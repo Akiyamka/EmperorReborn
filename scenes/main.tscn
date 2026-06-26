@@ -1,0 +1,82 @@
+[gd_scene load_steps=8 format=3 uid="uid://b3s2wqci2m81v"]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/rts_camera.gd" id="2_camera"]
+[ext_resource type="PackedScene" path="res://scenes/units/unit.tscn" id="3_unit"]
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 1
+background_color = Color(0.035, 0.045, 0.06, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.55, 0.62, 0.72, 1)
+ambient_light_energy = 0.65
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ground"]
+albedo_color = Color(0.16, 0.28, 0.19, 1)
+roughness = 0.9
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_ground"]
+material = SubResource("StandardMaterial3D_ground")
+size = Vector2(80, 80)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
+size = Vector3(80, 0.1, 80)
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-55, -35, 0)
+light_energy = 2.2
+shadow_enabled = true
+directional_shadow_max_distance = 90.0
+
+[node name="CameraRig" type="Node3D" parent="."]
+position = Vector3(0, 0, 8)
+script = ExtResource("2_camera")
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+position = Vector3(0, 24, 32)
+rotation_degrees = Vector3(-60, 0, 0)
+current = true
+fov = 50.0
+far = 500.0
+
+[node name="Terrain" type="StaticBody3D" parent="."]
+
+[node name="Ground" type="MeshInstance3D" parent="Terrain"]
+mesh = SubResource("PlaneMesh_ground")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Terrain"]
+position = Vector3(0, -0.05, 0)
+shape = SubResource("BoxShape3D_ground")
+
+[node name="Units" type="Node3D" parent="."]
+
+[node name="ScoutA" parent="Units" instance=ExtResource("3_unit")]
+position = Vector3(-3, 0.7, 0)
+
+[node name="ScoutB" parent="Units" instance=ExtResource("3_unit")]
+position = Vector3(0, 0.7, -2)
+
+[node name="ScoutC" parent="Units" instance=ExtResource("3_unit")]
+position = Vector3(3, 0.7, 1)
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Help" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 640.0
+offset_bottom = 44.0
+text = "WASD/Arrows: move camera | Q/E: rotate | Wheel: zoom | Left click: select | Right click: move"
+
+[node name="Selection" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 46.0
+offset_right = 360.0
+offset_bottom = 74.0
+text = "No unit selected"

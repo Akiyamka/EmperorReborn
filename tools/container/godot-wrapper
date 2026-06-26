@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export HOME="${HOME:-/tmp/godot-home}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-/tmp/godot-data}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/tmp/godot-config}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/godot-cache}"
+
+mkdir -p \
+	"${HOME}" \
+	"${XDG_CONFIG_HOME}" \
+	"${XDG_CACHE_HOME}/fontconfig" \
+	"${XDG_DATA_HOME}/godot/export_templates"
+
+templates_version="${GODOT_VERSION}.${GODOT_RELEASE}"
+templates_source="/opt/godot/export_templates/${templates_version}"
+templates_target="${XDG_DATA_HOME}/godot/export_templates/${templates_version}"
+
+if [[ -d "${templates_source}" && ! -e "${templates_target}" ]]; then
+	ln -s "${templates_source}" "${templates_target}"
+fi
+
+exec /usr/local/bin/godot-bin "$@"

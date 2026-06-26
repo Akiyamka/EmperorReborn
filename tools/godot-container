@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PODMAN_BIN="${PODMAN_BIN:-podman}"
+IMAGE="${GODOT_CONTAINER_IMAGE:-emperorjs-godot:4.4.1}"
+GODOT_VERSION="${GODOT_VERSION:-4.4.1}"
+GODOT_RELEASE="${GODOT_RELEASE:-stable}"
+PROJECT_DIR="${GODOT_PROJECT_DIR:-$(pwd)}"
+CONTAINERFILE="${GODOT_CONTAINERFILE:-${PROJECT_DIR}/Containerfile}"
+WEB_EXPORT_PATH="${GODOT_WEB_EXPORT_PATH:-exports/web/index.html}"
+
+
+usage() {
+	cat <<'USAGE'
+Usage: ./tools/godot-container <command> [args]
+
+Commands:
+  build          Build the Podman image with Godot and Web templates.
+  version        Print Godot version from the container.
+  check          Import/validate the mounted project in headless mode.
+  export-web     Export the Web preset to exports/web/index.html.
+  watch-export   Re-export Web when project files change.
+  shell          Open a shell inside the mounted project container.
+  godot [args]   Run arbitrary Godot arguments in the container.
+
+Environment:
+  GODOT_CONTAINER_IMAGE   Image tag. Default: emperorjs-godot:4.4.1
+  GODOT_VERSION           Godot version to build. Default: 4.4.1
+  GODOT_RELEASE           Godot release channel. Default: stable
+  GODOT_PROJECT_DIR       Host project directory. Default: current directory
+  GODOT_WEB_EXPORT_PATH   Export path. Default: exports/web/index.html
+USAGE
+}
+
+
+tty_flags() {
+	if [[ -t 0 && -t 1 ]]; then
+		printf '%s\n' "-it"
+	fi
+}
+
+
+podman_base_args() {
+	local tty_flag
+	tty_flag="$(tty_flags)"
+
+	if [[ -n "${tty_flag}" ]]; then
+		printf '%s\n' "${tty_flag}"
+	fi
+
+	printf '%s\n' \
+		--rm \
+		--userns=keep-id \
+		--volume "${PROJECT_DIR}:/workspace:Z" \
+		--workdir /workspace
+}
+
+
+run_godot() {
+	mapfile -t base_args < <(podman_base_args)
+	"${PODMAN_BIN}" run "${base_args[@]}" "${IMAGE}" "$@"
+}
+
+
+run_shell() {
+	mapfile -t base_args < <(podman_base_args)
+	"${PODMAN_BIN}" run "${base_args[@]}" --entrypoint bash "${IMAGE}" "$@"
+}
+
+
+build_image() {
+	"${PODMAN_BIN}" build \
+		--build-arg "GODOT_VERSION=${GODOT_VERSION}" \
+		--build-arg "GODOT_RELEASE=${GODOT_RELEASE}" \
+		--tag "${IMAGE}" \
+		--file "${CONTAINERFILE}" \
+		"${PROJECT_DIR}"
+}
+
+
+check_project() {
+	run_godot --headless --path /workspace --quit
+}
+
+
+export_web() {
+	mkdir -p "${PROJECT_DIR}/$(dirname "${WEB_EXPORT_PATH}")"
+	run_godot --headless --path /workspace --export-release Web "/workspace/${WEB_EXPORT_PATH}"
+}
+
+
+watch_export() {
+	mkdir -p "${PROJECT_DIR}/$(dirname "${WEB_EXPORT_PATH}")"
+	run_shell -lc "set -e; while true; do godot --headless --path /workspace --export-release Web '/workspace/${WEB_EXPORT_PATH}' || true; inotifywait -r -e close_write,create,delete,move --exclude '(^|/)(\\.git|\\.godot|exports)(/|$)' /workspace; done"
+}
+
+
+command="${1:-}"
+if [[ -n "${command}" ]]; then
+	shift
+fi
+
+case "${command}" in
+	build)
+		build_image
+		;;
+	version)
+		run_godot --version
+		;;
+	check)
+		check_project
+		;;
+	export-web)
+		export_web
+		;;
+	watch-export)
+		watch_export
+		;;
+	shell)
+		run_shell "$@"
+		;;
+	godot)
+		run_godot "$@"
+		;;
+	""|help|--help|-h)
+		usage
+		;;
+	*)
+		printf 'Unknown command: %s\n\n' "${command}" >&2
+		usage >&2
+		exit 2
+		;;
+esac

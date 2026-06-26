@@ -1,0 +1,16 @@
+# Godot local/editor state
+.godot/
+.import/
+
+# Godot exports
+export.cfg
+export_credentials.cfg
+exports/
+
+# Mono/C# crash logs, if C# support is enabled later
+mono_crash.*.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
