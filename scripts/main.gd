@@ -1,13 +1,48 @@
 extends Node3D
 
 @onready var camera: Camera3D = $CameraRig/Camera3D
+@onready var camera_rig: Node3D = $CameraRig
+@onready var terrain: MapLoader = $Terrain
 @onready var selection_label: Label = $HUD/Selection
+@onready var fps_label: Label = $HUD/FPS
 
 var selected_unit = null
+var _fps_update_time := 0.0
 
 
 func _ready() -> void:
 	_update_selection_label()
+	_update_fps_label()
+	_place_on_map()
+
+
+func _place_on_map() -> void:
+	var center := terrain.map_center()
+	camera_rig.global_position = Vector3(center.x, 0.0, center.z)
+
+	# Terrain collision is not queryable until the first physics frame.
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		var spot: Vector3 = Vector3(center.x, 0.0, center.z) + unit.position
+		unit.global_position = _snap_to_ground(spot) + Vector3.UP * 0.7
+
+
+func _snap_to_ground(point: Vector3) -> Vector3:
+	var query := PhysicsRayQueryParameters3D.create(
+		Vector3(point.x, 200.0, point.z), Vector3(point.x, -200.0, point.z), 1
+	)
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return Vector3(point.x, 0.0, point.z)
+	return hit["position"]
+
+
+func _process(delta: float) -> void:
+	_fps_update_time += delta
+	if _fps_update_time >= 0.25:
+		_fps_update_time = 0.0
+		_update_fps_label()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -84,3 +119,7 @@ func _update_selection_label(status := "") -> void:
 	selection_label.text = "%s selected" % selected_unit.name
 	if not status.is_empty():
 		selection_label.text += " | %s" % status
+
+
+func _update_fps_label() -> void:
+	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()

@@ -5,7 +5,7 @@ extends Node3D
 @export var rotation_speed := 1.8
 @export var zoom_speed := 3.0
 @export var min_zoom := 14.0
-@export var max_zoom := 48.0
+@export var max_zoom := 240.0
 @export var edge_scroll_margin := 16.0
 @export var edge_scroll_enabled := true
 

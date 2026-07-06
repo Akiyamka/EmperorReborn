@@ -1,8 +1,10 @@
-[gd_scene load_steps=8 format=3 uid="uid://b3s2wqci2m81v"]
+[gd_scene load_steps=7 format=3 uid="uid://b3s2wqci2m81v"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/rts_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" path="res://scenes/units/unit.tscn" id="3_unit"]
+[ext_resource type="Script" path="res://scripts/map_loader.gd" id="4_map"]
+[ext_resource type="Script" path="res://scripts/tuning_panel.gd" id="5_tuning"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -10,17 +12,6 @@ background_color = Color(0.035, 0.045, 0.06, 1)
 ambient_light_source = 2
 ambient_light_color = Color(0.55, 0.62, 0.72, 1)
 ambient_light_energy = 0.65
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ground"]
-albedo_color = Color(0.16, 0.28, 0.19, 1)
-roughness = 0.9
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_ground"]
-material = SubResource("StandardMaterial3D_ground")
-size = Vector2(80, 80)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
-size = Vector3(80, 0.1, 80)
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
@@ -32,7 +23,7 @@ environment = SubResource("Environment_main")
 rotation_degrees = Vector3(-55, -35, 0)
 light_energy = 2.2
 shadow_enabled = true
-directional_shadow_max_distance = 90.0
+directional_shadow_max_distance = 500.0
 
 [node name="CameraRig" type="Node3D" parent="."]
 position = Vector3(0, 0, 8)
@@ -46,13 +37,10 @@ fov = 50.0
 far = 500.0
 
 [node name="Terrain" type="StaticBody3D" parent="."]
-
-[node name="Ground" type="MeshInstance3D" parent="Terrain"]
-mesh = SubResource("PlaneMesh_ground")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Terrain"]
-position = Vector3(0, -0.05, 0)
-shape = SubResource("BoxShape3D_ground")
+script = ExtResource("4_map")
+map_dir = "res://assets/maps/#M70 Claw Rock"
+sun_path = NodePath("../Sun")
+environment_path = NodePath("../WorldEnvironment")
 
 [node name="Units" type="Node3D" parent="."]
 
@@ -64,6 +52,12 @@ position = Vector3(0, 0.7, -2)
 
 [node name="ScoutC" parent="Units" instance=ExtResource("3_unit")]
 position = Vector3(3, 0.7, 1)
+
+[node name="TuningPanel" type="CanvasLayer" parent="."]
+script = ExtResource("5_tuning")
+terrain_path = NodePath("../Terrain")
+sun_path = NodePath("../Sun")
+environment_path = NodePath("../WorldEnvironment")
 
 [node name="HUD" type="CanvasLayer" parent="."]
 
@@ -80,3 +74,13 @@ offset_top = 46.0
 offset_right = 360.0
 offset_bottom = 74.0
 text = "No unit selected"
+
+[node name="FPS" type="Label" parent="HUD"]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -144.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = 44.0
+text = "FPS: --"
+horizontal_alignment = 2

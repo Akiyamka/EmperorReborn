@@ -86,8 +86,13 @@ The helper uses rootless-friendly Podman flags: `--userns=keep-id` and `-v <proj
 - `tools/godot-container` - Helper for running Godot against the mounted project.
 - `scenes/main.tscn` - Main RTS test map.
 - `scenes/units/unit.tscn` - Placeholder selectable unit.
+- `scenes/debug/screenshot.tscn` - Headless screenshot helper for visual checks.
 - `scripts/main.gd` - Selection and command controller.
+- `scripts/xbf.gd` - Parser for Emperor: Battle for Dune XBF terrain meshes.
+- `scripts/map_loader.gd` - Loads a baked map folder (`test.xbf` + `test.lit` + `texture.dat`) into terrain with collision.
+- `scripts/terrain.gdshader` - Tiled theme texture modulated by the map's baked ground-tone layer.
 - `scripts/rts_camera.gd` - RTS camera movement.
 - `scripts/rts_unit.gd` - Basic unit movement and selection state.
+- `assets/maps/` - Unpacked Emperor map folders (see `../specs/emperor-map-file-format.md`). Select the map with the `map_dir` export on the `Terrain` node or the `EMPEROR_MAP` env var (folder name, e.g. `#M72 Carthag`).
 - `assets/` - Art, audio, fonts, and imported source assets.
 - `addons/` - Godot plugins.
