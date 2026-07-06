@@ -218,13 +218,13 @@ func _apply_lighting() -> void:
 		# so the runtime lights are desaturated (luminance preserved) to
 		# avoid tinting twice.
 		if _lit_colors.size() >= 2:
-			sun.light_color = _desaturated(_lit_colors[1], 0.84)
-		sun.light_energy = 1.3
+			sun.light_color = _desaturated(_lit_colors[1], 1.0)
+		sun.light_energy = 1.0
 
 	var world_environment := get_node_or_null(environment_path) as WorldEnvironment
 	if world_environment != null and _lit_colors.size() >= 1:
-		world_environment.environment.ambient_light_color = _desaturated(_lit_colors[0], 0.84)
-		world_environment.environment.ambient_light_energy = 1.83
+		world_environment.environment.ambient_light_color = _desaturated(_lit_colors[0], 1.0)
+		world_environment.environment.ambient_light_energy = 1.0
 
 
 func _desaturated(color: Color, keep_saturation: float) -> Color:

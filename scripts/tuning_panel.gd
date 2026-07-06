@@ -14,10 +14,11 @@ var _environment: WorldEnvironment
 
 var _values := {
 	"tone_scale": 3.0,
-	"tone_saturation": 0.19,
-	"sun_energy": 1.3,
-	"ambient_energy": 1.83,
-	"light_saturation": 0.84,
+	"tone_saturation": 0.0,
+	"tone_alpha_gain": 1.5,
+	"sun_energy": 1.0,
+	"ambient_energy": 1.0,
+	"light_saturation": 1.0,
 }
 var _panel: PanelContainer
 var _sun_color_button: ColorPickerButton
@@ -55,6 +56,7 @@ func _build_ui() -> void:
 
 	_add_slider(vbox, "tone_scale", 0.0, 5.0)
 	_add_slider(vbox, "tone_saturation", 0.0, 1.0)
+	_add_slider(vbox, "tone_alpha_gain", 0.0, 4.0)
 	_add_slider(vbox, "sun_energy", 0.0, 3.0)
 	_add_slider(vbox, "ambient_energy", 0.0, 3.0)
 	_add_slider(vbox, "light_saturation", 0.0, 1.0)
@@ -108,7 +110,7 @@ func _add_slider(parent: Container, key: String, min_value: float, max_value: fl
 
 func _apply(key: String) -> void:
 	match key:
-		"tone_scale", "tone_saturation":
+		"tone_scale", "tone_saturation", "tone_alpha_gain":
 			_set_terrain_param(key, _values[key])
 		"sun_energy":
 			if _sun != null:

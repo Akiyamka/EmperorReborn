@@ -11,6 +11,10 @@ extends Node3D
 
 @onready var camera: Camera3D = $Camera3D
 
+## XZ area the rig may move in (world units). Empty rect = unrestricted.
+## Set by main.gd from the loaded map's bounds.
+var bounds := Rect2()
+
 var _zoom := 32.0
 var _has_mouse_position := false
 
@@ -41,6 +45,7 @@ func _process(delta: float) -> void:
 	right = right.normalized()
 
 	global_position += (right * input_direction.x + forward * input_direction.y) * speed * delta
+	_clamp_view_to_bounds()
 
 	var rotation_input := 0.0
 	if Input.is_key_pressed(KEY_Q):
@@ -107,6 +112,24 @@ func _edge_scroll_direction() -> Vector2:
 	return direction
 
 
+## Clamps the point the camera actually looks at (center ray projected onto
+## the ground plane) to the map bounds — clamping the rig itself is not
+## enough because the pitched camera looks well behind the rig at high zoom.
+func _clamp_view_to_bounds() -> void:
+	if not bounds.has_area():
+		return
+	var camera_position := camera.global_position
+	var view_direction := -camera.global_transform.basis.z
+	if view_direction.y >= -0.01:
+		return
+	var distance := camera_position.y / -view_direction.y
+	var view_center := camera_position + view_direction * distance
+	var clamped_x := clampf(view_center.x, bounds.position.x, bounds.end.x)
+	var clamped_z := clampf(view_center.z, bounds.position.y, bounds.end.y)
+	global_position.x += clamped_x - view_center.x
+	global_position.z += clamped_z - view_center.z
+
+
 func _set_zoom(value: float) -> void:
 	_zoom = clampf(value, min_zoom, max_zoom)
 	_apply_zoom()
@@ -115,3 +138,4 @@ func _set_zoom(value: float) -> void:
 func _apply_zoom() -> void:
 	camera.position = Vector3(0.0, _zoom * 0.75, _zoom)
 	camera.rotation_degrees = Vector3(-60.0, 0.0, 0.0)
+	_clamp_view_to_bounds()

@@ -12,7 +12,12 @@ uniform sampler2D ground_color : source_color, filter_linear, repeat_disable, hi
 uniform float tone_scale = 3.0;
 // Multiplying an orange tile by the orange CPT squares the color and
 // oversaturates; pull the CPT contribution back toward its luminance.
-uniform float tone_saturation : hint_range(0.0, 1.0) = 0.19;
+uniform float tone_saturation : hint_range(0.0, 1.0) = 0.0;
+// CPT's DXT3 alpha is a per-texel blend weight: 0 on cliffs (the planar
+// projection would smear there — use the tile texture alone), ~0.53 on
+// sand, ~0.9 on rock plateaus. tone_alpha_gain rescales it so mid-alpha
+// reaches full CPT influence.
+uniform float tone_alpha_gain : hint_range(0.0, 4.0) = 1.5;
 uniform float ground_world_size = 512.0;
 // Set per surface when its UVs stay inside [0,1] on that axis: transition
 // strips (cragsandjoin, smooth, ...) span exactly 0..1, and wrap sampling at
@@ -49,8 +54,10 @@ void fragment() {
 	// Map geometry is Z-mirrored from D3D space, so world Z maps directly to V.
 	vec2 ground_uv = vec2(world_xz.x, world_xz.y) / ground_world_size;
 	// min() mimics the D3D-era framebuffer clamp of MODULATE2X.
-	vec3 tone_color = min(texture(ground_color, ground_uv).rgb * tone_scale, vec3(1.0));
+	vec4 ground = texture(ground_color, ground_uv);
+	vec3 tone_color = min(ground.rgb * tone_scale, vec3(1.0));
 	tone_color = mix(vec3(dot(tone_color, vec3(0.299, 0.587, 0.114))), tone_color, tone_saturation);
+	tone_color = mix(vec3(1.0), tone_color, clamp(ground.a * tone_alpha_gain, 0.0, 1.0));
 	vec3 mottle = texture(mottle_tex, world_xz / mottle_world_size).rgb;
 	vec3 variation = mix(vec3(1.0), mottle / mottle_mean, mottle_strength);
 	ALBEDO = base * tone_color * clamp(variation, 0.0, 1.5);

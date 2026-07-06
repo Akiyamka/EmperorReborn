@@ -20,6 +20,12 @@ func _place_on_map() -> void:
 	var center := terrain.map_center()
 	camera_rig.global_position = Vector3(center.x, 0.0, center.z)
 
+	# Keep the camera rig within the map, with a small margin past the edges.
+	var aabb := terrain.terrain_aabb
+	camera_rig.bounds = Rect2(
+		aabb.position.x, aabb.position.z, aabb.size.x, aabb.size.z
+	).grow(8.0)
+
 	# Terrain collision is not queryable until the first physics frame.
 	await get_tree().physics_frame
 	await get_tree().physics_frame
