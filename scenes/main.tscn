@@ -4,7 +4,6 @@
 [ext_resource type="Script" uid="uid://xoynnrvxuq2p" path="res://scripts/rts_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="3_unit"]
 [ext_resource type="PackedScene" path="res://assets/converted_maps/#M70 Claw Rock/terrain.tscn" id="4_map"]
-[ext_resource type="Script" uid="uid://bhnqfbimk6wk3" path="res://scripts/tuning_panel.gd" id="5_tuning"]
 [ext_resource type="Resource" path="res://resources/RTSCameraConfig.tres" id="6_camera_config"]
 
 [sub_resource type="Environment" id="Environment_main"]
@@ -49,12 +48,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, -2)
 
 [node name="ScoutC" parent="Units" unique_id=325326372 instance=ExtResource("3_unit")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0.7, 1)
-
-[node name="TuningPanel" type="CanvasLayer" parent="." unique_id=604987323]
-script = ExtResource("5_tuning")
-terrain_path = NodePath("../Terrain")
-sun_path = NodePath("../Sun")
-environment_path = NodePath("../WorldEnvironment")
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
 
