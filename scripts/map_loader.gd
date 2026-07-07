@@ -1,8 +1,9 @@
 class_name MapLoader
 extends StaticBody3D
-## Loads a baked Emperor map folder (test.xbf mesh + test.lit lighting) and
-## builds the terrain mesh with collision. One original map cell is 16 XBF
-## units; world_scale = 1/16 makes one cell = 1 Godot unit.
+## Loads a baked Emperor map folder (test.xbf TLV metadata + mesh,
+## test.lit lighting, test.CPT ground color) and builds the terrain mesh with
+## collision. One original map cell is 16 XBF units; world_scale = 1/16 makes
+## one cell = 1 Godot unit.
 
 @export_dir var map_dir := "res://assets/maps/#M70 Claw Rock"
 @export var world_scale := 0.0625
@@ -38,7 +39,12 @@ func _ready() -> void:
 
 
 func load_map(dir: String) -> void:
-	var xbf := Xbf.load_file(dir.path_join("test.xbf"))
+	var xbf_path := _first_existing_map_path(dir, ["test.xbf", "debug.xbf"])
+	if xbf_path.is_empty():
+		push_error("MapLoader: no XBF file found in %s" % dir)
+		return
+
+	var xbf := Xbf.load_file(xbf_path)
 	if xbf == null:
 		return
 
@@ -81,7 +87,19 @@ func load_map(dir: String) -> void:
 		navigation_grid = null
 
 	_apply_lighting()
-	print("MapLoader: %s — %d surfaces, %d textures, aabb %s" % [dir, mesh.get_surface_count(), xbf.textures.size(), terrain_aabb])
+	var map_size_text := ""
+	if xbf.map_size != Vector2i.ZERO:
+		map_size_text = ", map %dx%d" % [xbf.map_size.x, xbf.map_size.y]
+	print("MapLoader: %s (%s) — %d surfaces, %d textures%s, aabb %s" % [
+		dir,
+		xbf_path.get_file(),
+		mesh.get_surface_count(),
+		xbf.textures.size(),
+		map_size_text,
+		terrain_aabb,
+	])
+	if xbf.has_tlv_meta():
+		print("  XBF TLV: meta_end=%d, %s" % [xbf.meta_end, xbf.logical_layer_summary()])
 
 
 func map_center() -> Vector3:
@@ -235,3 +253,11 @@ func _apply_lighting() -> void:
 func _desaturated(color: Color, keep_saturation: float) -> Color:
 	var luminance := color.r * 0.299 + color.g * 0.587 + color.b * 0.114
 	return Color(luminance, luminance, luminance).lerp(color, keep_saturation)
+
+
+func _first_existing_map_path(dir: String, names: Array[String]) -> String:
+	for file_name in names:
+		var path := dir.path_join(file_name)
+		if FileAccess.file_exists(path):
+			return path
+	return ""
