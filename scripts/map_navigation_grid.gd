@@ -1,6 +1,7 @@
 class_name MapNavigationGrid
 extends RefCounted
 
+const MapXbfScript := preload("res://scripts/xbf/map_xbf.gd")
 const NAV_SIZE := 256
 const SOURCE_TILE_XBF_UNITS := 32.0
 
@@ -37,7 +38,7 @@ var _is_loaded := false
 var _xbf_to_world_scale := 1.0
 
 
-func load(dir: String, bounds: AABB, source_xbf: Xbf = null, _world_scale := 1.0) -> bool:
+func load(dir: String, bounds: AABB, source_xbf = null, _world_scale := 1.0) -> bool:
 	map_dir = dir
 	world_bounds = bounds
 	_xbf_to_world_scale = _world_scale
@@ -50,7 +51,7 @@ func load(dir: String, bounds: AABB, source_xbf: Xbf = null, _world_scale := 1.0
 		if xbf_path.is_empty():
 			push_error("MapNavigationGrid: no XBF file found in %s" % dir)
 			return false
-		source_xbf = Xbf.load_file(xbf_path)
+		source_xbf = MapXbfScript.load_file(xbf_path)
 	if source_xbf == null:
 		return false
 	if not source_xbf.has_tile_grid():
@@ -223,7 +224,7 @@ func print_summary() -> void:
 	])
 
 
-func _build_nav_cells(source_xbf: Xbf) -> void:
+func _build_nav_cells(source_xbf) -> void:
 	var total := NAV_SIZE * NAV_SIZE
 	terrain_type.resize(total)
 	source_tile_x.resize(total)
@@ -235,19 +236,19 @@ func _build_nav_cells(source_xbf: Xbf) -> void:
 
 	var terrain_hist := {}
 	var spice_hist := {}
-	var has_spice_grid := source_xbf.has_sized_spice_grid()
+	var has_spice_grid: bool = source_xbf.has_sized_spice_grid()
 	for nav_y in NAV_SIZE:
 		for nav_x in NAV_SIZE:
 			var i := _idx(nav_x, nav_y)
 			var tile_x := _nav_axis_to_source_tile(nav_x, source_xbf.tile_grid_size.x)
 			var tile_y := _nav_axis_to_source_tile(nav_y, source_xbf.tile_grid_size.y)
-			var type_id := source_xbf.tile_at(tile_x, tile_y)
+			var type_id: int = source_xbf.tile_at(tile_x, tile_y)
 			source_tile_x[i] = tile_x
 			source_tile_y[i] = tile_y
 			terrain_type[i] = type_id
 			_apply_terrain_attrs(i, type_id)
 			_inc_count(terrain_hist, type_id)
-			var spice := source_xbf.spice_at(tile_x, tile_y) if has_spice_grid else 0
+			var spice: int = source_xbf.spice_at(tile_x, tile_y) if has_spice_grid else 0
 			spice_value[i] = spice if spice >= 0 else 0
 			_inc_count(spice_hist, spice_value[i])
 

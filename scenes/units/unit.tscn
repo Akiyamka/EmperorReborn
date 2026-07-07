@@ -1,15 +1,7 @@
-[gd_scene load_steps=5 format=3 uid="uid://bklm37mbnlo4i"]
+[gd_scene load_steps=4 format=3 uid="uid://bklm37mbnlo4i"]
 
 [ext_resource type="Script" path="res://scripts/rts_unit.gd" id="1_unit"]
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_unit"]
-albedo_color = Color(0.74, 0.49, 0.2, 1)
-roughness = 0.78
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_unit"]
-material = SubResource("StandardMaterial3D_unit")
-radius = 0.35
-height = 1.4
+[ext_resource type="PackedScene" path="res://assets/converted_models/AT_inf_H0/AT_inf_H0.tscn" id="2_at_inf"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_unit"]
 radius = 0.35
@@ -20,9 +12,10 @@ collision_layer = 2
 collision_mask = 1
 script = ExtResource("1_unit")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
-mesh = SubResource("CapsuleMesh_unit")
-material_override = SubResource("StandardMaterial3D_unit")
+[node name="VisualRoot" type="Node3D" parent="."]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0)
+
+[node name="AT_inf_H0" parent="VisualRoot" instance=ExtResource("2_at_inf")]
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("CapsuleShape3D_unit")

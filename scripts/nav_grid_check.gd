@@ -1,7 +1,7 @@
 extends SceneTree
 
 const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
-const XbfScript := preload("res://scripts/xbf.gd")
+const MapXbfScript := preload("res://scripts/xbf/map_xbf.gd")
 const WORLD_SCALE := 0.0625
 
 
@@ -16,7 +16,7 @@ func _init() -> void:
 		quit(1)
 		return
 
-	var xbf = XbfScript.load_file(xbf_path)
+	var xbf = MapXbfScript.load_file(xbf_path)
 	if xbf == null:
 		quit(1)
 		return

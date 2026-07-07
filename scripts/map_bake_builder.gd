@@ -5,7 +5,7 @@ const TERRAIN_SHADER := preload("res://scripts/terrain.gdshader")
 const BakedMapDataScript := preload("res://scripts/baked_map_data.gd")
 const MapLoaderScript := preload("res://scripts/map_loader.gd")
 const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
-const XbfScript := preload("res://scripts/xbf.gd")
+const MapXbfScript := preload("res://scripts/xbf/map_xbf.gd")
 
 const GROUND_TONE_WORLD_UNITS := 8192.0
 
@@ -30,7 +30,7 @@ func build(dir: String) -> Resource:
 		push_error("MapBakeBuilder: no XBF file found in %s" % dir)
 		return null
 
-	var xbf = XbfScript.load_file(xbf_path)
+	var xbf = MapXbfScript.load_file(xbf_path)
 	if xbf == null:
 		return null
 
