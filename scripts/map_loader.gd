@@ -10,6 +10,7 @@ extends StaticBody3D
 @export var environment_path: NodePath
 
 const TERRAIN_SHADER := preload("res://scripts/terrain.gdshader")
+const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
 
 ## texture.dat covers 8192x8192 XBF units (2048 texels x 4 units).
 const GROUND_TONE_WORLD_UNITS := 8192.0
@@ -21,6 +22,7 @@ const GROUND_TONE_WORLD_UNITS := 8192.0
 @export var mottle_full_map := false
 
 var terrain_aabb := AABB()
+var navigation_grid
 var _ground_color: ImageTexture
 var _lit_direction := Vector3.ZERO
 var _lit_colors: Array[Color] = []
@@ -74,6 +76,9 @@ func load_map(dir: String) -> void:
 	scale = Vector3.ONE * world_scale
 	terrain_aabb.position *= world_scale
 	terrain_aabb.size *= world_scale
+	navigation_grid = MapNavigationGridScript.new()
+	if not navigation_grid.load(dir, terrain_aabb, xbf, world_scale):
+		navigation_grid = null
 
 	_apply_lighting()
 	print("MapLoader: %s — %d surfaces, %d textures, aabb %s" % [dir, mesh.get_surface_count(), xbf.textures.size(), terrain_aabb])

@@ -2,9 +2,10 @@ class_name Xbf
 extends RefCounted
 ## Parser for Emperor: Battle for Dune XBF meshes (see specs/emperor-map-file-format.md §6).
 ##
-## An XBF file is a flat list of objects (terrain chunks for map meshes), each with
-## position+normal vertices and triangles carrying a texture index, smoothing group
-## and per-corner UVs. Reference implementation: CorrinoEngine/LibEmperor/Xbf.cs.
+## A terrain XBF contains a header area with map metadata/logical layers plus
+## a tree of objects (terrain chunks for map meshes), each with position+normal
+## vertices and triangles carrying a texture index, smoothing group and per-corner
+## UVs. Reference implementation for the mesh part: CorrinoEngine/LibEmperor/Xbf.cs.
 
 const _FLAG_VERTEX_COLORS := 1
 const _FLAG_TRIANGLE_EXTRA := 2
@@ -13,6 +14,9 @@ const _FLAG_OBJECT_ANIMATION := 8
 
 var textures: PackedStringArray = []
 var objects: Array[Dictionary] = []
+var tile_grid := PackedByteArray()
+var tile_grid_size := Vector2i.ZERO
+var tile_grid_file_offset := -1
 
 
 static func load_file(path: String) -> Xbf:
@@ -35,9 +39,11 @@ func _parse(bytes: PackedByteArray) -> bool:
 		push_error("Xbf: unsupported version %d" % version)
 		return false
 
-	# Unknown header block; the reference parser skips it too.
+	# Header block: the reference parser skipped it, but terrain XBFs embed
+	# the logical CHUNKTILE grid here as [uint32 length][uint8 tile[length]].
 	var unknown_block_size := buffer.get_32()
-	buffer.seek(buffer.get_position() + unknown_block_size)
+	var unknown_block := buffer.get_data(unknown_block_size)[1] as PackedByteArray
+	_parse_embedded_tile_grid(unknown_block, 8)
 
 	# Blob layout: null-terminated names, some prefixed with a 0x02 flag byte
 	# (render-flag marker). Split at byte level: Godot Strings choke on NULs.
@@ -64,6 +70,64 @@ func _parse(bytes: PackedByteArray) -> bool:
 		objects.append(_parse_object(buffer))
 
 	return true
+
+
+func has_tile_grid() -> bool:
+	return not tile_grid.is_empty()
+
+
+func has_sized_tile_grid() -> bool:
+	return tile_grid.size() == tile_grid_size.x * tile_grid_size.y and tile_grid_size.x > 0 and tile_grid_size.y > 0
+
+
+func tile_at(x: int, y: int) -> int:
+	if not has_sized_tile_grid() or x < 0 or y < 0 or x >= tile_grid_size.x or y >= tile_grid_size.y:
+		return -1
+	return tile_grid[y * tile_grid_size.x + x]
+
+
+func set_tile_grid_size(size: Vector2i) -> bool:
+	if size.x <= 0 or size.y <= 0 or size.x * size.y != tile_grid.size():
+		return false
+	tile_grid_size = size
+	return true
+
+
+func _parse_embedded_tile_grid(header: PackedByteArray, file_offset_base: int) -> void:
+	tile_grid = PackedByteArray()
+	tile_grid_size = Vector2i.ZERO
+	tile_grid_file_offset = -1
+
+	var best_offset := -1
+	var best_length := 0
+	var best_score := -1
+	for offset in range(0, header.size() - 4):
+		var length := _u32_le(header, offset)
+		if offset + 4 + length > header.size():
+			continue
+		if length < 1024 or length > 262144:
+			continue
+		var valid := true
+		var non_sand := 0
+		for i in length:
+			var value := header[offset + 4 + i]
+			if value > 7:
+				valid = false
+				break
+			if value != 0:
+				non_sand += 1
+		if not valid:
+			continue
+		if non_sand > best_score:
+			best_score = non_sand
+			best_offset = offset
+			best_length = length
+
+	if best_offset == -1:
+		return
+
+	tile_grid = header.slice(best_offset + 4, best_offset + 4 + best_length)
+	tile_grid_file_offset = file_offset_base + best_offset + 4
 
 
 func _parse_object(buffer: StreamPeerBuffer) -> Dictionary:
@@ -194,3 +258,7 @@ func _collect_surfaces(object: Dictionary, parent_transform: Transform3D, surfac
 
 	for child: Dictionary in object.children:
 		_collect_surfaces(child, transform, surfaces)
+
+
+static func _u32_le(bytes: PackedByteArray, offset: int) -> int:
+	return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)

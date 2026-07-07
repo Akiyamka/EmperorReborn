@@ -90,7 +90,16 @@ func _command_move(screen_position: Vector2) -> void:
 
 	var target: Vector3 = hit["position"]
 	selected_unit.move_to(target)
-	_update_selection_label("Moving to %.1f, %.1f" % [target.x, target.z])
+	var nav_status := ""
+	if terrain.navigation_grid != null and terrain.navigation_grid.is_loaded():
+		var cell: Vector2i = terrain.navigation_grid.world_to_grid(target)
+		var debug: Dictionary = terrain.navigation_grid.cell_debug(cell)
+		nav_status = " | nav %s tile %s terrain %s" % [
+			str(cell),
+			str(debug.get("source_tile", "?")),
+			str(debug.get("terrain_name", "?")),
+		]
+	_update_selection_label("Moving to %.1f, %.1f%s" % [target.x, target.z, nav_status])
 
 
 func _clear_selection() -> void:
