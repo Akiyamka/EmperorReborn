@@ -4,7 +4,7 @@
 [ext_resource type="Script" uid="uid://xoynnrvxuq2p" path="res://scripts/rts_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="3_unit"]
 [ext_resource type="PackedScene" path="res://assets/converted_maps/#M70 Claw Rock/terrain.tscn" id="4_map"]
-[ext_resource type="Resource" path="res://resources/RTSCameraConfig.tres" id="6_camera_config"]
+[ext_resource type="Resource" uid="uid://nj40xd0p0abq" path="res://resources/RTSCameraConfig.tres" id="6_camera_config"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
