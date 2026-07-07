@@ -14,7 +14,7 @@ func _init() -> void:
 
 	var output := String(args.get("output", ""))
 	if output.is_empty():
-		output = "res://assets/converted_models".path_join(source.get_file().get_basename()).path_join("%s.tscn" % source.get_file().get_basename())
+		output = "res://assets/converted_models".path_join(source.get_file().get_basename()).path_join("%s.scn" % source.get_file().get_basename())
 
 	var builder = ModelBakeBuilderScript.new()
 	builder.source_texture_dir = String(args.get("textures", ProjectSettings.globalize_path("res://../extracted/textures")))
@@ -77,7 +77,7 @@ func _usage(error: String) -> void:
 	print("Usage:")
 	print("  godot --headless --path . --script res://scripts/convert_model.gd -- --source /path/to/Units/AT_inf_H0.xbf")
 	print("Options:")
-	print("  --output res://assets/converted_models/AT_inf_H0/AT_inf_H0.tscn")
+	print("  --output res://assets/converted_models/AT_inf_H0/AT_inf_H0.scn")
 	print("  --textures /home/aki/git/com.emperor/extracted/textures")
 	print("  --texture-output res://assets/model_textures/3DDATA0001")
 	print("  --world-scale 0.0625")

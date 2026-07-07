@@ -106,17 +106,30 @@ func _build_object_mesh(object: Dictionary, texture_names: PackedStringArray, an
 				"positions": PackedVector3Array(),
 				"normals": PackedVector3Array(),
 				"uvs": PackedVector2Array(),
+				"indices": PackedInt32Array(),
+				"corner_lookup": {},
 			}
 		var surface: Dictionary = surfaces[texture_index]
 		for corner in 3:
 			var vertex_index := indices[i * 3 + corner]
-			var position: Vector3 = positions[vertex_index]
-			position.z = -position.z
-			var normal: Vector3 = normals[vertex_index]
-			normal.z = -normal.z
-			surface.positions.append(position)
-			surface.normals.append(normal.normalized())
-			surface.uvs.append(uvs[i * 3 + corner])
+			var uv: Vector2 = uvs[i * 3 + corner]
+			# Deduplicate corners sharing the same source vertex and UV so the
+			# surface is indexed. The key must not depend on position, so the
+			# layout stays identical across vertex animation frames.
+			var corner_key := [vertex_index, uv]
+			var lookup: Dictionary = surface.corner_lookup
+			var packed_index: int = lookup.get(corner_key, -1)
+			if packed_index == -1:
+				packed_index = surface.positions.size()
+				lookup[corner_key] = packed_index
+				var position: Vector3 = positions[vertex_index]
+				position.z = -position.z
+				var normal: Vector3 = normals[vertex_index]
+				normal.z = -normal.z
+				surface.positions.append(position)
+				surface.normals.append(normal.normalized())
+				surface.uvs.append(uv)
+			surface.indices.append(packed_index)
 
 	var mesh := ArrayMesh.new()
 	var texture_indices := surfaces.keys()
@@ -128,6 +141,7 @@ func _build_object_mesh(object: Dictionary, texture_names: PackedStringArray, an
 		arrays[Mesh.ARRAY_VERTEX] = surface.positions
 		arrays[Mesh.ARRAY_NORMAL] = surface.normals
 		arrays[Mesh.ARRAY_TEX_UV] = surface.uvs
+		arrays[Mesh.ARRAY_INDEX] = surface.indices
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		var surface_index := mesh.get_surface_count() - 1
 		var texture_name := texture_names[texture_index] if texture_index < texture_names.size() else ""
@@ -257,11 +271,17 @@ func _add_vertex_animation_track(anim: Animation, mesh_path: String, object: Dic
 
 	var frame_ids := frames.keys()
 	frame_ids.sort()
+	var mesh_cache := {}
 	for frame_id: int in frame_ids:
 		var positions: PackedVector3Array = frames[frame_id]
 		if positions.size() != (object.positions as PackedVector3Array).size():
 			continue
-		anim.track_insert_key(track, frame_id / fps, _build_object_mesh(object, texture_names, positions))
+		# Identical poses share one baked mesh instead of duplicating it per frame.
+		var mesh: ArrayMesh = mesh_cache.get(positions)
+		if mesh == null:
+			mesh = _build_object_mesh(object, texture_names, positions)
+			mesh_cache[positions] = mesh
+		anim.track_insert_key(track, frame_id / fps, mesh)
 
 
 func _slice_animation(source: Animation, entry: Dictionary) -> Animation:
