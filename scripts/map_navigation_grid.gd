@@ -71,6 +71,37 @@ func load(dir: String, bounds: AABB, source_xbf: Xbf = null, _world_scale := 1.0
 	return true
 
 
+func load_baked(data: Resource) -> bool:
+	map_dir = data.source_map_dir
+	world_bounds = data.nav_world_bounds
+	_xbf_to_world_scale = data.world_scale
+	_is_loaded = false
+
+	cpf_values = data.nav_cpf_values
+	terrain_type = data.nav_terrain_type
+	source_tile_x = data.nav_source_tile_x
+	source_tile_y = data.nav_source_tile_y
+	spice_value = data.nav_spice_value
+	pass_mask = data.nav_pass_mask
+	movement_cost = data.nav_movement_cost
+	buildable = data.nav_buildable
+	cpf_report = data.nav_cpf_report
+	nav_report = data.nav_report
+
+	var total := NAV_SIZE * NAV_SIZE
+	if terrain_type.size() != total or source_tile_x.size() != total or source_tile_y.size() != total:
+		push_error("MapNavigationGrid: baked nav arrays have invalid size in %s" % data.resource_path)
+		return false
+	if spice_value.size() != total or pass_mask.size() != total or movement_cost.size() != total or buildable.size() != total:
+		push_error("MapNavigationGrid: baked nav attributes have invalid size in %s" % data.resource_path)
+		return false
+	if cpf_values.size() != total:
+		cpf_values = _zero_i32_grid()
+
+	_is_loaded = true
+	return true
+
+
 func _infer_tile_grid_size(length: int) -> Vector2i:
 	if length <= 0 or world_bounds.size.x <= 0.0 or world_bounds.size.z <= 0.0:
 		return Vector2i.ZERO

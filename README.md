@@ -52,6 +52,17 @@ Validate/import the project in headless mode:
 make godot-check
 ```
 
+Convert an unpacked Emperor map into Godot-native resources:
+
+```sh
+./tools/godot-container godot --headless --path /workspace --script res://scripts/convert_map.gd -- --source "res://assets/maps/#M70 Claw Rock"
+```
+
+The converter writes `assets/converted_maps/<map>/map_data.tres` and
+`terrain.tscn`. Runtime loading only uses these converted Godot resources; it
+does not parse XBF/CPF/CPT files in-game. Select another converted map by
+instancing that map's generated `terrain.tscn` in the scene.
+
 Export the browser build to `exports/web/index.html`:
 
 ```sh
@@ -89,10 +100,14 @@ The helper uses rootless-friendly Podman flags: `--userns=keep-id` and `-v <proj
 - `scenes/debug/screenshot.tscn` - Headless screenshot helper for visual checks.
 - `scripts/main.gd` - Selection and command controller.
 - `scripts/xbf.gd` - Parser for Emperor: Battle for Dune XBF terrain meshes.
-- `scripts/map_loader.gd` - Loads a baked map folder (`test.xbf` + `test.lit` + `texture.dat`) into terrain with collision.
+- `scripts/convert_map.gd` - Headless converter from unpacked Emperor map folders into Godot resources.
+- `scripts/map_bake_builder.gd` - Shared conversion builder for terrain, materials, collision, lighting, and nav data.
+- `scripts/baked_map_data.gd` - Resource format consumed by runtime map loading.
+- `scripts/map_loader.gd` - Loads converted `map_data.tres` terrain with collision and nav data.
 - `scripts/terrain.gdshader` - Tiled theme texture modulated by the map's baked ground-tone layer.
 - `scripts/rts_camera.gd` - RTS camera movement.
 - `scripts/rts_unit.gd` - Basic unit movement and selection state.
-- `assets/maps/` - Unpacked Emperor map folders (see `../specs/emperor-map-file-format.md`). Select the map with the `map_dir` export on the `Terrain` node or the `EMPEROR_MAP` env var (folder name, e.g. `#M72 Carthag`).
+- `assets/maps/` - Unpacked Emperor map folders (see `../specs/emperor-map-file-format.md`). These are converter inputs.
+- `assets/converted_maps/` - Godot-native converted map resources used by runtime.
 - `assets/` - Art, audio, fonts, and imported source assets.
 - `addons/` - Godot plugins.

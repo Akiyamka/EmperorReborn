@@ -1,10 +1,10 @@
-[gd_scene load_steps=7 format=3 uid="uid://b3s2wqci2m81v"]
+[gd_scene format=3 uid="uid://b3s2wqci2m81v"]
 
-[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
-[ext_resource type="Script" path="res://scripts/rts_camera.gd" id="2_camera"]
-[ext_resource type="PackedScene" path="res://scenes/units/unit.tscn" id="3_unit"]
-[ext_resource type="Script" path="res://scripts/map_loader.gd" id="4_map"]
-[ext_resource type="Script" path="res://scripts/tuning_panel.gd" id="5_tuning"]
+[ext_resource type="Script" uid="uid://3psqgxv6e2ys" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://xoynnrvxuq2p" path="res://scripts/rts_camera.gd" id="2_camera"]
+[ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="3_unit"]
+[ext_resource type="PackedScene" path="res://assets/converted_maps/#M70 Claw Rock/terrain.tscn" id="4_map"]
+[ext_resource type="Script" uid="uid://bhnqfbimk6wk3" path="res://scripts/tuning_panel.gd" id="5_tuning"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -13,69 +13,65 @@ ambient_light_source = 2
 ambient_light_color = Color(0.55, 0.62, 0.72, 1)
 ambient_light_energy = 0.65
 
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node3D" unique_id=1610428844]
 script = ExtResource("1_main")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=615837895]
 environment = SubResource("Environment_main")
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
-rotation_degrees = Vector3(-55, -35, 0)
-light_energy = 2.2
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=2142863009]
+transform = Transform3D(0.81915206, 0.46984634, -0.32898995, 0, 0.57357645, 0.81915206, 0.57357645, -0.6710101, 0.46984634, 0, 0, 0)
+light_energy = 0.2
 shadow_enabled = true
 directional_shadow_max_distance = 500.0
 
-[node name="CameraRig" type="Node3D" parent="."]
-position = Vector3(0, 0, 8)
+[node name="CameraRig" type="Node3D" parent="." unique_id=184942209]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 8)
 script = ExtResource("2_camera")
 
-[node name="Camera3D" type="Camera3D" parent="CameraRig"]
-position = Vector3(0, 24, 32)
-rotation_degrees = Vector3(-60, 0, 0)
+[node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=926810768]
+transform = Transform3D(1, 0, 0, 0, 0.49999997, 0.86602545, 0, -0.86602545, 0.49999997, 0, 24, 32)
 current = true
 fov = 50.0
 far = 500.0
 
-[node name="Terrain" type="StaticBody3D" parent="."]
-script = ExtResource("4_map")
-map_dir = "res://assets/maps/#M70 Claw Rock"
-sun_path = NodePath("../Sun")
-environment_path = NodePath("../WorldEnvironment")
+[node name="Terrain" parent="." unique_id=1242358657 instance=ExtResource("4_map")]
 
-[node name="Units" type="Node3D" parent="."]
+[node name="Units" type="Node3D" parent="." unique_id=21881757]
 
-[node name="ScoutA" parent="Units" instance=ExtResource("3_unit")]
-position = Vector3(-3, 0.7, 0)
+[node name="ScoutA" parent="Units" unique_id=1502406383 instance=ExtResource("3_unit")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0.7, 0)
 
-[node name="ScoutB" parent="Units" instance=ExtResource("3_unit")]
-position = Vector3(0, 0.7, -2)
+[node name="ScoutB" parent="Units" unique_id=1281454651 instance=ExtResource("3_unit")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, -2)
 
-[node name="ScoutC" parent="Units" instance=ExtResource("3_unit")]
-position = Vector3(3, 0.7, 1)
+[node name="ScoutC" parent="Units" unique_id=325326372 instance=ExtResource("3_unit")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0.7, 1)
 
-[node name="TuningPanel" type="CanvasLayer" parent="."]
+[node name="TuningPanel" type="CanvasLayer" parent="." unique_id=604987323]
 script = ExtResource("5_tuning")
 terrain_path = NodePath("../Terrain")
 sun_path = NodePath("../Sun")
 environment_path = NodePath("../WorldEnvironment")
 
-[node name="HUD" type="CanvasLayer" parent="."]
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
 
-[node name="Help" type="Label" parent="HUD"]
+[node name="Help" type="Label" parent="HUD" unique_id=1755436348]
 offset_left = 16.0
 offset_top = 16.0
 offset_right = 640.0
 offset_bottom = 44.0
 text = "WASD/Arrows: move camera | Q/E: rotate | Wheel: zoom | Left click: select | Right click: move"
 
-[node name="Selection" type="Label" parent="HUD"]
+[node name="Selection" type="Label" parent="HUD" unique_id=404881697]
 offset_left = 16.0
 offset_top = 46.0
 offset_right = 360.0
 offset_bottom = 74.0
 text = "No unit selected"
 
-[node name="FPS" type="Label" parent="HUD"]
+[node name="FPS" type="Label" parent="HUD" unique_id=1283044958]
+anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -144.0

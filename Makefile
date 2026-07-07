@@ -1,12 +1,15 @@
 GODOT_CONTAINER := ./tools/godot-container
 
-.PHONY: godot-image godot-check godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: godot-image godot-check godot-convert-map godot-export-web godot-watch-export godot-shell godot-version
 
 godot-image:
 	$(GODOT_CONTAINER) build
 
 godot-check:
 	$(GODOT_CONTAINER) check
+
+godot-convert-map:
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://scripts/convert_map.gd -- --source "$(MAP)"
 
 godot-export-web:
 	$(GODOT_CONTAINER) export-web
