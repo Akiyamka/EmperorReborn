@@ -49,6 +49,10 @@ func map_center() -> Vector3:
 	return terrain_aabb.get_center()
 
 
+func map_bounds() -> Rect2:
+	return Rect2(terrain_aabb.position.x, terrain_aabb.position.z, terrain_aabb.size.x, terrain_aabb.size.z)
+
+
 func _apply_lighting() -> void:
 	var sun := get_node_or_null(sun_path) as DirectionalLight3D
 	if sun != null and map_data.lit_direction != Vector3.ZERO:

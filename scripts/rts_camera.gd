@@ -1,40 +1,37 @@
+class_name RTSCamera
 extends Node3D
 
-@export var move_speed := 18.0
-@export var fast_multiplier := 2.0
-@export var rotation_speed := 1.8
-@export var zoom_speed := 3.0
-@export var min_zoom := 14.0
-@export var max_zoom := 240.0
-@export var edge_scroll_margin := 16.0
-@export var edge_scroll_enabled := true
+const RTSCameraConfigScript := preload("res://scripts/rts_camera_config.gd")
+
+@export var config: Resource
 
 @onready var camera: Camera3D = $Camera3D
 
-## XZ area the rig may move in (world units). Empty rect = unrestricted.
-## Set by main.gd from the loaded map's bounds.
-var bounds := Rect2()
+## XZ area the camera target may move in (world units). Empty rect = unrestricted.
+var target_bounds := Rect2()
 
-var _zoom := 32.0
+var _zoom := 0.0
 var _has_mouse_position := false
 
 
 func _ready() -> void:
-	_zoom = camera.position.z
+	_ensure_config()
+	_apply_camera_defaults()
+	_zoom = config.default_zoom
 	_apply_zoom()
 
 
 func _process(delta: float) -> void:
 	var input_direction := _keyboard_direction()
-	if edge_scroll_enabled:
+	if config.edge_scroll_enabled:
 		input_direction += _edge_scroll_direction()
 
 	if input_direction.length_squared() > 1.0:
 		input_direction = input_direction.normalized()
 
-	var speed := move_speed
+	var speed: float = config.move_speed
 	if Input.is_key_pressed(KEY_SHIFT):
-		speed *= fast_multiplier
+		speed *= config.fast_multiplier
 
 	var forward := -global_transform.basis.z
 	forward.y = 0.0
@@ -54,7 +51,7 @@ func _process(delta: float) -> void:
 		rotation_input += 1.0
 
 	if not is_zero_approx(rotation_input):
-		rotate_y(rotation_input * rotation_speed * delta)
+		rotate_y(rotation_input * config.rotation_speed * delta)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -64,11 +61,27 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
-				_set_zoom(_zoom - zoom_speed)
+				_set_zoom(_zoom - config.zoom_speed)
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_WHEEL_DOWN:
-				_set_zoom(_zoom + zoom_speed)
+				_set_zoom(_zoom + config.zoom_speed)
 				get_viewport().set_input_as_handled()
+
+
+func set_map_view(center: Vector3, bounds: Rect2) -> void:
+	_ensure_config()
+	set_target(center)
+	set_target_bounds(bounds.grow(config.bounds_margin))
+
+
+func set_target(target: Vector3) -> void:
+	global_position = Vector3(target.x, 0.0, target.z)
+	_clamp_view_to_bounds()
+
+
+func set_target_bounds(bounds: Rect2) -> void:
+	target_bounds = bounds
+	_clamp_view_to_bounds()
 
 
 func _keyboard_direction() -> Vector2:
@@ -99,14 +112,14 @@ func _edge_scroll_direction() -> Vector2:
 	if mouse_position.x > viewport_rect.size.x or mouse_position.y > viewport_rect.size.y:
 		return direction
 
-	if mouse_position.x <= edge_scroll_margin:
+	if mouse_position.x <= config.edge_scroll_margin:
 		direction.x -= 1.0
-	elif mouse_position.x >= viewport_rect.size.x - edge_scroll_margin:
+	elif mouse_position.x >= viewport_rect.size.x - config.edge_scroll_margin:
 		direction.x += 1.0
 
-	if mouse_position.y <= edge_scroll_margin:
+	if mouse_position.y <= config.edge_scroll_margin:
 		direction.y += 1.0
-	elif mouse_position.y >= viewport_rect.size.y - edge_scroll_margin:
+	elif mouse_position.y >= viewport_rect.size.y - config.edge_scroll_margin:
 		direction.y -= 1.0
 
 	return direction
@@ -116,7 +129,7 @@ func _edge_scroll_direction() -> Vector2:
 ## the ground plane) to the map bounds — clamping the rig itself is not
 ## enough because the pitched camera looks well behind the rig at high zoom.
 func _clamp_view_to_bounds() -> void:
-	if not bounds.has_area():
+	if not target_bounds.has_area():
 		return
 	var camera_position := camera.global_position
 	var view_direction := -camera.global_transform.basis.z
@@ -124,18 +137,29 @@ func _clamp_view_to_bounds() -> void:
 		return
 	var distance := camera_position.y / -view_direction.y
 	var view_center := camera_position + view_direction * distance
-	var clamped_x := clampf(view_center.x, bounds.position.x, bounds.end.x)
-	var clamped_z := clampf(view_center.z, bounds.position.y, bounds.end.y)
+	var clamped_x := clampf(view_center.x, target_bounds.position.x, target_bounds.end.x)
+	var clamped_z := clampf(view_center.z, target_bounds.position.y, target_bounds.end.y)
 	global_position.x += clamped_x - view_center.x
 	global_position.z += clamped_z - view_center.z
 
 
 func _set_zoom(value: float) -> void:
-	_zoom = clampf(value, min_zoom, max_zoom)
+	_ensure_config()
+	_zoom = clampf(value, config.min_zoom, config.max_zoom)
 	_apply_zoom()
 
 
 func _apply_zoom() -> void:
-	camera.position = Vector3(0.0, _zoom * 0.75, _zoom)
-	camera.rotation_degrees = Vector3(-60.0, 0.0, 0.0)
+	camera.position = Vector3(0.0, _zoom * config.camera_height_per_zoom, _zoom)
+	camera.rotation_degrees = Vector3(config.camera_pitch_degrees, 0.0, 0.0)
 	_clamp_view_to_bounds()
+
+
+func _apply_camera_defaults() -> void:
+	camera.fov = config.fov
+	camera.far = config.far
+
+
+func _ensure_config() -> void:
+	if config == null:
+		config = RTSCameraConfigScript.new()

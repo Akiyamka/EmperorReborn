@@ -5,6 +5,7 @@
 [ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="3_unit"]
 [ext_resource type="PackedScene" path="res://assets/converted_maps/#M70 Claw Rock/terrain.tscn" id="4_map"]
 [ext_resource type="Script" uid="uid://bhnqfbimk6wk3" path="res://scripts/tuning_panel.gd" id="5_tuning"]
+[ext_resource type="Resource" path="res://resources/RTSCameraConfig.tres" id="6_camera_config"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -28,6 +29,7 @@ directional_shadow_max_distance = 500.0
 [node name="CameraRig" type="Node3D" parent="." unique_id=184942209]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 8)
 script = ExtResource("2_camera")
+config = ExtResource("6_camera_config")
 
 [node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=926810768]
 transform = Transform3D(1, 0, 0, 0, 0.49999997, 0.86602545, 0, -0.86602545, 0.49999997, 0, 24, 32)

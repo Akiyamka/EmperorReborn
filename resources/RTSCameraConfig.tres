@@ -1,0 +1,20 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rts_camera_config.gd" id="1_config"]
+
+[resource]
+script = ExtResource("1_config")
+move_speed = 18.0
+fast_multiplier = 2.0
+rotation_speed = 1.8
+zoom_speed = 3.0
+min_zoom = 14.0
+max_zoom = 240.0
+default_zoom = 32.0
+camera_pitch_degrees = -60.0
+camera_height_per_zoom = 0.75
+bounds_margin = 8.0
+edge_scroll_margin = 16.0
+edge_scroll_enabled = true
+fov = 50.0
+far = 500.0
