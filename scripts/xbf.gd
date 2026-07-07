@@ -17,6 +17,9 @@ var objects: Array[Dictionary] = []
 var tile_grid := PackedByteArray()
 var tile_grid_size := Vector2i.ZERO
 var tile_grid_file_offset := -1
+var spice_grid := PackedByteArray()
+var spice_grid_size := Vector2i.ZERO
+var spice_grid_file_offset := -1
 
 
 static func load_file(path: String) -> Xbf:
@@ -40,10 +43,10 @@ func _parse(bytes: PackedByteArray) -> bool:
 		return false
 
 	# Header block: the reference parser skipped it, but terrain XBFs embed
-	# the logical CHUNKTILE grid here as [uint32 length][uint8 tile[length]].
+	# per-cell logical grids here as [uint32 length][uint8 grid[length]].
 	var unknown_block_size := buffer.get_32()
 	var unknown_block := buffer.get_data(unknown_block_size)[1] as PackedByteArray
-	_parse_embedded_tile_grid(unknown_block, 8)
+	_parse_embedded_logical_grids(unknown_block, 8)
 
 	# Blob layout: null-terminated names, some prefixed with a 0x02 flag byte
 	# (render-flag marker). Split at byte level: Godot Strings choke on NULs.
@@ -80,23 +83,49 @@ func has_sized_tile_grid() -> bool:
 	return tile_grid.size() == tile_grid_size.x * tile_grid_size.y and tile_grid_size.x > 0 and tile_grid_size.y > 0
 
 
+func has_spice_grid() -> bool:
+	return not spice_grid.is_empty()
+
+
+func has_sized_spice_grid() -> bool:
+	return spice_grid.size() == spice_grid_size.x * spice_grid_size.y and spice_grid_size.x > 0 and spice_grid_size.y > 0
+
+
 func tile_at(x: int, y: int) -> int:
 	if not has_sized_tile_grid() or x < 0 or y < 0 or x >= tile_grid_size.x or y >= tile_grid_size.y:
 		return -1
 	return tile_grid[y * tile_grid_size.x + x]
 
 
+func spice_at(x: int, y: int) -> int:
+	if not has_sized_spice_grid() or x < 0 or y < 0 or x >= spice_grid_size.x or y >= spice_grid_size.y:
+		return -1
+	return spice_grid[y * spice_grid_size.x + x]
+
+
 func set_tile_grid_size(size: Vector2i) -> bool:
 	if size.x <= 0 or size.y <= 0 or size.x * size.y != tile_grid.size():
 		return false
 	tile_grid_size = size
+	if spice_grid.size() == tile_grid.size():
+		spice_grid_size = size
 	return true
 
 
-func _parse_embedded_tile_grid(header: PackedByteArray, file_offset_base: int) -> void:
+func set_spice_grid_size(size: Vector2i) -> bool:
+	if size.x <= 0 or size.y <= 0 or size.x * size.y != spice_grid.size():
+		return false
+	spice_grid_size = size
+	return true
+
+
+func _parse_embedded_logical_grids(header: PackedByteArray, file_offset_base: int) -> void:
 	tile_grid = PackedByteArray()
 	tile_grid_size = Vector2i.ZERO
 	tile_grid_file_offset = -1
+	spice_grid = PackedByteArray()
+	spice_grid_size = Vector2i.ZERO
+	spice_grid_file_offset = -1
 
 	var best_offset := -1
 	var best_length := 0
@@ -128,6 +157,25 @@ func _parse_embedded_tile_grid(header: PackedByteArray, file_offset_base: int) -
 
 	tile_grid = header.slice(best_offset + 4, best_offset + 4 + best_length)
 	tile_grid_file_offset = file_offset_base + best_offset + 4
+	_parse_embedded_spice_grid_after_tile(header, file_offset_base, best_offset, best_length)
+
+
+func _parse_embedded_spice_grid_after_tile(header: PackedByteArray, file_offset_base: int, tile_length_offset: int, tile_length: int) -> void:
+	var spice_length_offset := tile_length_offset + 4 + tile_length + 4
+	if spice_length_offset + 4 > header.size():
+		return
+
+	var spice_length := _u32_le(header, spice_length_offset)
+	if spice_length != tile_length or spice_length_offset + 4 + spice_length > header.size():
+		return
+
+	for i in spice_length:
+		var value := header[spice_length_offset + 4 + i]
+		if value != 0 and value != 255:
+			return
+
+	spice_grid = header.slice(spice_length_offset + 4, spice_length_offset + 4 + spice_length)
+	spice_grid_file_offset = file_offset_base + spice_length_offset + 4
 
 
 func _parse_object(buffer: StreamPeerBuffer) -> Dictionary:

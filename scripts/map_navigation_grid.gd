@@ -33,6 +33,7 @@ var cpt_alpha_majority := PackedInt32Array()
 var terrain_type := PackedInt32Array()
 var source_tile_x := PackedInt32Array()
 var source_tile_y := PackedInt32Array()
+var spice_value := PackedByteArray()
 var pass_mask := PackedInt32Array()
 var movement_cost := PackedFloat32Array()
 var buildable := PackedByteArray()
@@ -70,6 +71,9 @@ func load(dir: String, bounds: AABB, source_xbf: Xbf = null, _world_scale := 1.0
 		if not source_xbf.set_tile_grid_size(inferred_size):
 			push_warning("MapNavigationGrid: cannot infer XBF tile grid dimensions for %s, length=%d" % [dir, source_xbf.tile_grid.size()])
 			return false
+	if source_xbf.has_spice_grid() and not source_xbf.has_sized_spice_grid():
+		if not source_xbf.set_spice_grid_size(source_xbf.tile_grid_size):
+			push_warning("MapNavigationGrid: cannot size XBF spice grid for %s, length=%d" % [dir, source_xbf.spice_grid.size()])
 
 	_build_nav_cells(source_xbf)
 	_is_loaded = true
@@ -128,6 +132,7 @@ func cell_debug(grid_position: Vector2i) -> Dictionary:
 		"cpt_alpha_majority": cpt_alpha_majority[i],
 		"terrain_type": terrain_type[i],
 		"terrain_name": terrain_type_name(terrain_type[i]),
+		"spice": spice_value[i],
 		"pass_mask": pass_mask[i],
 		"movement_cost": movement_cost[i],
 		"buildable": buildable[i] != 0,
@@ -178,6 +183,13 @@ func print_summary() -> void:
 		nav_report.get("source_grid_offset", -1),
 		_format_terrain_counts(nav_report.get("source_terrain_top", [])),
 	])
+	if nav_report.get("source_spice_grid_size", Vector2i.ZERO) != Vector2i.ZERO:
+		print("  XBF spice grid: size=%s offset=%d top=%s" % [
+			nav_report.get("source_spice_grid_size", Vector2i.ZERO),
+			nav_report.get("source_spice_grid_offset", -1),
+			_format_top_counts(nav_report.get("source_spice_top", [])),
+		])
+		print("  Nav spice top: %s" % _format_top_counts(nav_report.get("spice_top", [])))
 	print("  Nav terrain top: %s" % _format_terrain_counts(nav_report.get("terrain_top", [])))
 	print("  CPF: min=%d max=%d unique=%d mean=%.2f delta_mean=%.2f delta_p95=%d delta_max=%d bit_or=0x%04x bit_and=0x%04x" % [
 		cpf_report.get("min", 0),
@@ -207,12 +219,15 @@ func _build_nav_cells(source_xbf: Xbf) -> void:
 	terrain_type.resize(total)
 	source_tile_x.resize(total)
 	source_tile_y.resize(total)
+	spice_value.resize(total)
 	pass_mask.resize(total)
 	movement_cost.resize(total)
 	buildable.resize(total)
 
 	var alpha_majority_hist := {}
 	var terrain_hist := {}
+	var spice_hist := {}
+	var has_spice_grid := source_xbf.has_sized_spice_grid()
 	for nav_y in NAV_SIZE:
 		for nav_x in NAV_SIZE:
 			var i := _idx(nav_x, nav_y)
@@ -228,17 +243,28 @@ func _build_nav_cells(source_xbf: Xbf) -> void:
 			terrain_type[i] = type_id
 			_apply_terrain_attrs(i, type_id)
 			_inc_count(terrain_hist, type_id)
+			var spice := source_xbf.spice_at(tile_x, tile_y) if has_spice_grid else 0
+			spice_value[i] = spice if spice >= 0 else 0
+			_inc_count(spice_hist, spice_value[i])
 
 	var source_hist := {}
 	for value in source_xbf.tile_grid:
 		_inc_count(source_hist, value)
+	var source_spice_hist := {}
+	if source_xbf.has_spice_grid():
+		for value in source_xbf.spice_grid:
+			_inc_count(source_spice_hist, value)
 
 	nav_report = {
 		"alpha_majority_top": _top_counts(alpha_majority_hist, 10),
 		"terrain_top": _top_counts(terrain_hist, 10),
+		"spice_top": _top_counts(spice_hist, 4),
 		"source_terrain_top": _top_counts(source_hist, 10),
+		"source_spice_top": _top_counts(source_spice_hist, 4),
 		"source_grid_size": source_xbf.tile_grid_size,
 		"source_grid_offset": source_xbf.tile_grid_file_offset,
+		"source_spice_grid_size": source_xbf.spice_grid_size,
+		"source_spice_grid_offset": source_xbf.spice_grid_file_offset,
 	}
 
 

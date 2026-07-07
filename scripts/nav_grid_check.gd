@@ -10,9 +10,9 @@ func _init() -> void:
 	if debug_dir.is_empty():
 		debug_dir = ProjectSettings.globalize_path("res://../assets/maps/debug")
 
-	var xbf_path := debug_dir.path_join("debug.xbf")
-	if not FileAccess.file_exists(xbf_path):
-		push_error("nav_grid_check: missing %s" % xbf_path)
+	var xbf_path := _first_existing_map_path(debug_dir, ["debug.xbf", "test.xbf"])
+	if xbf_path.is_empty():
+		push_error("nav_grid_check: missing XBF in %s" % debug_dir)
 		quit(1)
 		return
 
@@ -47,14 +47,16 @@ func _init() -> void:
 	for x in 24:
 		var cell := Vector2i(x, 0)
 		var info: Dictionary = nav.cell_debug(cell)
-		strip.append("%d:%s tile=%s" % [
+		strip.append("%d:%s tile=%s spice=%d" % [
 			cell.x,
 			info.get("terrain_name", "unknown"),
 			str(info.get("source_tile", Vector2i.ZERO)),
+			info.get("spice", 0),
 		])
 	print("nav_grid_check: saved %s" % output_path)
 	print("nav_grid_check: top-left nav strip %s" % ", ".join(strip))
 	_compare_dme_chunk_tiles(debug_dir, xbf)
+	_print_spice_grid_summary(xbf)
 	quit()
 
 
@@ -86,6 +88,20 @@ func _compare_dme_chunk_tiles(debug_dir: String, xbf) -> void:
 	print("nav_grid_check: xbf tile row0 %s" % ", ".join(control))
 
 
+func _print_spice_grid_summary(xbf) -> void:
+	if xbf.has_spice_grid():
+		var spice_cells := 0
+		for value in xbf.spice_grid:
+			if value != 0:
+				spice_cells += 1
+		print("nav_grid_check: xbf spice grid offset=%d size=%s cells=%d/%d" % [
+			xbf.spice_grid_file_offset,
+			str(xbf.spice_grid_size),
+			spice_cells,
+			xbf.spice_grid.size(),
+		])
+
+
 func _load_dme_chunk_tiles(path: String) -> PackedInt32Array:
 	var values := PackedInt32Array()
 	var in_chunk := false
@@ -103,6 +119,14 @@ func _load_dme_chunk_tiles(path: String) -> PackedInt32Array:
 		for i in range(0, nums.size(), 2):
 			values.append(int(nums[i]))
 	return values
+
+
+func _first_existing_map_path(dir: String, names: Array[String]) -> String:
+	for file_name in names:
+		var path := dir.path_join(file_name)
+		if FileAccess.file_exists(path):
+			return path
+	return ""
 
 
 func _source_type_name(type_id: int) -> String:
