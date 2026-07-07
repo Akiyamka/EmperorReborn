@@ -2,11 +2,6 @@ class_name MapNavigationGrid
 extends RefCounted
 
 const NAV_SIZE := 256
-const CPT_SIZE := 2048
-const DXT_BLOCK_BYTES := 16
-const DXT_BLOCKS_PER_ROW := 512
-const DXT_TILE_BLOCKS := 64
-const DXT_TILES_PER_ROW := 8
 const SOURCE_TILE_XBF_UNITS := 32.0
 
 const PASS_INFANTRY := 1 << 0
@@ -28,8 +23,6 @@ const TERRAIN_UNKNOWN := -1
 var map_dir := ""
 var world_bounds := AABB()
 var cpf_values := PackedInt32Array()
-var cpt_raw_majority := PackedInt32Array()
-var cpt_alpha_majority := PackedInt32Array()
 var terrain_type := PackedInt32Array()
 var source_tile_x := PackedInt32Array()
 var source_tile_y := PackedInt32Array()
@@ -38,10 +31,8 @@ var pass_mask := PackedInt32Array()
 var movement_cost := PackedFloat32Array()
 var buildable := PackedByteArray()
 var cpf_report := {}
-var cpt_report := {}
 var nav_report := {}
 
-var _cpt_linear_dxt := PackedByteArray()
 var _is_loaded := false
 var _xbf_to_world_scale := 1.0
 
@@ -53,7 +44,6 @@ func load(dir: String, bounds: AABB, source_xbf: Xbf = null, _world_scale := 1.0
 	_is_loaded = false
 
 	_load_cpf(_first_existing_map_path(dir, ["test.CPF", "debug.CPF"]))
-	_load_cpt(_first_existing_map_path(dir, ["test.CPT", "debug.CPT"]))
 
 	if source_xbf == null:
 		var xbf_path := _first_existing_map_path(dir, ["test.xbf", "debug.xbf"])
@@ -128,8 +118,6 @@ func cell_debug(grid_position: Vector2i) -> Dictionary:
 		"world_center": grid_to_world(grid_position),
 		"source_tile": Vector2i(source_tile_x[i], source_tile_y[i]),
 		"cpf_raw": cpf_values[i],
-		"cpt_raw_majority": cpt_raw_majority[i],
-		"cpt_alpha_majority": cpt_alpha_majority[i],
 		"terrain_type": terrain_type[i],
 		"terrain_name": terrain_type_name(terrain_type[i]),
 		"spice": spice_value[i],
@@ -202,20 +190,10 @@ func print_summary() -> void:
 		cpf_report.get("bit_or", 0),
 		cpf_report.get("bit_and", 0),
 	])
-	print("  CPT: header=%dx%d raw_unique=%d storage=%s" % [
-		cpt_report.get("width", 0),
-		cpt_report.get("height", 0),
-		cpt_report.get("raw_unique", 0),
-		cpt_report.get("storage", "unknown"),
-	])
-	if cpt_report.get("storage", "") == "tiled_dxt3_color":
-		push_warning("MapNavigationGrid: test.CPT validates as tiled DXT3 color data, not a linear terrain-type byte map. Terrain pass/cost/buildable come from the embedded XBF tile grid.")
 
 
 func _build_nav_cells(source_xbf: Xbf) -> void:
 	var total := NAV_SIZE * NAV_SIZE
-	cpt_raw_majority.resize(total)
-	cpt_alpha_majority.resize(total)
 	terrain_type.resize(total)
 	source_tile_x.resize(total)
 	source_tile_y.resize(total)
@@ -224,17 +202,12 @@ func _build_nav_cells(source_xbf: Xbf) -> void:
 	movement_cost.resize(total)
 	buildable.resize(total)
 
-	var alpha_majority_hist := {}
 	var terrain_hist := {}
 	var spice_hist := {}
 	var has_spice_grid := source_xbf.has_sized_spice_grid()
 	for nav_y in NAV_SIZE:
 		for nav_x in NAV_SIZE:
 			var i := _idx(nav_x, nav_y)
-			cpt_raw_majority[i] = _raw_majority_for_nav_cell(nav_x, nav_y) if not _cpt_linear_dxt.is_empty() else 0
-			cpt_alpha_majority[i] = _alpha_majority_for_nav_cell(nav_x, nav_y) if not _cpt_linear_dxt.is_empty() else 0
-			_inc_count(alpha_majority_hist, cpt_alpha_majority[i])
-
 			var tile_x := _nav_axis_to_source_tile(nav_x, source_xbf.tile_grid_size.x)
 			var tile_y := _nav_axis_to_source_tile(nav_y, source_xbf.tile_grid_size.y)
 			var type_id := source_xbf.tile_at(tile_x, tile_y)
@@ -256,7 +229,6 @@ func _build_nav_cells(source_xbf: Xbf) -> void:
 			_inc_count(source_spice_hist, value)
 
 	nav_report = {
-		"alpha_majority_top": _top_counts(alpha_majority_hist, 10),
 		"terrain_top": _top_counts(terrain_hist, 10),
 		"spice_top": _top_counts(spice_hist, 4),
 		"source_terrain_top": _top_counts(source_hist, 10),
@@ -370,100 +342,6 @@ func _load_cpf(path: String) -> bool:
 	return true
 
 
-func _load_cpt(path: String) -> bool:
-	if path.is_empty():
-		_cpt_linear_dxt = PackedByteArray()
-		cpt_report = {"storage": "missing", "width": 0, "height": 0, "raw_unique": 0}
-		return true
-
-	var bytes := FileAccess.get_file_as_bytes(path)
-	if bytes.size() != CPT_SIZE * CPT_SIZE + 8:
-		push_error("MapNavigationGrid: invalid CPT size at %s: %d" % [path, bytes.size()])
-		return false
-
-	var width := _u32_le(bytes, 0)
-	var height := _u32_le(bytes, 4)
-	if width != CPT_SIZE or height != CPT_SIZE:
-		push_error("MapNavigationGrid: invalid CPT header at %s: %dx%d" % [path, width, height])
-		return false
-
-	var raw_hist := {}
-	for i in range(8, bytes.size()):
-		_inc_count(raw_hist, bytes[i])
-
-	_cpt_linear_dxt = _reorder_tiled_dxt3(bytes)
-	var alpha_hist := {}
-	var color0_hist := {}
-	var color1_hist := {}
-	var index_hist := {}
-	for block_offset in range(0, _cpt_linear_dxt.size(), DXT_BLOCK_BYTES):
-		var alpha_bits := _u64_le(_cpt_linear_dxt, block_offset)
-		for pixel in 16:
-			_inc_count(alpha_hist, (alpha_bits >> (pixel * 4)) & 0xf)
-
-		_inc_count(color0_hist, _u16_le(_cpt_linear_dxt, block_offset + 8))
-		_inc_count(color1_hist, _u16_le(_cpt_linear_dxt, block_offset + 10))
-		var indices := _u32_le(_cpt_linear_dxt, block_offset + 12)
-		for pixel in 16:
-			_inc_count(index_hist, (indices >> (pixel * 2)) & 0x3)
-
-	cpt_report = {
-		"width": width,
-		"height": height,
-		"raw_unique": raw_hist.size(),
-		"raw_top": _top_counts(raw_hist, 10),
-		"storage": "tiled_dxt3_color",
-		"alpha_top": _top_counts(alpha_hist, 10),
-		"color0_unique": color0_hist.size(),
-		"color1_unique": color1_hist.size(),
-		"color_index_top": _top_counts(index_hist, 4),
-	}
-	return true
-
-
-func _raw_majority_for_nav_cell(nav_x: int, nav_y: int) -> int:
-	var hist := {}
-	var block_x0 := nav_x * 2
-	var block_y0 := nav_y * 2
-	for by in 2:
-		for bx in 2:
-			var block_index := (block_y0 + by) * DXT_BLOCKS_PER_ROW + block_x0 + bx
-			var block_offset := block_index * DXT_BLOCK_BYTES
-			for byte_offset in DXT_BLOCK_BYTES:
-				_inc_count(hist, _cpt_linear_dxt[block_offset + byte_offset])
-	return _top_counts(hist, 1)[0]["key"]
-
-
-func _alpha_majority_for_nav_cell(nav_x: int, nav_y: int) -> int:
-	var hist := {}
-	var block_x0 := nav_x * 2
-	var block_y0 := nav_y * 2
-	for by in 2:
-		for bx in 2:
-			var block_index := (block_y0 + by) * DXT_BLOCKS_PER_ROW + block_x0 + bx
-			var block_offset := block_index * DXT_BLOCK_BYTES
-			var alpha_bits := _u64_le(_cpt_linear_dxt, block_offset)
-			for pixel in 16:
-				_inc_count(hist, (alpha_bits >> (pixel * 4)) & 0xf)
-	return _top_counts(hist, 1)[0]["key"]
-
-
-func _reorder_tiled_dxt3(bytes: PackedByteArray) -> PackedByteArray:
-	var src := bytes.slice(8)
-	var linear := PackedByteArray()
-	linear.resize(src.size())
-	var dst_offset := 0
-	for block_y in DXT_BLOCKS_PER_ROW:
-		var tile_row := block_y >> 6
-		var row_in_tile := block_y & 63
-		for tile_col in DXT_TILES_PER_ROW:
-			var src_offset := ((tile_row * DXT_TILES_PER_ROW + tile_col) * 4096 + row_in_tile * DXT_TILE_BLOCKS) * DXT_BLOCK_BYTES
-			for i in 1024:
-				linear[dst_offset + i] = src[src_offset + i]
-			dst_offset += 1024
-	return linear
-
-
 func _first_existing_map_path(dir: String, names: Array[String]) -> String:
 	for file_name in names:
 		var path := dir.path_join(file_name)
@@ -510,17 +388,6 @@ func _idx(x: int, y: int) -> int:
 
 static func _u16_le(bytes: PackedByteArray, offset: int) -> int:
 	return bytes[offset] | (bytes[offset + 1] << 8)
-
-
-static func _u32_le(bytes: PackedByteArray, offset: int) -> int:
-	return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)
-
-
-static func _u64_le(bytes: PackedByteArray, offset: int) -> int:
-	var value := 0
-	for i in 8:
-		value |= bytes[offset + i] << (i * 8)
-	return value
 
 
 static func _inc_count(hist: Dictionary, key: Variant) -> void:
