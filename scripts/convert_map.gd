@@ -87,7 +87,7 @@ func _parse_args(raw_args: PackedStringArray) -> Dictionary:
 func _usage(error: String) -> void:
 	push_error("convert_map: %s" % error)
 	print("Usage:")
-	print("  godot --headless --path . --script res://scripts/convert_map.gd -- --source res://assets/maps/#M70\\ Claw\\ Rock")
+	print("  godot --headless --path . --script res://scripts/convert_map.gd -- --source res://assets/unpacked_rfd/MAPS/#M70\\ Claw\\ Rock")
 	print("Options:")
 	print("  --output res://assets/converted_maps/<name>")
 	print("  --world-scale 0.0625")

@@ -8,7 +8,7 @@ const WORLD_SCALE := 0.0625
 func _init() -> void:
 	var debug_dir := OS.get_environment("EMPEROR_NAV_DEBUG_MAP")
 	if debug_dir.is_empty():
-		debug_dir = ProjectSettings.globalize_path("res://../assets/maps/debug")
+		debug_dir = ProjectSettings.globalize_path("res://assets/unpacked_rfd/MAPS/debug")
 
 	var xbf_path := _first_existing_map_path(debug_dir, ["debug.xbf", "test.xbf"])
 	if xbf_path.is_empty():
@@ -25,7 +25,7 @@ func _init() -> void:
 		quit(1)
 		return
 
-	var bounds := xbf.build_mesh().get_aabb()
+	var bounds: AABB = xbf.build_mesh().get_aabb()
 	bounds.position *= WORLD_SCALE
 	bounds.size *= WORLD_SCALE
 

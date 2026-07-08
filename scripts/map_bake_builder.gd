@@ -8,6 +8,7 @@ const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
 const MapXbfScript := preload("res://scripts/xbf/map_xbf.gd")
 
 const GROUND_TONE_WORLD_UNITS := 8192.0
+const TERRAIN_TEXTURE_DIR := "res://assets/unpacked_rfd/3DDATA/Textures"
 
 var world_scale := 0.0625
 var mottle_strength := 0.7
@@ -176,8 +177,8 @@ func _load_mottle(texture_names: PackedStringArray) -> void:
 	for name in texture_names:
 		if name.to_lower().begins_with("geidi") or name.to_lower().begins_with("giedi"):
 			return
-	var path := "res://assets/textures/arrakistexture.png"
-	if not ResourceLoader.exists(path):
+	var path := _find_terrain_texture_path("arrakistexture.tga")
+	if path.is_empty():
 		return
 	_mottle = load(path)
 	var image: Image = _mottle.get_image()
@@ -188,11 +189,9 @@ func _load_mottle(texture_names: PackedStringArray) -> void:
 
 
 func _terrain_material(texture_name: String) -> Material:
-	var texture_path := "res://assets/textures".path_join(
-		texture_name.to_lower().replace(".tga", ".png")
-	)
-	if not ResourceLoader.exists(texture_path):
-		push_warning("MapBakeBuilder: no texture %s, using placeholder color" % texture_path)
+	var texture_path := _find_terrain_texture_path(texture_name.get_file())
+	if texture_path.is_empty():
+		push_warning("MapBakeBuilder: no texture %s in %s, using placeholder color" % [texture_name, TERRAIN_TEXTURE_DIR])
 		var fallback := StandardMaterial3D.new()
 		fallback.roughness = 1.0
 		fallback.albedo_color = Color.from_hsv(float(texture_name.hash() % 360) / 360.0, 0.3, 0.75)
@@ -222,6 +221,34 @@ func _terrain_material(texture_name: String) -> Material:
 			material.set_shader_parameter("mottle_strength", mottle_strength)
 			material.set_shader_parameter("mottle_world_size", mottle_world_size)
 	return material
+
+
+func _find_terrain_texture_path(file_name: String) -> String:
+	if file_name.is_empty():
+		return ""
+
+	var wanted := file_name.get_file()
+	if wanted.get_extension().is_empty():
+		wanted += ".tga"
+
+	var direct_path := TERRAIN_TEXTURE_DIR.path_join(wanted)
+	if ResourceLoader.exists(direct_path) or FileAccess.file_exists(direct_path):
+		return direct_path
+
+	var expected := wanted.to_lower()
+	var dir := DirAccess.open(TERRAIN_TEXTURE_DIR)
+	if dir == null:
+		return ""
+
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while not entry.is_empty():
+		if not dir.current_is_dir() and entry.to_lower() == expected:
+			dir.list_dir_end()
+			return TERRAIN_TEXTURE_DIR.path_join(entry)
+		entry = dir.get_next()
+	dir.list_dir_end()
+	return ""
 
 
 func _parse_lit(lit_path: String) -> void:

@@ -17,8 +17,8 @@ func _init() -> void:
 		output = "res://assets/converted_models".path_join(source.get_file().get_basename()).path_join("%s.scn" % source.get_file().get_basename())
 
 	var builder = ModelBakeBuilderScript.new()
-	builder.source_texture_dir = String(args.get("textures", ProjectSettings.globalize_path("res://../extracted/textures")))
-	builder.texture_output_dir = String(args.get("texture-output", "res://assets/model_textures/3DDATA0001"))
+	builder.source_texture_dir = String(args.get("textures", "res://assets/unpacked_rfd/3DDATA/Textures"))
+	builder.texture_output_dir = String(args.get("texture-output", ""))
 	if args.has("world-scale"):
 		builder.world_scale = float(args["world-scale"])
 	if args.has("fps"):
@@ -75,11 +75,11 @@ func _parse_args(raw_args: PackedStringArray) -> Dictionary:
 func _usage(error: String) -> void:
 	push_error("convert_model: %s" % error)
 	print("Usage:")
-	print("  godot --headless --path . --script res://scripts/convert_model.gd -- --source /path/to/Units/AT_inf_H0.xbf")
+	print("  godot --headless --path . --script res://scripts/convert_model.gd -- --source res://assets/unpacked_rfd/3DDATA/Units/AT_inf_H0.xbf")
 	print("Options:")
 	print("  --output res://assets/converted_models/AT_inf_H0/AT_inf_H0.scn")
-	print("  --textures /home/aki/git/com.emperor/extracted/textures")
-	print("  --texture-output res://assets/model_textures/3DDATA0001")
+	print("  --textures res://assets/unpacked_rfd/3DDATA/Textures")
+	print("  --texture-output res://assets/model_textures")
 	print("  --world-scale 0.0625")
 	print("  --fps 20")
 	quit(1)

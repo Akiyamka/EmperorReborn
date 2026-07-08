@@ -10,9 +10,10 @@ const ModelXbfScript := preload("res://scripts/xbf/model_xbf.gd")
 # Other FX (flashes, lightning, ...) are already driven by the animation
 # tracks and must stay visible.
 const EFFECT_NAME_MARKERS: PackedStringArray = ["leech", "shield"]
+const MODEL_TEXTURE_DIR := "res://assets/unpacked_rfd/3DDATA/Textures"
 
-var source_texture_dir := ""
-var texture_output_dir := "res://assets/model_textures/3DDATA0001"
+var source_texture_dir := MODEL_TEXTURE_DIR
+var texture_output_dir := ""
 var fps := 20.0
 var world_scale := 0.0625
 
@@ -407,21 +408,28 @@ func _ensure_model_texture(texture_name: String) -> String:
 	if texture_name.is_empty():
 		return ""
 
-	var clean_file := texture_name.get_file().replace(".tga", ".png").replace(".TGA", ".png")
-	var output_path := texture_output_dir.path_join(clean_file)
-	if ResourceLoader.exists(output_path) or FileAccess.file_exists(ProjectSettings.globalize_path(output_path)):
-		return output_path
+	var clean_file := texture_name.get_file()
+	if clean_file.get_extension().is_empty():
+		clean_file += ".tga"
+
+	var output_path := ""
+	if not texture_output_dir.is_empty():
+		output_path = texture_output_dir.path_join(clean_file)
+		if ResourceLoader.exists(output_path) or FileAccess.file_exists(ProjectSettings.globalize_path(output_path)):
+			return output_path
 
 	if source_texture_dir.is_empty():
 		missing_textures.append(texture_name)
 		return ""
 
-	var source_path := source_texture_dir.path_join("3DDATA0001__Textures__%s" % clean_file)
-	if not FileAccess.file_exists(source_path):
+	var source_path := source_texture_dir.path_join(clean_file)
+	if not ResourceLoader.exists(source_path) and not FileAccess.file_exists(source_path):
 		source_path = _find_source_texture_case_insensitive(clean_file)
 	if not FileAccess.file_exists(source_path):
 		missing_textures.append(texture_name)
 		return ""
+	if texture_output_dir.is_empty():
+		return source_path
 
 	var output_abs := ProjectSettings.globalize_path(output_path)
 	var err := DirAccess.make_dir_recursive_absolute(output_abs.get_base_dir())
@@ -440,7 +448,7 @@ func _find_source_texture_case_insensitive(clean_file: String) -> String:
 	if source_texture_dir.is_empty():
 		return ""
 
-	var expected := ("3DDATA0001__Textures__%s" % clean_file).to_lower()
+	var expected := clean_file.to_lower()
 	var dir := DirAccess.open(source_texture_dir)
 	if dir == null:
 		return ""

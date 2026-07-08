@@ -53,7 +53,7 @@ make godot-check
 Convert an unpacked Emperor map into Godot-native resources:
 
 ```sh
-./tools/godot-container godot --headless --path /workspace --script res://scripts/convert_map.gd -- --source "res://assets/maps/#M70 Claw Rock"
+./tools/godot-container godot --headless --path /workspace --script res://scripts/convert_map.gd -- --source "res://assets/unpacked_rfd/MAPS/#M70 Claw Rock"
 ```
 
 The converter writes `assets/converted_maps/<map>/map_data.tres` and
