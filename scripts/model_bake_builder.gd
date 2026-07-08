@@ -20,15 +20,21 @@ var world_scale := 0.0625
 # Frame rate of the baked animated-texture sequences (frames of the atlas
 # advanced per second by the fx_frame animation tracks).
 const TEXTURE_FX_FPS := 4.0
+const MIN_ANIMATION_AXIS_SCALE := 0.0001
+const TEXTURE_PREFIX_MARKERS := "=@!%&"
 
 var missing_textures: PackedStringArray = []
 var copied_textures: PackedStringArray = []
 var _material_cache := {}
 var _animated_texture_sequences := {}
 var _animated_material_frames := {}
+var _scrolling_materials := {}
 var _pending_frame_tracks: Array[Dictionary] = []
+var _pending_scroll_tracks: Array[Dictionary] = []
 var _animated_frame_shader_add: Shader
 var _animated_frame_shader_mix: Shader
+var _model_texture_shaders := {}
+var _scrolling_texture_shaders := {}
 var _shield_shader: Shader
 var _has_shield_fx_marker := false
 
@@ -39,7 +45,11 @@ func build(xbf_path: String) -> PackedScene:
 	_material_cache.clear()
 	_animated_texture_sequences.clear()
 	_animated_material_frames.clear()
+	_scrolling_materials.clear()
 	_pending_frame_tracks.clear()
+	_pending_scroll_tracks.clear()
+	_model_texture_shaders.clear()
+	_scrolling_texture_shaders.clear()
 	_has_shield_fx_marker = false
 
 	var xbf = ModelXbfScript.load_file(xbf_path)
@@ -61,8 +71,8 @@ func build(xbf_path: String) -> PackedScene:
 		root.add_child(child)
 		max_frame = maxi(max_frame, _object_animation_length(object))
 
-	if anim.get_track_count() > 0:
-		anim.length = max_frame / fps
+	if anim.get_track_count() > 0 or not _pending_frame_tracks.is_empty() or not _pending_scroll_tracks.is_empty():
+		anim.length = maxf(max_frame / fps, 1.0 / fps)
 		_add_shader_fx_tracks(anim)
 		var library := AnimationLibrary.new()
 		library.add_animation("timeline", anim)
@@ -105,6 +115,8 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		var atlas_frames := _mesh_animated_frame_count(mesh)
 		if atlas_frames > 1:
 			_pending_frame_tracks.append({"path": "%s/Mesh" % child_path, "frames": atlas_frames})
+		if _mesh_has_scrolling_texture(mesh):
+			_pending_scroll_tracks.append({"path": "%s/Mesh" % child_path})
 
 	for child_object: Dictionary in object.children:
 		var child := _build_object_node(child_object, texture_names, child_path, anim)
@@ -187,39 +199,60 @@ func _model_material(texture_name: String) -> Material:
 	var texture_path := _ensure_model_texture(texture_name)
 	var texture: Texture2D = null
 	var animated_frames := _animated_texture_frames(texture_name)
+	var additive := _is_additive_texture(texture_name)
+	var team_colored := _uses_team_color(texture_name)
 	if not animated_frames.is_empty():
-		var animated_texture := _load_animated_texture_atlas(animated_frames, _texture_alpha_mode(texture_name))
+		var animated_texture := _load_animated_texture_atlas(animated_frames)
 		if animated_texture != null:
 			var animated_material := ShaderMaterial.new()
-			animated_material.shader = _animated_frame_shader(_is_additive_texture(texture_name))
+			animated_material.shader = _animated_frame_shader(additive)
 			animated_material.set_shader_parameter("albedo_atlas", animated_texture)
 			animated_material.set_shader_parameter("frame_count", float(animated_frames.size()))
+			animated_material.set_shader_parameter("use_team_color", team_colored)
 			_animated_material_frames[animated_material] = animated_frames.size()
 			_material_cache[texture_name] = animated_material
 			return animated_material
 	if not texture_path.is_empty():
-		texture = _load_png_texture(texture_path, _texture_alpha_mode(texture_name))
+		texture = _load_png_texture(texture_path)
 	if _is_animated_shield_texture(texture_name) and texture != null:
 		var shield_material := ShaderMaterial.new()
 		shield_material.shader = _animated_shield_shader()
 		shield_material.set_shader_parameter("albedo_tex", texture)
+		shield_material.set_shader_parameter("use_team_color", team_colored)
+		_scrolling_materials[shield_material] = true
 		_material_cache[texture_name] = shield_material
 		return shield_material
+	if _is_scrolling_texture(texture_name) and texture != null:
+		var scrolling_material := ShaderMaterial.new()
+		scrolling_material.shader = _scrolling_texture_shader(additive)
+		scrolling_material.set_shader_parameter("albedo_tex", texture)
+		scrolling_material.set_shader_parameter("use_team_color", team_colored)
+		_scrolling_materials[scrolling_material] = true
+		_material_cache[texture_name] = scrolling_material
+		return scrolling_material
+	if team_colored and texture != null:
+		var team_material := ShaderMaterial.new()
+		team_material.shader = _model_texture_shader(additive, _uses_alpha_channel(texture_name), _texture_has_alpha(texture))
+		team_material.set_shader_parameter("albedo_tex", texture)
+		team_material.set_shader_parameter("use_team_color", true)
+		_material_cache[texture_name] = team_material
+		return team_material
 
 	var material := StandardMaterial3D.new()
 	material.roughness = 0.85
 	material.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-	if _uses_black_to_alpha(texture_name):
+	if additive:
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		material.cull_mode = BaseMaterial3D.CULL_DISABLED
 		material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-		if _is_additive_texture(texture_name):
-			material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	elif _uses_magenta_to_alpha(texture_name) and _texture_has_alpha(texture):
-		# Magenta colour key is a 1-bit mask: alpha scissor keeps the material
-		# in the opaque pass (depth write + early-Z) instead of alpha blending.
-		# Textures without any keyed pixel stay fully opaque (no discard cost).
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	elif _uses_alpha_channel(texture_name) and _texture_has_alpha(texture):
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	elif _texture_has_alpha(texture):
+		# Magenta colour key is a 1-bit mask in the original TGA loader.
+		# Alpha scissor keeps these textures in the opaque pass.
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 		material.alpha_scissor_threshold = 0.5
 
@@ -246,7 +279,7 @@ func _prepare_animated_texture_sequences(fx_strings: Array[Dictionary]) -> void:
 			var suffix := file_name.substr(digit_range.y)
 			if prefix.is_empty() or suffix.is_empty():
 				continue
-			var key := "%s#%s" % [prefix.to_lower(), suffix.to_lower()]
+			var key := "%s#%s" % [_texture_sequence_key(prefix), _texture_sequence_key(suffix)]
 			if not groups.has(key):
 				groups[key] = {}
 				group_bases[key] = "%s%s" % [prefix, suffix]
@@ -274,7 +307,7 @@ func _prepare_animated_texture_sequences(fx_strings: Array[Dictionary]) -> void:
 		if frames.size() < 2:
 			continue
 		for frame_name in frames:
-			_animated_texture_sequences[String(frame_name).to_lower()] = frames
+			_animated_texture_sequences[_texture_sequence_key(String(frame_name))] = frames
 
 
 func _digit_ranges(value: String) -> Array[Vector2i]:
@@ -296,24 +329,26 @@ func _digit_ranges(value: String) -> Array[Vector2i]:
 
 
 func _fx_texture_name_exists(texture_name: String, fx_strings: Array[Dictionary]) -> bool:
-	var expected := texture_name.to_lower()
+	var expected := _texture_sequence_key(texture_name)
 	for record: Dictionary in fx_strings:
-		if String(record.get("value", "")).get_file().to_lower() == expected:
+		if _texture_sequence_key(String(record.get("value", "")).get_file()) == expected:
 			return true
 	return false
 
 
 func _animated_texture_frames(texture_name: String) -> PackedStringArray:
-	return _animated_texture_sequences.get(texture_name.get_file().to_lower(), PackedStringArray())
+	if not _is_animated_texture(texture_name):
+		return PackedStringArray()
+	return _animated_texture_sequences.get(_texture_sequence_key(texture_name.get_file()), PackedStringArray())
 
 
-func _load_animated_texture_atlas(frame_names: PackedStringArray, alpha_mode: int) -> Texture2D:
+func _load_animated_texture_atlas(frame_names: PackedStringArray) -> Texture2D:
 	var images: Array[Image] = []
 	for frame_name in frame_names:
 		var frame_path := _ensure_model_texture(frame_name)
 		if frame_path.is_empty():
 			return null
-		var image := _load_png_image(frame_path, alpha_mode)
+		var image := _load_png_image(frame_path)
 		if image == null:
 			return null
 		if not images.is_empty() and image.get_size() != images[0].get_size():
@@ -346,10 +381,22 @@ shader_type spatial;
 render_mode %s unshaded, cull_disabled, depth_draw_never;
 
 instance uniform float fx_frame = 0.0;
+instance uniform vec4 team_color = vec4(0.12, 0.44, 1.0, 1.0);
 uniform sampler2D albedo_atlas : source_color;
+uniform bool use_team_color = false;
 uniform float frame_count = 1.0;
 uniform float alpha_floor = 0.32;
 uniform float alpha_softness = 0.16;
+
+vec3 apply_team_color(vec3 rgb) {
+	if (!use_team_color) {
+		return rgb;
+	}
+	float blue_dominance = rgb.b - max(rgb.r, rgb.g);
+	float mask = smoothstep(0.08, 0.35, blue_dominance) * smoothstep(0.10, 0.35, rgb.b);
+	float shade = max(max(rgb.r, rgb.g), rgb.b);
+	return mix(rgb, team_color.rgb * shade, mask * team_color.a);
+}
 
 void fragment() {
 	float frame = mod(floor(fx_frame + 0.5), frame_count);
@@ -359,7 +406,7 @@ void fragment() {
 	if (alpha <= 0.01) {
 		discard;
 	}
-	ALBEDO = color.rgb * alpha;
+	ALBEDO = apply_team_color(color.rgb) * alpha;
 	ALPHA = alpha;
 }
 """ % ("blend_add," if additive else "")
@@ -383,11 +430,23 @@ shader_type spatial;
 render_mode blend_add, unshaded, cull_disabled, depth_draw_never;
 
 instance uniform float fx_time = 0.0;
+instance uniform vec4 team_color = vec4(0.12, 0.44, 1.0, 1.0);
 uniform sampler2D albedo_tex : source_color;
+uniform bool use_team_color = false;
 uniform float scroll_speed = 0.225;
 uniform float secondary_scroll_speed = -0.11;
 uniform float pulse_speed = 1.3;
 uniform float pulse_amount = 0.25;
+
+vec3 apply_team_color(vec3 rgb) {
+	if (!use_team_color) {
+		return rgb;
+	}
+	float blue_dominance = rgb.b - max(rgb.r, rgb.g);
+	float mask = smoothstep(0.08, 0.35, blue_dominance) * smoothstep(0.10, 0.35, rgb.b);
+	float shade = max(max(rgb.r, rgb.g), rgb.b);
+	return mix(rgb, team_color.rgb * shade, mask * team_color.a);
+}
 
 void fragment() {
 	vec2 uv_a = UV + vec2(0.0, fx_time * scroll_speed);
@@ -397,11 +456,104 @@ void fragment() {
 	vec3 color = max(primary.rgb, secondary.rgb * 0.65);
 	float alpha = max(primary.a, secondary.a * 0.7);
 	float pulse = 1.0 + sin(fx_time * pulse_speed) * pulse_amount;
-	ALBEDO = color * pulse;
+	ALBEDO = apply_team_color(color) * pulse;
 	ALPHA = alpha;
 }
 """
 	return _shield_shader
+
+
+func _model_texture_shader(additive: bool, alpha_blend: bool, has_alpha: bool) -> Shader:
+	var key := "%s:%s:%s" % [additive, alpha_blend, has_alpha]
+	if _model_texture_shaders.has(key):
+		return _model_texture_shaders[key]
+
+	var render_modes := PackedStringArray()
+	if additive:
+		render_modes.append("blend_add")
+		render_modes.append("unshaded")
+		render_modes.append("cull_disabled")
+		render_modes.append("depth_draw_never")
+	elif alpha_blend:
+		render_modes.append("blend_mix")
+		render_modes.append("cull_disabled")
+	elif has_alpha:
+		render_modes.append("cull_disabled")
+
+	var render_line := ""
+	if not render_modes.is_empty():
+		render_line = "render_mode %s;\n" % ", ".join(render_modes)
+
+	var fragment_alpha := ""
+	if additive or alpha_blend:
+		fragment_alpha = "\tif (color.a <= 0.01) {\n\t\tdiscard;\n\t}\n\tALBEDO = apply_team_color(color.rgb) * color.a;\n\tALPHA = color.a;\n"
+	else:
+		var discard_threshold := 0.5 if has_alpha else 0.01
+		fragment_alpha = "\tif (color.a <= %.2f) {\n\t\tdiscard;\n\t}\n\tALBEDO = apply_team_color(color.rgb);\n" % discard_threshold
+
+	var shader := Shader.new()
+	shader.code = """
+shader_type spatial;
+%s
+instance uniform vec4 team_color = vec4(0.12, 0.44, 1.0, 1.0);
+uniform sampler2D albedo_tex : source_color;
+uniform bool use_team_color = false;
+
+vec3 apply_team_color(vec3 rgb) {
+	if (!use_team_color) {
+		return rgb;
+	}
+	float blue_dominance = rgb.b - max(rgb.r, rgb.g);
+	float mask = smoothstep(0.08, 0.35, blue_dominance) * smoothstep(0.10, 0.35, rgb.b);
+	float shade = max(max(rgb.r, rgb.g), rgb.b);
+	return mix(rgb, team_color.rgb * shade, mask * team_color.a);
+}
+
+void fragment() {
+	vec4 color = texture(albedo_tex, UV);
+%s}
+""" % [render_line, fragment_alpha]
+	_model_texture_shaders[key] = shader
+	return shader
+
+
+func _scrolling_texture_shader(additive: bool) -> Shader:
+	if _scrolling_texture_shaders.has(additive):
+		return _scrolling_texture_shaders[additive]
+
+	var shader := Shader.new()
+	var render_mode := "blend_add, unshaded, cull_disabled, depth_draw_never" if additive else "blend_mix, cull_disabled"
+	shader.code = """
+shader_type spatial;
+render_mode %s;
+
+instance uniform float fx_time = 0.0;
+instance uniform vec4 team_color = vec4(0.12, 0.44, 1.0, 1.0);
+uniform sampler2D albedo_tex : source_color;
+uniform bool use_team_color = false;
+uniform vec2 scroll_speed = vec2(0.0, 0.18);
+
+vec3 apply_team_color(vec3 rgb) {
+	if (!use_team_color) {
+		return rgb;
+	}
+	float blue_dominance = rgb.b - max(rgb.r, rgb.g);
+	float mask = smoothstep(0.08, 0.35, blue_dominance) * smoothstep(0.10, 0.35, rgb.b);
+	float shade = max(max(rgb.r, rgb.g), rgb.b);
+	return mix(rgb, team_color.rgb * shade, mask * team_color.a);
+}
+
+void fragment() {
+	vec4 color = texture(albedo_tex, UV + scroll_speed * fx_time);
+	if (color.a <= 0.01) {
+		discard;
+	}
+	ALBEDO = apply_team_color(color.rgb) * color.a;
+	ALPHA = color.a;
+}
+""" % render_mode
+	_scrolling_texture_shaders[additive] = shader
+	return shader
 
 
 func _ensure_model_texture(texture_name: String) -> String:
@@ -464,18 +616,15 @@ func _find_source_texture_case_insensitive(clean_file: String) -> String:
 	return ""
 
 
-func _load_png_texture(path: String, alpha_mode := 0) -> Texture2D:
-	if alpha_mode == 0 and ResourceLoader.exists(path):
-		return load(path)
-
-	var image := _load_png_image(path, alpha_mode)
+func _load_png_texture(path: String) -> Texture2D:
+	var image := _load_png_image(path)
 	if image == null:
 		return null
 	image.generate_mipmaps()
 	return ImageTexture.create_from_image(image)
 
 
-func _load_png_image(path: String, alpha_mode := 0) -> Image:
+func _load_png_image(path: String) -> Image:
 	var absolute_path := ProjectSettings.globalize_path(path)
 	if not FileAccess.file_exists(absolute_path):
 		return null
@@ -484,43 +633,88 @@ func _load_png_image(path: String, alpha_mode := 0) -> Image:
 	if err != OK:
 		push_warning("ModelBakeBuilder: could not load texture image %s (%s)" % [path, error_string(err)])
 		return null
-	if alpha_mode == 1:
-		_apply_black_to_alpha(image)
-	elif alpha_mode == 2:
-		_apply_magenta_to_alpha(image)
+	_apply_magenta_to_alpha(image)
 	return image
-
-
-func _apply_black_to_alpha(image: Image) -> void:
-	image.convert(Image.FORMAT_RGBA8)
-	for y in image.get_height():
-		for x in image.get_width():
-			var color := image.get_pixel(x, y)
-			color.a = maxf(color.r, maxf(color.g, color.b))
-			image.set_pixel(x, y, color)
 
 
 func _apply_magenta_to_alpha(image: Image) -> void:
 	image.convert(Image.FORMAT_RGBA8)
+	var keyed := []
+	keyed.resize(image.get_width() * image.get_height())
 	for y in image.get_height():
 		for x in image.get_width():
 			var color := image.get_pixel(x, y)
 			if color.r > 0.92 and color.g < 0.12 and color.b > 0.92:
 				color.a = 0.0
 				image.set_pixel(x, y, color)
+				keyed[y * image.get_width() + x] = true
+
+	for y in image.get_height():
+		for x in image.get_width():
+			if not keyed[y * image.get_width() + x]:
+				continue
+			var fill := _nearest_opaque_color(image, keyed, Vector2i(x, y), 4)
+			fill.a = 0.0
+			image.set_pixel(x, y, fill)
+
+
+func _nearest_opaque_color(image: Image, keyed: Array, pixel: Vector2i, radius: int) -> Color:
+	var width := image.get_width()
+	var height := image.get_height()
+	for distance in range(1, radius + 1):
+		for y in range(maxi(0, pixel.y - distance), mini(height, pixel.y + distance + 1)):
+			for x in range(maxi(0, pixel.x - distance), mini(width, pixel.x + distance + 1)):
+				if abs(pixel.x - x) != distance and abs(pixel.y - y) != distance:
+					continue
+				if keyed[y * width + x]:
+					continue
+				var color := image.get_pixel(x, y)
+				if color.a > 0.5:
+					return Color(color.r, color.g, color.b, 0.0)
+	return Color(0.0, 0.0, 0.0, 0.0)
 
 
 func _is_additive_texture(texture_name: String) -> bool:
-	return texture_name.get_file().begins_with("!")
+	return _texture_has_prefix(texture_name, "!")
 
 
-func _uses_black_to_alpha(texture_name: String) -> bool:
+func _uses_team_color(texture_name: String) -> bool:
+	return _texture_has_prefix(texture_name, "=")
+
+
+func _uses_alpha_channel(texture_name: String) -> bool:
+	return _texture_has_prefix(texture_name, "@")
+
+
+func _is_animated_texture(texture_name: String) -> bool:
+	return _texture_has_prefix(texture_name, "%")
+
+
+func _is_scrolling_texture(texture_name: String) -> bool:
+	return _is_animated_texture(texture_name)
+
+
+func _texture_has_prefix(texture_name: String, marker: String) -> bool:
+	return _texture_prefixes(texture_name).contains(marker)
+
+
+func _texture_prefixes(texture_name: String) -> String:
 	var file_name := texture_name.get_file()
-	return file_name.begins_with("!") or file_name.begins_with("@")
+	var prefixes := ""
+	for i in file_name.length():
+		var marker := file_name.substr(i, 1)
+		if not TEXTURE_PREFIX_MARKERS.contains(marker):
+			break
+		prefixes += marker
+	return prefixes
 
 
-func _uses_magenta_to_alpha(texture_name: String) -> bool:
-	return texture_name.get_file().begins_with("=")
+func _texture_sequence_key(texture_name: String) -> String:
+	var file_name := texture_name.get_file()
+	var index := 0
+	while index < file_name.length() and TEXTURE_PREFIX_MARKERS.contains(file_name.substr(index, 1)):
+		index += 1
+	return file_name.substr(index).to_lower()
 
 
 func _texture_has_alpha(texture: Texture2D) -> bool:
@@ -532,14 +726,6 @@ func _texture_has_alpha(texture: Texture2D) -> bool:
 	return image.detect_alpha() != Image.ALPHA_NONE
 
 
-func _texture_alpha_mode(texture_name: String) -> int:
-	if _uses_black_to_alpha(texture_name):
-		return 1
-	if _uses_magenta_to_alpha(texture_name):
-		return 2
-	return 0
-
-
 func _is_effect_object(object_name: String) -> bool:
 	var lower := object_name.to_lower()
 	for marker in EFFECT_NAME_MARKERS:
@@ -549,7 +735,7 @@ func _is_effect_object(object_name: String) -> bool:
 
 
 func _is_animated_shield_texture(texture_name: String) -> bool:
-	return _has_shield_fx_marker and texture_name.get_file().to_lower().contains("shield")
+	return _is_animated_texture(texture_name) and _has_shield_fx_marker and texture_name.get_file().to_lower().contains("shield")
 
 
 func _add_animation_track(anim: Animation, node_path: String, object: Dictionary) -> void:
@@ -557,7 +743,7 @@ func _add_animation_track(anim: Animation, node_path: String, object: Dictionary
 	if object_animation.is_empty():
 		return
 
-	var frames: Dictionary = object_animation.frames
+	var frames := _dense_object_animation_frames(object_animation)
 	if frames.is_empty():
 		return
 
@@ -568,7 +754,89 @@ func _add_animation_track(anim: Animation, node_path: String, object: Dictionary
 	var frame_ids := frames.keys()
 	frame_ids.sort()
 	for frame_id: int in frame_ids:
-		anim.track_insert_key(track, frame_id / fps, _to_godot_transform(frames[frame_id]))
+		var transform := _sanitize_animation_transform(_to_godot_transform(frames[frame_id]))
+		anim.track_insert_key(track, frame_id / fps, transform)
+
+
+func _dense_object_animation_frames(object_animation: Dictionary) -> Dictionary:
+	var source_frames: Dictionary = object_animation.frames
+	if source_frames.is_empty():
+		return {}
+
+	var length := int(object_animation.get("length", 1))
+	if length <= 0:
+		length = 1
+
+	var frame_ids := source_frames.keys()
+	frame_ids.sort()
+	var first_frame := int(frame_ids[0])
+	var last_frame := int(frame_ids[-1])
+	var dense := {}
+
+	for frame in length:
+		if source_frames.has(frame):
+			dense[frame] = source_frames[frame]
+		elif frame < first_frame:
+			dense[frame] = source_frames[first_frame]
+		elif frame > last_frame:
+			dense[frame] = source_frames[last_frame]
+		else:
+			var previous_frame := first_frame
+			var next_frame := last_frame
+			for frame_id: int in frame_ids:
+				if frame_id < frame:
+					previous_frame = frame_id
+				elif frame_id > frame:
+					next_frame = frame_id
+					break
+			var span := maxf(1.0, float(next_frame - previous_frame))
+			var weight := float(frame - previous_frame) / span
+			dense[frame] = _lerp_transform(source_frames[previous_frame], source_frames[next_frame], weight)
+	return dense
+
+
+func _lerp_transform(a: Transform3D, b: Transform3D, weight: float) -> Transform3D:
+	return Transform3D(
+		a.basis.x.lerp(b.basis.x, weight),
+		a.basis.y.lerp(b.basis.y, weight),
+		a.basis.z.lerp(b.basis.z, weight),
+		a.origin.lerp(b.origin, weight)
+	)
+
+
+func _sanitize_animation_transform(transform: Transform3D) -> Transform3D:
+	var x := transform.basis.x
+	var y := transform.basis.y
+	var z := transform.basis.z
+	var x_scale := maxf(x.length(), MIN_ANIMATION_AXIS_SCALE)
+	var y_scale := maxf(y.length(), MIN_ANIMATION_AXIS_SCALE)
+	var z_scale := maxf(z.length(), MIN_ANIMATION_AXIS_SCALE)
+
+	var nx := x.normalized() if x.length() >= MIN_ANIMATION_AXIS_SCALE else Vector3.RIGHT
+	var ny := y.normalized() if y.length() >= MIN_ANIMATION_AXIS_SCALE else Vector3.UP
+	ny = ny - nx * nx.dot(ny)
+	if ny.length() < MIN_ANIMATION_AXIS_SCALE:
+		ny = _perpendicular_axis(nx)
+	else:
+		ny = ny.normalized()
+
+	var nz := z.normalized() if z.length() >= MIN_ANIMATION_AXIS_SCALE else nx.cross(ny)
+	nz = nz - nx * nx.dot(nz) - ny * ny.dot(nz)
+	if nz.length() < MIN_ANIMATION_AXIS_SCALE:
+		nz = nx.cross(ny).normalized()
+	else:
+		nz = nz.normalized()
+
+	if transform.basis.determinant() < 0.0:
+		nz = -nz
+
+	transform.basis = Basis(nx * x_scale, ny * y_scale, nz * z_scale)
+	return transform
+
+
+func _perpendicular_axis(axis: Vector3) -> Vector3:
+	var reference := Vector3.UP if absf(axis.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	return (reference - axis * axis.dot(reference)).normalized()
 
 
 func _add_vertex_animation_track(anim: Animation, mesh_path: String, object: Dictionary, texture_names: PackedStringArray) -> void:
@@ -607,6 +875,13 @@ func _mesh_animated_frame_count(mesh: ArrayMesh) -> int:
 	return frames
 
 
+func _mesh_has_scrolling_texture(mesh: ArrayMesh) -> bool:
+	for surface_index in mesh.get_surface_count():
+		if _scrolling_materials.has(mesh.surface_get_material(surface_index)):
+			return true
+	return false
+
+
 func _add_shader_fx_tracks(anim: Animation) -> void:
 	var key_count := int(ceilf(anim.length * TEXTURE_FX_FPS))
 	for entry: Dictionary in _pending_frame_tracks:
@@ -617,6 +892,13 @@ func _add_shader_fx_tracks(anim: Animation) -> void:
 		anim.value_track_set_update_mode(track, Animation.UPDATE_DISCRETE)
 		for i in key_count + 1:
 			anim.track_insert_key(track, i / TEXTURE_FX_FPS, float(i % frame_count))
+
+	for entry: Dictionary in _pending_scroll_tracks:
+		var track := anim.add_track(Animation.TYPE_VALUE)
+		anim.track_set_path(track, NodePath("%s:instance_shader_parameters/fx_time" % String(entry["path"])))
+		anim.track_set_interpolation_type(track, Animation.INTERPOLATION_LINEAR)
+		anim.track_insert_key(track, 0.0, 0.0)
+		anim.track_insert_key(track, anim.length, anim.length)
 
 
 func _slice_animation(source: Animation, entry: Dictionary) -> Animation:

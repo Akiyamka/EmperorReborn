@@ -1,6 +1,6 @@
 GODOT_CONTAINER := ./tools/godot-container
 
-.PHONY: rules-export godot-image godot-check godot-convert-map godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-export godot-image godot-check godot-convert-map godot-convert-building godot-export-web godot-watch-export godot-shell godot-version
 
 rules-export:
 	python3 tools/rules/export_rules_to_tres.py --db tools/rules/rules.db --out data/rules --clean
@@ -13,6 +13,9 @@ godot-check:
 
 godot-convert-map:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://scripts/convert_map.gd -- --source "$(MAP)"
+
+godot-convert-building:
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://scripts/convert_building.gd -- --building "$(BUILDING)"
 
 godot-export-web:
 	$(GODOT_CONTAINER) export-web
