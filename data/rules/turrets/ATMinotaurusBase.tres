@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ATMinotaurusBase"
+entity_type = &"turret"
+source_table = &"turrets"
+source_id = 69
+fields = {
+	"bullet": "KobraHowitzer_B",
+	"reload_count": 120,
+	"turret_muzzle_flash": "Muzzle3",
+	"turret_y_rotation_angle": 5.0,
+	"turret_min_y_rotation": -45.0,
+	"turret_max_y_rotation": 45.0,
+	"turret_next_joint": "ATMinotaurusGun"
+}
+lists = {}
+links = {}

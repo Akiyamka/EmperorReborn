@@ -1,0 +1,49 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"GUWormhead"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 109
+fields = {
+	"house": "Guild",
+	"cost": 100,
+	"health": 50000,
+	"tech_level": 1,
+	"power_used": 0,
+	"is_con_yard": false,
+	"debris": "DebrisSmall",
+	"view_range_base": 10.0,
+	"source_line": 465
+}
+lists = {
+	"occupy_rows": [
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb"
+	],
+	"terrain": [
+		"Sand",
+		"Rock"
+	]
+}
+links = {}

@@ -1,0 +1,39 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"IMMonument"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 132
+fields = {
+	"house": "Incidental",
+	"cost": 100,
+	"health": 1000,
+	"tech_level": 1,
+	"power_used": 0,
+	"storm_damage": 10,
+	"is_con_yard": false,
+	"explosion_type": "SmExplosion",
+	"debris": "DebrisSmall",
+	"counts_for_stats": false,
+	"view_range_base": 10.0,
+	"source_line": 492
+}
+lists = {
+	"occupy_rows": [
+		"bbbb",
+		"bbbb",
+		"bbbb",
+		"bbbb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"explosion_effects": [
+		"SmExplosion"
+	]
+}
+links = {}

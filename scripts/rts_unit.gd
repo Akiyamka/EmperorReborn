@@ -1,16 +1,22 @@
 extends CharacterBody3D
 class_name RTSUnit
 
+@export var config_id: StringName
 @export var move_speed := 5.0
 @export var arrival_radius := 0.2
 @export var selection_color := Color(0.2, 0.85, 1.0)
 @export var visual_root_path := NodePath("VisualRoot")
+@export var max_health := 0.0
 @export var max_shields := 0.0
 
 @onready var visual_root: Node3D = get_node_or_null(visual_root_path)
 
+var unit_config: Resource
 var target_position: Vector3
 var is_selected := false
+var health := 0.0:
+	set(value):
+		health = clampf(value, 0.0, max_health)
 var shields := 0.0:
 	set(value):
 		shields = clampf(value, 0.0, max_shields)
@@ -22,9 +28,11 @@ var _shield_time := 0.0
 
 
 func _ready() -> void:
+	_apply_rules_config()
 	target_position = global_position
 	_capture_base_materials()
 	_shield_meshes = _collect_shield_meshes()
+	health = max_health
 	shields = max_shields
 	_selection_material = StandardMaterial3D.new()
 	_selection_material.albedo_color = selection_color
@@ -63,6 +71,16 @@ func move_to(world_position: Vector3) -> void:
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
 
 
+func setup(unit_id: StringName) -> void:
+	config_id = unit_id
+	if not is_inside_tree():
+		return
+
+	_apply_rules_config()
+	health = max_health
+	shields = max_shields
+
+
 func stop_at_current_position() -> void:
 	target_position = global_position
 	velocity = Vector3.ZERO
@@ -79,6 +97,25 @@ func set_selected(value: bool) -> void:
 func _refresh_shield_visibility() -> void:
 	for mesh_instance in _shield_meshes:
 		mesh_instance.visible = shields > 0.0
+
+
+func _apply_rules_config() -> void:
+	if String(config_id).is_empty():
+		return
+
+	var rules := get_node_or_null("/root/Rules")
+	if rules == null:
+		push_warning("Rules autoload is not available; using scene defaults for %s" % name)
+		return
+
+	unit_config = rules.call("unit", config_id)
+	if unit_config == null:
+		push_warning("Unit rules config not found: %s" % String(config_id))
+		return
+
+	move_speed = float(unit_config.field(&"speed", move_speed))
+	max_health = float(unit_config.field(&"health", max_health))
+	max_shields = float(unit_config.field(&"shield_health", 0.0))
 
 
 func _collect_shield_meshes() -> Array[MeshInstance3D]:

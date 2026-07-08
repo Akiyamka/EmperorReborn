@@ -1,0 +1,73 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"FRCamp"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 45
+fields = {
+	"house": "Fremen",
+	"cost": 600,
+	"build_time": 540,
+	"health": 2000,
+	"tech_level": 3,
+	"roof_height": 100,
+	"score": 4,
+	"num_infantry_when_gone": 2,
+	"can_be_engineered": true,
+	"can_be_primary": true,
+	"is_con_yard": false,
+	"ai_exit": true,
+	"upgrade_tech_level": 5,
+	"upgrade_cost": 1000,
+	"ai_manufacturing": true,
+	"explosion_type": "MidExplosion",
+	"debris": "DebrisSmall",
+	"view_range_base": 10.0,
+	"source_line": 388
+}
+lists = {
+	"occupy_rows": [
+		"ssssss",
+		"ssssss",
+		"ssssss",
+		"ddbbdd",
+		"dbbbbb",
+		"dbbbbb",
+		"bbbbbb",
+		"dbbbbd",
+		"ddbbdd"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"requires_primary": [
+		"HKConYard",
+		"ATConYard",
+		"ORConYard"
+	],
+	"requires_secondary": [
+		"HKBarracks",
+		"ATBarracks",
+		"ORBarracks"
+	],
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 3,
+			"tile_y": 5
+		},
+		{
+			"seq": 1,
+			"tile_x": 3,
+			"tile_y": 2
+		}
+	],
+	"explosion_effects": [
+		"MidExplosion"
+	]
+}
+links = {}

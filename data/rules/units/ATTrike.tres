@@ -1,0 +1,85 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ATTrike"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 31
+fields = {
+	"house": "Atreides",
+	"unit_group": "FromFactory",
+	"cost": 300,
+	"build_time": 150,
+	"size": 2,
+	"speed": 12.0,
+	"turn_rate": 0.3,
+	"armour_type": "Light",
+	"health": 1200,
+	"tech_level": 2,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"worm_attraction": 4,
+	"ai_threat": 50,
+	"score": 2,
+	"reinforcement_value": 5,
+	"debris": "DebrisSmall",
+	"chaos_effect": "MediumChaosFX",
+	"hawk_effect": "MediumHawkFX",
+	"damage_effect": "MediumDamageFX",
+	"explosion_type": "SmExplosion",
+	"starportable": true,
+	"ai_tank": true,
+	"gets_height_advantage": false,
+	"hit_slow_down_amount": 50,
+	"hit_slow_down_duration": 100,
+	"special_ground_terrain": "Sand",
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0,
+	"view_range_bonus_terrain": "InfRock",
+	"missile_trail": 6,
+	"missile_trail_size": 9,
+	"missile_trail_wiggle_freq": 10,
+	"missile_trail_wiggle_scale": 10,
+	"missile_trail_length": 12,
+	"missile_trail_delta": 0.9,
+	"source_line": 566
+}
+lists = {
+	"turrets": [
+		"ATTrikeGun"
+	],
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"ATFactory"
+	],
+	"veterancy_levels": [
+		{
+			"level_order": 1,
+			"veterancy_score": 8,
+			"extra_armour_percent": 50.0
+		},
+		{
+			"level_order": 2,
+			"veterancy_score": 20,
+			"speed_override": 20.0
+		},
+		{
+			"level_order": 3,
+			"veterancy_score": 40,
+			"extra_damage_percent": 50.0,
+			"extra_range_percent": 50.0
+		}
+	],
+	"explosion_effects": [
+		"SmExplosion"
+	]
+}
+links = {}

@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="SplatConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/splat_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"DeathHandSplat"
+entity_type = &"splat"
+source_table = &"splat_types"
+source_id = 1
+fields = {
+	"size": 10,
+	"lifespan": 1000,
+	"homing_delay": 100.0,
+	"damage": 0.0
+}
+lists = {}
+links = {}

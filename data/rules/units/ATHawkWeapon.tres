@@ -1,0 +1,44 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ATHawkWeapon"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 48
+fields = {
+	"house": "Atreides",
+	"unit_group": "FromATPalace",
+	"cost": 0,
+	"build_time": 4536,
+	"size": 3,
+	"ai_special": true,
+	"source_line": 591
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"ATPalace"
+	]
+}
+links = {
+	"resources": [
+		{
+			"seq": 0,
+			"target": "ATPalaceBeam",
+			"source_line": 8977
+		},
+		{
+			"seq": 1,
+			"target": "Hawk_B",
+			"source_line": 8977
+		}
+	]
+}

@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"StormUnit"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 91
+fields = {
+	"house": "Incidental",
+	"size": 3,
+	"speed": 3.0,
+	"turn_rate": 0.0,
+	"ai_uncontrolled": true,
+	"can_die": false,
+	"selectable": false,
+	"source_line": 734
+}
+lists = {
+	"terrain": [
+		"Sand"
+	]
+}
+links = {}

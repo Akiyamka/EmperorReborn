@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="WarheadConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/warhead_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Beam_W"
+entity_type = &"warhead"
+source_table = &"warheads"
+source_id = 24
+fields = {
+	"armour_damage": {
+		"None": 90.0,
+		"BPV": 75.0,
+		"Light": 60.0,
+		"Medium": 60.0,
+		"Heavy": 60.0,
+		"Concrete": 100.0,
+		"Walls": 50.0,
+		"Building": 75.0,
+		"CY": 25.0,
+		"Harvester": 60.0,
+		"Invulnerable": 0.0,
+		"Aircraft": 60.0,
+		"Earplugs": 90.0
+	}
+}
+lists = {}
+links = {}

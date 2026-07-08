@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ATPillboxGun"
+entity_type = &"turret"
+source_table = &"turrets"
+source_id = 43
+fields = {
+	"bullet": "HMG_B",
+	"reload_count": 25,
+	"turret_y_rotation_angle": 6.0,
+	"turret_min_y_rotation": -190.0,
+	"turret_max_y_rotation": 190.0
+}
+lists = {}
+links = {}

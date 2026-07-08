@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ExplosionConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/explosion_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"MediumChaosFX"
+entity_type = &"explosion"
+source_table = &"explosion_types"
+source_id = 34
+fields = {
+	"source_line": 189
+}
+lists = {}
+links = {}

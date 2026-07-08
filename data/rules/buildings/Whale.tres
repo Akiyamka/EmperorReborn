@@ -1,0 +1,31 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Whale"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 137
+fields = {
+	"house": "Incidental",
+	"cost": 100,
+	"health": 1000,
+	"tech_level": 1,
+	"power_used": 0,
+	"is_con_yard": false,
+	"selectable": false,
+	"debris": "DebrisSmall",
+	"view_range_base": 10.0,
+	"source_line": 753
+}
+lists = {
+	"occupy_rows": [
+		"b"
+	],
+	"terrain": [
+		"Rock"
+	]
+}
+links = {}

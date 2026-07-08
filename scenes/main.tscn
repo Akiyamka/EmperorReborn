@@ -55,28 +55,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 129.6273, 8.045668, 140.38583
 [node name="OrdosAPC" parent="Units" unique_id=1929728337 instance=ExtResource("7_or_apc")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 143.6279, 8.399508, 142.2648)
 
-[node name="OrdosAPC3" parent="Units" unique_id=1798364935 instance=ExtResource("7_or_apc")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 136.7879, 8.399508, 142.2648)
-visible = false
-
-[node name="OrdosAPC2" parent="Units" unique_id=225842978 instance=ExtResource("7_or_apc")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 150.12624, 8.399508, 142.2648)
-visible = false
-
 [node name="NIABTank" parent="Units" unique_id=1211664053 instance=ExtResource("8_niab")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 136.21701, 8.11331, 152.11343)
-
-[node name="NIABTank2" parent="Units" unique_id=677428933 instance=ExtResource("8_niab")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 128.7944, 8.11331, 152.11343)
-visible = false
-
-[node name="NIABTank3" parent="Units" unique_id=1284368626 instance=ExtResource("8_niab")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 121.97116, 8.11331, 152.11343)
-visible = false
-
-[node name="NIABTank4" parent="Units" unique_id=349063134 instance=ExtResource("8_niab")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 115.85735, 8.11331, 152.11343)
-visible = false
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
 

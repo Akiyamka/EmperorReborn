@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"SmallWorm"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 86
+fields = {
+	"house": "Incidental",
+	"size": 5,
+	"speed": 0.0,
+	"turn_rate": 0.0,
+	"health": 5000,
+	"ai_uncontrolled": true,
+	"can_die": false,
+	"cant_be_leeched": true,
+	"projectable": false,
+	"selectable": false,
+	"source_line": 648
+}
+lists = {
+	"terrain": [
+		"Sand"
+	]
+}
+links = {}

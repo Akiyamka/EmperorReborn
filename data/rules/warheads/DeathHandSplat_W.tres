@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="WarheadConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/warhead_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"DeathHandSplat_W"
+entity_type = &"warhead"
+source_table = &"warheads"
+source_id = 29
+fields = {
+	"armour_damage": {
+		"None": 100.0,
+		"BPV": 80.0,
+		"Light": 50.0,
+		"Medium": 50.0,
+		"Heavy": 50.0,
+		"Concrete": 10.0,
+		"Walls": 10.0,
+		"Building": 10.0,
+		"CY": 10.0,
+		"Harvester": 50.0,
+		"Invulnerable": 0.0,
+		"Aircraft": 50.0,
+		"Earplugs": 100.0
+	}
+}
+lists = {}
+links = {}

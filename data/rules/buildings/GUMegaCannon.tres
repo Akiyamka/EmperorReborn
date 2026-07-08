@@ -1,0 +1,49 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"GUMegaCannon"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 145
+fields = {
+	"house": "Guild",
+	"cost": 550,
+	"build_time": 240,
+	"health": 2700,
+	"tech_level": 2,
+	"power_used": 60,
+	"storm_damage": 5,
+	"roof_height": 20,
+	"score": 3,
+	"num_infantry_when_gone": 1,
+	"can_be_engineered": true,
+	"is_con_yard": false,
+	"ai_defence": true,
+	"ai_threat": 100,
+	"unstealth_range": 3.0,
+	"turret_attach": "GUMegaTurretBase",
+	"disable_with_low_power": true,
+	"explosion_type": "BigExplosion",
+	"debris": "DebrisSmall",
+	"view_range_base": 10.0,
+	"gets_height_advantage": false,
+	"source_line": 799
+}
+lists = {
+	"occupy_rows": [
+		"bbbb",
+		"bbbb",
+		"bbbb",
+		"bbbb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"explosion_effects": [
+		"BigExplosion"
+	]
+}
+links = {}

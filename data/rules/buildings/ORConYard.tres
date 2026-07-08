@@ -1,0 +1,58 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORConYard"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 40
+fields = {
+	"house": "Ordos",
+	"cost": 2000,
+	"health": 4000,
+	"storm_damage": 5,
+	"roof_height": 107,
+	"score": 4,
+	"num_infantry_when_gone": 3,
+	"can_be_engineered": true,
+	"can_be_primary": true,
+	"is_con_yard": true,
+	"upgrade_tech_level": 4,
+	"upgrade_cost": 600,
+	"ai_critical": true,
+	"explosion_type": "BigExplosion",
+	"debris": "DebrisLarge",
+	"view_range_base": 10.0,
+	"source_line": 377
+}
+lists = {
+	"occupy_rows": [
+		"sssss",
+		"sssss",
+		"sssss",
+		"nbbbn",
+		"nbbbn",
+		"bbbbb",
+		"bbbbb",
+		"bbbbb",
+		"bbbbb",
+		"nbbbn"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"explosion_effects": [
+		"BigExplosion"
+	]
+}
+links = {
+	"resources": [
+		{
+			"seq": 0,
+			"target": "MCV",
+			"source_line": 4062
+		}
+	]
+}

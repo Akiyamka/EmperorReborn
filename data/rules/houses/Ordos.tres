@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="HouseConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/house_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Ordos"
+entity_type = &"house"
+source_table = &"houses"
+source_id = 1
+fields = {
+	"sound_file": "OR.txt",
+	"sort_order": 1
+}
+lists = {}
+links = {}

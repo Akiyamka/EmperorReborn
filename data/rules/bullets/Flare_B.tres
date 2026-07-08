@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Flare_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 43
+fields = {}
+lists = {}
+links = {}

@@ -1,0 +1,74 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"IMTANK"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 97
+fields = {
+	"house": "Imperial",
+	"unit_group": "FromFactory",
+	"cost": 900,
+	"build_time": 492,
+	"size": 2,
+	"speed": 6.0,
+	"turn_rate": 0.175,
+	"armour_type": "Heavy",
+	"health": 2000,
+	"tech_level": 3,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"worm_attraction": 7,
+	"ai_threat": 60,
+	"score": 4,
+	"reinforcement_value": 6,
+	"debris": "DebrisLarge",
+	"chaos_effect": "MediumChaosFX",
+	"hawk_effect": "MediumHawkFX",
+	"damage_effect": "MediumDamageFX",
+	"explosion_type": "Explosion",
+	"crushes": true,
+	"starportable": true,
+	"ai_tank": true,
+	"gets_height_advantage": false,
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0,
+	"view_range_bonus_terrain": "InfRock",
+	"source_line": 796
+}
+lists = {
+	"turrets": [
+		"HKAssaultTankBase"
+	],
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"veterancy_levels": [
+		{
+			"level_order": 1,
+			"veterancy_score": 10,
+			"extra_damage_percent": 25.0
+		},
+		{
+			"level_order": 2,
+			"veterancy_score": 24,
+			"can_self_repair": true
+		},
+		{
+			"level_order": 3,
+			"veterancy_score": 48,
+			"extra_damage_percent": 50.0,
+			"extra_armour_percent": 50.0
+		}
+	],
+	"explosion_effects": [
+		"Explosion"
+	]
+}
+links = {}

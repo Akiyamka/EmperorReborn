@@ -1,0 +1,66 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"OREITS"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 50
+fields = {
+	"house": "Ordos",
+	"unit_group": "FromHanger",
+	"cost": 2000,
+	"build_time": 499,
+	"size": 2,
+	"speed": 7.0,
+	"turn_rate": 0.2,
+	"armour_type": "Light",
+	"health": 1750,
+	"tech_level": 5,
+	"storm_damage": 10,
+	"ai_threat": 80,
+	"score": 3,
+	"chaos_effect": "MediumChaosFX",
+	"hawk_effect": "MediumHawkFX",
+	"damage_effect": "MediumDamageFX",
+	"explosion_type": "AerialExplosion",
+	"can_self_repair": true,
+	"starportable": true,
+	"ai_special": true,
+	"gets_height_advantage": false,
+	"upgraded_primary_required": true,
+	"can_fly": true,
+	"hit_slow_down_amount": 75,
+	"hit_slow_down_duration": 100,
+	"view_range_base": 4.0,
+	"view_range_bonus": 16.0,
+	"view_range_bonus_terrain": "InfRock",
+	"height_offset": 20.0,
+	"exclude_from_skirmish_lose": true,
+	"source_line": 595
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"ORHanger"
+	],
+	"explosion_effects": [
+		"AerialExplosion"
+	]
+}
+links = {
+	"resources": [
+		{
+			"seq": 0,
+			"target": "EITSBomb_B",
+			"source_line": 9272
+		}
+	]
+}

@@ -1,0 +1,34 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"HEATAPC_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 26
+fields = {
+	"damage": 200.0,
+	"max_range": 10.0,
+	"warhead": "HEAT_W",
+	"debris": "DebrisSmall",
+	"speed": 28.0,
+	"explosion_type": "MissileHit",
+	"blow_up": true,
+	"missile_trail": 3,
+	"missile_trail_size": 1,
+	"missile_trail_wiggle_freq": 80,
+	"missile_trail_wiggle_scale": 6,
+	"missile_trail_length": 7,
+	"missile_trail_delta": 0.8,
+	"anti_aircraft": true,
+	"homing": true,
+	"turn_rate": 0.3
+}
+lists = {
+	"explosion_effects": [
+		"MissileHit"
+	]
+}
+links = {}

@@ -1,0 +1,41 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Frigate"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 88
+fields = {
+	"house": "Imperial",
+	"cost": 1000,
+	"size": 9,
+	"speed": 12.0,
+	"turn_rate": 0.1,
+	"armour_type": "Medium",
+	"health": 100000,
+	"storm_damage": 10,
+	"debris": "DebrisLarge",
+	"explosion_type": "Explosion",
+	"ai_special": true,
+	"ai_uncontrolled": true,
+	"can_fly": true,
+	"can_die": false,
+	"height_offset": 50.0,
+	"exclude_from_skirmish_lose": true,
+	"source_line": 650
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"explosion_effects": [
+		"Explosion"
+	]
+}
+links = {}

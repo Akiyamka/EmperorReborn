@@ -1,0 +1,65 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"HKHelipad"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 10
+fields = {
+	"house": "Harkonnen",
+	"building_group": "Helipad",
+	"cost": 800,
+	"build_time": 240,
+	"health": 2000,
+	"tech_level": 5,
+	"power_used": 30,
+	"storm_damage": 5,
+	"roof_height": 72,
+	"score": 2,
+	"num_infantry_when_gone": 1,
+	"can_be_engineered": true,
+	"is_con_yard": false,
+	"ai_exit": false,
+	"ai_critical": true,
+	"explosion_type": "MidExplosion",
+	"debris": "DebrisSmall",
+	"view_range_base": 10.0,
+	"source_line": 337
+}
+lists = {
+	"occupy_rows": [
+		"bb",
+		"bb",
+		"bb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"requires_primary": [
+		"HKConYard",
+		"ATConYard",
+		"ORConYard"
+	],
+	"requires_secondary": [
+		"HKHanger",
+		"ATHanger",
+		"ORHanger"
+	],
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 2,
+			"tile_y": 0
+		}
+	],
+	"roles": [
+		"Helipad"
+	],
+	"explosion_effects": [
+		"MidExplosion"
+	]
+}
+links = {}

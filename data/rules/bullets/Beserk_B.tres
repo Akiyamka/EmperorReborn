@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Beserk_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 54
+fields = {
+	"damage": 1000.0,
+	"warhead": "HEAT_W",
+	"speed": 32.0,
+	"explosion_type": "ORLightning",
+	"blast_radius": 128.0,
+	"friendly_damage_amount": 0.0,
+	"continuous": true,
+	"damage_column": true,
+	"beserk": true
+}
+lists = {
+	"explosion_effects": [
+		"ORLightning"
+	]
+}
+links = {}

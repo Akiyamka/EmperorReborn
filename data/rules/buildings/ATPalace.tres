@@ -1,0 +1,59 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ATPalace"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 26
+fields = {
+	"house": "Atreides",
+	"cost": 1600,
+	"build_time": 1080,
+	"health": 3000,
+	"tech_level": 8,
+	"power_used": 150,
+	"storm_damage": 5,
+	"roof_height": 220,
+	"score": 4,
+	"num_infantry_when_gone": 4,
+	"can_be_engineered": true,
+	"can_be_primary": true,
+	"is_con_yard": false,
+	"ai_core": true,
+	"explosion_type": "BigExplosion",
+	"debris": "DebrisMedium",
+	"view_range_base": 10.0,
+	"source_line": 357
+}
+lists = {
+	"occupy_rows": [
+		"sssssss",
+		"sssssss",
+		"sssssss",
+		"nnbbbnn",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"requires_primary": [
+		"ATConYard"
+	],
+	"requires_secondary": [
+		"HKStarport",
+		"ATStarport",
+		"ORStarport"
+	],
+	"explosion_effects": [
+		"BigExplosion"
+	]
+}
+links = {}

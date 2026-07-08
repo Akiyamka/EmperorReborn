@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Hawk_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 55
+fields = {
+	"damage": 1000.0,
+	"warhead": "HEAT_W",
+	"speed": 16.0,
+	"explosion_type": "ATHawk",
+	"blast_radius": 128.0,
+	"friendly_damage_amount": 0.0,
+	"continuous": true,
+	"damage_column": true,
+	"retreat": true
+}
+lists = {
+	"explosion_effects": [
+		"ATHawk"
+	]
+}
+links = {}

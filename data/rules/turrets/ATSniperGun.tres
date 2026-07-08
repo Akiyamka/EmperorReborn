@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ATSniperGun"
+entity_type = &"turret"
+source_table = &"turrets"
+source_id = 34
+fields = {
+	"bullet": "Cal50_B",
+	"reload_count": 76,
+	"turret_muzzle_flash": "Smuzz2"
+}
+lists = {}
+links = {}

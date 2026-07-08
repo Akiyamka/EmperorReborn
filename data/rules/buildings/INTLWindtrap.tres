@@ -1,0 +1,45 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"INTLWindtrap"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 124
+fields = {
+	"house": "Incidental",
+	"building_group": "SmWindtrap",
+	"cost": 200,
+	"build_time": 240,
+	"health": 1500,
+	"tech_level": 1,
+	"power_generated": 100,
+	"storm_damage": 10,
+	"roof_height": 70,
+	"score": 2,
+	"num_infantry_when_gone": 1,
+	"can_be_engineered": true,
+	"is_con_yard": false,
+	"exclude_from_skirmish_lose": true,
+	"exclude_from_campaign_lose": true,
+	"explosion_type": "Explosion",
+	"debris": "DebrisSmall",
+	"counts_for_stats": false,
+	"view_range_base": 10.0,
+	"source_line": 481
+}
+lists = {
+	"occupy_rows": [
+		"bb",
+		"bb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"explosion_effects": [
+		"Explosion"
+	]
+}
+links = {}

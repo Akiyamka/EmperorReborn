@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="WarheadConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/warhead_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Poison_W"
+entity_type = &"warhead"
+source_table = &"warheads"
+source_id = 8
+fields = {
+	"armour_damage": {
+		"None": 100.0,
+		"BPV": 80.0,
+		"Light": 0.0,
+		"Medium": 0.0,
+		"Heavy": 0.0,
+		"Concrete": 0.0,
+		"Walls": 0.0,
+		"Building": 0.0,
+		"CY": 0.0,
+		"Harvester": 0.0,
+		"Invulnerable": 0.0,
+		"Aircraft": 0.0,
+		"Earplugs": 100.0
+	}
+}
+lists = {}
+links = {}

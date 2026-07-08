@@ -1,0 +1,80 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ATADP"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 49
+fields = {
+	"house": "Atreides",
+	"unit_group": "FromHanger",
+	"cost": 800,
+	"build_time": 499,
+	"size": 2,
+	"speed": 20.0,
+	"turn_rate": 0.05,
+	"armour_type": "Aircraft",
+	"health": 1200,
+	"tech_level": 6,
+	"storm_damage": 10,
+	"ai_threat": 60,
+	"score": 2,
+	"debris": "DebrisMedium",
+	"chaos_effect": "MediumChaosFX",
+	"hawk_effect": "MediumHawkFX",
+	"damage_effect": "MediumDamageFX",
+	"explosion_type": "AerialExplosion",
+	"ai_special": true,
+	"gets_height_advantage": false,
+	"can_fly": true,
+	"circles": true,
+	"view_range_base": 10.0,
+	"height_offset": 8.0,
+	"exclude_from_skirmish_lose": true,
+	"missile_trail": 7,
+	"missile_trail_size": 9,
+	"missile_trail_wiggle_freq": 10,
+	"missile_trail_wiggle_scale": 10,
+	"missile_trail_length": 18,
+	"missile_trail_delta": 0.9,
+	"source_line": 592
+}
+lists = {
+	"turrets": [
+		"ATADPGun"
+	],
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"ATHanger"
+	],
+	"veterancy_levels": [
+		{
+			"level_order": 1,
+			"veterancy_score": 10,
+			"extra_damage_percent": 25.0,
+			"extra_armour_percent": 50.0
+		},
+		{
+			"level_order": 2,
+			"veterancy_score": 24,
+			"extra_range_percent": 50.0
+		},
+		{
+			"level_order": 3,
+			"veterancy_score": 48,
+			"extra_damage_percent": 50.0
+		}
+	],
+	"explosion_effects": [
+		"AerialExplosion"
+	]
+}
+links = {}

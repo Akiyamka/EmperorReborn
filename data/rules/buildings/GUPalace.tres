@@ -1,0 +1,81 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"GUPalace"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 42
+fields = {
+	"house": "Guild",
+	"cost": 2000,
+	"build_time": 1080,
+	"health": 5000,
+	"tech_level": 4,
+	"power_used": 180,
+	"storm_damage": 5,
+	"roof_height": 260,
+	"score": 4,
+	"can_be_engineered": true,
+	"can_be_primary": true,
+	"is_con_yard": false,
+	"ai_exit": true,
+	"upgrade_tech_level": 5,
+	"upgrade_cost": 1600,
+	"ai_manufacturing": true,
+	"explosion_type": "BigExplosion",
+	"debris": "DebrisLarge",
+	"view_range_base": 10.0,
+	"source_line": 382
+}
+lists = {
+	"occupy_rows": [
+		"sssssss",
+		"sssssss",
+		"sdsssds",
+		"bdbbbdb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"ddbbbdd",
+		"bbdbdbb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"requires_primary": [
+		"HKConYard",
+		"ATConYard",
+		"ORConYard"
+	],
+	"requires_secondary": [
+		"HKFactory",
+		"ATFactory",
+		"ORFactory"
+	],
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 3,
+			"tile_y": 5
+		},
+		{
+			"seq": 1,
+			"tile_x": 3,
+			"tile_y": 1
+		}
+	],
+	"explosion_effects": [
+		"BigExplosion"
+	]
+}
+links = {}

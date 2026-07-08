@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"GasInf_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 20
+fields = {
+	"damage": 250.0,
+	"max_range": 3.0,
+	"warhead": "Flame_W",
+	"debris": "DebrisSmall",
+	"speed": 32.0,
+	"reduce_damage_with_distance": false,
+	"friendly_damage_amount": 50.0,
+	"continuous": true,
+	"gassed": true,
+	"linger_duration": 50.0,
+	"linger_damage": 10.0
+}
+lists = {}
+links = {}

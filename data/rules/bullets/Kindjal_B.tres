@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Kindjal_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 15
+fields = {
+	"damage": 500.0,
+	"max_range": 12.0,
+	"warhead": "80mmGun_W",
+	"debris": "DebrisSmall",
+	"speed": -1.0,
+	"explosion_type": "ShellHit",
+	"blow_up": true,
+	"blast_radius": 64.0
+}
+lists = {
+	"explosion_effects": [
+		"ShellHit"
+	]
+}
+links = {}

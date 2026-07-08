@@ -1,0 +1,33 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"KobraHowitzer_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 23
+fields = {
+	"damage": 600.0,
+	"max_range": 16.0,
+	"warhead": "Howitzer_W",
+	"debris": "DebrisLarge",
+	"explosion_type": "ShellHit",
+	"blow_up": true,
+	"blast_radius": 96.0,
+	"missile_trail": 6,
+	"missile_trail_size": 2,
+	"missile_trail_wiggle_freq": 100,
+	"missile_trail_wiggle_scale": 8,
+	"missile_trail_length": 8,
+	"missile_trail_delta": 0.7,
+	"friendly_damage_amount": 50.0,
+	"trajectory": true
+}
+lists = {
+	"explosion_effects": [
+		"ShellHit"
+	]
+}
+links = {}

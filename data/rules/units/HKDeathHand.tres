@@ -1,0 +1,41 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"HKDeathHand"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 44
+fields = {
+	"house": "Harkonnen",
+	"unit_group": "FromHKPalace",
+	"cost": 0,
+	"build_time": 5184,
+	"size": 3,
+	"speed": 40.0,
+	"ai_special": true,
+	"can_die": false,
+	"source_line": 585
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"HKPalace"
+	]
+}
+links = {
+	"resources": [
+		{
+			"seq": 0,
+			"target": "DeathHandBomb",
+			"source_line": 8487
+		}
+	]
+}

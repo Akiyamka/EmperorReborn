@@ -1,0 +1,44 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"IMDropShip"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 63
+fields = {
+	"house": "Imperial",
+	"cost": 1100,
+	"size": 3,
+	"speed": 8.0,
+	"turn_rate": 0.1,
+	"armour_type": "Medium",
+	"health": 3000,
+	"tech_level": 5,
+	"storm_damage": 10,
+	"debris": "DebrisMedium",
+	"chaos_effect": "LargeChaosFX",
+	"hawk_effect": "LargeHawkFX",
+	"damage_effect": "LargeDamageFX",
+	"explosion_type": "AerialExplosion",
+	"ai_special": true,
+	"ai_uncontrolled": true,
+	"can_fly": true,
+	"selectable": false,
+	"exclude_from_skirmish_lose": true,
+	"source_line": 618
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"explosion_effects": [
+		"AerialExplosion"
+	]
+}
+links = {}

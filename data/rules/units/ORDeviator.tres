@@ -1,0 +1,92 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORDeviator"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 41
+fields = {
+	"house": "Ordos",
+	"unit_group": "FromFactory",
+	"cost": 950,
+	"build_time": 648,
+	"size": 2,
+	"speed": 8.0,
+	"turn_rate": 0.05,
+	"armour_type": "Light",
+	"health": 1300,
+	"tech_level": 7,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"worm_attraction": 6,
+	"ai_threat": 100,
+	"score": 4,
+	"reinforcement_value": 10,
+	"debris": "DebrisMedium",
+	"chaos_effect": "MediumChaosFX",
+	"hawk_effect": "MediumHawkFX",
+	"damage_effect": "MediumDamageFX",
+	"explosion_type": "Explosion",
+	"can_move_any_direction": true,
+	"can_self_repair": true,
+	"starportable": true,
+	"ai_special": true,
+	"crate_gift": true,
+	"hit_slow_down_amount": 75,
+	"hit_slow_down_duration": 100,
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0,
+	"view_range_bonus_terrain": "InfRock",
+	"missile_trail": 6,
+	"missile_trail_size": 11,
+	"missile_trail_wiggle_freq": 10,
+	"missile_trail_wiggle_scale": 10,
+	"missile_trail_length": 14,
+	"missile_trail_delta": 0.9,
+	"shield_health": 800.0,
+	"source_line": 579
+}
+lists = {
+	"turrets": [
+		"ORDeviatorGun"
+	],
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"DustBowl",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"ORFactory"
+	],
+	"secondary_buildings": [
+		"HKStarport",
+		"ATStarport",
+		"ORStarport"
+	],
+	"veterancy_levels": [
+		{
+			"level_order": 1,
+			"veterancy_score": 10,
+			"extra_armour_percent": 50.0
+		},
+		{
+			"level_order": 2,
+			"veterancy_score": 24,
+			"extra_range_percent": 25.0
+		},
+		{
+			"level_order": 3,
+			"veterancy_score": 48,
+			"extra_armour_percent": 75.0
+		}
+	],
+	"explosion_effects": [
+		"Explosion"
+	]
+}
+links = {}

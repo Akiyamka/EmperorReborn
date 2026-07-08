@@ -1,0 +1,85 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ATSonicTank"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 36
+fields = {
+	"house": "Atreides",
+	"unit_group": "FromFactory",
+	"cost": 1400,
+	"build_time": 648,
+	"size": 2,
+	"speed": 4.0,
+	"turn_rate": 0.1,
+	"armour_type": "Medium",
+	"health": 2000,
+	"tech_level": 7,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"worm_attraction": 7,
+	"ai_threat": 100,
+	"score": 4,
+	"reinforcement_value": 10,
+	"debris": "DebrisLarge",
+	"chaos_effect": "MediumChaosFX",
+	"hawk_effect": "MediumHawkFX",
+	"damage_effect": "MediumDamageFX",
+	"explosion_type": "Explosion",
+	"crushes": true,
+	"starportable": true,
+	"ai_special": true,
+	"gets_height_advantage": false,
+	"crate_gift": true,
+	"hit_slow_down_amount": 50,
+	"hit_slow_down_duration": 100,
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0,
+	"view_range_bonus_terrain": "InfRock",
+	"source_line": 571
+}
+lists = {
+	"turrets": [
+		"ATSonicTankGun"
+	],
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"ATFactory"
+	],
+	"secondary_buildings": [
+		"HKStarport",
+		"ATStarport",
+		"ORStarport"
+	],
+	"veterancy_levels": [
+		{
+			"level_order": 1,
+			"veterancy_score": 13,
+			"extra_damage_percent": 50.0
+		},
+		{
+			"level_order": 2,
+			"veterancy_score": 30,
+			"extra_armour_percent": 50.0
+		},
+		{
+			"level_order": 3,
+			"veterancy_score": 60,
+			"extra_damage_percent": 25.0,
+			"extra_range_percent": 50.0
+		}
+	],
+	"explosion_effects": [
+		"Explosion"
+	]
+}
+links = {}

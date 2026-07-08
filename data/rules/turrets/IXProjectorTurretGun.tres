@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"IXProjectorTurretGun"
+entity_type = &"turret"
+source_table = &"turrets"
+source_id = 49
+fields = {
+	"bullet": "LMG_B",
+	"reload_count": 30,
+	"turret_muzzle_flash": "Muzzle1",
+	"turret_min_x_rotation": -80.0,
+	"turret_max_x_rotation": 20.0,
+	"turret_x_rotation_angle": 2.0
+}
+lists = {}
+links = {}

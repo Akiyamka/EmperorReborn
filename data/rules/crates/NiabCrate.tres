@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="CrateConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/crate_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"NiabCrate"
+entity_type = &"crate"
+source_table = &"crate_types"
+source_id = 5
+fields = {
+	"size": 2,
+	"health": -1,
+	"crate_gift_object": "GUNiabTank"
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock"
+	]
+}
+links = {}

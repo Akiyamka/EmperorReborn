@@ -1,0 +1,61 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORADP"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 53
+fields = {
+	"house": "Ordos",
+	"unit_group": "FromHanger",
+	"cost": 600,
+	"build_time": 499,
+	"size": 2,
+	"speed": 6.0,
+	"turn_rate": 0.2,
+	"armour_type": "Light",
+	"health": 1100,
+	"tech_level": 6,
+	"storm_damage": 10,
+	"ai_threat": 70,
+	"score": 2,
+	"chaos_effect": "MediumChaosFX",
+	"hawk_effect": "MediumHawkFX",
+	"damage_effect": "MediumDamageFX",
+	"explosion_type": "AerialExplosion",
+	"ai_special": true,
+	"gets_height_advantage": false,
+	"can_fly": true,
+	"hit_slow_down_amount": 75,
+	"hit_slow_down_duration": 100,
+	"view_range_base": 10.0,
+	"height_offset": 20.0,
+	"exclude_from_skirmish_lose": true,
+	"source_line": 598
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"ORHanger"
+	],
+	"explosion_effects": [
+		"AerialExplosion"
+	]
+}
+links = {
+	"resources": [
+		{
+			"seq": 0,
+			"target": "HEATADP_B",
+			"source_line": 9328
+		}
+	]
+}

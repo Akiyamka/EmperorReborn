@@ -1,0 +1,44 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORBeamWeapon"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 52
+fields = {
+	"house": "Ordos",
+	"unit_group": "FromORPalace",
+	"cost": 0,
+	"build_time": 6220,
+	"size": 3,
+	"ai_special": true,
+	"source_line": 597
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"ORPalace"
+	]
+}
+links = {
+	"resources": [
+		{
+			"seq": 0,
+			"target": "ORPalaceLightning",
+			"source_line": 9447
+		},
+		{
+			"seq": 1,
+			"target": "Beserk_B",
+			"source_line": 9447
+		}
+	]
+}

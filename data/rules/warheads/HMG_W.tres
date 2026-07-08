@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="WarheadConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/warhead_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"HMG_W"
+entity_type = &"warhead"
+source_table = &"warheads"
+source_id = 4
+fields = {
+	"armour_damage": {
+		"None": 100.0,
+		"BPV": 85.0,
+		"Light": 45.0,
+		"Medium": 35.0,
+		"Heavy": 20.0,
+		"Concrete": 100.0,
+		"Walls": 30.0,
+		"Building": 30.0,
+		"CY": 25.0,
+		"Harvester": 35.0,
+		"Invulnerable": 0.0,
+		"Aircraft": 35.0,
+		"Earplugs": 100.0
+	}
+}
+lists = {}
+links = {}

@@ -1,0 +1,78 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Harvester"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 54
+fields = {
+	"unit_group": "FromFactory",
+	"cost": 1000,
+	"build_time": 504,
+	"size": 3,
+	"speed": 4.0,
+	"turn_rate": 0.15,
+	"armour_type": "Harvester",
+	"health": 3500,
+	"tech_level": 2,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"worm_attraction": 2,
+	"ai_threat": 5,
+	"score": 4,
+	"reinforcement_value": 5,
+	"debris": "DebrisLarge",
+	"chaos_effect": "LargeChaosFX",
+	"hawk_effect": "LargeHawkFX",
+	"damage_effect": "LargeDamageFX",
+	"explosion_type": "Explosion",
+	"crushes": true,
+	"starportable": true,
+	"ai_uncontrolled": true,
+	"ai_critical": true,
+	"crate_gift": true,
+	"roof_height": 44,
+	"view_range_base": 4.0,
+	"view_range_bonus": 6.0,
+	"view_range_bonus_terrain": "InfRock",
+	"exclude_from_skirmish_lose": true,
+	"source_line": 601
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"HKFactory",
+		"ATFactory",
+		"ORFactory"
+	],
+	"explosion_effects": [
+		"Explosion"
+	]
+}
+links = {
+	"resources": [
+		{
+			"seq": 0,
+			"target": "HKRefinery",
+			"source_line": 6824
+		},
+		{
+			"seq": 1,
+			"target": "ATRefinery",
+			"source_line": 6824
+		},
+		{
+			"seq": 2,
+			"target": "ORRefinery",
+			"source_line": 6824
+		}
+	]
+}

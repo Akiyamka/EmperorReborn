@@ -1,0 +1,61 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORPopUpTurret"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 36
+fields = {
+	"house": "Ordos",
+	"cost": 1200,
+	"build_time": 309,
+	"health": 3000,
+	"tech_level": 4,
+	"power_used": 75,
+	"storm_damage": 5,
+	"roof_height": 50,
+	"score": 3,
+	"num_infantry_when_gone": 1,
+	"is_con_yard": false,
+	"ai_defence": true,
+	"ai_threat": 100,
+	"unstealth_range": 6.0,
+	"turret_attach": "ORPopUpGun",
+	"upgraded_primary_required": true,
+	"disable_with_low_power": true,
+	"range_indicator": 9,
+	"range_mask": 1,
+	"chaos_effect": "LargeChaosFX",
+	"explosion_type": "SmExplosion",
+	"debris": "DebrisSmall",
+	"view_range_base": 10.0,
+	"gets_height_advantage": false,
+	"source_line": 371
+}
+lists = {
+	"occupy_rows": [
+		"bb",
+		"bb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"requires_primary": [
+		"ORConYard"
+	],
+	"requires_secondary": [
+		"HKBarracks",
+		"ATBarracks",
+		"ORBarracks"
+	],
+	"roles": [
+		"PopupTurret"
+	],
+	"explosion_effects": [
+		"SmExplosion"
+	]
+}
+links = {}

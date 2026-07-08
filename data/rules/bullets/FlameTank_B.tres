@@ -1,0 +1,24 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"FlameTank_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 17
+fields = {
+	"damage": 125.0,
+	"max_range": 4.0,
+	"warhead": "Flame_W",
+	"debris": "DebrisSmall",
+	"speed": 32.0,
+	"blast_radius": 32.0,
+	"reduce_damage_with_distance": false,
+	"friendly_damage_amount": 50.0,
+	"continuous": true,
+	"burnt": true
+}
+lists = {}
+links = {}

@@ -1,0 +1,72 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"IMSardaukar"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 61
+fields = {
+	"house": "Imperial",
+	"unit_group": "FromIMBarracks",
+	"cost": 300,
+	"build_time": 432,
+	"size": 1,
+	"speed": 6.0,
+	"turn_rate": 0.2,
+	"armour_type": "BPV",
+	"armour_modifier_percent": 50.0,
+	"armour_modifier_terrain": "InfRock",
+	"health": 900,
+	"tech_level": 3,
+	"storm_damage": 138,
+	"tasty_to_worms": true,
+	"worm_attraction": 4,
+	"ai_threat": 70,
+	"chaos_effect": "SmallChaosFX",
+	"hawk_effect": "SmallHawkFX",
+	"can_move_any_direction": true,
+	"can_be_deviated": false,
+	"can_be_repaired": false,
+	"infantry": true,
+	"crushable": true,
+	"ai_foot": true,
+	"crate_gift": true,
+	"view_range_base": 12.0,
+	"source_line": 615
+}
+lists = {
+	"turrets": [
+		"IMSardaukarGun"
+	],
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"InfRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"IMBarracks"
+	],
+	"veterancy_levels": [
+		{
+			"level_order": 1,
+			"veterancy_score": 6,
+			"extra_damage_percent": 50.0
+		},
+		{
+			"level_order": 2,
+			"veterancy_score": 16,
+			"extra_armour_percent": 50.0
+		},
+		{
+			"level_order": 3,
+			"veterancy_score": 32,
+			"can_self_repair": true
+		}
+	]
+}
+links = {}

@@ -1,0 +1,34 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Mortar_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 24
+fields = {
+	"damage": 375.0,
+	"max_range": 15.0,
+	"warhead": "Howitzer_W",
+	"debris": "DebrisLarge",
+	"explosion_type": "ShellHit",
+	"blow_up": true,
+	"blast_radius": 64.0,
+	"reduce_damage_with_distance": false,
+	"missile_trail": 1,
+	"missile_trail_size": 2,
+	"missile_trail_wiggle_freq": 10,
+	"missile_trail_wiggle_scale": 5,
+	"missile_trail_length": 12,
+	"missile_trail_delta": 0.5,
+	"friendly_damage_amount": 50.0,
+	"trajectory": true
+}
+lists = {
+	"explosion_effects": [
+		"ShellHit"
+	]
+}
+links = {}

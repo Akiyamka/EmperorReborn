@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="UnitGroupConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_group_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"FromATPalace"
+entity_type = &"unit_group"
+source_table = &"unit_groups"
+source_id = 8
+fields = {}
+lists = {}
+links = {}

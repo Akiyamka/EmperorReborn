@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ArmourTypeConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/armour_type_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"Medium"
+entity_type = &"armour_type"
+source_table = &"armour_types"
+source_id = 3
+fields = {
+	"sort_order": 3
+}
+lists = {}
+links = {}

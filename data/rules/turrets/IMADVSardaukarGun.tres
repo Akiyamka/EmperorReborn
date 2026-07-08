@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"IMADVSardaukarGun"
+entity_type = &"turret"
+source_table = &"turrets"
+source_id = 50
+fields = {
+	"bullet": "InfLaser_B",
+	"reload_count": 50,
+	"turret_disable_if_unit_deployed": true
+}
+lists = {}
+links = {}

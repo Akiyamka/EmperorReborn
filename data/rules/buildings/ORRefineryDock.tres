@@ -1,0 +1,50 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORRefineryDock"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 48
+fields = {
+	"house": "Ordos",
+	"building_group": "RefineryDock",
+	"build_time": 618,
+	"health": 1000,
+	"tech_level": 3,
+	"power_used": 20,
+	"storm_damage": 5,
+	"is_con_yard": false,
+	"upgrade_tech_level": 3,
+	"upgrade_cost": 1200,
+	"ai_resource": true,
+	"disable_if_no_spice_on_map": true,
+	"view_range_base": 10.0,
+	"source_line": 392
+}
+lists = {
+	"occupy_rows": [
+		"ppp",
+		"ppp",
+		"ppp"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"requires_primary": [
+		"HKConYard",
+		"ATConYard",
+		"ORConYard"
+	],
+	"requires_secondary": [
+		"HKRefinery",
+		"ATRefinery",
+		"ORRefinery"
+	],
+	"roles": [
+		"Dockable"
+	]
+}
+links = {}

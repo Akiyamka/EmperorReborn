@@ -1,0 +1,57 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ATADVCarryall"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 47
+fields = {
+	"house": "Atreides",
+	"unit_group": "FromHanger",
+	"cost": 1800,
+	"build_time": 648,
+	"size": 3,
+	"speed": 17.0,
+	"turn_rate": 0.1,
+	"armour_type": "Medium",
+	"health": 900,
+	"tech_level": 6,
+	"storm_damage": 10,
+	"ai_threat": 70,
+	"score": 3,
+	"debris": "DebrisLarge",
+	"chaos_effect": "LargeChaosFX",
+	"hawk_effect": "LargeHawkFX",
+	"damage_effect": "LargeDamageFX",
+	"explosion_type": "AerialExplosion",
+	"starportable": true,
+	"ai_air": true,
+	"upgraded_primary_required": true,
+	"crate_gift": true,
+	"can_fly": true,
+	"advanced_carryall": true,
+	"circles": false,
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0,
+	"height_offset": 8.0,
+	"exclude_from_skirmish_lose": true,
+	"source_line": 590
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"ATHanger"
+	],
+	"explosion_effects": [
+		"AerialExplosion"
+	]
+}
+links = {}

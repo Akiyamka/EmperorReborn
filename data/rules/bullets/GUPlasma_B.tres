@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"GUPlasma_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 67
+fields = {
+	"damage": 3000.0,
+	"max_range": 255.0,
+	"warhead": "Flame_W",
+	"debris": "DebrisSmall",
+	"blow_up": true,
+	"blast_radius": 160.0,
+	"reduce_damage_with_distance": false,
+	"friendly_damage_amount": 50.0,
+	"trajectory": true
+}
+lists = {}
+links = {}

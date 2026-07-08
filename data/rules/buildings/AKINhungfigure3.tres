@@ -1,0 +1,32 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"AKINhungfigure3"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 59
+fields = {
+	"house": "Incidental",
+	"cost": 0,
+	"health": 1000,
+	"tech_level": 1,
+	"power_used": 0,
+	"storm_damage": 10,
+	"is_con_yard": false,
+	"debris": "DebrisSmall",
+	"counts_for_stats": false,
+	"view_range_base": 10.0,
+	"source_line": 408
+}
+lists = {
+	"occupy_rows": [
+		"b"
+	],
+	"terrain": [
+		"Rock"
+	]
+}
+links = {}

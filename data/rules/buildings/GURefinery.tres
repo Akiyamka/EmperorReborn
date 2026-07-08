@@ -1,0 +1,69 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"GURefinery"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 110
+fields = {
+	"house": "Guild",
+	"building_group": "Refinery",
+	"cost": 1500,
+	"health": 3000,
+	"tech_level": 1,
+	"storm_damage": 10,
+	"can_be_engineered": true,
+	"is_con_yard": false,
+	"ai_exit": true,
+	"explosion_type": "BigExplosion",
+	"debris": "DebrisLarge",
+	"view_range_base": 10.0,
+	"source_line": 466
+}
+lists = {
+	"occupy_rows": [
+		"sssssss",
+		"sssssss",
+		"sssssss",
+		"nbdddbn",
+		"nbdddbn",
+		"nbdddbn",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb"
+	],
+	"terrain": [
+		"Sand",
+		"Rock"
+	],
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 2,
+			"tile_y": 0,
+			"angle": 0.0
+		},
+		{
+			"seq": 1,
+			"tile_x": 9,
+			"tile_y": 5,
+			"angle": -45.0
+		},
+		{
+			"seq": 2,
+			"tile_x": 1,
+			"tile_y": 5,
+			"angle": 45.0
+		}
+	],
+	"roles": [
+		"Refinery"
+	],
+	"explosion_effects": [
+		"BigExplosion"
+	]
+}
+links = {}

@@ -1,0 +1,75 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORHanger"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 37
+fields = {
+	"house": "Ordos",
+	"cost": 1300,
+	"build_time": 540,
+	"health": 3500,
+	"tech_level": 5,
+	"power_used": 50,
+	"storm_damage": 5,
+	"roof_height": 115,
+	"score": 4,
+	"num_infantry_when_gone": 3,
+	"can_be_engineered": true,
+	"can_be_primary": true,
+	"is_con_yard": false,
+	"upgrade_tech_level": 5,
+	"upgrade_cost": 1200,
+	"ai_manufacturing": true,
+	"explosion_type": "MidExplosion",
+	"debris": "DebrisMedium",
+	"view_range_base": 10.0,
+	"source_line": 372
+}
+lists = {
+	"occupy_rows": [
+		"sssssss",
+		"sssssss",
+		"sssssss",
+		"nbbbbbn",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"requires_primary": [
+		"ORConYard"
+	],
+	"requires_secondary": [
+		"HKFactory",
+		"ATFactory",
+		"ORFactory"
+	],
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 3,
+			"tile_y": 5
+		},
+		{
+			"seq": 1,
+			"tile_x": 3,
+			"tile_y": 1
+		}
+	],
+	"roles": [
+		"Hanger"
+	],
+	"explosion_effects": [
+		"MidExplosion"
+	]
+}
+links = {}

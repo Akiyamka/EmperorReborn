@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORMortarInfBigGun"
+entity_type = &"turret"
+source_table = &"turrets"
+source_id = 1
+fields = {
+	"bullet": "Mortar_B",
+	"reload_count": 45,
+	"turret_min_x_rotation": -90.0,
+	"turret_max_x_rotation": -30.0,
+	"turret_x_rotation_angle": 10.0,
+	"turret_disable_if_unit_undeployed": true
+}
+lists = {}
+links = {}

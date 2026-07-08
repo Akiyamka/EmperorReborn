@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"HKInkVineGun"
+entity_type = &"turret"
+source_table = &"turrets"
+source_id = 30
+fields = {
+	"bullet": "InkVine_B",
+	"reload_count": 100,
+	"turret_y_rotation_angle": 30.0,
+	"turret_min_y_rotation": -30.0,
+	"turret_max_y_rotation": 30.0,
+	"turret_min_x_rotation": -90.0,
+	"turret_max_x_rotation": -20.0,
+	"turret_x_rotation_angle": 2.0
+}
+lists = {}
+links = {}

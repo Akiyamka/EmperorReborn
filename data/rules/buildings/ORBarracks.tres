@@ -1,0 +1,75 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORBarracks"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 29
+fields = {
+	"house": "Ordos",
+	"cost": 225,
+	"build_time": 309,
+	"health": 2500,
+	"tech_level": 1,
+	"power_used": 20,
+	"storm_damage": 5,
+	"roof_height": 120,
+	"score": 3,
+	"num_infantry_when_gone": 3,
+	"can_be_engineered": true,
+	"can_be_primary": true,
+	"is_con_yard": false,
+	"ai_exit": true,
+	"upgrade_tech_level": 3,
+	"upgrade_cost": 800,
+	"ai_manufacturing": true,
+	"explosion_type": "MidExplosion",
+	"debris": "DebrisMedium",
+	"view_range_base": 10.0,
+	"source_line": 364
+}
+lists = {
+	"occupy_rows": [
+		"sssss",
+		"sssss",
+		"sssss",
+		"nbbbn",
+		"bbbbb",
+		"bbbbb",
+		"bbbbb",
+		"bbbbb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"requires_primary": [
+		"ORConYard"
+	],
+	"requires_secondary": [
+		"HKSmWindtrap",
+		"ATSmWindtrap",
+		"ORSmWindtrap"
+	],
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 2,
+			"tile_y": 4
+		},
+		{
+			"seq": 1,
+			"tile_x": 2,
+			"tile_y": 2
+		}
+	],
+	"roles": [
+		"Barracks"
+	],
+	"explosion_effects": [
+		"MidExplosion"
+	]
+}
+links = {}

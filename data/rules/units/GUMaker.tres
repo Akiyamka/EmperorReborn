@@ -1,0 +1,77 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"GUMaker"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 69
+fields = {
+	"house": "Guild",
+	"unit_group": "FromGUPalace",
+	"cost": 1000,
+	"build_time": 589,
+	"size": 2,
+	"speed": 4.0,
+	"turn_rate": 0.3,
+	"armour_type": "Medium",
+	"health": 1000,
+	"tech_level": 4,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"worm_attraction": -20,
+	"ai_threat": 70,
+	"reinforcement_value": 6,
+	"debris": "DebrisMedium",
+	"chaos_effect": "MediumChaosFX",
+	"hawk_effect": "MediumHawkFX",
+	"damage_effect": "BloodFX",
+	"explosion_type": "Explosion",
+	"can_move_any_direction": true,
+	"can_be_deviated": false,
+	"starportable": true,
+	"ai_tank": true,
+	"gets_height_advantage": false,
+	"crate_gift": true,
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0,
+	"view_range_bonus_terrain": "InfRock",
+	"source_line": 628
+}
+lists = {
+	"turrets": [
+		"GUMakerGun"
+	],
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"primary_buildings": [
+		"GUPalace"
+	],
+	"veterancy_levels": [
+		{
+			"level_order": 1,
+			"veterancy_score": 6,
+			"extra_damage_percent": 50.0
+		},
+		{
+			"level_order": 2,
+			"veterancy_score": 16,
+			"extra_armour_percent": 50.0
+		},
+		{
+			"level_order": 3,
+			"veterancy_score": 32,
+			"can_self_repair": true
+		}
+	],
+	"explosion_effects": [
+		"Explosion"
+	]
+}
+links = {}

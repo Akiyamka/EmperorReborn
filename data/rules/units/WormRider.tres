@@ -1,0 +1,42 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"WormRider"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 68
+fields = {
+	"house": "Fremen",
+	"cost": 150,
+	"size": 3,
+	"speed": 6.0,
+	"turn_rate": 0.05,
+	"armour_type": "None",
+	"health": 10000,
+	"chaos_effect": "LargeChaosFX",
+	"hawk_effect": "LargeHawkFX",
+	"can_be_deviated": false,
+	"ai_foot": true,
+	"view_range_base": 24.0,
+	"source_line": 626
+}
+lists = {
+	"turrets": [
+		"WormRiderGun"
+	],
+	"terrain": [
+		"Sand"
+	]
+}
+links = {
+	"resources": [
+		{
+			"seq": 0,
+			"target": "FRADVFremen",
+			"source_line": 10272
+		}
+	]
+}

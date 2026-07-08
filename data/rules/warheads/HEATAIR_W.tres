@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="WarheadConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/warhead_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"HEATAIR_W"
+entity_type = &"warhead"
+source_table = &"warheads"
+source_id = 15
+fields = {
+	"armour_damage": {
+		"None": 20.0,
+		"BPV": 10.0,
+		"Light": 60.0,
+		"Medium": 70.0,
+		"Heavy": 75.0,
+		"Concrete": 100.0,
+		"Walls": 75.0,
+		"Building": 70.0,
+		"CY": 30.0,
+		"Harvester": 50.0,
+		"Invulnerable": 0.0,
+		"Aircraft": 100.0,
+		"Earplugs": 20.0
+	}
+}
+lists = {}
+links = {}

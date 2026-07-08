@@ -1,6 +1,9 @@
 GODOT_CONTAINER := ./tools/godot-container
 
-.PHONY: godot-image godot-check godot-convert-map godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-export godot-image godot-check godot-convert-map godot-export-web godot-watch-export godot-shell godot-version
+
+rules-export:
+	python3 tools/rules/export_rules_to_tres.py --db tools/rules/rules.db --out data/rules --clean
 
 godot-image:
 	$(GODOT_CONTAINER) build

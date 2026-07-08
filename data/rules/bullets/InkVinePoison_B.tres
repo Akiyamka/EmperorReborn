@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"InkVinePoison_B"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 50
+fields = {
+	"damage": 3.0,
+	"max_range": 0.0,
+	"warhead": "Poison_W",
+	"speed": 16.0,
+	"blast_radius": 48.0,
+	"friendly_damage_amount": 0.0,
+	"ignites": false,
+	"gassed": true
+}
+lists = {}
+links = {}

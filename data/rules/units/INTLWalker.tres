@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"INTLWalker"
+entity_type = &"unit"
+source_table = &"units"
+source_id = 81
+fields = {
+	"house": "Incidental",
+	"cost": 850,
+	"size": 2,
+	"speed": 3.0,
+	"turn_rate": 0.05,
+	"armour_type": "Medium",
+	"tech_level": 1,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"worm_attraction": 4,
+	"debris": "DebrisMedium",
+	"chaos_effect": "MediumChaosFX",
+	"hawk_effect": "MediumHawkFX",
+	"explosion_type": "Explosion",
+	"ai_tank": true,
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0,
+	"view_range_bonus_terrain": "InfRock",
+	"source_line": 642
+}
+lists = {
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
+	],
+	"explosion_effects": [
+		"Explosion"
+	]
+}
+links = {}

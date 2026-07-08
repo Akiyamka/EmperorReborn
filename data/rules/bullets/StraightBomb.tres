@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"StraightBomb"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 1
+fields = {
+	"damage": 400.0,
+	"max_range": 9.0,
+	"warhead": "HEAT_W",
+	"debris": "DebrisMedium",
+	"speed": 24.0,
+	"explosion_type": "ShellHit",
+	"blow_up": true
+}
+lists = {
+	"explosion_effects": [
+		"ShellHit"
+	]
+}
+links = {}

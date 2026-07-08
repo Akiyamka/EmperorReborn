@@ -1,0 +1,77 @@
+[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"ORFactory"
+entity_type = &"building"
+source_table = &"buildings"
+source_id = 32
+fields = {
+	"house": "Ordos",
+	"cost": 1000,
+	"build_time": 864,
+	"health": 4000,
+	"tech_level": 2,
+	"power_used": 40,
+	"storm_damage": 5,
+	"roof_height": 115,
+	"score": 4,
+	"num_infantry_when_gone": 3,
+	"can_be_engineered": true,
+	"can_be_primary": true,
+	"is_con_yard": false,
+	"ai_exit": true,
+	"upgrade_tech_level": 4,
+	"upgrade_cost": 1200,
+	"ai_manufacturing": true,
+	"explosion_type": "BigExplosion",
+	"debris": "DebrisLarge",
+	"view_range_base": 10.0,
+	"source_line": 367
+}
+lists = {
+	"occupy_rows": [
+		"sssssss",
+		"sssssss",
+		"sssssss",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb",
+		"bbbbbbb"
+	],
+	"terrain": [
+		"Rock"
+	],
+	"requires_primary": [
+		"ORConYard"
+	],
+	"requires_secondary": [
+		"HKSmWindtrap",
+		"ATSmWindtrap",
+		"ORSmWindtrap"
+	],
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 4,
+			"tile_y": 5
+		},
+		{
+			"seq": 1,
+			"tile_x": 4,
+			"tile_y": 1
+		}
+	],
+	"roles": [
+		"Factory"
+	],
+	"explosion_effects": [
+		"BigExplosion"
+	]
+}
+links = {}

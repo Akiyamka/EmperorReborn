@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+
+[resource]
+script = ExtResource("rules_script")
+id = &"SpicePuff"
+entity_type = &"bullet"
+source_table = &"bullets"
+source_id = 46
+fields = {
+	"damage": 10.0,
+	"warhead": "Pistol_W",
+	"speed": 16.0,
+	"blow_up": true,
+	"blast_radius": 16.0,
+	"continuous": true
+}
+lists = {}
+links = {}
