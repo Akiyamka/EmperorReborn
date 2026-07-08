@@ -1,7 +1,7 @@
 extends SceneTree
 
 const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
-const MapXbfScript := preload("res://scripts/xbf/map_xbf.gd")
+const MapXbfScript := preload("res://importers/xbf/map_xbf.gd")
 const WORLD_SCALE := 0.0625
 
 

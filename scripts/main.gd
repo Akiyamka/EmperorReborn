@@ -5,15 +5,40 @@ extends Node3D
 @onready var terrain: MapLoader = $Terrain
 @onready var selection_label: Label = $HUD/Selection
 @onready var fps_label: Label = $HUD/FPS
+@onready var side_panel: SidePanel = $HUD/SidePanel
 
 var selected_unit = null
 var _fps_update_time := 0.0
 
 
 func _ready() -> void:
+	side_panel.command_pressed.connect(_on_panel_command)
+	side_panel.queue_slot_pressed.connect(_on_panel_queue_slot)
 	_update_selection_label()
 	_update_fps_label()
 	_place_on_map()
+
+
+func _on_panel_command(command: StringName) -> void:
+	_update_selection_label("Command: %s (not implemented)" % command)
+
+
+# Demo production loop until real queues exist: available -> progress -> ready.
+func _on_panel_queue_slot(tab: SidePanel.Tab, slot_index: int) -> void:
+	var slot := side_panel.get_slot(slot_index)
+	if slot == null:
+		return
+	match slot.state:
+		QueueSlot.State.AVAILABLE:
+			slot.state = QueueSlot.State.PROGRESS
+			slot.progress = 0.0
+			var tween := slot.create_tween()
+			tween.tween_property(slot, "progress", 100.0, 5.0)
+			tween.tween_callback(func() -> void: slot.state = QueueSlot.State.READY)
+			_update_selection_label("Tab %d slot %d: building..." % [tab, slot_index])
+		QueueSlot.State.READY:
+			slot.state = QueueSlot.State.AVAILABLE
+			_update_selection_label("Tab %d slot %d: placed (not implemented)" % [tab, slot_index])
 
 
 func _place_on_map() -> void:

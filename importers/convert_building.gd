@@ -1,6 +1,6 @@
 extends SceneTree
 
-const BuildingBakeBuilderScript := preload("res://scripts/building_bake_builder.gd")
+const BuildingBakeBuilderScript := preload("res://importers/building_bake_builder.gd")
 
 
 func _init() -> void:
@@ -79,7 +79,7 @@ func _parse_args(raw_args: PackedStringArray) -> Dictionary:
 func _usage(error: String) -> void:
 	push_error("convert_building: %s" % error)
 	print("Usage:")
-	print("  godot --headless --path . --script res://scripts/convert_building.gd -- --building ATBarracks")
+	print("  godot --headless --path . --script res://importers/convert_building.gd -- --building ATBarracks")
 	print("Options:")
 	print("  --prefix at_barracks")
 	print("  --source res://assets/unpacked_rfd/3DDATA/Buildings")

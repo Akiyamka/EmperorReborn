@@ -1,7 +1,7 @@
 class_name MapXbf
 extends RefCounted
 
-const XbfMeshScript := preload("res://scripts/xbf/xbf_mesh.gd")
+const XbfMeshScript := preload("res://importers/xbf/xbf_mesh.gd")
 
 const MESH_PREFIX_BYTES := 8
 const TLV_TAG_PREFIX := 0xA0000000
@@ -41,7 +41,7 @@ static func load_file(path: String):
 	if bytes.is_empty():
 		push_error("MapXbf: cannot read %s (%s)" % [path, error_string(FileAccess.get_open_error())])
 		return null
-	var xbf = load("res://scripts/xbf/map_xbf.gd").new()
+	var xbf = load("res://importers/xbf/map_xbf.gd").new()
 	if not xbf._parse(bytes):
 		return null
 	return xbf

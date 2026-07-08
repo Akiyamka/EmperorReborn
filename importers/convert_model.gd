@@ -1,6 +1,6 @@
 extends SceneTree
 
-const ModelBakeBuilderScript := preload("res://scripts/model_bake_builder.gd")
+const ModelBakeBuilderScript := preload("res://importers/model_bake_builder.gd")
 
 
 func _init() -> void:
@@ -75,7 +75,7 @@ func _parse_args(raw_args: PackedStringArray) -> Dictionary:
 func _usage(error: String) -> void:
 	push_error("convert_model: %s" % error)
 	print("Usage:")
-	print("  godot --headless --path . --script res://scripts/convert_model.gd -- --source res://assets/unpacked_rfd/3DDATA/Units/AT_inf_H0.xbf")
+	print("  godot --headless --path . --script res://importers/convert_model.gd -- --source res://assets/unpacked_rfd/3DDATA/Units/AT_inf_H0.xbf")
 	print("Options:")
 	print("  --output res://assets/converted_models/AT_inf_H0/AT_inf_H0.scn")
 	print("  --textures res://assets/unpacked_rfd/3DDATA/Textures")

@@ -1,7 +1,7 @@
 class_name ModelBakeBuilder
 extends RefCounted
 
-const ModelXbfScript := preload("res://scripts/xbf/model_xbf.gd")
+const ModelXbfScript := preload("res://importers/xbf/model_xbf.gd")
 
 # Effect submeshes the original game toggles from gameplay code rather than
 # from the baked animation: the leech parasite overlay and the energy shield

@@ -1,0 +1,165 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/side_panel.gd" id="1_side_panel"]
+[ext_resource type="Script" path="res://scripts/ui/panel_tab.gd" id="2_panel_tab"]
+
+[node name="SidePanel" type="Control"]
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -280.0
+grow_horizontal = 0
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1_side_panel")
+
+[node name="TopBlock" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = 296.0
+grow_horizontal = 2
+
+[node name="TopColumn" type="VBoxContainer" parent="TopBlock"]
+layout_mode = 2
+
+[node name="CreditsLabel" type="Label" parent="TopBlock/TopColumn"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "0"
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="RadarPlaceholder" type="ColorRect" parent="TopBlock/TopColumn"]
+custom_minimum_size = Vector2(0, 196)
+layout_mode = 2
+color = Color(0.05, 0.09, 0.16, 1)
+
+[node name="RadarLabel" type="Label" parent="TopBlock/TopColumn/RadarPlaceholder"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "RADAR"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="CommandButtons" type="HBoxContainer" parent="TopBlock/TopColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="Repair" type="Button" parent="TopBlock/TopColumn/CommandButtons"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Rep"
+tooltip_text = "Repair"
+
+[node name="Guard" type="Button" parent="TopBlock/TopColumn/CommandButtons"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Grd"
+tooltip_text = "Guard"
+
+[node name="Waypoint" type="Button" parent="TopBlock/TopColumn/CommandButtons"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Way"
+tooltip_text = "Waypoint mode"
+
+[node name="Retreat" type="Button" parent="TopBlock/TopColumn/CommandButtons"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Ret"
+tooltip_text = "Retreat"
+
+[node name="Sell" type="Button" parent="TopBlock/TopColumn/CommandButtons"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "$"
+tooltip_text = "Sell"
+
+[node name="BottomBlock" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = -404.0
+offset_right = -8.0
+offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="BottomColumn" type="VBoxContainer" parent="BottomBlock"]
+layout_mode = 2
+
+[node name="SecondaryTabs" type="HBoxContainer" parent="BottomBlock/BottomColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="Upgrades" type="Button" parent="BottomBlock/BottomColumn/SecondaryTabs"]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Upgrades"
+script = ExtResource("2_panel_tab")
+
+[node name="Starport" type="Button" parent="BottomBlock/BottomColumn/SecondaryTabs"]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Starport"
+script = ExtResource("2_panel_tab")
+
+[node name="ProductionRow" type="HBoxContainer" parent="BottomBlock/BottomColumn"]
+layout_mode = 2
+
+[node name="QueueTabs" type="VBoxContainer" parent="BottomBlock/BottomColumn/ProductionRow"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="Infantry" type="Button" parent="BottomBlock/BottomColumn/ProductionRow/QueueTabs"]
+custom_minimum_size = Vector2(48, 64)
+layout_mode = 2
+toggle_mode = true
+text = "Inf"
+tooltip_text = "Infantry queue"
+script = ExtResource("2_panel_tab")
+
+[node name="Vehicles" type="Button" parent="BottomBlock/BottomColumn/ProductionRow/QueueTabs"]
+custom_minimum_size = Vector2(48, 64)
+layout_mode = 2
+toggle_mode = true
+text = "Veh"
+tooltip_text = "Vehicles queue"
+script = ExtResource("2_panel_tab")
+
+[node name="Buildings" type="Button" parent="BottomBlock/BottomColumn/ProductionRow/QueueTabs"]
+custom_minimum_size = Vector2(48, 64)
+layout_mode = 2
+toggle_mode = true
+text = "Bld"
+tooltip_text = "Buildings queue"
+script = ExtResource("2_panel_tab")
+
+[node name="QueueGrid" type="GridContainer" parent="BottomBlock/BottomColumn/ProductionRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 3

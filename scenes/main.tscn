@@ -8,6 +8,7 @@
 [ext_resource type="PackedScene" path="res://scenes/units/or_apc.tscn" id="7_or_apc"]
 [ext_resource type="PackedScene" path="res://scenes/units/niab_tank.tscn" id="8_niab"]
 [ext_resource type="PackedScene" path="res://assets/converted_buildings/ATBarracks/ATBarracks.scn" id="9_at_barracks"]
+[ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="10_side_panel"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -84,9 +85,11 @@ text = "No unit selected"
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -144.0
+offset_left = -424.0
 offset_top = 16.0
-offset_right = -16.0
+offset_right = -296.0
 offset_bottom = 44.0
 text = "FPS: --"
 horizontal_alignment = 2
+
+[node name="SidePanel" parent="HUD" instance=ExtResource("10_side_panel")]

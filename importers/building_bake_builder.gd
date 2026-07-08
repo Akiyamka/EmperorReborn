@@ -1,7 +1,7 @@
 class_name BuildingBakeBuilder
 extends RefCounted
 
-const ModelBakeBuilderScript := preload("res://scripts/model_bake_builder.gd")
+const ModelBakeBuilderScript := preload("res://importers/model_bake_builder.gd")
 const RTSBuildingScript := preload("res://scripts/rts_building.gd")
 
 const BUILDING_MODEL_DIR := "res://assets/unpacked_rfd/3DDATA/Buildings"

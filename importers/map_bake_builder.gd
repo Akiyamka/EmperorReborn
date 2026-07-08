@@ -5,7 +5,7 @@ const TERRAIN_SHADER := preload("res://scripts/terrain.gdshader")
 const BakedMapDataScript := preload("res://scripts/baked_map_data.gd")
 const MapLoaderScript := preload("res://scripts/map_loader.gd")
 const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
-const MapXbfScript := preload("res://scripts/xbf/map_xbf.gd")
+const MapXbfScript := preload("res://importers/xbf/map_xbf.gd")
 
 const GROUND_TONE_WORLD_UNITS := 8192.0
 const TERRAIN_TEXTURE_DIR := "res://assets/unpacked_rfd/3DDATA/Textures"

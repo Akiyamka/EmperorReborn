@@ -1,7 +1,7 @@
 class_name ModelXbf
 extends RefCounted
 
-const XbfMeshScript := preload("res://scripts/xbf/xbf_mesh.gd")
+const XbfMeshScript := preload("res://importers/xbf/xbf_mesh.gd")
 
 const FX_HEADER := "FXDataHeader"
 const ANIMATION_ENTRY_SIZE := 60
@@ -26,7 +26,7 @@ static func load_file(path: String):
 	if bytes.is_empty():
 		push_error("ModelXbf: cannot read %s (%s)" % [path, error_string(FileAccess.get_open_error())])
 		return null
-	var xbf = load("res://scripts/xbf/model_xbf.gd").new()
+	var xbf = load("res://importers/xbf/model_xbf.gd").new()
 	if not xbf._parse(bytes):
 		return null
 	return xbf
@@ -50,8 +50,10 @@ func _parse(bytes: PackedByteArray) -> bool:
 		push_error("ModelXbf: invalid FX section size %d for %d byte file" % [fx_section_size, bytes.size()])
 		return false
 
+	# Static props (e.g. 3DDATA/Placement markers) have an empty FX section.
 	var fx_bytes := bytes.slice(8, fx_section_end)
-	_parse_fx_section(fx_bytes)
+	if not fx_bytes.is_empty():
+		_parse_fx_section(fx_bytes)
 
 	buffer.seek(fx_section_end)
 	mesh_data = XbfMeshScript.parse_from_buffer(buffer)

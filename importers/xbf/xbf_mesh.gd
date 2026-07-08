@@ -11,7 +11,7 @@ var objects: Array[Dictionary] = []
 
 
 static func parse_from_buffer(buffer: StreamPeerBuffer):
-	var mesh = load("res://scripts/xbf/xbf_mesh.gd").new()
+	var mesh = load("res://importers/xbf/xbf_mesh.gd").new()
 	if not mesh._parse(buffer):
 		return null
 	return mesh
