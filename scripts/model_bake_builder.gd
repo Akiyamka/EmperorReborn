@@ -25,9 +25,7 @@ var copied_textures: PackedStringArray = []
 var _material_cache := {}
 var _animated_texture_sequences := {}
 var _animated_material_frames := {}
-var _shield_materials := {}
 var _pending_frame_tracks: Array[Dictionary] = []
-var _pending_time_tracks: PackedStringArray = []
 var _animated_frame_shader_add: Shader
 var _animated_frame_shader_mix: Shader
 var _shield_shader: Shader
@@ -40,9 +38,7 @@ func build(xbf_path: String) -> PackedScene:
 	_material_cache.clear()
 	_animated_texture_sequences.clear()
 	_animated_material_frames.clear()
-	_shield_materials.clear()
 	_pending_frame_tracks.clear()
-	_pending_time_tracks.clear()
 	_has_shield_fx_marker = false
 
 	var xbf = ModelXbfScript.load_file(xbf_path)
@@ -108,8 +104,6 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		var atlas_frames := _mesh_animated_frame_count(mesh)
 		if atlas_frames > 1:
 			_pending_frame_tracks.append({"path": "%s/Mesh" % child_path, "frames": atlas_frames})
-		if _mesh_has_shield_material(mesh):
-			_pending_time_tracks.append("%s/Mesh" % child_path)
 
 	for child_object: Dictionary in object.children:
 		var child := _build_object_node(child_object, texture_names, child_path, anim)
@@ -208,7 +202,6 @@ func _model_material(texture_name: String) -> Material:
 		var shield_material := ShaderMaterial.new()
 		shield_material.shader = _animated_shield_shader()
 		shield_material.set_shader_parameter("albedo_tex", texture)
-		_shield_materials[shield_material] = true
 		_material_cache[texture_name] = shield_material
 		return shield_material
 
@@ -380,9 +373,10 @@ func _animated_shield_shader() -> Shader:
 	if _shield_shader != null:
 		return _shield_shader
 	_shield_shader = Shader.new()
-	# fx_time comes from an AnimationPlayer track instead of TIME: TIME in a
-	# shader forces the editor 3D viewport to redraw continuously (see the
-	# animated-frame shader above).
+	# fx_time is driven by RTSUnit while the shield is up (a continuous phase
+	# cannot come from sliced animation tracks — it would snap on clip loops),
+	# and must not be TIME: TIME in a shader forces the editor 3D viewport to
+	# redraw continuously (see the animated-frame shader above).
 	_shield_shader.code = """
 shader_type spatial;
 render_mode blend_add, unshaded, cull_disabled, depth_draw_never;
@@ -615,22 +609,6 @@ func _add_shader_fx_tracks(anim: Animation) -> void:
 		anim.value_track_set_update_mode(track, Animation.UPDATE_DISCRETE)
 		for i in key_count + 1:
 			anim.track_insert_key(track, i / TEXTURE_FX_FPS, float(i % frame_count))
-	for path: String in _pending_time_tracks:
-		# Linear time ramp replacing TIME in the shield shader. Keys are dense
-		# so any sliced clip window still contains them.
-		var track := anim.add_track(Animation.TYPE_VALUE)
-		anim.track_set_path(track, NodePath("%s:instance_shader_parameters/fx_time" % path))
-		anim.track_set_interpolation_type(track, Animation.INTERPOLATION_LINEAR)
-		for i in key_count + 1:
-			var t := i / TEXTURE_FX_FPS
-			anim.track_insert_key(track, t, t)
-
-
-func _mesh_has_shield_material(mesh: ArrayMesh) -> bool:
-	for surface_index in mesh.get_surface_count():
-		if _shield_materials.has(mesh.surface_get_material(surface_index)):
-			return true
-	return false
 
 
 func _slice_animation(source: Animation, entry: Dictionary) -> Animation:

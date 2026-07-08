@@ -17,11 +17,14 @@ var shields := 0.0:
 		_refresh_shield_visibility()
 var _base_materials := {}
 var _selection_material: StandardMaterial3D
+var _shield_meshes: Array[MeshInstance3D] = []
+var _shield_time := 0.0
 
 
 func _ready() -> void:
 	target_position = global_position
 	_capture_base_materials()
+	_shield_meshes = _collect_shield_meshes()
 	shields = max_shields
 	_selection_material = StandardMaterial3D.new()
 	_selection_material.albedo_color = selection_color
@@ -30,6 +33,17 @@ func _ready() -> void:
 	_selection_material.emission_energy_multiplier = 0.4
 	_selection_material.roughness = 0.8
 	_refresh_selection()
+
+
+func _process(delta: float) -> void:
+	if shields <= 0.0 or _shield_meshes.is_empty():
+		return
+	# The shield shader takes its scroll/pulse phase from here: a continuous
+	# phase cannot come from animation tracks (it would snap on clip loops),
+	# and TIME in the shader would keep the editor viewport redrawing.
+	_shield_time += delta
+	for mesh_instance in _shield_meshes:
+		mesh_instance.set_instance_shader_parameter("fx_time", _shield_time)
 
 
 func _physics_process(_delta: float) -> void:
@@ -63,9 +77,16 @@ func set_selected(value: bool) -> void:
 
 
 func _refresh_shield_visibility() -> void:
+	for mesh_instance in _shield_meshes:
+		mesh_instance.visible = shields > 0.0
+
+
+func _collect_shield_meshes() -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
 	for mesh_instance in _mesh_instances():
 		if String(mesh_instance.get_parent().name).to_lower().contains("shield"):
-			mesh_instance.visible = shields > 0.0
+			result.append(mesh_instance)
+	return result
 
 
 func _refresh_selection() -> void:
