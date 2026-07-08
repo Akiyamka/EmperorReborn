@@ -5,11 +5,16 @@ class_name RTSUnit
 @export var arrival_radius := 0.2
 @export var selection_color := Color(0.2, 0.85, 1.0)
 @export var visual_root_path := NodePath("VisualRoot")
+@export var max_shields := 0.0
 
 @onready var visual_root: Node3D = get_node_or_null(visual_root_path)
 
 var target_position: Vector3
 var is_selected := false
+var shields := 0.0:
+	set(value):
+		shields = clampf(value, 0.0, max_shields)
+		_refresh_shield_visibility()
 var _base_materials := {}
 var _selection_material: StandardMaterial3D
 
@@ -17,6 +22,7 @@ var _selection_material: StandardMaterial3D
 func _ready() -> void:
 	target_position = global_position
 	_capture_base_materials()
+	shields = max_shields
 	_selection_material = StandardMaterial3D.new()
 	_selection_material.albedo_color = selection_color
 	_selection_material.emission_enabled = true
@@ -43,12 +49,23 @@ func move_to(world_position: Vector3) -> void:
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
 
 
+func stop_at_current_position() -> void:
+	target_position = global_position
+	velocity = Vector3.ZERO
+
+
 func set_selected(value: bool) -> void:
 	if is_selected == value:
 		return
 
 	is_selected = value
 	_refresh_selection()
+
+
+func _refresh_shield_visibility() -> void:
+	for mesh_instance in _mesh_instances():
+		if String(mesh_instance.get_parent().name).to_lower().contains("shield"):
+			mesh_instance.visible = shields > 0.0
 
 
 func _refresh_selection() -> void:

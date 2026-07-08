@@ -24,8 +24,9 @@ func _place_on_map() -> void:
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	for unit in get_tree().get_nodes_in_group("rts_units"):
-		var spot: Vector3 = Vector3(center.x, 0.0, center.z) + unit.position
+		var spot: Vector3 = unit.global_position
 		unit.global_position = _snap_to_ground(spot) + Vector3.UP * 0.7
+		unit.stop_at_current_position()
 
 
 func _snap_to_ground(point: Vector3) -> Vector3:

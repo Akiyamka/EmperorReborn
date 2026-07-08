@@ -80,13 +80,13 @@ func _parse_fx_section(bytes: PackedByteArray) -> void:
 
 func _parse_animation_entries(bytes: PackedByteArray) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
-	var start := _find_animation_table_start(bytes)
-	if start < 0:
+	var entry_offsets := _find_animation_entry_offsets(bytes)
+	if entry_offsets.is_empty():
 		return entries
-	animation_table_offset = start
+	animation_table_offset = entry_offsets[0]
 
-	for i in fx_animation_count:
-		var offset := start + i * ANIMATION_ENTRY_SIZE
+	for i in entry_offsets.size():
+		var offset: int = entry_offsets[i]
 		if offset + ANIMATION_ENTRY_SIZE > bytes.size():
 			push_warning("ModelXbf: animation entry %d overruns FX section" % i)
 			break
@@ -107,9 +107,10 @@ func _parse_animation_entries(bytes: PackedByteArray) -> Array[Dictionary]:
 	return entries
 
 
-func _find_animation_table_start(bytes: PackedByteArray) -> int:
+func _find_animation_entry_offsets(bytes: PackedByteArray) -> PackedInt32Array:
+	var offsets := PackedInt32Array()
 	if fx_animation_count <= 0:
-		return -1
+		return offsets
 
 	for i in fx_strings.size():
 		var record: Dictionary = fx_strings[i]
@@ -123,8 +124,20 @@ func _find_animation_table_start(bytes: PackedByteArray) -> int:
 					valid = false
 					break
 			if valid:
-				return offset
-	return -1
+				for entry_index in fx_animation_count:
+					offsets.append(offset + entry_index * ANIMATION_ENTRY_SIZE)
+				return offsets
+
+	for i in fx_strings.size():
+		var record: Dictionary = fx_strings[i]
+		var offset := int(record["offset"])
+		if _looks_like_animation_entry(bytes, offset):
+			offsets.append(offset)
+			if offsets.size() == fx_animation_count:
+				return offsets
+
+	offsets.clear()
+	return offsets
 
 
 func _looks_like_animation_entry(bytes: PackedByteArray, offset: int) -> bool:
@@ -136,8 +149,11 @@ func _looks_like_animation_entry(bytes: PackedByteArray, offset: int) -> bool:
 	return _i32_le(bytes, offset + 32) == 1 \
 		and _i32_le(bytes, offset + 36) == 1 \
 		and _i32_le(bytes, offset + 40) == 0 \
-		and _i32_le(bytes, offset + 44) == 0 \
-		and bytes[offset + 48] == 1
+		and _i32_le(bytes, offset + 44) >= 0 \
+		and _i32_le(bytes, offset + 44) <= 8 \
+		and bytes[offset + 48] <= 1 \
+		and _i32_le(bytes, offset + 52) >= 0 \
+		and _i32_le(bytes, offset + 56) >= _i32_le(bytes, offset + 52)
 
 
 func _find_printable_strings(bytes: PackedByteArray) -> Array[Dictionary]:
