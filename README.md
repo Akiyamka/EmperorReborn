@@ -1,6 +1,6 @@
-# EmperorJS
+# EmperorReborn
 
-EmperorJS is a Godot 4 project whose goal is to make a browser-playable version
+EmperorReborn is a Godot 4 project whose goal is to make a browser-playable version
 of *Emperor: Battle for Dune*.
 
 This repository does not include original game assets. Shipping those files

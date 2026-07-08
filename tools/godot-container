@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PODMAN_BIN="${PODMAN_BIN:-podman}"
-IMAGE="${GODOT_CONTAINER_IMAGE:-emperorjs-godot:4.7}"
+IMAGE="${GODOT_CONTAINER_IMAGE:-EmperorReborn-godot:4.7}"
 GODOT_VERSION="${GODOT_VERSION:-4.7}"
 GODOT_RELEASE="${GODOT_RELEASE:-stable}"
 PROJECT_DIR="${GODOT_PROJECT_DIR:-$(pwd)}"
@@ -24,7 +24,7 @@ Commands:
   godot [args]   Run arbitrary Godot arguments in the container.
 
 Environment:
-  GODOT_CONTAINER_IMAGE   Image tag. Default: emperorjs-godot:4.7
+  GODOT_CONTAINER_IMAGE   Image tag. Default: EmperorReborn-godot:4.7
   GODOT_VERSION           Godot version to build. Default: 4.7
   GODOT_RELEASE           Godot release channel. Default: stable
   GODOT_PROJECT_DIR       Host project directory. Default: current directory
