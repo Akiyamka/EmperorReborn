@@ -1,7 +1,19 @@
 extends CharacterBody3D
 class_name RTSUnit
 
+signal owner_changed(player_id: int)
+
+const PlayerDataScript := preload("res://scripts/players/player_data.gd")
+
 @export var config_id: StringName
+@export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
+	set(value):
+		if owner_player_id == value:
+			return
+		owner_player_id = value
+		if is_inside_tree():
+			_refresh_owner_visuals()
+		owner_changed.emit(owner_player_id)
 @export var move_speed := 5.0
 @export var arrival_radius := 0.2
 @export var selection_color := Color(0.2, 0.85, 1.0)
@@ -35,12 +47,8 @@ func _ready() -> void:
 	health = max_health
 	shields = max_shields
 	_selection_material = StandardMaterial3D.new()
-	_selection_material.albedo_color = selection_color
-	_selection_material.emission_enabled = true
-	_selection_material.emission = selection_color
-	_selection_material.emission_energy_multiplier = 0.4
 	_selection_material.roughness = 0.8
-	_refresh_selection()
+	_refresh_owner_visuals()
 
 
 func _process(delta: float) -> void:
@@ -94,6 +102,35 @@ func set_selected(value: bool) -> void:
 	_refresh_selection()
 
 
+func set_owner_player_id(player_id: int) -> void:
+	owner_player_id = player_id
+
+
+func owner_player():
+	var players = _players()
+	if players == null:
+		return null
+	return players.player(owner_player_id)
+
+
+func is_neutral_owner() -> bool:
+	return owner_player_id == PlayerDataScript.NEUTRAL_PLAYER_ID
+
+
+func is_owned_by(player_id: int) -> bool:
+	return owner_player_id == player_id
+
+
+func is_allied_with(player_id: int) -> bool:
+	var players = _players()
+	return players != null and players.are_allied(owner_player_id, player_id)
+
+
+func is_enemy_of(player_id: int) -> bool:
+	var players = _players()
+	return players != null and players.are_enemies(owner_player_id, player_id)
+
+
 func _refresh_shield_visibility() -> void:
 	for mesh_instance in _shield_meshes:
 		mesh_instance.visible = shields > 0.0
@@ -132,6 +169,33 @@ func _refresh_selection() -> void:
 
 	for mesh_instance in _mesh_instances():
 		mesh_instance.material_override = _selection_material if is_selected else _base_materials.get(mesh_instance)
+
+
+func _refresh_owner_visuals() -> void:
+	var color := _owner_team_color()
+	if _selection_material != null:
+		_selection_material.albedo_color = color
+		_selection_material.emission_enabled = true
+		_selection_material.emission = color
+		_selection_material.emission_energy_multiplier = 0.4
+
+	for mesh_instance in _mesh_instances():
+		mesh_instance.set_instance_shader_parameter("team_color", color)
+
+	_refresh_selection()
+
+
+func _owner_team_color() -> Color:
+	var roster_player = owner_player()
+	if roster_player == null or roster_player.is_neutral:
+		return selection_color
+	return roster_player.team_color
+
+
+func _players():
+	if not is_inside_tree():
+		return null
+	return get_node_or_null("/root/Players")
 
 
 func _capture_base_materials() -> void:

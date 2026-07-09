@@ -1,5 +1,9 @@
 extends Node3D
 
+const PlayerDataScript := preload("res://scripts/players/player_data.gd")
+const LOCAL_PLAYER_ID := 1
+const ENEMY_PLAYER_ID := 2
+
 @onready var camera: Camera3D = $CameraRig/Camera3D
 @onready var camera_rig: Node3D = $CameraRig
 @onready var terrain: MapLoader = $Terrain
@@ -12,6 +16,7 @@ var _fps_update_time := 0.0
 
 
 func _ready() -> void:
+	_configure_demo_players()
 	side_panel.command_pressed.connect(_on_panel_command)
 	side_panel.queue_slot_pressed.connect(_on_panel_queue_slot)
 	_update_selection_label()
@@ -109,6 +114,10 @@ func _command_move(screen_position: Vector2) -> void:
 	if selected_unit == null:
 		return
 
+	if not _can_control(selected_unit):
+		_update_selection_label("Cannot command this player")
+		return
+
 	var hit := _raycast(screen_position, 1)
 	if hit.is_empty():
 		return
@@ -156,10 +165,75 @@ func _update_selection_label(status := "") -> void:
 		selection_label.text = "No unit selected"
 		return
 
-	selection_label.text = "%s selected" % selected_unit.name
+	selection_label.text = "%s selected | %s" % [selected_unit.name, _owner_status(selected_unit)]
 	if not status.is_empty():
 		selection_label.text += " | %s" % status
 
 
 func _update_fps_label() -> void:
 	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
+
+
+func _configure_demo_players() -> void:
+	var players = get_node_or_null("/root/Players")
+	if players == null:
+		push_warning("Players autoload is not available; units and buildings will stay neutral")
+		return
+
+	if players.player_count() > 0:
+		return
+
+	players.create_player(
+		LOCAL_PLAYER_ID,
+		"Atreides Commander",
+		Color(0.12, 0.44, 1.0),
+		&"Atreides",
+		[&"Fremen"],
+		1,
+		5000,
+		0
+	)
+	players.create_player(
+		ENEMY_PLAYER_ID,
+		"Ordos Rival",
+		Color(0.16, 0.75, 0.34),
+		&"Ordos",
+		[&"Ix"],
+		2,
+		5000,
+		0
+	)
+	players.local_player_id = LOCAL_PLAYER_ID
+	players.set_relation(LOCAL_PLAYER_ID, ENEMY_PLAYER_ID, PlayerDataScript.Relation.ENEMY)
+
+
+func _can_control(unit) -> bool:
+	var players = get_node_or_null("/root/Players")
+	return players != null and unit.is_owned_by(players.local_player_id)
+
+
+func _owner_status(unit) -> String:
+	var owner = unit.owner_player()
+	if owner == null:
+		return "owner: missing"
+	if owner.is_neutral:
+		return "owner: neutral"
+
+	var players = get_node_or_null("/root/Players")
+	var relation := "unknown"
+	if players != null:
+		match players.relation_between(players.local_player_id, owner.player_id):
+			PlayerDataScript.Relation.ALLY:
+				relation = "ally"
+			PlayerDataScript.Relation.ENEMY:
+				relation = "enemy"
+			_:
+				relation = "neutral"
+
+	var faction := String(owner.house_id)
+	if owner.has_subhouses():
+		var subhouses := []
+		for subhouse_id in owner.subhouse_ids:
+			subhouses.append(String(subhouse_id))
+		faction += "/%s" % ", ".join(subhouses)
+	return "owner: %s (%s, %s)" % [owner.nickname, faction, relation]

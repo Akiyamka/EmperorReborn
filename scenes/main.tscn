@@ -47,23 +47,29 @@ metadata/_edit_lock_ = true
 
 [node name="ATBarracks" parent="Buildings" unique_id=226675699 instance=ExtResource("9_at_barracks")]
 transform = Transform3D(0.70710677, 0, -0.70710677, 0, 1, 0, 0.70710677, 0, 0.70710677, 118.0, 8.0, 148.0)
+owner_player_id = 1
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
 
 [node name="ScoutA" parent="Units" unique_id=1502406383 instance=ExtResource("3_unit")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 123.627304, 8.160141, 139.38583)
+owner_player_id = 1
 
 [node name="ScoutB" parent="Units" unique_id=1281454651 instance=ExtResource("3_unit")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 126.627304, 8.160141, 137.38583)
+owner_player_id = 1
 
 [node name="ScoutC" parent="Units" unique_id=325326372 instance=ExtResource("3_unit")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 129.6273, 8.045668, 140.38583)
+owner_player_id = 1
 
 [node name="OrdosAPC" parent="Units" unique_id=1929728337 instance=ExtResource("7_or_apc")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 143.6279, 8.399508, 142.2648)
+owner_player_id = 2
 
 [node name="NIABTank" parent="Units" unique_id=1211664053 instance=ExtResource("8_niab")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 136.21701, 8.11331, 152.11343)
+owner_player_id = 2
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
 
