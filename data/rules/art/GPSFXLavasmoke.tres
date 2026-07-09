@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_bpe3f"]
+
+[resource]
+script = ExtResource("1_bpe3f")
+id = &"GPSFXLavasmoke"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 172
+fields = {
+	"load_flag_only_preplaced": true,
+	"source_line": 1261,
+	"target_entity": "GPSFXLavasmoke",
+	"target_entity_source_id": 105,
+	"target_entity_type": "building",
+	"xaf": "GP_SFX_Lavasmoke"
+}

@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_s5htc"]
+
+[resource]
+script = ExtResource("1_s5htc")
+id = &"GUNIABTank"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 83
+fields = {
+	"clip_sphere": 60.0,
+	"icon": "icons\\\\GU_NIABTank.tga",
+	"icon_grey": "icons\\\\grey_GU_NIABTank.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Units",
+	"source_line": 625,
+	"target_entity": "GUNIABTank",
+	"target_entity_source_id": 70,
+	"target_entity_type": "unit",
+	"xaf": "GU_NIABTank"
+}

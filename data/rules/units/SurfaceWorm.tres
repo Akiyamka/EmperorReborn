@@ -1,50 +1,51 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_ot6cw"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_ot6cw")
 id = &"SurfaceWorm"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 87
 fields = {
+	"ai_uncontrolled": true,
+	"can_move_any_direction": true,
+	"cant_be_leeched": true,
+	"health": 5000,
 	"house": "Incidental",
+	"legacy_name": "SurfaceWorm",
+	"projectable": false,
 	"size": 3,
+	"source_line": 649,
 	"speed": 5.0,
 	"turn_rate": 0.05,
-	"health": 5000,
-	"can_move_any_direction": true,
-	"ai_uncontrolled": true,
-	"cant_be_leeched": true,
-	"projectable": false,
-	"view_range_base": 12.0,
-	"source_line": 649
+	"view_range_base": 12.0
 }
 lists = {
-	"turrets": [
-		"WormRiderGun"
-	],
 	"terrain": [
 		"Sand"
+	],
+	"turrets": [
+		"WormRiderGun"
 	]
 }
 links = {
 	"resources": [
 		{
 			"seq": 0,
-			"target": "WormSign0",
-			"source_line": 9467
+			"source_line": 9468,
+			"target": "WormSign0"
 		},
 		{
 			"seq": 1,
-			"target": "WormSign1",
-			"source_line": 9467
+			"source_line": 9468,
+			"target": "WormSign1"
 		},
 		{
 			"seq": 2,
-			"target": "WormSign2",
-			"source_line": 9467
+			"source_line": 9468,
+			"target": "WormSign2"
 		}
 	]
 }

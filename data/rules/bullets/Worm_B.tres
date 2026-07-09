@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_nanko"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_nanko")
 id = &"Worm_B"
 entity_type = &"bullet"
 source_table = &"bullets"
@@ -11,8 +11,6 @@ source_id = 53
 fields = {
 	"damage": 1000.0,
 	"max_range": 1.0,
-	"warhead": "HEAT_W",
-	"speed": 32.0
+	"speed": 32.0,
+	"warhead": "HEAT_W"
 }
-lists = {}
-links = {}

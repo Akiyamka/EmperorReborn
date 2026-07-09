@@ -1,53 +1,53 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_lxw10"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_lxw10")
 id = &"Carryall"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 56
 fields = {
-	"unit_group": "FromHanger",
-	"cost": 1100,
-	"build_time": 450,
-	"size": 3,
-	"speed": 20.0,
-	"turn_rate": 0.1,
-	"armour_type": "Medium",
-	"health": 1600,
-	"tech_level": 5,
-	"storm_damage": 10,
-	"score": 3,
-	"debris": "DebrisMedium",
-	"damage_effect": "LargeDamageFX",
-	"explosion_type": "AerialExplosion",
-	"starportable": true,
-	"ai_uncontrolled": true,
 	"ai_critical": true,
+	"ai_uncontrolled": true,
+	"armour_type": "Medium",
+	"build_time": 450,
 	"can_fly": true,
-	"projectable": false,
 	"circles": true,
-	"selectable": false,
-	"height_offset": 8.0,
+	"cost": 1100,
+	"damage_effect": "LargeDamageFX",
+	"debris": "DebrisMedium",
 	"exclude_from_skirmish_lose": true,
-	"source_line": 603
+	"explosion_type": "AerialExplosion",
+	"health": 1600,
+	"height_offset": 8.0,
+	"legacy_name": "Carryall",
+	"projectable": false,
+	"score": 3,
+	"selectable": false,
+	"size": 3,
+	"source_line": 603,
+	"speed": 20.0,
+	"starportable": true,
+	"storm_damage": 10,
+	"tech_level": 5,
+	"turn_rate": 0.1,
+	"unit_group": "FromHanger"
 }
 lists = {
-	"terrain": [
-		"Sand",
-		"Rock",
-		"NBRock",
-		"Ramp"
+	"explosion_effects": [
+		"AerialExplosion"
 	],
 	"primary_buildings": [
 		"HKHanger",
 		"ATHanger",
 		"ORHanger"
 	],
-	"explosion_effects": [
-		"AerialExplosion"
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
 	]
 }
-links = {}

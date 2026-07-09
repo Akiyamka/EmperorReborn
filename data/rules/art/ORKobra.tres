@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_nj1ti"]
+
+[resource]
+script = ExtResource("1_nj1ti")
+id = &"ORKobra"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 49
+fields = {
+	"clip_sphere": 70.0,
+	"icon": "icons\\\\OR_Kobra.tga",
+	"icon_grey": "icons\\\\grey_OR_Kobra.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Units",
+	"source_line": 424,
+	"target_entity": "ORKobra",
+	"target_entity_source_id": 40,
+	"target_entity_type": "unit",
+	"xaf": "OR_Kobra"
+}

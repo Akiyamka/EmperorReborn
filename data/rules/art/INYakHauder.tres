@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_6r48m"]
+
+[resource]
+script = ExtResource("1_6r48m")
+id = &"INYakHauder"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 89
+fields = {
+	"load_flag_only_preplaced": true,
+	"source_line": 658,
+	"target_entity": "INYakHauder",
+	"target_entity_source_id": 72,
+	"target_entity_type": "unit",
+	"xaf": "IN_YakHauder"
+}

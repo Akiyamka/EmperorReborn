@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="TurretConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="1_26xp1"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_26xp1")
 id = &"ATOrnithopterGun"
 entity_type = &"turret"
 source_table = &"turrets"
@@ -11,10 +11,8 @@ source_id = 41
 fields = {
 	"bullet": "TrailMissile_B",
 	"reload_count": 30,
-	"turret_y_rotation_angle": 2.0,
-	"turret_min_y_rotation": -90.0,
+	"turret_bullet_count": 10,
 	"turret_max_y_rotation": 90.0,
-	"turret_bullet_count": 10
+	"turret_min_y_rotation": -90.0,
+	"turret_y_rotation_angle": 2.0
 }
-lists = {}
-links = {}

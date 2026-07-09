@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_legg2"]
+
+[resource]
+script = ExtResource("1_legg2")
+id = &"Deviate_B"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 297
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 1799,
+	"target_entity": "Deviate_B",
+	"target_entity_source_id": 35,
+	"target_entity_type": "bullet",
+	"xaf": "Gasrocket.xaf"
+}

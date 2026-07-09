@@ -1,29 +1,27 @@
-[gd_resource type="Resource" script_class="WarheadConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="WarheadConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/warhead_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/warhead_config.gd" id="1_j2pql"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_j2pql")
 id = &"Stab_W"
 entity_type = &"warhead"
 source_table = &"warheads"
 source_id = 18
 fields = {
 	"armour_damage": {
-		"None": 100.0,
+		"Aircraft": 40.0,
 		"BPV": 90.0,
-		"Light": 5.0,
-		"Medium": 5.0,
-		"Heavy": 5.0,
-		"Concrete": 5.0,
-		"Walls": 5.0,
 		"Building": 5.0,
 		"CY": 5.0,
+		"Concrete": 5.0,
+		"Earplugs": 100.0,
 		"Harvester": 5.0,
+		"Heavy": 5.0,
 		"Invulnerable": 0.0,
-		"Aircraft": 40.0,
-		"Earplugs": 100.0
+		"Light": 5.0,
+		"Medium": 5.0,
+		"None": 100.0,
+		"Walls": 5.0
 	}
 }
-lists = {}
-links = {}

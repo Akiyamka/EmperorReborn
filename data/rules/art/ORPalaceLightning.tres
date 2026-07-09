@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_yv58y"]
+
+[resource]
+script = ExtResource("1_yv58y")
+id = &"ORPalaceLightning"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 354
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 1981,
+	"target_entity": "ORPalaceLightning",
+	"target_entity_source_id": 24,
+	"target_entity_type": "explosion_type",
+	"xaf": "ORPalaceLightning.XBF"
+}

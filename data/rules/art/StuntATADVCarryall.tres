@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_a5l6l"]
+
+[resource]
+script = ExtResource("1_a5l6l")
+id = &"StuntATADVCarryall"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 77
+fields = {
+	"clip_sphere": 110.0,
+	"load_flag_only_preplaced": true,
+	"source_line": 577,
+	"target_entity": "StuntATADVCarryall",
+	"target_entity_source_id": 90,
+	"target_entity_type": "unit",
+	"xaf": "AT_Carryall"
+}

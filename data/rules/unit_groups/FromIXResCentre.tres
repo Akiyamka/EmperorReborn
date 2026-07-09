@@ -1,13 +1,10 @@
-[gd_resource type="Resource" script_class="UnitGroupConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitGroupConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_group_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_group_config.gd" id="1_amdpp"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_amdpp")
 id = &"FromIXResCentre"
 entity_type = &"unit_group"
 source_table = &"unit_groups"
 source_id = 6
-fields = {}
-lists = {}
-links = {}

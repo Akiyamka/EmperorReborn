@@ -1,47 +1,47 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_gqnpk"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_gqnpk")
 id = &"FakeHarvester"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 85
 fields = {
-	"unit_group": "FromFactory",
-	"cost": 1000,
-	"build_time": 720,
-	"size": 3,
-	"speed": 4.0,
-	"turn_rate": 0.15,
 	"armour_type": "Harvester",
+	"build_time": 720,
+	"chaos_effect": "LargeChaosFX",
+	"cost": 1000,
+	"crushes": true,
+	"damage_effect": "LargeDamageFX",
+	"debris": "DebrisLarge",
+	"exclude_from_skirmish_lose": true,
+	"explosion_type": "Explosion",
+	"hawk_effect": "LargeHawkFX",
 	"health": 4500,
-	"tech_level": 2,
+	"legacy_name": "FakeHarvester",
+	"size": 3,
+	"source_line": 646,
+	"speed": 4.0,
 	"storm_damage": 10,
 	"tasty_to_worms": true,
-	"worm_attraction": 2,
-	"debris": "DebrisLarge",
-	"chaos_effect": "LargeChaosFX",
-	"hawk_effect": "LargeHawkFX",
-	"damage_effect": "LargeDamageFX",
-	"explosion_type": "Explosion",
-	"crushes": true,
+	"tech_level": 2,
+	"turn_rate": 0.15,
+	"unit_group": "FromFactory",
 	"view_range_base": 4.0,
 	"view_range_bonus": 6.0,
 	"view_range_bonus_terrain": "InfRock",
-	"exclude_from_skirmish_lose": true,
-	"source_line": 646
+	"worm_attraction": 2
 }
 lists = {
+	"explosion_effects": [
+		"Explosion"
+	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"Ramp"
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

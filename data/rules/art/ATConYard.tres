@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_137rc"]
+
+[resource]
+script = ExtResource("1_137rc")
+id = &"ATConYard"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 105
+fields = {
+	"clip_sphere": 140.0,
+	"icon": "icons\\\\ico2_acy.tga",
+	"icon_grey": "icons\\\\grey_ico2_acy.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 740,
+	"target_entity": "ATConYard",
+	"target_entity_source_id": 27,
+	"target_entity_type": "building",
+	"xaf": "AT_Conyard",
+	"xaf_construction": "construction_AT_construction_yard_high.XBF"
+}

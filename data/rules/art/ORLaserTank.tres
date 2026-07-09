@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_72dxk"]
+
+[resource]
+script = ExtResource("1_72dxk")
+id = &"ORLaserTank"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 47
+fields = {
+	"clip_sphere": 60.0,
+	"icon": "icons\\\\OR_LaserTank.tga",
+	"icon_grey": "icons\\\\grey_OR_LaserTank.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Units",
+	"source_line": 410,
+	"target_entity": "ORLaserTank",
+	"target_entity_source_id": 38,
+	"target_entity_type": "unit",
+	"xaf": "Or_lasertank"
+}

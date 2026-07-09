@@ -1,20 +1,18 @@
-[gd_resource type="Resource" script_class="DebrisConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="DebrisConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/debris_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/debris_config.gd" id="1_k6qy3"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_k6qy3")
 id = &"DebrisLarge"
 entity_type = &"debris"
 source_table = &"debris_types"
 source_id = 0
 fields = {
 	"missile_trail": 3,
+	"missile_trail_delta": 0.7,
+	"missile_trail_length": 8,
 	"missile_trail_size": 2,
 	"missile_trail_wiggle_freq": 120,
-	"missile_trail_wiggle_scale": 22,
-	"missile_trail_length": 8,
-	"missile_trail_delta": 0.7
+	"missile_trail_wiggle_scale": 22
 }
-lists = {}
-links = {}

@@ -1,33 +1,37 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_gxyay"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_gxyay")
 id = &"HKConYard"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 13
 fields = {
-	"house": "Harkonnen",
-	"cost": 2000,
-	"health": 4000,
-	"storm_damage": 5,
-	"roof_height": 107,
-	"score": 4,
-	"num_infantry_when_gone": 3,
+	"ai_critical": true,
 	"can_be_engineered": true,
 	"can_be_primary": true,
-	"is_con_yard": true,
-	"upgrade_tech_level": 4,
-	"upgrade_cost": 600,
-	"ai_critical": true,
-	"explosion_type": "BigExplosion",
+	"cost": 2000,
 	"debris": "DebrisLarge",
-	"view_range_base": 10.0,
-	"source_line": 342
+	"explosion_type": "BigExplosion",
+	"health": 4000,
+	"house": "Harkonnen",
+	"is_con_yard": true,
+	"legacy_name": "HKConYard",
+	"num_infantry_when_gone": 3,
+	"roof_height": 107,
+	"score": 4,
+	"source_line": 342,
+	"storm_damage": 5,
+	"upgrade_cost": 600,
+	"upgrade_tech_level": 4,
+	"view_range_base": 10.0
 }
 lists = {
+	"explosion_effects": [
+		"BigExplosion"
+	],
 	"occupy_rows": [
 		"sssss",
 		"sssss",
@@ -43,17 +47,14 @@ lists = {
 	],
 	"terrain": [
 		"Rock"
-	],
-	"explosion_effects": [
-		"BigExplosion"
 	]
 }
 links = {
 	"resources": [
 		{
 			"seq": 0,
-			"target": "MCV",
-			"source_line": 3009
+			"source_line": 3010,
+			"target": "MCV"
 		}
 	]
 }

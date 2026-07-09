@@ -1,27 +1,31 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_egvi5"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_egvi5")
 id = &"INCrash"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 130
 fields = {
-	"house": "Incidental",
 	"cost": 100,
-	"health": 10,
-	"tech_level": 1,
-	"power_used": 0,
-	"is_con_yard": false,
-	"explosion_type": "SmExplosion",
-	"debris": "DebrisSmall",
 	"counts_for_stats": false,
-	"view_range_base": 0.0,
-	"source_line": 489
+	"debris": "DebrisSmall",
+	"explosion_type": "SmExplosion",
+	"health": 10,
+	"house": "Incidental",
+	"is_con_yard": false,
+	"legacy_name": "INCrash",
+	"power_used": 0,
+	"source_line": 489,
+	"tech_level": 1,
+	"view_range_base": 0.0
 }
 lists = {
+	"explosion_effects": [
+		"SmExplosion"
+	],
 	"occupy_rows": [
 		"bbb",
 		"bbb",
@@ -29,9 +33,5 @@ lists = {
 	],
 	"terrain": [
 		"Rock"
-	],
-	"explosion_effects": [
-		"SmExplosion"
 	]
 }
-links = {}

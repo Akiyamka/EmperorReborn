@@ -1,55 +1,55 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_kp7cu"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_kp7cu")
 id = &"IMAPC"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 96
 fields = {
-	"house": "Imperial",
-	"unit_group": "FromFactory",
-	"cost": 600,
-	"build_time": 499,
-	"size": 2,
-	"speed": 8.0,
-	"turn_rate": 0.1,
-	"armour_type": "Medium",
-	"health": 1200,
-	"tech_level": 4,
-	"storm_damage": 10,
-	"tasty_to_worms": true,
-	"worm_attraction": 5,
-	"score": 3,
-	"reinforcement_value": 6,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "Explosion",
-	"crushes": true,
-	"starportable": true,
 	"ai_special": true,
+	"armour_type": "Medium",
+	"build_time": 499,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 600,
+	"crushes": true,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
+	"explosion_type": "Explosion",
 	"gets_height_advantage": false,
-	"upgraded_primary_required": true,
+	"hawk_effect": "MediumHawkFX",
+	"health": 1200,
 	"hit_slow_down_amount": 50,
 	"hit_slow_down_duration": 100,
+	"house": "Imperial",
+	"legacy_name": "IMAPC",
+	"reinforcement_value": 6,
+	"score": 3,
+	"size": 2,
+	"source_line": 795,
+	"speed": 8.0,
+	"starportable": true,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"tech_level": 4,
+	"turn_rate": 0.1,
+	"unit_group": "FromFactory",
+	"upgraded_primary_required": true,
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 795
+	"worm_attraction": 5
 }
 lists = {
+	"explosion_effects": [
+		"Explosion"
+	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"Ramp"
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

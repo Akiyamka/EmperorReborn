@@ -1,28 +1,27 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_o0ffp"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_o0ffp")
 id = &"Gas_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 19
 fields = {
+	"blast_radius": 96.0,
 	"damage": 500.0,
-	"max_range": 14.0,
-	"warhead": "Flame_W",
 	"debris": "DebrisSmall",
 	"explosion_type": "DeviateHit",
-	"blast_radius": 96.0,
-	"reduce_damage_with_distance": false,
 	"friendly_damage_amount": 50.0,
+	"gassed": true,
+	"max_range": 14.0,
+	"reduce_damage_with_distance": false,
 	"trajectory": true,
-	"gassed": true
+	"warhead": "Flame_W"
 }
 lists = {
 	"explosion_effects": [
 		"DeviateHit"
 	]
 }
-links = {}

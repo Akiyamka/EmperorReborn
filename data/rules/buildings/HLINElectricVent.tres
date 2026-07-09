@@ -1,27 +1,31 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_60hj0"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_60hj0")
 id = &"HLINElectricVent"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 104
 fields = {
-	"house": "Incidental",
 	"cost": 100,
-	"health": 1000,
-	"tech_level": 1,
-	"power_used": 0,
-	"is_con_yard": false,
-	"explosion_type": "MidExplosion",
-	"debris": "DebrisSmall",
 	"counts_for_stats": false,
-	"view_range_base": 10.0,
-	"source_line": 458
+	"debris": "DebrisSmall",
+	"explosion_type": "MidExplosion",
+	"health": 1000,
+	"house": "Incidental",
+	"is_con_yard": false,
+	"legacy_name": "HLINElectricVent",
+	"power_used": 0,
+	"source_line": 458,
+	"tech_level": 1,
+	"view_range_base": 10.0
 }
 lists = {
+	"explosion_effects": [
+		"MidExplosion"
+	],
 	"occupy_rows": [
 		"dbbbbd",
 		"bbbbbb",
@@ -32,9 +36,5 @@ lists = {
 	],
 	"terrain": [
 		"Rock"
-	],
-	"explosion_effects": [
-		"MidExplosion"
 	]
 }
-links = {}

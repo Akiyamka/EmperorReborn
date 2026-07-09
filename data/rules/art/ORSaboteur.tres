@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_negs0"]
+
+[resource]
+script = ExtResource("1_negs0")
+id = &"ORSaboteur"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 18
+fields = {
+	"crap_shadow_size": -1.0,
+	"icon": "icons\\\\OR_Saboteur.tga",
+	"icon_grey": "icons\\\\Grey_OR_Saboteur.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Infantry",
+	"source_line": 198,
+	"target_entity": "ORSaboteur",
+	"target_entity_source_id": 15,
+	"target_entity_type": "unit",
+	"xaf": "OR_Saboteur"
+}

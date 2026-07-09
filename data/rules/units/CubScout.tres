@@ -1,41 +1,42 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_bqna6"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_bqna6")
 id = &"CubScout"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 23
 fields = {
-	"house": "Incidental",
-	"unit_group": "FromBarracks",
-	"cost": 40,
-	"size": 1,
-	"speed": 6.0,
-	"turn_rate": 0.2,
-	"armour_type": "None",
+	"ai_critical": true,
+	"ai_threat": 40,
 	"armour_modifier_percent": 50.0,
 	"armour_modifier_terrain": "InfRock",
-	"health": 200,
-	"tech_level": 1,
-	"storm_damage": 10,
-	"tasty_to_worms": false,
-	"worm_attraction": 4,
-	"ai_threat": 40,
-	"score": 1,
-	"chaos_effect": "SmallChaosFX",
-	"hawk_effect": "SmallHawkFX",
-	"can_move_any_direction": true,
+	"armour_type": "None",
 	"can_be_deviated": false,
 	"can_be_repaired": false,
-	"infantry": true,
-	"crushable": true,
-	"ai_critical": true,
 	"can_be_suppressed": true,
+	"can_move_any_direction": true,
+	"chaos_effect": "SmallChaosFX",
+	"cost": 40,
+	"crushable": true,
+	"hawk_effect": "SmallHawkFX",
+	"health": 200,
+	"house": "Incidental",
+	"infantry": true,
+	"legacy_name": "CubScout",
+	"score": 1,
+	"size": 1,
+	"source_line": 551,
+	"speed": 6.0,
+	"storm_damage": 10,
+	"tasty_to_worms": false,
+	"tech_level": 1,
+	"turn_rate": 0.2,
+	"unit_group": "FromBarracks",
 	"view_range_base": 20.0,
-	"source_line": 551
+	"worm_attraction": 4
 }
 lists = {
 	"terrain": [
@@ -46,4 +47,3 @@ lists = {
 		"Ramp"
 	]
 }
-links = {}

@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_qtasm"]
+
+[resource]
+script = ExtResource("1_qtasm")
+id = &"HKBuzzsaw"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 29
+fields = {
+	"clip_sphere": 60.0,
+	"icon": "icons\\\\HK_BuzzSaw.tga",
+	"icon_grey": "icons\\\\grey_HK_BuzzSaw.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Units",
+	"source_line": 282,
+	"target_entity": "HKBuzzsaw",
+	"target_entity_source_id": 25,
+	"target_entity_type": "unit",
+	"xaf": "HK_buzzsaw"
+}

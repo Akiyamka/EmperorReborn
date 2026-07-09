@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_3kqs8"]
+
+[resource]
+script = ExtResource("1_3kqs8")
+id = &"ATADP"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 44
+fields = {
+	"clip_sphere": 60.0,
+	"icon": "icons\\\\AT_Drone.tga",
+	"icon_grey": "icons\\\\grey_AT_Drone.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Units",
+	"source_line": 385,
+	"target_entity": "ATADP",
+	"target_entity_source_id": 49,
+	"target_entity_type": "unit",
+	"xaf": "AT_Drone"
+}

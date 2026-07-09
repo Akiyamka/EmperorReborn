@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_goxdn"]
+
+[resource]
+script = ExtResource("1_goxdn")
+id = &"BeaconFlare"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 159
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 1199,
+	"target_entity": "BeaconFlare",
+	"target_entity_source_id": 49,
+	"target_entity_type": "building",
+	"xaf": "BeaconFlare"
+}

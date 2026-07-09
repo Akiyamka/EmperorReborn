@@ -1,49 +1,52 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_esj5o"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_esj5o")
 id = &"HKFlame"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 27
 fields = {
-	"house": "Harkonnen",
-	"unit_group": "FromFactory",
-	"cost": 900,
-	"build_time": 499,
-	"size": 2,
-	"speed": 6.0,
-	"turn_rate": 0.175,
+	"ai_tank": true,
+	"ai_threat": 80,
 	"armour_type": "Medium",
+	"build_time": 499,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 900,
+	"crushes": true,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
+	"explosion_type": "Explosion",
+	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
 	"health": 1800,
-	"tech_level": 4,
+	"house": "Harkonnen",
+	"legacy_name": "HKFlame",
+	"reinforcement_value": 6,
+	"score": 3,
+	"size": 2,
+	"source_line": 560,
+	"speed": 6.0,
+	"starportable": true,
 	"storm_damage": 10,
 	"tasty_to_worms": true,
-	"worm_attraction": 7,
-	"ai_threat": 80,
-	"score": 3,
-	"reinforcement_value": 6,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "Explosion",
-	"crushes": true,
-	"starportable": true,
-	"ai_tank": true,
-	"gets_height_advantage": false,
+	"tech_level": 4,
+	"turn_rate": 0.175,
+	"unit_group": "FromFactory",
 	"upgraded_primary_required": true,
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 560
+	"worm_attraction": 7
 }
 lists = {
-	"turrets": [
-		"HKFlameTankRight",
-		"HKFlameTankLeft"
+	"explosion_effects": [
+		"Explosion"
+	],
+	"primary_buildings": [
+		"HKFactory"
 	],
 	"terrain": [
 		"Sand",
@@ -51,29 +54,26 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"HKFactory"
+	"turrets": [
+		"HKFlameTankRight",
+		"HKFlameTankLeft"
 	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 25.0,
 			"level_order": 1,
-			"veterancy_score": 10,
-			"extra_damage_percent": 25.0
+			"veterancy_score": 10
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 2,
-			"veterancy_score": 24,
-			"can_self_repair": true
+			"veterancy_score": 24
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 48,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 50.0,
-			"extra_armour_percent": 50.0
+			"level_order": 3,
+			"veterancy_score": 48
 		}
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

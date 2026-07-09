@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_1y2sb"]
+
+[resource]
+script = ExtResource("1_1y2sb")
+id = &"GUNIAP"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 86
+fields = {
+	"load_flag_only_preplaced": true,
+	"source_line": 642,
+	"target_entity": "GUNIAP",
+	"target_entity_source_id": 94,
+	"target_entity_type": "unit",
+	"xaf": "GU_IN_NIAP"
+}

@@ -1,28 +1,32 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_i56iw"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_i56iw")
 id = &"TLINGreenhouse"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 131
 fields = {
-	"house": "Incidental",
 	"cost": 100,
-	"health": 10,
-	"tech_level": 1,
-	"power_used": 0,
-	"storm_damage": 10,
-	"is_con_yard": false,
-	"explosion_type": "MidExplosion",
-	"debris": "DebrisSmall",
 	"counts_for_stats": false,
-	"view_range_base": 0.0,
-	"source_line": 490
+	"debris": "DebrisSmall",
+	"explosion_type": "MidExplosion",
+	"health": 10,
+	"house": "Incidental",
+	"is_con_yard": false,
+	"legacy_name": "TLINGreenhouse",
+	"power_used": 0,
+	"source_line": 490,
+	"storm_damage": 10,
+	"tech_level": 1,
+	"view_range_base": 0.0
 }
 lists = {
+	"explosion_effects": [
+		"MidExplosion"
+	],
 	"occupy_rows": [
 		"bbbb",
 		"bbbb",
@@ -31,9 +35,5 @@ lists = {
 	],
 	"terrain": [
 		"Rock"
-	],
-	"explosion_effects": [
-		"MidExplosion"
 	]
 }
-links = {}

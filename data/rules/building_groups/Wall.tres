@@ -1,13 +1,10 @@
-[gd_resource type="Resource" script_class="BuildingGroupConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingGroupConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_group_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_group_config.gd" id="1_dk33j"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_dk33j")
 id = &"Wall"
 entity_type = &"building_group"
 source_table = &"building_groups"
 source_id = 1
-fields = {}
-lists = {}
-links = {}

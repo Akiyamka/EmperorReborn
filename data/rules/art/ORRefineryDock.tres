@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_4ccb7"]
+
+[resource]
+script = ExtResource("1_4ccb7")
+id = &"ORRefineryDock"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 146
+fields = {
+	"icon": "icons\\\\OR_RefineryPAD.tga",
+	"icon_grey": "icons\\\\grey_OR_RefineryPAD.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 1095,
+	"target_entity": "ORRefineryDock",
+	"target_entity_source_id": 48,
+	"target_entity_type": "building",
+	"xaf": "hk_refinery",
+	"xaf_construction": "construction_HK_refinery_high.xaf"
+}

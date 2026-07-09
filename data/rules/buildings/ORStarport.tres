@@ -1,36 +1,52 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_bae2a"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_bae2a")
 id = &"ORStarport"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 38
 fields = {
-	"house": "Ordos",
-	"building_group": "Starport",
-	"cost": 1500,
-	"build_time": 720,
-	"health": 2500,
-	"tech_level": 7,
-	"power_used": 100,
-	"storm_damage": 5,
-	"roof_height": 70,
-	"score": 4,
-	"num_infantry_when_gone": 3,
-	"can_be_engineered": true,
-	"can_be_primary": true,
-	"is_con_yard": false,
 	"ai_exit": true,
 	"ai_manufacturing": true,
-	"explosion_type": "MidExplosion",
+	"build_time": 720,
+	"building_group": "Starport",
+	"can_be_engineered": true,
+	"can_be_primary": true,
+	"cost": 1500,
 	"debris": "DebrisLarge",
-	"view_range_base": 10.0,
-	"source_line": 373
+	"explosion_type": "MidExplosion",
+	"health": 2500,
+	"house": "Ordos",
+	"is_con_yard": false,
+	"legacy_name": "ORStarport",
+	"num_infantry_when_gone": 3,
+	"power_used": 100,
+	"roof_height": 70,
+	"score": 4,
+	"source_line": 373,
+	"storm_damage": 5,
+	"tech_level": 7,
+	"view_range_base": 10.0
 }
 lists = {
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 3,
+			"tile_y": 7
+		},
+		{
+			"seq": 1,
+			"tile_x": 3,
+			"tile_y": 1
+		}
+	],
+	"explosion_effects": [
+		"MidExplosion"
+	],
 	"occupy_rows": [
 		"sssssssss",
 		"sssssssss",
@@ -44,9 +60,6 @@ lists = {
 		"nnbbbbbnn",
 		"nnbbbbnnn"
 	],
-	"terrain": [
-		"Rock"
-	],
 	"requires_primary": [
 		"HKConYard",
 		"ATConYard",
@@ -57,23 +70,10 @@ lists = {
 		"ATHanger",
 		"ORHanger"
 	],
-	"deploy_points": [
-		{
-			"seq": 0,
-			"tile_x": 3,
-			"tile_y": 7
-		},
-		{
-			"seq": 1,
-			"tile_x": 3,
-			"tile_y": 1
-		}
-	],
 	"roles": [
 		"Starport"
 	],
-	"explosion_effects": [
-		"MidExplosion"
+	"terrain": [
+		"Rock"
 	]
 }
-links = {}

@@ -1,13 +1,10 @@
-[gd_resource type="Resource" script_class="WarheadConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="WarheadConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/warhead_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/warhead_config.gd" id="1_geq0n"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_geq0n")
 id = &"AntiPersonnel"
 entity_type = &"warhead"
 source_table = &"warheads"
 source_id = 0
-fields = {}
-lists = {}
-links = {}

@@ -1,13 +1,10 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_tpfbl"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_tpfbl")
 id = &"Beam_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 41
-fields = {}
-lists = {}
-links = {}

@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_cisuf"]
+
+[resource]
+script = ExtResource("1_cisuf")
+id = &"TLFleshVat"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 154
+fields = {
+	"clip_sphere": 150.0,
+	"icon": "icons\\\\TL_FleshVat.tga",
+	"icon_grey": "icons\\\\grey_TL_FleshVat.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 1158,
+	"target_entity": "TLFleshVat",
+	"target_entity_source_id": 41,
+	"target_entity_type": "building",
+	"xaf": "TL_Fleshvat",
+	"xaf_construction": "TL_Fleshvat.xaf"
+}

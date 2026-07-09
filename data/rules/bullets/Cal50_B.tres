@@ -1,24 +1,23 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_x17b2"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_x17b2")
 id = &"Cal50_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 13
 fields = {
 	"damage": 600.0,
-	"max_range": 12.0,
-	"warhead": "50.cal_W",
 	"debris": "DebrisSmall",
+	"explosion_type": "SniperHit",
+	"max_range": 12.0,
 	"speed": -1.0,
-	"explosion_type": "SniperHit"
+	"warhead": "50.cal_W"
 }
 lists = {
 	"explosion_effects": [
 		"SniperHit"
 	]
 }
-links = {}

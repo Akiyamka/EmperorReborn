@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_8lkgm"]
+
+[resource]
+script = ExtResource("1_8lkgm")
+id = &"ATMinotaurus"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 37
+fields = {
+	"clip_sphere": 60.0,
+	"icon": "icons\\\\At_Minotaurus.tga",
+	"icon_grey": "icons\\\\grey_AT_Minotaurus.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Units",
+	"source_line": 338,
+	"target_entity": "ATMinotaurus",
+	"target_entity_source_id": 35,
+	"target_entity_type": "unit",
+	"xaf": "AT_minotaurus"
+}

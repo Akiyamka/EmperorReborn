@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_w1mwu"]
+
+[resource]
+script = ExtResource("1_w1mwu")
+id = &"HKINMossPalace"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 186
+fields = {
+	"load_flag_only_preplaced": true,
+	"source_line": 1330,
+	"target_entity": "HKINMossPalace",
+	"target_entity_source_id": 71,
+	"target_entity_type": "building",
+	"xaf": "HK_IN_MossPalace"
+}

@@ -1,45 +1,46 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_jqwiy"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_jqwiy")
 id = &"SMQuad"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 84
 fields = {
-	"house": "Incidental",
-	"unit_group": "FromFactory",
-	"cost": 1200,
-	"build_time": 589,
-	"size": 2,
-	"speed": 6.0,
-	"turn_rate": 0.175,
+	"ai_tank": true,
+	"ai_threat": 60,
 	"armour_type": "Light",
+	"build_time": 589,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 1200,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
+	"explosion_type": "Explosion",
+	"hawk_effect": "MediumHawkFX",
 	"health": 1000,
-	"tech_level": 5,
+	"house": "Incidental",
+	"legacy_name": "SMQuad",
+	"reinforcement_value": 7,
+	"score": 3,
+	"size": 2,
+	"source_line": 645,
+	"speed": 6.0,
+	"starportable": true,
 	"storm_damage": 10,
 	"tasty_to_worms": true,
-	"worm_attraction": 6,
-	"ai_threat": 60,
-	"score": 3,
-	"reinforcement_value": 7,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "Explosion",
-	"starportable": true,
-	"ai_tank": true,
+	"tech_level": 5,
+	"turn_rate": 0.175,
+	"unit_group": "FromFactory",
 	"view_range_base": 4.0,
 	"view_range_bonus": 14.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 645
+	"worm_attraction": 6
 }
 lists = {
-	"turrets": [
-		"ORAPCBase"
+	"explosion_effects": [
+		"Explosion"
 	],
 	"terrain": [
 		"Sand",
@@ -47,25 +48,24 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
+	"turrets": [
+		"ORAPCBase"
+	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 50.0,
 			"level_order": 1,
-			"veterancy_score": 6,
-			"extra_damage_percent": 50.0
+			"veterancy_score": 6
 		},
 		{
+			"extra_armour_percent": 50.0,
 			"level_order": 2,
-			"veterancy_score": 14,
-			"extra_armour_percent": 50.0
+			"veterancy_score": 14
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 3,
-			"veterancy_score": 28,
-			"can_self_repair": true
+			"veterancy_score": 28
 		}
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

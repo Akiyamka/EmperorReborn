@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_uo340"]
+
+[resource]
+script = ExtResource("1_uo340")
+id = &"FRADVFremen"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 81
+fields = {
+	"icon": "icons\\\\FR_ADVFremen.tga",
+	"icon_grey": "icons\\\\grey_FR_ADVFremen.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Infantry",
+	"source_line": 605,
+	"target_entity": "FRADVFremen",
+	"target_entity_source_id": 65,
+	"target_entity_type": "unit",
+	"xaf": "FR_ADVFremen"
+}

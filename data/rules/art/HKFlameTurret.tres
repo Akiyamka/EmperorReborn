@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_71acm"]
+
+[resource]
+script = ExtResource("1_71acm")
+id = &"HKFlameTurret"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 131
+fields = {
+	"clip_sphere": 85.0,
+	"icon": "icons\\\\HK_FlameTurret.tga",
+	"icon_grey": "icons\\\\grey_HK_FlameTurret.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 966,
+	"target_entity": "HKFlameTurret",
+	"target_entity_source_id": 7,
+	"target_entity_type": "building",
+	"xaf": "hk_flameturret",
+	"xaf_construction": "construction_hk_flameturret_high.xaf"
+}

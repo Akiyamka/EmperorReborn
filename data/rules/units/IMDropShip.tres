@@ -1,44 +1,44 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_c6mar"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_c6mar")
 id = &"IMDropShip"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 63
 fields = {
-	"house": "Imperial",
-	"cost": 1100,
-	"size": 3,
-	"speed": 8.0,
-	"turn_rate": 0.1,
-	"armour_type": "Medium",
-	"health": 3000,
-	"tech_level": 5,
-	"storm_damage": 10,
-	"debris": "DebrisMedium",
-	"chaos_effect": "LargeChaosFX",
-	"hawk_effect": "LargeHawkFX",
-	"damage_effect": "LargeDamageFX",
-	"explosion_type": "AerialExplosion",
 	"ai_special": true,
 	"ai_uncontrolled": true,
+	"armour_type": "Medium",
 	"can_fly": true,
-	"selectable": false,
+	"chaos_effect": "LargeChaosFX",
+	"cost": 1100,
+	"damage_effect": "LargeDamageFX",
+	"debris": "DebrisMedium",
 	"exclude_from_skirmish_lose": true,
-	"source_line": 618
+	"explosion_type": "AerialExplosion",
+	"hawk_effect": "LargeHawkFX",
+	"health": 3000,
+	"house": "Imperial",
+	"legacy_name": "IMDropShip",
+	"selectable": false,
+	"size": 3,
+	"source_line": 618,
+	"speed": 8.0,
+	"storm_damage": 10,
+	"tech_level": 5,
+	"turn_rate": 0.1
 }
 lists = {
+	"explosion_effects": [
+		"AerialExplosion"
+	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"Ramp"
-	],
-	"explosion_effects": [
-		"AerialExplosion"
 	]
 }
-links = {}

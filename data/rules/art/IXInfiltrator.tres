@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_dthyu"]
+
+[resource]
+script = ExtResource("1_dthyu")
+id = &"IXInfiltrator"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 63
+fields = {
+	"icon": "icons\\\\IX_Infiltrator.tga",
+	"icon_grey": "icons\\\\grey_IX_Infiltrator.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Units",
+	"source_line": 509,
+	"target_entity": "IXInfiltrator",
+	"target_entity_source_id": 57,
+	"target_entity_type": "unit",
+	"xaf": "IX_Infiltrator"
+}

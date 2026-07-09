@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_kpuke"]
+
+[resource]
+script = ExtResource("1_kpuke")
+id = &"OREngineer"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 19
+fields = {
+	"crap_shadow_size": -1.0,
+	"icon": "icons\\\\OR_Engineer.tga",
+	"icon_grey": "icons\\\\Grey_OR_Engineer.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Infantry",
+	"source_line": 205,
+	"target_entity": "OREngineer",
+	"target_entity_source_id": 13,
+	"target_entity_type": "unit",
+	"xaf": "OR_Engineer"
+}

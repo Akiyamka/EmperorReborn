@@ -1,22 +1,23 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_2512n"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_2512n")
 id = &"BeaconFlare"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 49
 fields = {
-	"house": "Incidental",
 	"cost": 0,
 	"health": 3200,
-	"tech_level": 3,
-	"power_used": 0,
+	"house": "Incidental",
 	"is_con_yard": false,
-	"view_range_base": 10.0,
-	"source_line": 394
+	"legacy_name": "BeaconFlare",
+	"power_used": 0,
+	"source_line": 394,
+	"tech_level": 3,
+	"view_range_base": 10.0
 }
 lists = {
 	"occupy_rows": [
@@ -27,4 +28,3 @@ lists = {
 		"Rock"
 	]
 }
-links = {}

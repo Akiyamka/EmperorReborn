@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="ArtSidebarTypesConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_sidebar_types_config.gd" id="1_lyvic"]
+
+[resource]
+script = ExtResource("1_lyvic")
+id = &"sidebar_types"
+entity_type = &"art_sidebar_types"
+source_table = &"art_sidebar_types"
+lists = {
+	"entries": [
+		{
+			"name": "Buildings",
+			"seq": 0
+		},
+		{
+			"name": "Units",
+			"seq": 1
+		},
+		{
+			"name": "Infantry",
+			"seq": 2
+		}
+	],
+	"names": [
+		"Buildings",
+		"Units",
+		"Infantry"
+	]
+}

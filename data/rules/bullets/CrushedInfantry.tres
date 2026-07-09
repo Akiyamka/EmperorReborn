@@ -1,22 +1,20 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_1f6v0"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_1f6v0")
 id = &"CrushedInfantry"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 64
 fields = {
-	"damage": 330.0,
-	"max_range": 0.0,
-	"warhead": "ArmourOnly_W",
-	"debris": "DebrisSmall",
-	"blow_up": true,
 	"blast_radius": 32.0,
+	"blow_up": true,
+	"damage": 330.0,
+	"debris": "DebrisSmall",
+	"friendly_damage_amount": 0.0,
+	"max_range": 0.0,
 	"reduce_damage_with_distance": false,
-	"friendly_damage_amount": 0.0
+	"warhead": "ArmourOnly_W"
 }
-lists = {}
-links = {}

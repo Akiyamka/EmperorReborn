@@ -1,76 +1,77 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_48fcl"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_48fcl")
 id = &"MCV"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 55
 fields = {
-	"unit_group": "FromFactory",
-	"cost": 2000,
-	"build_time": 864,
-	"size": 3,
-	"speed": 4.0,
-	"turn_rate": 0.175,
+	"ai_special": true,
+	"ai_threat": 5,
 	"armour_type": "Heavy",
+	"build_time": 864,
+	"chaos_effect": "LargeChaosFX",
+	"cost": 2000,
+	"crate_gift": true,
+	"crushes": true,
+	"damage_effect": "LargeDamageFX",
+	"debris": "DebrisLarge",
+	"explosion_type": "Explosion",
+	"hawk_effect": "LargeHawkFX",
 	"health": 4500,
-	"tech_level": 2,
+	"legacy_name": "MCV",
+	"reinforcement_value": 7,
+	"roof_height": 52,
+	"score": 4,
+	"size": 3,
+	"source_line": 602,
+	"speed": 4.0,
+	"starportable": true,
 	"storm_damage": 10,
 	"tasty_to_worms": true,
-	"worm_attraction": 1,
-	"ai_threat": 5,
-	"score": 4,
-	"reinforcement_value": 7,
-	"debris": "DebrisLarge",
-	"chaos_effect": "LargeChaosFX",
-	"hawk_effect": "LargeHawkFX",
-	"damage_effect": "LargeDamageFX",
-	"explosion_type": "Explosion",
-	"crushes": true,
-	"starportable": true,
-	"ai_special": true,
-	"crate_gift": true,
-	"roof_height": 52,
+	"tech_level": 2,
+	"turn_rate": 0.175,
+	"unit_group": "FromFactory",
 	"view_range_base": 12.0,
 	"view_range_bonus": 14.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 602
+	"worm_attraction": 1
 }
 lists = {
-	"terrain": [
-		"Sand",
-		"Rock",
-		"NBRock",
-		"Ramp"
+	"explosion_effects": [
+		"Explosion"
 	],
 	"primary_buildings": [
 		"HKFactory",
 		"ATFactory",
 		"ORFactory"
 	],
-	"explosion_effects": [
-		"Explosion"
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
 	]
 }
 links = {
 	"resources": [
 		{
 			"seq": 0,
-			"target": "ATConYard",
-			"source_line": 6869
+			"source_line": 6870,
+			"target": "ATConYard"
 		},
 		{
 			"seq": 1,
-			"target": "HKConYard",
-			"source_line": 6869
+			"source_line": 6870,
+			"target": "HKConYard"
 		},
 		{
 			"seq": 2,
-			"target": "ORConYard",
-			"source_line": 6869
+			"source_line": 6870,
+			"target": "ORConYard"
 		}
 	]
 }

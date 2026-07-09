@@ -1,42 +1,43 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_ng53v"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_ng53v")
 id = &"WormRider"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 68
 fields = {
-	"house": "Fremen",
+	"ai_foot": true,
+	"armour_type": "None",
+	"can_be_deviated": false,
+	"chaos_effect": "LargeChaosFX",
 	"cost": 150,
+	"hawk_effect": "LargeHawkFX",
+	"health": 10000,
+	"house": "Fremen",
+	"legacy_name": "WormRider",
 	"size": 3,
+	"source_line": 626,
 	"speed": 6.0,
 	"turn_rate": 0.05,
-	"armour_type": "None",
-	"health": 10000,
-	"chaos_effect": "LargeChaosFX",
-	"hawk_effect": "LargeHawkFX",
-	"can_be_deviated": false,
-	"ai_foot": true,
-	"view_range_base": 24.0,
-	"source_line": 626
+	"view_range_base": 24.0
 }
 lists = {
-	"turrets": [
-		"WormRiderGun"
-	],
 	"terrain": [
 		"Sand"
+	],
+	"turrets": [
+		"WormRiderGun"
 	]
 }
 links = {
 	"resources": [
 		{
 			"seq": 0,
-			"target": "FRADVFremen",
-			"source_line": 10272
+			"source_line": 10273,
+			"target": "FRADVFremen"
 		}
 	]
 }

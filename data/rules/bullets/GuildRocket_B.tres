@@ -1,27 +1,26 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_nrj2n"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_nrj2n")
 id = &"GuildRocket_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 65
 fields = {
-	"damage": 300.0,
-	"max_range": 7.0,
-	"warhead": "HEATAIR_W",
-	"debris": "DebrisSmall",
-	"speed": 28.0,
-	"explosion_type": "MissileHit",
 	"blow_up": true,
+	"damage": 300.0,
+	"debris": "DebrisSmall",
+	"explosion_type": "MissileHit",
 	"homing": true,
-	"turn_rate": 0.3
+	"max_range": 7.0,
+	"speed": 28.0,
+	"turn_rate": 0.3,
+	"warhead": "HEATAIR_W"
 }
 lists = {
 	"explosion_effects": [
 		"MissileHit"
 	]
 }
-links = {}

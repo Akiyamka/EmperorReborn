@@ -1,28 +1,32 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_qp2nq"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_qp2nq")
 id = &"IMMonument"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 132
 fields = {
-	"house": "Incidental",
 	"cost": 100,
-	"health": 1000,
-	"tech_level": 1,
-	"power_used": 0,
-	"storm_damage": 10,
-	"is_con_yard": false,
-	"explosion_type": "SmExplosion",
-	"debris": "DebrisSmall",
 	"counts_for_stats": false,
-	"view_range_base": 10.0,
-	"source_line": 492
+	"debris": "DebrisSmall",
+	"explosion_type": "SmExplosion",
+	"health": 1000,
+	"house": "Incidental",
+	"is_con_yard": false,
+	"legacy_name": "IMMonument",
+	"power_used": 0,
+	"source_line": 492,
+	"storm_damage": 10,
+	"tech_level": 1,
+	"view_range_base": 10.0
 }
 lists = {
+	"explosion_effects": [
+		"SmExplosion"
+	],
 	"occupy_rows": [
 		"bbbb",
 		"bbbb",
@@ -31,9 +35,5 @@ lists = {
 	],
 	"terrain": [
 		"Rock"
-	],
-	"explosion_effects": [
-		"SmExplosion"
 	]
 }
-links = {}

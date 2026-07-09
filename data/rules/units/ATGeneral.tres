@@ -1,46 +1,44 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_rxcgo"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_rxcgo")
 id = &"ATGeneral"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 17
 fields = {
-	"house": "Atreides",
-	"unit_group": "FromBarracks",
-	"cost": 400,
-	"size": 1,
-	"speed": 6.0,
-	"turn_rate": 0.2,
-	"armour_type": "Earplugs",
+	"ai_special": true,
+	"ai_threat": 60,
 	"armour_modifier_percent": 50.0,
 	"armour_modifier_terrain": "InfRock",
-	"health": 1000,
-	"tech_level": 1,
-	"storm_damage": 10,
-	"tasty_to_worms": false,
-	"worm_attraction": 3,
-	"ai_threat": 60,
-	"score": 4,
-	"chaos_effect": "SmallChaosFX",
-	"hawk_effect": "SmallHawkFX",
-	"can_move_any_direction": true,
+	"armour_type": "Earplugs",
 	"can_be_deviated": false,
 	"can_be_repaired": false,
-	"infantry": true,
-	"crushable": true,
-	"ai_special": true,
 	"can_be_suppressed": true,
+	"can_move_any_direction": true,
+	"chaos_effect": "SmallChaosFX",
+	"cost": 400,
+	"crushable": true,
+	"hawk_effect": "SmallHawkFX",
+	"health": 1000,
+	"house": "Atreides",
+	"infantry": true,
+	"legacy_name": "ATGeneral",
+	"score": 4,
+	"size": 1,
+	"source_line": 545,
+	"speed": 6.0,
+	"storm_damage": 10,
+	"tasty_to_worms": false,
+	"tech_level": 1,
+	"turn_rate": 0.2,
+	"unit_group": "FromBarracks",
 	"view_range_base": 7.0,
-	"source_line": 545
+	"worm_attraction": 3
 }
 lists = {
-	"turrets": [
-		"IMSardaukarGun"
-	],
 	"terrain": [
 		"Sand",
 		"Rock",
@@ -48,23 +46,25 @@ lists = {
 		"InfRock",
 		"Ramp"
 	],
+	"turrets": [
+		"IMSardaukarGun"
+	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 25.0,
 			"level_order": 1,
-			"veterancy_score": 5,
-			"extra_damage_percent": 25.0
+			"veterancy_score": 5
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 2,
-			"veterancy_score": 10,
-			"can_self_repair": true
+			"veterancy_score": 10
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 20,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 50.0,
-			"extra_armour_percent": 50.0
+			"level_order": 3,
+			"veterancy_score": 20
 		}
 	]
 }
-links = {}

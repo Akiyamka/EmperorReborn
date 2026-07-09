@@ -1,36 +1,52 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_b2s4t"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_b2s4t")
 id = &"GUPalace"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 42
 fields = {
-	"house": "Guild",
-	"cost": 2000,
+	"ai_exit": true,
+	"ai_manufacturing": true,
 	"build_time": 1080,
-	"health": 5000,
-	"tech_level": 4,
-	"power_used": 180,
-	"storm_damage": 5,
-	"roof_height": 260,
-	"score": 4,
 	"can_be_engineered": true,
 	"can_be_primary": true,
-	"is_con_yard": false,
-	"ai_exit": true,
-	"upgrade_tech_level": 5,
-	"upgrade_cost": 1600,
-	"ai_manufacturing": true,
-	"explosion_type": "BigExplosion",
+	"cost": 2000,
 	"debris": "DebrisLarge",
-	"view_range_base": 10.0,
-	"source_line": 382
+	"explosion_type": "BigExplosion",
+	"health": 5000,
+	"house": "Guild",
+	"is_con_yard": false,
+	"legacy_name": "GUPalace",
+	"power_used": 180,
+	"roof_height": 260,
+	"score": 4,
+	"source_line": 382,
+	"storm_damage": 5,
+	"tech_level": 4,
+	"upgrade_cost": 1600,
+	"upgrade_tech_level": 5,
+	"view_range_base": 10.0
 }
 lists = {
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 3,
+			"tile_y": 5
+		},
+		{
+			"seq": 1,
+			"tile_x": 3,
+			"tile_y": 1
+		}
+	],
+	"explosion_effects": [
+		"BigExplosion"
+	],
 	"occupy_rows": [
 		"sssssss",
 		"sssssss",
@@ -49,9 +65,6 @@ lists = {
 		"ddbbbdd",
 		"bbdbdbb"
 	],
-	"terrain": [
-		"Rock"
-	],
 	"requires_primary": [
 		"HKConYard",
 		"ATConYard",
@@ -62,20 +75,7 @@ lists = {
 		"ATFactory",
 		"ORFactory"
 	],
-	"deploy_points": [
-		{
-			"seq": 0,
-			"tile_x": 3,
-			"tile_y": 5
-		},
-		{
-			"seq": 1,
-			"tile_x": 3,
-			"tile_y": 1
-		}
-	],
-	"explosion_effects": [
-		"BigExplosion"
+	"terrain": [
+		"Rock"
 	]
 }
-links = {}

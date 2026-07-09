@@ -16,6 +16,7 @@ RUN apt-get update \
         ca-certificates \
         curl \
         inotify-tools \
+        sqlite3 \
         unzip \
         libasound2 \
         libdbus-1-3 \

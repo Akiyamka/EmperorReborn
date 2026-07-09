@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="TurretConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="1_worv2"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_worv2")
 id = &"HKTrooperGun"
 entity_type = &"turret"
 source_table = &"turrets"
@@ -13,5 +13,3 @@ fields = {
 	"reload_count": 100,
 	"turret_muzzle_flash": "Muzzle2"
 }
-lists = {}
-links = {}

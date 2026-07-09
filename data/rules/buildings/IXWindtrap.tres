@@ -1,50 +1,50 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_51qrm"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_51qrm")
 id = &"IXWindtrap"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 126
 fields = {
-	"house": "Ix",
-	"building_group": "SmWindtrap",
-	"cost": 225,
 	"build_time": 240,
+	"building_group": "SmWindtrap",
+	"can_be_engineered": true,
+	"cost": 225,
+	"counts_for_stats": false,
+	"debris": "DebrisSmall",
+	"exclude_from_campaign_lose": true,
+	"exclude_from_skirmish_lose": true,
+	"explosion_type": "Explosion",
 	"health": 3000,
-	"tech_level": 1,
+	"house": "Ix",
+	"is_con_yard": false,
+	"legacy_name": "IXWindtrap",
+	"num_infantry_when_gone": 1,
 	"power_generated": 100,
-	"storm_damage": 10,
 	"roof_height": 70,
 	"score": 2,
-	"num_infantry_when_gone": 1,
-	"can_be_engineered": true,
-	"is_con_yard": false,
-	"exclude_from_skirmish_lose": true,
-	"exclude_from_campaign_lose": true,
-	"explosion_type": "Explosion",
-	"debris": "DebrisSmall",
-	"counts_for_stats": false,
-	"view_range_base": 10.0,
-	"source_line": 483
+	"source_line": 483,
+	"storm_damage": 10,
+	"tech_level": 1,
+	"view_range_base": 10.0
 }
 lists = {
+	"explosion_effects": [
+		"Explosion"
+	],
 	"occupy_rows": [
 		"bb",
 		"bb"
-	],
-	"terrain": [
-		"Rock"
 	],
 	"requires_primary": [
 		"HKConYard",
 		"ATConYard",
 		"ORConYard"
 	],
-	"explosion_effects": [
-		"Explosion"
+	"terrain": [
+		"Rock"
 	]
 }
-links = {}

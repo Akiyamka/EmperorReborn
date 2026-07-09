@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_dmdma"]
+
+[resource]
+script = ExtResource("1_dmdma")
+id = &"HMG_B"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 273
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 1727,
+	"target_entity": "HMG_B",
+	"target_entity_source_id": 12,
+	"target_entity_type": "bullet",
+	"xaf": "conceptual.xaf"
+}

@@ -1,55 +1,55 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_mjoui"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_mjoui")
 id = &"ORScout"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 10
 fields = {
-	"house": "Ordos",
-	"unit_group": "FromBarracks",
-	"cost": 30,
-	"build_time": 65,
-	"size": 1,
-	"speed": 8.0,
-	"turn_rate": 0.2,
-	"armour_type": "None",
+	"ai_critical": true,
+	"ai_threat": 0,
 	"armour_modifier_percent": 50.0,
 	"armour_modifier_terrain": "InfRock",
-	"health": 200,
-	"tech_level": 1,
-	"storm_damage": 202,
-	"tasty_to_worms": true,
-	"worm_attraction": 3,
-	"ai_threat": 0,
-	"score": 1,
-	"chaos_effect": "SmallChaosFX",
-	"hawk_effect": "SmallHawkFX",
-	"can_move_any_direction": true,
+	"armour_type": "None",
+	"build_time": 65,
 	"can_be_deviated": false,
 	"can_be_repaired": false,
-	"infantry": true,
-	"crushable": true,
-	"ai_critical": true,
 	"can_be_suppressed": true,
-	"stealthed_when_still": true,
-	"view_range_base": 20.0,
+	"can_move_any_direction": true,
+	"chaos_effect": "SmallChaosFX",
+	"cost": 30,
+	"crushable": true,
 	"exclude_from_skirmish_lose": true,
-	"source_line": 536
+	"hawk_effect": "SmallHawkFX",
+	"health": 200,
+	"house": "Ordos",
+	"infantry": true,
+	"legacy_name": "ORScout",
+	"score": 1,
+	"size": 1,
+	"source_line": 536,
+	"speed": 8.0,
+	"stealthed_when_still": true,
+	"storm_damage": 202,
+	"tasty_to_worms": true,
+	"tech_level": 1,
+	"turn_rate": 0.2,
+	"unit_group": "FromBarracks",
+	"view_range_base": 20.0,
+	"worm_attraction": 3
 }
 lists = {
+	"primary_buildings": [
+		"ORBarracks"
+	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"InfRock",
 		"Ramp"
-	],
-	"primary_buildings": [
-		"ORBarracks"
 	]
 }
-links = {}

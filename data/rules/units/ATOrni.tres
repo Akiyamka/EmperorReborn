@@ -1,48 +1,52 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_lpkuk"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_lpkuk")
 id = &"ATOrni"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 46
 fields = {
-	"house": "Atreides",
-	"unit_group": "FromHanger",
-	"cost": 1000,
-	"build_time": 499,
-	"size": 2,
-	"speed": 20.0,
-	"turn_rate": 0.05,
-	"armour_type": "Aircraft",
-	"health": 1600,
-	"tech_level": 5,
-	"storm_damage": 10,
-	"ai_threat": 80,
-	"score": 3,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "AerialExplosion",
-	"starportable": true,
 	"ai_air": true,
-	"gets_height_advantage": false,
-	"upgraded_primary_required": true,
+	"ai_threat": 80,
+	"armour_type": "Aircraft",
+	"build_time": 499,
 	"can_fly": true,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 1000,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
+	"exclude_from_skirmish_lose": true,
+	"explosion_type": "AerialExplosion",
+	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
+	"health": 1600,
+	"height_offset": 8.0,
 	"hit_slow_down_amount": 50,
 	"hit_slow_down_duration": 100,
+	"house": "Atreides",
+	"legacy_name": "ATOrni",
+	"score": 3,
+	"size": 2,
+	"source_line": 589,
+	"speed": 20.0,
+	"starportable": true,
+	"storm_damage": 10,
+	"tech_level": 5,
+	"turn_rate": 0.05,
+	"unit_group": "FromHanger",
+	"upgraded_primary_required": true,
 	"view_range_base": 4.0,
-	"view_range_bonus": 8.0,
-	"height_offset": 8.0,
-	"exclude_from_skirmish_lose": true,
-	"source_line": 589
+	"view_range_bonus": 8.0
 }
 lists = {
-	"turrets": [
-		"ATOrnithopterGun"
+	"explosion_effects": [
+		"AerialExplosion"
+	],
+	"primary_buildings": [
+		"ATHanger"
 	],
 	"terrain": [
 		"Sand",
@@ -50,37 +54,34 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"ATHanger"
+	"turrets": [
+		"ATOrnithopterGun"
 	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 25.0,
 			"level_order": 1,
-			"veterancy_score": 10,
-			"extra_damage_percent": 25.0
+			"veterancy_score": 10
 		},
 		{
 			"level_order": 2,
-			"veterancy_score": 24,
-			"speed_override": 30.0
+			"speed_override": 30.0,
+			"veterancy_score": 24
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 48,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 50.0,
-			"extra_armour_percent": 50.0
+			"level_order": 3,
+			"veterancy_score": 48
 		}
-	],
-	"explosion_effects": [
-		"AerialExplosion"
 	]
 }
 links = {
 	"resources": [
 		{
 			"seq": 0,
-			"target": "ATHelipad",
-			"source_line": 8761
+			"source_line": 8762,
+			"target": "ATHelipad"
 		}
 	]
 }

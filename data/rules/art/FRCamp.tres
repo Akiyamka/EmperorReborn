@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_6a7w4"]
+
+[resource]
+script = ExtResource("1_6a7w4")
+id = &"FRCamp"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 158
+fields = {
+	"clip_sphere": 100.0,
+	"icon": "icons\\\\FR_Camp.tga",
+	"icon_grey": "icons\\\\grey_FR_Camp.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 1190,
+	"target_entity": "FRCamp",
+	"target_entity_source_id": 45,
+	"target_entity_type": "building",
+	"xaf": "FR_Camp",
+	"xaf_construction": "FR_Camp.xaf"
+}

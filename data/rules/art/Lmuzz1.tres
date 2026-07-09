@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_tdek8"]
+
+[resource]
+script = ExtResource("1_tdek8")
+id = &"Lmuzz1"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 328
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 1901,
+	"target_entity_type": "unresolved",
+	"xaf": "Lmuzz1.xaf"
+}

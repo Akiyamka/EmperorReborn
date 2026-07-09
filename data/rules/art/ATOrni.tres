@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_0jex7"]
+
+[resource]
+script = ExtResource("1_0jex7")
+id = &"ATOrni"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 43
+fields = {
+	"clip_sphere": 60.0,
+	"icon": "icons\\\\AT_Ornithopter.tga",
+	"icon_grey": "icons\\\\grey_AT_Ornithopter.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Units",
+	"source_line": 378,
+	"target_entity": "ATOrni",
+	"target_entity_source_id": 46,
+	"target_entity_type": "unit",
+	"xaf": "AT_Ornithopter"
+}

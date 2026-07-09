@@ -1,50 +1,54 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_5xria"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_5xria")
 id = &"ATMinotaurus"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 35
 fields = {
-	"house": "Atreides",
-	"unit_group": "FromFactory",
-	"cost": 1300,
-	"build_time": 589,
-	"size": 2,
-	"speed": 8.0,
-	"turn_rate": 0.15,
-	"armour_type": "Heavy",
-	"health": 2500,
-	"tech_level": 5,
-	"storm_damage": 10,
-	"tasty_to_worms": true,
-	"worm_attraction": 7,
-	"ai_threat": 90,
-	"score": 4,
-	"reinforcement_value": 7,
-	"debris": "DebrisLarge",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "Explosion",
-	"crushes": true,
-	"starportable": true,
 	"ai_special": true,
-	"upgraded_primary_required": true,
+	"ai_threat": 90,
+	"armour_type": "Heavy",
+	"build_time": 589,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 1300,
+	"crushes": true,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisLarge",
+	"explosion_type": "Explosion",
+	"hawk_effect": "MediumHawkFX",
+	"health": 2500,
 	"hit_slow_down_amount": 50,
 	"hit_slow_down_duration": 100,
+	"house": "Atreides",
+	"legacy_name": "ATMinotaurus",
+	"reinforcement_value": 7,
 	"roof_height": 44,
+	"score": 4,
+	"size": 2,
+	"source_line": 570,
+	"speed": 8.0,
+	"starportable": true,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"tech_level": 5,
+	"turn_rate": 0.15,
+	"unit_group": "FromFactory",
+	"upgraded_primary_required": true,
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 570
+	"worm_attraction": 7
 }
 lists = {
-	"turrets": [
-		"ATMinotaurusBase"
+	"explosion_effects": [
+		"Explosion"
+	],
+	"primary_buildings": [
+		"ATFactory"
 	],
 	"terrain": [
 		"Sand",
@@ -52,29 +56,25 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"ATFactory"
+	"turrets": [
+		"ATMinotaurusBase"
 	],
 	"veterancy_levels": [
 		{
-			"level_order": 1,
-			"veterancy_score": 10,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 50.0,
-			"extra_armour_percent": 50.0
+			"level_order": 1,
+			"veterancy_score": 10
 		},
 		{
+			"extra_armour_percent": 75.0,
 			"level_order": 2,
-			"veterancy_score": 24,
-			"extra_armour_percent": 75.0
+			"veterancy_score": 24
 		},
 		{
+			"extra_damage_percent": 75.0,
 			"level_order": 3,
-			"veterancy_score": 48,
-			"extra_damage_percent": 75.0
+			"veterancy_score": 48
 		}
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

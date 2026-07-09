@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_5qo4d"]
+
+[resource]
+script = ExtResource("1_5qo4d")
+id = &"AKINhungfigure4"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 171
+fields = {
+	"clip_sphere": 80.0,
+	"load_flag_only_preplaced": true,
+	"source_line": 1254,
+	"target_entity": "AKINhungfigure4",
+	"target_entity_source_id": 60,
+	"target_entity_type": "building",
+	"xaf": "AK_IN_hungfigure4"
+}

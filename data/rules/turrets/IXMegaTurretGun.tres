@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="TurretConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="1_550c6"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_550c6")
 id = &"IXMegaTurretGun"
 entity_type = &"turret"
 source_table = &"turrets"
@@ -11,11 +11,9 @@ source_id = 66
 fields = {
 	"bullet": "IXPlasma_B",
 	"reload_count": 100,
-	"turret_muzzle_flash": "IXPlasmaFlash",
-	"turret_y_rotation_angle": 10.0,
-	"turret_min_x_rotation": -90.0,
 	"turret_max_x_rotation": -10.0,
-	"turret_x_rotation_angle": 10.0
+	"turret_min_x_rotation": -90.0,
+	"turret_muzzle_flash": "IXPlasmaFlash",
+	"turret_x_rotation_angle": 10.0,
+	"turret_y_rotation_angle": 10.0
 }
-lists = {}
-links = {}

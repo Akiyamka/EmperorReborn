@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_ckfjy"]
+
+[resource]
+script = ExtResource("1_ckfjy")
+id = &"LAW_B"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 271
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 1721,
+	"target_entity": "LAW_B",
+	"target_entity_source_id": 10,
+	"target_entity_type": "bullet",
+	"xaf": "Missile.xaf"
+}

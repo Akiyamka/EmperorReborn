@@ -1,47 +1,48 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_lbki2"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_lbki2")
 id = &"HKTrooper"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 2
 fields = {
-	"house": "Harkonnen",
-	"unit_group": "FromBarracks",
-	"cost": 90,
-	"build_time": 99,
-	"size": 1,
-	"speed": 4.0,
-	"turn_rate": 0.2,
-	"armour_type": "None",
+	"ai_foot": true,
+	"ai_threat": 40,
 	"armour_modifier_percent": 50.0,
 	"armour_modifier_terrain": "InfRock",
-	"health": 300,
-	"tech_level": 2,
-	"storm_damage": 74,
-	"tasty_to_worms": true,
-	"worm_attraction": 4,
-	"ai_threat": 40,
-	"score": 2,
-	"reinforcement_value": 2,
-	"chaos_effect": "SmallChaosFX",
-	"hawk_effect": "SmallHawkFX",
-	"can_move_any_direction": true,
+	"armour_type": "None",
+	"build_time": 99,
 	"can_be_deviated": false,
 	"can_be_repaired": false,
-	"infantry": true,
-	"crushable": true,
-	"ai_foot": true,
 	"can_be_suppressed": true,
+	"can_move_any_direction": true,
+	"chaos_effect": "SmallChaosFX",
+	"cost": 90,
+	"crushable": true,
+	"hawk_effect": "SmallHawkFX",
+	"health": 300,
+	"house": "Harkonnen",
+	"infantry": true,
+	"legacy_name": "HKTrooper",
+	"reinforcement_value": 2,
+	"score": 2,
+	"size": 1,
+	"source_line": 523,
+	"speed": 4.0,
+	"storm_damage": 74,
+	"tasty_to_worms": true,
+	"tech_level": 2,
+	"turn_rate": 0.2,
+	"unit_group": "FromBarracks",
 	"view_range_base": 12.0,
-	"source_line": 523
+	"worm_attraction": 4
 }
 lists = {
-	"turrets": [
-		"HKTrooperGun"
+	"primary_buildings": [
+		"HKBarracks"
 	],
 	"terrain": [
 		"Sand",
@@ -50,26 +51,25 @@ lists = {
 		"InfRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"HKBarracks"
+	"turrets": [
+		"HKTrooperGun"
 	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 25.0,
 			"level_order": 1,
-			"veterancy_score": 4,
-			"extra_damage_percent": 25.0
+			"veterancy_score": 4
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 2,
-			"veterancy_score": 10,
-			"can_self_repair": true
+			"veterancy_score": 10
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 20,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 50.0,
-			"extra_armour_percent": 50.0
+			"level_order": 3,
+			"veterancy_score": 20
 		}
 	]
 }
-links = {}

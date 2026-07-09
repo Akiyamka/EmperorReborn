@@ -1,52 +1,56 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_vquuh"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_vquuh")
 id = &"ORDustScout"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 37
 fields = {
-	"house": "Ordos",
-	"unit_group": "FromFactory",
-	"cost": 350,
-	"build_time": 150,
-	"size": 2,
-	"speed": 14.0,
-	"turn_rate": 0.3,
-	"armour_type": "Light",
-	"health": 1100,
-	"tech_level": 2,
-	"storm_damage": 10,
-	"tasty_to_worms": true,
-	"worm_attraction": 4,
+	"ai_tank": true,
 	"ai_threat": 50,
-	"score": 2,
-	"reinforcement_value": 5,
-	"debris": "DebrisSmall",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "SmExplosion",
+	"armour_type": "Light",
+	"build_time": 150,
 	"can_move_any_direction": true,
 	"can_self_repair": true,
-	"starportable": true,
-	"ai_tank": true,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 350,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisSmall",
+	"explosion_type": "SmExplosion",
 	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
+	"health": 1100,
 	"hit_slow_down_amount": 75,
 	"hit_slow_down_duration": 100,
-	"special_ground_terrain": "DustBowl",
+	"house": "Ordos",
+	"legacy_name": "ORDustScout",
+	"reinforcement_value": 5,
 	"roof_height": 10,
+	"score": 2,
+	"size": 2,
+	"source_line": 575,
+	"special_ground_terrain": "DustBowl",
+	"speed": 14.0,
+	"starportable": true,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"tech_level": 2,
+	"turn_rate": 0.3,
+	"unit_group": "FromFactory",
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 575
+	"worm_attraction": 4
 }
 lists = {
-	"turrets": [
-		"ORDustGun"
+	"explosion_effects": [
+		"SmExplosion"
+	],
+	"primary_buildings": [
+		"ORFactory"
 	],
 	"terrain": [
 		"Sand",
@@ -55,29 +59,25 @@ lists = {
 		"DustBowl",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"ORFactory"
+	"turrets": [
+		"ORDustGun"
 	],
 	"veterancy_levels": [
 		{
+			"extra_armour_percent": 50.0,
 			"level_order": 1,
-			"veterancy_score": 8,
-			"extra_armour_percent": 50.0
+			"veterancy_score": 8
 		},
 		{
+			"extra_armour_percent": 75.0,
 			"level_order": 2,
-			"veterancy_score": 20,
-			"extra_armour_percent": 75.0
+			"veterancy_score": 20
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 40,
 			"extra_damage_percent": 50.0,
-			"extra_range_percent": 50.0
+			"extra_range_percent": 50.0,
+			"level_order": 3,
+			"veterancy_score": 40
 		}
-	],
-	"explosion_effects": [
-		"SmExplosion"
 	]
 }
-links = {}

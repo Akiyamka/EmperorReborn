@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_5mide"]
+
+[resource]
+script = ExtResource("1_5mide")
+id = &"WormSign3"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 382
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 2073,
+	"target_entity": "WormSign3",
+	"target_entity_source_id": 44,
+	"target_entity_type": "explosion_type",
+	"xaf": "SFX_Wormsign_3.xbf"
+}

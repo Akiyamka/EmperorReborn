@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_vdmwh"]
+
+[resource]
+script = ExtResource("1_vdmwh")
+id = &"LargeChaosFX"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 369
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 2034,
+	"target_entity": "LargeChaosFX",
+	"target_entity_source_id": 31,
+	"target_entity_type": "explosion_type",
+	"xaf": "SFX_chaos_0.xbf"
+}

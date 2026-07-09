@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_cgk5g"]
+
+[resource]
+script = ExtResource("1_cgk5g")
+id = &"ATSniper"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 9
+fields = {
+	"crap_shadow_size": -1.0,
+	"icon": "icons\\\\AT_Sniper.tga",
+	"icon_grey": "icons\\\\grey_AT_Sniper.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Infantry",
+	"source_line": 138,
+	"target_entity": "ATSniper",
+	"target_entity_source_id": 7,
+	"target_entity_type": "unit",
+	"xaf": "AT_Sniper"
+}

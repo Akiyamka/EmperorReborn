@@ -1,34 +1,35 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_fvei2"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_fvei2")
 id = &"IXWall"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 127
 fields = {
-	"house": "Ix",
+	"build_time": 60,
 	"building_group": "Wall",
 	"cost": 20,
-	"build_time": 60,
-	"health": 2000,
-	"tech_level": 1,
-	"storm_damage": 10,
-	"is_con_yard": false,
-	"selectable": false,
-	"explosion_type": "SmExplosion",
 	"counts_for_stats": false,
-	"view_range_base": 10.0,
-	"source_line": 484
+	"explosion_type": "SmExplosion",
+	"health": 2000,
+	"house": "Ix",
+	"is_con_yard": false,
+	"legacy_name": "IXWall",
+	"selectable": false,
+	"source_line": 484,
+	"storm_damage": 10,
+	"tech_level": 1,
+	"view_range_base": 10.0
 }
 lists = {
+	"explosion_effects": [
+		"SmExplosion"
+	],
 	"occupy_rows": [
 		"b"
-	],
-	"terrain": [
-		"Rock"
 	],
 	"requires_primary": [
 		"HKConYard",
@@ -38,8 +39,7 @@ lists = {
 	"roles": [
 		"Wall"
 	],
-	"explosion_effects": [
-		"SmExplosion"
+	"terrain": [
+		"Rock"
 	]
 }
-links = {}

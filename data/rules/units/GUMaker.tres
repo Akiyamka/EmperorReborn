@@ -1,48 +1,52 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_uchtt"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_uchtt")
 id = &"GUMaker"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 69
 fields = {
-	"house": "Guild",
-	"unit_group": "FromGUPalace",
-	"cost": 1000,
-	"build_time": 589,
-	"size": 2,
-	"speed": 4.0,
-	"turn_rate": 0.3,
+	"ai_tank": true,
+	"ai_threat": 70,
 	"armour_type": "Medium",
+	"build_time": 589,
+	"can_be_deviated": false,
+	"can_move_any_direction": true,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 1000,
+	"crate_gift": true,
+	"damage_effect": "BloodFX",
+	"debris": "DebrisMedium",
+	"explosion_type": "Explosion",
+	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
 	"health": 1000,
-	"tech_level": 4,
+	"house": "Guild",
+	"legacy_name": "GUMaker",
+	"reinforcement_value": 6,
+	"size": 2,
+	"source_line": 628,
+	"speed": 4.0,
+	"starportable": true,
 	"storm_damage": 10,
 	"tasty_to_worms": true,
-	"worm_attraction": -20,
-	"ai_threat": 70,
-	"reinforcement_value": 6,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "BloodFX",
-	"explosion_type": "Explosion",
-	"can_move_any_direction": true,
-	"can_be_deviated": false,
-	"starportable": true,
-	"ai_tank": true,
-	"gets_height_advantage": false,
-	"crate_gift": true,
+	"tech_level": 4,
+	"turn_rate": 0.3,
+	"unit_group": "FromGUPalace",
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 628
+	"worm_attraction": -20
 }
 lists = {
-	"turrets": [
-		"GUMakerGun"
+	"explosion_effects": [
+		"Explosion"
+	],
+	"primary_buildings": [
+		"GUPalace"
 	],
 	"terrain": [
 		"Sand",
@@ -50,28 +54,24 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"GUPalace"
+	"turrets": [
+		"GUMakerGun"
 	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 50.0,
 			"level_order": 1,
-			"veterancy_score": 6,
-			"extra_damage_percent": 50.0
+			"veterancy_score": 6
 		},
 		{
+			"extra_armour_percent": 50.0,
 			"level_order": 2,
-			"veterancy_score": 16,
-			"extra_armour_percent": 50.0
+			"veterancy_score": 16
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 3,
-			"veterancy_score": 32,
-			"can_self_repair": true
+			"veterancy_score": 32
 		}
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

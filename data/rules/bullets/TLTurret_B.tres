@@ -1,20 +1,18 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_n5l4l"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_n5l4l")
 id = &"TLTurret_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 60
 fields = {
+	"anti_aircraft": true,
 	"damage": 1000.0,
-	"max_range": 10.0,
-	"warhead": "ANTIAIR_W",
 	"debris": "DebrisSmall",
+	"max_range": 10.0,
 	"speed": -1.0,
-	"anti_aircraft": true
+	"warhead": "ANTIAIR_W"
 }
-lists = {}
-links = {}

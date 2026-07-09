@@ -1,20 +1,18 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_fxavh"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_fxavh")
 id = &"SpicePuff"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 46
 fields = {
-	"damage": 10.0,
-	"warhead": "Pistol_W",
-	"speed": 16.0,
-	"blow_up": true,
 	"blast_radius": 16.0,
-	"continuous": true
+	"blow_up": true,
+	"continuous": true,
+	"damage": 10.0,
+	"speed": 16.0,
+	"warhead": "Pistol_W"
 }
-lists = {}
-links = {}

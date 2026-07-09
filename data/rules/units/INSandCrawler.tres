@@ -1,45 +1,45 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_6qh3b"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_6qh3b")
 id = &"INSandCrawler"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 74
 fields = {
-	"house": "Incidental",
-	"cost": 850,
-	"size": 2,
-	"speed": 3.0,
-	"turn_rate": 0.05,
+	"ai_tank": true,
 	"armour_type": "Medium",
+	"chaos_effect": "MediumChaosFX",
+	"cost": 850,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
+	"explosion_type": "Explosion",
+	"hawk_effect": "MediumHawkFX",
 	"health": 1500,
-	"tech_level": 1,
+	"house": "Incidental",
+	"legacy_name": "INSandCrawler",
+	"size": 2,
+	"source_line": 635,
+	"speed": 3.0,
 	"storm_damage": 10,
 	"tasty_to_worms": true,
-	"worm_attraction": 4,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "Explosion",
-	"ai_tank": true,
+	"tech_level": 1,
+	"turn_rate": 0.05,
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 635
+	"worm_attraction": 4
 }
 lists = {
+	"explosion_effects": [
+		"Explosion"
+	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"Ramp"
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

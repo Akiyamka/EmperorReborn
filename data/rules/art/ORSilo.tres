@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_j2kjw"]
+
+[resource]
+script = ExtResource("1_j2kjw")
+id = &"ORSilo"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 144
+fields = {
+	"icon": "icons\\\\OR_Silo.tga",
+	"icon_grey": "icons\\\\grey_OR_Silo.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 1080,
+	"target_entity_type": "unresolved",
+	"xaf": "OR_silo",
+	"xaf_construction": "OR_silo.xaf"
+}

@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_udcod"]
+
+[resource]
+script = ExtResource("1_udcod")
+id = &"InkVineSplat"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 392
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 2124,
+	"target_entity": "InkVineSplat",
+	"target_entity_source_id": 0,
+	"target_entity_type": "splat_type",
+	"xaf": "InkVineHit.xaf"
+}

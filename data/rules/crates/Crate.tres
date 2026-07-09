@@ -1,16 +1,16 @@
-[gd_resource type="Resource" script_class="CrateConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="CrateConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/crate_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/crate_config.gd" id="1_2rllg"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_2rllg")
 id = &"Crate"
 entity_type = &"crate"
 source_table = &"crate_types"
 source_id = 0
 fields = {
-	"size": 3,
-	"lifespan": 10000
+	"lifespan": 10000,
+	"size": 3
 }
 lists = {
 	"terrain": [
@@ -18,4 +18,3 @@ lists = {
 		"Rock"
 	]
 }
-links = {}

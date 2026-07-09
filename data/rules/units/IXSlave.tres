@@ -1,53 +1,53 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_4ypd8"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_4ypd8")
 id = &"IXSlave"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 22
 fields = {
-	"house": "Ix",
-	"unit_group": "FromBarracks",
-	"cost": 40,
-	"size": 1,
-	"speed": 2.0,
-	"turn_rate": 0.2,
-	"armour_type": "None",
+	"ai_special": true,
+	"ai_threat": 40,
 	"armour_modifier_percent": 50.0,
 	"armour_modifier_terrain": "InfRock",
-	"health": 300,
-	"tech_level": 1,
-	"storm_damage": 10,
-	"tasty_to_worms": false,
-	"worm_attraction": 3,
-	"ai_threat": 40,
-	"score": 2,
-	"chaos_effect": "SmallChaosFX",
-	"hawk_effect": "SmallHawkFX",
-	"can_move_any_direction": true,
+	"armour_type": "None",
 	"can_be_deviated": false,
 	"can_be_repaired": false,
-	"infantry": true,
-	"crushable": true,
-	"ai_special": true,
-	"gets_height_advantage": false,
 	"can_be_suppressed": true,
+	"can_move_any_direction": true,
+	"chaos_effect": "SmallChaosFX",
+	"cost": 40,
+	"crushable": true,
+	"gets_height_advantage": false,
+	"hawk_effect": "SmallHawkFX",
+	"health": 300,
+	"house": "Ix",
+	"infantry": true,
+	"legacy_name": "IXSlave",
+	"score": 2,
+	"size": 1,
+	"source_line": 550,
+	"speed": 2.0,
+	"storm_damage": 10,
+	"tasty_to_worms": false,
+	"tech_level": 1,
+	"turn_rate": 0.2,
+	"unit_group": "FromBarracks",
 	"view_range_base": 7.0,
-	"source_line": 550
+	"worm_attraction": 3
 }
 lists = {
-	"turrets": [
-		"IXSlaveKnife"
-	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"InfRock",
 		"Ramp"
+	],
+	"turrets": [
+		"IXSlaveKnife"
 	]
 }
-links = {}

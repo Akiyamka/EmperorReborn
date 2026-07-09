@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="TurretConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="TurretConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/turret_config.gd" id="1_d0n22"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_d0n22")
 id = &"GUMegaTurretBase"
 entity_type = &"turret"
 source_table = &"turrets"
@@ -11,11 +11,9 @@ source_id = 67
 fields = {
 	"bullet": "GUPlasma_B",
 	"reload_count": 100,
-	"turret_muzzle_flash": "GUPlasmaFlash",
-	"turret_y_rotation_angle": 6.0,
-	"turret_min_y_rotation": -190.0,
 	"turret_max_y_rotation": 190.0,
-	"turret_next_joint": "GUMegaTurretGun"
+	"turret_min_y_rotation": -190.0,
+	"turret_muzzle_flash": "GUPlasmaFlash",
+	"turret_next_joint": "GUMegaTurretGun",
+	"turret_y_rotation_angle": 6.0
 }
-lists = {}
-links = {}

@@ -1,57 +1,61 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_nv5p5"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_nv5p5")
 id = &"ORLaserTank"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 38
 fields = {
-	"house": "Ordos",
-	"unit_group": "FromFactory",
-	"cost": 700,
-	"build_time": 432,
-	"size": 2,
-	"speed": 12.0,
-	"turn_rate": 0.1,
-	"armour_type": "Medium",
-	"health": 800,
-	"tech_level": 3,
-	"storm_damage": 10,
-	"tasty_to_worms": true,
-	"worm_attraction": 7,
+	"ai_tank": true,
 	"ai_threat": 60,
-	"score": 3,
-	"reinforcement_value": 6,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "Explosion",
+	"armour_type": "Medium",
+	"build_time": 432,
 	"can_move_any_direction": true,
 	"can_self_repair": true,
-	"starportable": true,
-	"ai_tank": true,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 700,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
+	"explosion_type": "Explosion",
 	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
+	"health": 800,
 	"hit_slow_down_amount": 75,
 	"hit_slow_down_duration": 100,
-	"view_range_base": 4.0,
-	"view_range_bonus": 8.0,
-	"view_range_bonus_terrain": "InfRock",
+	"house": "Ordos",
+	"legacy_name": "ORLaserTank",
 	"missile_trail": 6,
+	"missile_trail_delta": 0.9,
+	"missile_trail_length": 14,
 	"missile_trail_size": 11,
 	"missile_trail_wiggle_freq": 10,
 	"missile_trail_wiggle_scale": 10,
-	"missile_trail_length": 14,
-	"missile_trail_delta": 0.9,
+	"reinforcement_value": 6,
+	"score": 3,
 	"shield_health": 300.0,
-	"source_line": 576
+	"size": 2,
+	"source_line": 576,
+	"speed": 12.0,
+	"starportable": true,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"tech_level": 3,
+	"turn_rate": 0.1,
+	"unit_group": "FromFactory",
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0,
+	"view_range_bonus_terrain": "InfRock",
+	"worm_attraction": 7
 }
 lists = {
-	"turrets": [
-		"ORLaserTankBase"
+	"explosion_effects": [
+		"Explosion"
+	],
+	"primary_buildings": [
+		"ORFactory"
 	],
 	"terrain": [
 		"Sand",
@@ -60,28 +64,24 @@ lists = {
 		"DustBowl",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"ORFactory"
+	"turrets": [
+		"ORLaserTankBase"
 	],
 	"veterancy_levels": [
 		{
+			"extra_armour_percent": 50.0,
 			"level_order": 1,
-			"veterancy_score": 10,
-			"extra_armour_percent": 50.0
+			"veterancy_score": 10
 		},
 		{
+			"extra_range_percent": 50.0,
 			"level_order": 2,
-			"veterancy_score": 24,
-			"extra_range_percent": 50.0
+			"veterancy_score": 24
 		},
 		{
+			"extra_damage_percent": 50.0,
 			"level_order": 3,
-			"veterancy_score": 48,
-			"extra_damage_percent": 50.0
+			"veterancy_score": 48
 		}
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

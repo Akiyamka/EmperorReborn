@@ -1,41 +1,41 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_jvr4g"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_jvr4g")
 id = &"Frigate"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 88
 fields = {
-	"house": "Imperial",
-	"cost": 1000,
-	"size": 9,
-	"speed": 12.0,
-	"turn_rate": 0.1,
-	"armour_type": "Medium",
-	"health": 100000,
-	"storm_damage": 10,
-	"debris": "DebrisLarge",
-	"explosion_type": "Explosion",
 	"ai_special": true,
 	"ai_uncontrolled": true,
-	"can_fly": true,
+	"armour_type": "Medium",
 	"can_die": false,
-	"height_offset": 50.0,
+	"can_fly": true,
+	"cost": 1000,
+	"debris": "DebrisLarge",
 	"exclude_from_skirmish_lose": true,
-	"source_line": 650
+	"explosion_type": "Explosion",
+	"health": 100000,
+	"height_offset": 50.0,
+	"house": "Imperial",
+	"legacy_name": "Frigate",
+	"size": 9,
+	"source_line": 650,
+	"speed": 12.0,
+	"storm_damage": 10,
+	"turn_rate": 0.1
 }
 lists = {
+	"explosion_effects": [
+		"Explosion"
+	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"Ramp"
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

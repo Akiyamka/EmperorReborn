@@ -1,45 +1,33 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_op8jc"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_op8jc")
 id = &"ORFactoryFrigate"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 33
 fields = {
-	"house": "Ordos",
-	"cost": 1000,
-	"health": 1500,
-	"tech_level": 2,
-	"storm_damage": 5,
-	"roof_height": 115,
-	"score": 3,
-	"num_infantry_when_gone": 2,
+	"ai_exit": true,
 	"can_be_engineered": false,
 	"can_be_primary": true,
-	"is_con_yard": false,
-	"ai_exit": true,
-	"explosion_type": "BigExplosion",
+	"cost": 1000,
 	"debris": "DebrisLarge",
-	"view_range_base": 10.0,
-	"source_line": 368
+	"explosion_type": "BigExplosion",
+	"health": 1500,
+	"house": "Ordos",
+	"is_con_yard": false,
+	"legacy_name": "ORFactoryFrigate",
+	"num_infantry_when_gone": 2,
+	"roof_height": 115,
+	"score": 3,
+	"source_line": 368,
+	"storm_damage": 5,
+	"tech_level": 2,
+	"view_range_base": 10.0
 }
 lists = {
-	"occupy_rows": [
-		"ssssssssssssssssss",
-		"ssssssssssssssssss",
-		"bbbbbbbbbbbbbbbbbb",
-		"bbbbbbbbbbbbbbbbbb",
-		"bbbbbbbbbbbbbbbbbb",
-		"bbbbbbbbbbbbbbbbbb",
-		"bbbbbbbbbbbbbbbbbb",
-		"bbbbbbbbbbbbbbbbbb"
-	],
-	"terrain": [
-		"Rock"
-	],
 	"deploy_points": [
 		{
 			"seq": 0,
@@ -52,11 +40,23 @@ lists = {
 			"tile_y": 1
 		}
 	],
+	"explosion_effects": [
+		"BigExplosion"
+	],
+	"occupy_rows": [
+		"ssssssssssssssssss",
+		"ssssssssssssssssss",
+		"bbbbbbbbbbbbbbbbbb",
+		"bbbbbbbbbbbbbbbbbb",
+		"bbbbbbbbbbbbbbbbbb",
+		"bbbbbbbbbbbbbbbbbb",
+		"bbbbbbbbbbbbbbbbbb",
+		"bbbbbbbbbbbbbbbbbb"
+	],
 	"roles": [
 		"Factory"
 	],
-	"explosion_effects": [
-		"BigExplosion"
+	"terrain": [
+		"Rock"
 	]
 }
-links = {}

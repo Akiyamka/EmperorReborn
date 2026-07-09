@@ -1,46 +1,50 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_5r65d"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_5r65d")
 id = &"HKGunship"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 42
 fields = {
-	"house": "Harkonnen",
-	"unit_group": "FromHanger",
-	"cost": 1000,
-	"build_time": 499,
-	"size": 2,
-	"speed": 10.0,
-	"turn_rate": 0.05,
-	"armour_type": "Aircraft",
-	"health": 2600,
-	"tech_level": 5,
-	"storm_damage": 10,
-	"ai_threat": 80,
-	"score": 3,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "AerialExplosion",
-	"starportable": true,
 	"ai_air": true,
-	"gets_height_advantage": false,
-	"upgraded_primary_required": true,
+	"ai_threat": 80,
+	"armour_type": "Aircraft",
+	"build_time": 499,
 	"can_fly": true,
-	"view_range_base": 4.0,
-	"view_range_bonus": 8.0,
-	"height_offset": 8.0,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 1000,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
 	"exclude_from_skirmish_lose": true,
-	"source_line": 583
+	"explosion_type": "AerialExplosion",
+	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
+	"health": 2600,
+	"height_offset": 8.0,
+	"house": "Harkonnen",
+	"legacy_name": "HKGunship",
+	"score": 3,
+	"size": 2,
+	"source_line": 583,
+	"speed": 10.0,
+	"starportable": true,
+	"storm_damage": 10,
+	"tech_level": 5,
+	"turn_rate": 0.05,
+	"unit_group": "FromHanger",
+	"upgraded_primary_required": true,
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0
 }
 lists = {
-	"turrets": [
-		"HKGunshipGun"
+	"explosion_effects": [
+		"AerialExplosion"
+	],
+	"primary_buildings": [
+		"HKHanger"
 	],
 	"terrain": [
 		"Sand",
@@ -48,37 +52,34 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"HKHanger"
+	"turrets": [
+		"HKGunshipGun"
 	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 25.0,
 			"level_order": 1,
-			"veterancy_score": 10,
-			"extra_damage_percent": 25.0
+			"veterancy_score": 10
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 2,
-			"veterancy_score": 24,
-			"can_self_repair": true
+			"veterancy_score": 24
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 48,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 50.0,
-			"extra_armour_percent": 50.0
+			"level_order": 3,
+			"veterancy_score": 48
 		}
-	],
-	"explosion_effects": [
-		"AerialExplosion"
 	]
 }
 links = {
 	"resources": [
 		{
 			"seq": 0,
-			"target": "HKHelipad",
-			"source_line": 8336
+			"source_line": 8337,
+			"target": "HKHelipad"
 		}
 	]
 }

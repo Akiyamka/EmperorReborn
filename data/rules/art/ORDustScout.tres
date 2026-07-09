@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_j5m0g"]
+
+[resource]
+script = ExtResource("1_j5m0g")
+id = &"ORDustScout"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 46
+fields = {
+	"crap_shadow_size": 0.5,
+	"icon": "icons\\\\OR_DustScout.tga",
+	"icon_grey": "icons\\\\grey_OR_DustScout.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Units",
+	"source_line": 402,
+	"target_entity": "ORDustScout",
+	"target_entity_source_id": 37,
+	"target_entity_type": "unit",
+	"xaf": "Or_DustScout"
+}

@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_xq1je"]
+
+[resource]
+script = ExtResource("1_xq1je")
+id = &"ORHanger"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 139
+fields = {
+	"clip_sphere": 200.0,
+	"icon": "icons\\\\OR_Hanger.tga",
+	"icon_grey": "icons\\\\grey_OR_Hanger.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 1031,
+	"target_entity": "ORHanger",
+	"target_entity_source_id": 37,
+	"target_entity_type": "building",
+	"xaf": "OR_Hanger",
+	"xaf_construction": "OR_Hanger_High.xaf"
+}

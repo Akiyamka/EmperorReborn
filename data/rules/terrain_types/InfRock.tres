@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="TerrainTypeConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="TerrainTypeConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/terrain_type_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/terrain_type_config.gd" id="1_r2fox"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_r2fox")
 id = &"InfRock"
 entity_type = &"terrain_type"
 source_table = &"terrain_types"
@@ -11,5 +11,3 @@ source_id = 4
 fields = {
 	"sort_order": 4
 }
-lists = {}
-links = {}

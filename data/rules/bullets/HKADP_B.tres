@@ -1,25 +1,24 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_7pnvr"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_7pnvr")
 id = &"HKADP_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 68
 fields = {
+	"anti_aircraft": true,
 	"damage": 150.0,
-	"max_range": 8.0,
-	"warhead": "ANTIAIR_W",
 	"debris": "DebrisSmall",
-	"speed": -1.0,
 	"explosion_type": "Mghit",
-	"anti_aircraft": true
+	"max_range": 8.0,
+	"speed": -1.0,
+	"warhead": "ANTIAIR_W"
 }
 lists = {
 	"explosion_effects": [
 		"Mghit"
 	]
 }
-links = {}

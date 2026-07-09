@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_m3m2h"]
+
+[resource]
+script = ExtResource("1_m3m2h")
+id = &"ORPopUpTurret"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 147
+fields = {
+	"clip_sphere": 85.0,
+	"icon": "icons\\\\OR_popupturret.tga",
+	"icon_grey": "icons\\\\grey_OR_popupturret.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 1102,
+	"target_entity": "ORPopUpTurret",
+	"target_entity_source_id": 36,
+	"target_entity_type": "building",
+	"xaf": "OR_popupturret",
+	"xaf_construction": "construction_OR_popupturret_high.xaf"
+}

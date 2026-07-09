@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_dpgqa"]
+
+[resource]
+script = ExtResource("1_dpgqa")
+id = &"ATKindjal"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 7
+fields = {
+	"crap_shadow_size": -1.0,
+	"icon": "icons\\\\AT_DeployInf.tga",
+	"icon_grey": "icons\\\\grey_AT_DeployInf.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Infantry",
+	"source_line": 124,
+	"target_entity": "ATKindjal",
+	"target_entity_source_id": 9,
+	"target_entity_type": "unit",
+	"xaf": "AT_Kindjal"
+}

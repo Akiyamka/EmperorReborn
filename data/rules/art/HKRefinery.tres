@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_xn1q2"]
+
+[resource]
+script = ExtResource("1_xn1q2")
+id = &"HKRefinery"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 129
+fields = {
+	"clip_sphere": 165.0,
+	"icon": "icons\\\\HK_Refinery.tga",
+	"icon_grey": "icons\\\\grey_HK_Refinery.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 951,
+	"target_entity": "HKRefinery",
+	"target_entity_source_id": 3,
+	"target_entity_type": "building",
+	"xaf": "hk_refinery",
+	"xaf_construction": "construction_HK_refinery_high.xaf"
+}

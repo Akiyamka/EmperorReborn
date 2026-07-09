@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_jb6sx"]
+
+[resource]
+script = ExtResource("1_jb6sx")
+id = &"ORRefinery"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 145
+fields = {
+	"clip_sphere": 160.0,
+	"icon": "icons\\\\OR_Refinery.tga",
+	"icon_grey": "icons\\\\grey_OR_Refinery.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 1087,
+	"target_entity": "ORRefinery",
+	"target_entity_source_id": 31,
+	"target_entity_type": "building",
+	"xaf": "OR_Refinery",
+	"xaf_construction": "construction_OR_refinery_high.xaf"
+}

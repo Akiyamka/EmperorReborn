@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_m3m5u"]
+
+[resource]
+script = ExtResource("1_m3m5u")
+id = &"MediumDamageFX"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 373
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 2046,
+	"target_entity": "MediumDamageFX",
+	"target_entity_source_id": 35,
+	"target_entity_type": "explosion_type",
+	"xaf": "SFX_Fire_1.xbf"
+}

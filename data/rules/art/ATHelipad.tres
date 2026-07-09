@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_ls5xw"]
+
+[resource]
+script = ExtResource("1_ls5xw")
+id = &"ATHelipad"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 118
+fields = {
+	"clip_sphere": 85.0,
+	"icon": "icons\\\\AT_Helipad.tga",
+	"icon_grey": "icons\\\\grey_AT_Helipad.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 854,
+	"target_entity": "ATHelipad",
+	"target_entity_source_id": 24,
+	"target_entity_type": "building",
+	"xaf": "AT_Helipad",
+	"xaf_construction": "construction_at_helipad_high.xaf"
+}

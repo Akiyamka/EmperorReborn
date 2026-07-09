@@ -1,46 +1,50 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_xassm"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_xassm")
 id = &"HKInkVine"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 28
 fields = {
-	"house": "Harkonnen",
-	"unit_group": "FromFactory",
-	"cost": 1000,
-	"build_time": 589,
-	"size": 2,
-	"speed": 8.0,
-	"turn_rate": 0.175,
-	"armour_type": "Heavy",
-	"health": 2000,
-	"tech_level": 5,
-	"storm_damage": 10,
-	"tasty_to_worms": true,
-	"worm_attraction": 7,
+	"ai_tank": true,
 	"ai_threat": 70,
-	"score": 3,
-	"reinforcement_value": 7,
+	"armour_type": "Heavy",
+	"build_time": 589,
 	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
+	"cost": 1000,
+	"crushes": true,
 	"damage_effect": "MediumDamageFX",
 	"explosion_type": "Explosion",
-	"crushes": true,
+	"hawk_effect": "MediumHawkFX",
+	"health": 2000,
+	"house": "Harkonnen",
+	"legacy_name": "HKInkVine",
+	"reinforcement_value": 7,
+	"score": 3,
+	"size": 2,
+	"source_line": 561,
+	"speed": 8.0,
 	"starportable": true,
-	"ai_tank": true,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"tech_level": 5,
+	"turn_rate": 0.175,
+	"unit_group": "FromFactory",
 	"upgraded_primary_required": true,
 	"view_range_base": 4.0,
 	"view_range_bonus": 16.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 561
+	"worm_attraction": 7
 }
 lists = {
-	"turrets": [
-		"HKInkVineGun"
+	"explosion_effects": [
+		"Explosion"
+	],
+	"primary_buildings": [
+		"HKFactory"
 	],
 	"terrain": [
 		"Sand",
@@ -48,29 +52,25 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"HKFactory"
+	"turrets": [
+		"HKInkVineGun"
 	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 25.0,
 			"level_order": 1,
-			"veterancy_score": 10,
-			"extra_damage_percent": 25.0
+			"veterancy_score": 10
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 2,
-			"veterancy_score": 24,
-			"can_self_repair": true
+			"veterancy_score": 24
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 48,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 50.0,
-			"extra_armour_percent": 50.0
+			"level_order": 3,
+			"veterancy_score": 48
 		}
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

@@ -1,59 +1,36 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_r6i48"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_r6i48")
 id = &"FRCamp"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 45
 fields = {
-	"house": "Fremen",
-	"cost": 600,
+	"ai_exit": true,
+	"ai_manufacturing": true,
 	"build_time": 540,
-	"health": 2000,
-	"tech_level": 3,
-	"roof_height": 100,
-	"score": 4,
-	"num_infantry_when_gone": 2,
 	"can_be_engineered": true,
 	"can_be_primary": true,
-	"is_con_yard": false,
-	"ai_exit": true,
-	"upgrade_tech_level": 5,
-	"upgrade_cost": 1000,
-	"ai_manufacturing": true,
-	"explosion_type": "MidExplosion",
+	"cost": 600,
 	"debris": "DebrisSmall",
-	"view_range_base": 10.0,
-	"source_line": 388
+	"explosion_type": "MidExplosion",
+	"health": 2000,
+	"house": "Fremen",
+	"is_con_yard": false,
+	"legacy_name": "FRCamp",
+	"num_infantry_when_gone": 2,
+	"roof_height": 100,
+	"score": 4,
+	"source_line": 388,
+	"tech_level": 3,
+	"upgrade_cost": 1000,
+	"upgrade_tech_level": 5,
+	"view_range_base": 10.0
 }
 lists = {
-	"occupy_rows": [
-		"ssssss",
-		"ssssss",
-		"ssssss",
-		"ddbbdd",
-		"dbbbbb",
-		"dbbbbb",
-		"bbbbbb",
-		"dbbbbd",
-		"ddbbdd"
-	],
-	"terrain": [
-		"Rock"
-	],
-	"requires_primary": [
-		"HKConYard",
-		"ATConYard",
-		"ORConYard"
-	],
-	"requires_secondary": [
-		"HKBarracks",
-		"ATBarracks",
-		"ORBarracks"
-	],
 	"deploy_points": [
 		{
 			"seq": 0,
@@ -68,6 +45,29 @@ lists = {
 	],
 	"explosion_effects": [
 		"MidExplosion"
+	],
+	"occupy_rows": [
+		"ssssss",
+		"ssssss",
+		"ssssss",
+		"ddbbdd",
+		"dbbbbb",
+		"dbbbbb",
+		"bbbbbb",
+		"dbbbbd",
+		"ddbbdd"
+	],
+	"requires_primary": [
+		"HKConYard",
+		"ATConYard",
+		"ORConYard"
+	],
+	"requires_secondary": [
+		"HKBarracks",
+		"ATBarracks",
+		"ORBarracks"
+	],
+	"terrain": [
+		"Rock"
 	]
 }
-links = {}

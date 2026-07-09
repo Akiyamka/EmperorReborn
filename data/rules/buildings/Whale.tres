@@ -1,24 +1,25 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_iryw2"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_iryw2")
 id = &"Whale"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 137
 fields = {
-	"house": "Incidental",
 	"cost": 100,
-	"health": 1000,
-	"tech_level": 1,
-	"power_used": 0,
-	"is_con_yard": false,
-	"selectable": false,
 	"debris": "DebrisSmall",
-	"view_range_base": 10.0,
-	"source_line": 753
+	"health": 1000,
+	"house": "Incidental",
+	"is_con_yard": false,
+	"legacy_name": "Whale",
+	"power_used": 0,
+	"selectable": false,
+	"source_line": 753,
+	"tech_level": 1,
+	"view_range_base": 10.0
 }
 lists = {
 	"occupy_rows": [
@@ -28,4 +29,3 @@ lists = {
 		"Rock"
 	]
 }
-links = {}

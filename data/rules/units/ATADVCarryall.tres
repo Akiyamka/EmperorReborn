@@ -1,57 +1,57 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_d2cbi"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_d2cbi")
 id = &"ATADVCarryall"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 47
 fields = {
-	"house": "Atreides",
-	"unit_group": "FromHanger",
-	"cost": 1800,
-	"build_time": 648,
-	"size": 3,
-	"speed": 17.0,
-	"turn_rate": 0.1,
-	"armour_type": "Medium",
-	"health": 900,
-	"tech_level": 6,
-	"storm_damage": 10,
-	"ai_threat": 70,
-	"score": 3,
-	"debris": "DebrisLarge",
-	"chaos_effect": "LargeChaosFX",
-	"hawk_effect": "LargeHawkFX",
-	"damage_effect": "LargeDamageFX",
-	"explosion_type": "AerialExplosion",
-	"starportable": true,
-	"ai_air": true,
-	"upgraded_primary_required": true,
-	"crate_gift": true,
-	"can_fly": true,
 	"advanced_carryall": true,
+	"ai_air": true,
+	"ai_threat": 70,
+	"armour_type": "Medium",
+	"build_time": 648,
+	"can_fly": true,
+	"chaos_effect": "LargeChaosFX",
 	"circles": false,
-	"view_range_base": 4.0,
-	"view_range_bonus": 8.0,
-	"height_offset": 8.0,
+	"cost": 1800,
+	"crate_gift": true,
+	"damage_effect": "LargeDamageFX",
+	"debris": "DebrisLarge",
 	"exclude_from_skirmish_lose": true,
-	"source_line": 590
+	"explosion_type": "AerialExplosion",
+	"hawk_effect": "LargeHawkFX",
+	"health": 900,
+	"height_offset": 8.0,
+	"house": "Atreides",
+	"legacy_name": "ATADVCarryall",
+	"score": 3,
+	"size": 3,
+	"source_line": 590,
+	"speed": 17.0,
+	"starportable": true,
+	"storm_damage": 10,
+	"tech_level": 6,
+	"turn_rate": 0.1,
+	"unit_group": "FromHanger",
+	"upgraded_primary_required": true,
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0
 }
 lists = {
+	"explosion_effects": [
+		"AerialExplosion"
+	],
+	"primary_buildings": [
+		"ATHanger"
+	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"Ramp"
-	],
-	"primary_buildings": [
-		"ATHanger"
-	],
-	"explosion_effects": [
-		"AerialExplosion"
 	]
 }
-links = {}

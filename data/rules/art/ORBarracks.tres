@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_lg7l1"]
+
+[resource]
+script = ExtResource("1_lg7l1")
+id = &"ORBarracks"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 140
+fields = {
+	"clip_sphere": 110.0,
+	"icon": "icons\\\\OR_Barracks.tga",
+	"icon_grey": "icons\\\\grey_OR_Barracks.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 1039,
+	"target_entity": "ORBarracks",
+	"target_entity_source_id": 29,
+	"target_entity_type": "building",
+	"xaf": "OR_Barracks",
+	"xaf_construction": "construction_OR_Barracks_High.xaf"
+}

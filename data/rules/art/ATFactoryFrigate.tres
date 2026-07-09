@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_0t7q0"]
+
+[resource]
+script = ExtResource("1_0t7q0")
+id = &"ATFactoryFrigate"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 119
+fields = {
+	"clip_sphere": 500.0,
+	"load_flag_only_preplaced": true,
+	"source_line": 862,
+	"target_entity": "ATFactoryFrigate",
+	"target_entity_source_id": 19,
+	"target_entity_type": "building",
+	"xaf": "AT_FactoryFrigate"
+}

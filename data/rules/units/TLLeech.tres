@@ -1,46 +1,47 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_vvpiw"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_vvpiw")
 id = &"TLLeech"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 60
 fields = {
-	"house": "Tleilaxu",
-	"unit_group": "FromTLFleshVat",
-	"cost": 800,
-	"build_time": 589,
-	"size": 2,
-	"speed": 14.0,
-	"turn_rate": 0.3,
+	"ai_tank": true,
+	"ai_threat": 90,
 	"armour_type": "Light",
+	"build_time": 589,
+	"can_be_deviated": false,
+	"can_move_any_direction": true,
+	"can_self_repair": true,
+	"cant_be_leeched": true,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 800,
+	"crate_gift": true,
+	"damage_effect": "BloodFX",
+	"hawk_effect": "MediumHawkFX",
 	"health": 1000,
-	"tech_level": 5,
+	"house": "Tleilaxu",
+	"legacy_name": "TLLeech",
+	"size": 2,
+	"source_line": 613,
+	"speed": 14.0,
 	"storm_damage": 10,
 	"tasty_to_worms": true,
-	"worm_attraction": 5,
-	"ai_threat": 90,
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "BloodFX",
-	"can_move_any_direction": true,
-	"can_be_deviated": false,
-	"can_self_repair": true,
-	"ai_tank": true,
+	"tech_level": 5,
+	"turn_rate": 0.3,
+	"unit_group": "FromTLFleshVat",
 	"upgraded_primary_required": true,
-	"crate_gift": true,
-	"cant_be_leeched": true,
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 613
+	"worm_attraction": 5
 }
 lists = {
-	"turrets": [
-		"TLLeechGun"
+	"primary_buildings": [
+		"TLFleshVat"
 	],
 	"terrain": [
 		"Sand",
@@ -48,25 +49,24 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"TLFleshVat"
+	"turrets": [
+		"TLLeechGun"
 	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 50.0,
 			"level_order": 1,
-			"veterancy_score": 4,
-			"extra_damage_percent": 50.0
+			"veterancy_score": 4
 		},
 		{
+			"extra_armour_percent": 50.0,
 			"level_order": 2,
-			"veterancy_score": 8,
-			"extra_armour_percent": 50.0
+			"veterancy_score": 8
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 3,
-			"veterancy_score": 16,
-			"can_self_repair": true
+			"veterancy_score": 16
 		}
 	]
 }
-links = {}

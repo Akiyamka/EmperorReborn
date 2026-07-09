@@ -1,33 +1,57 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_a6puw"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_a6puw")
 id = &"IXRefinery"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 125
 fields = {
-	"house": "Ix",
-	"building_group": "Refinery",
-	"cost": 1500,
-	"build_time": 720,
-	"health": 3000,
-	"tech_level": 1,
-	"power_used": 40,
-	"storm_damage": 10,
-	"score": 4,
-	"num_infantry_when_gone": 3,
-	"can_be_engineered": true,
-	"is_con_yard": false,
 	"ai_exit": true,
-	"explosion_type": "BigExplosion",
+	"build_time": 720,
+	"building_group": "Refinery",
+	"can_be_engineered": true,
+	"cost": 1500,
 	"debris": "DebrisLarge",
-	"view_range_base": 10.0,
-	"source_line": 482
+	"explosion_type": "BigExplosion",
+	"health": 3000,
+	"house": "Ix",
+	"is_con_yard": false,
+	"legacy_name": "IXRefinery",
+	"num_infantry_when_gone": 3,
+	"power_used": 40,
+	"score": 4,
+	"source_line": 482,
+	"storm_damage": 10,
+	"tech_level": 1,
+	"view_range_base": 10.0
 }
 lists = {
+	"deploy_points": [
+		{
+			"angle": 0.0,
+			"seq": 0,
+			"tile_x": 5,
+			"tile_y": 4
+		},
+		{
+			"angle": -45.0,
+			"seq": 1,
+			"tile_x": 9,
+			"tile_y": 5
+		},
+		{
+			"angle": 45.0,
+			"seq": 2,
+			"tile_x": 1,
+			"tile_y": 5
+		}
+	],
+	"explosion_effects": [
+		"BigExplosion"
+	],
 	"occupy_rows": [
 		"sssssssssss",
 		"sssssssssss",
@@ -40,9 +64,6 @@ lists = {
 		"nnbbbbbbbnn",
 		"nnnnbbbnnnn"
 	],
-	"terrain": [
-		"Rock"
-	],
 	"requires_primary": [
 		"HKConYard",
 		"ATConYard",
@@ -53,31 +74,10 @@ lists = {
 		"ATSmWindtrap",
 		"ORSmWindtrap"
 	],
-	"deploy_points": [
-		{
-			"seq": 0,
-			"tile_x": 5,
-			"tile_y": 4,
-			"angle": 0.0
-		},
-		{
-			"seq": 1,
-			"tile_x": 9,
-			"tile_y": 5,
-			"angle": -45.0
-		},
-		{
-			"seq": 2,
-			"tile_x": 1,
-			"tile_y": 5,
-			"angle": 45.0
-		}
-	],
 	"roles": [
 		"Refinery"
 	],
-	"explosion_effects": [
-		"BigExplosion"
+	"terrain": [
+		"Rock"
 	]
 }
-links = {}

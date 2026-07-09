@@ -1,23 +1,21 @@
-[gd_resource type="Resource" script_class="SpiceMoundConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="SpiceMoundConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/spice_mound_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/spice_mound_config.gd" id="1_jmaig"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_jmaig")
 id = &"SpiceMound"
 entity_type = &"spice_mound"
 source_table = &"spice_mound_types"
 source_id = 0
 fields = {
-	"health": 100,
-	"size": 1000,
-	"cost": 500,
 	"blast_radius": 6.0,
-	"spice_capacity": 50000,
-	"explosion_type": "SpiceBurst",
 	"build_time": 6,
+	"cost": 500,
+	"explosion_type": "SpiceBurst",
+	"health": 100,
+	"max_range": 2000.0,
 	"min_range": 200.0,
-	"max_range": 2000.0
+	"size": 1000,
+	"spice_capacity": 50000
 }
-lists = {}
-links = {}

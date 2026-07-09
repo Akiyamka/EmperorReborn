@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_cm7wo"]
+
+[resource]
+script = ExtResource("1_cm7wo")
+id = &"HKGeneral"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 6
+fields = {
+	"load_flag_only_preplaced": true,
+	"source_line": 117,
+	"target_entity": "HKGeneral",
+	"target_entity_source_id": 18,
+	"target_entity_type": "unit",
+	"xaf": "HK_General"
+}

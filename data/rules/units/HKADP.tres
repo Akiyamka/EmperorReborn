@@ -1,43 +1,47 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_di781"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_di781")
 id = &"HKADP"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 45
 fields = {
-	"house": "Harkonnen",
-	"unit_group": "FromHanger",
-	"cost": 1500,
-	"build_time": 750,
-	"size": 2,
-	"speed": 2.0,
-	"turn_rate": 0.2,
-	"armour_type": "Aircraft",
-	"health": 1200,
-	"tech_level": 6,
-	"storm_damage": 10,
-	"ai_threat": 80,
-	"score": 2,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "AerialExplosion",
 	"ai_special": true,
-	"gets_height_advantage": false,
+	"ai_threat": 80,
+	"armour_type": "Aircraft",
+	"build_time": 750,
 	"can_fly": true,
-	"view_range_base": 4.0,
-	"view_range_bonus": 8.0,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 1500,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
+	"explosion_type": "AerialExplosion",
+	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
+	"health": 1200,
 	"height_offset": 8.0,
-	"source_line": 586
+	"house": "Harkonnen",
+	"legacy_name": "HKADP",
+	"score": 2,
+	"size": 2,
+	"source_line": 586,
+	"speed": 2.0,
+	"storm_damage": 10,
+	"tech_level": 6,
+	"turn_rate": 0.2,
+	"unit_group": "FromHanger",
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0
 }
 lists = {
-	"turrets": [
-		"HKADPGun"
+	"explosion_effects": [
+		"AerialExplosion"
+	],
+	"primary_buildings": [
+		"HKHanger"
 	],
 	"terrain": [
 		"Sand",
@@ -45,29 +49,25 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"HKHanger"
+	"turrets": [
+		"HKADPGun"
 	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 25.0,
 			"level_order": 1,
-			"veterancy_score": 10,
-			"extra_damage_percent": 25.0
+			"veterancy_score": 10
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 2,
-			"veterancy_score": 24,
-			"can_self_repair": true
+			"veterancy_score": 24
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 48,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 50.0,
-			"extra_armour_percent": 50.0
+			"level_order": 3,
+			"veterancy_score": 48
 		}
-	],
-	"explosion_effects": [
-		"AerialExplosion"
 	]
 }
-links = {}

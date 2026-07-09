@@ -1,25 +1,24 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_vrdd2"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_vrdd2")
 id = &"BarrelBomb"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 4
 fields = {
+	"blast_radius": 128.0,
+	"blow_up": true,
 	"damage": 5000.0,
-	"max_range": 0.0,
-	"warhead": "BarrelBomb_W",
 	"debris": "DebrisSmall",
 	"explosion_type": "Explosion",
-	"blow_up": true,
-	"blast_radius": 128.0
+	"max_range": 0.0,
+	"warhead": "BarrelBomb_W"
 }
 lists = {
 	"explosion_effects": [
 		"Explosion"
 	]
 }
-links = {}

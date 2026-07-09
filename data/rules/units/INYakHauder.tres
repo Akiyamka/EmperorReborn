@@ -1,32 +1,33 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_l715h"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_l715h")
 id = &"INYakHauder"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 72
 fields = {
-	"house": "Incidental",
-	"cost": 850,
-	"size": 2,
-	"speed": 2.0,
-	"turn_rate": 0.05,
-	"armour_type": "Medium",
-	"health": 500,
-	"tech_level": 1,
-	"tasty_to_worms": true,
-	"worm_attraction": 4,
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"can_be_deviated": false,
 	"ai_tank": true,
+	"armour_type": "Medium",
+	"can_be_deviated": false,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 850,
+	"hawk_effect": "MediumHawkFX",
+	"health": 500,
+	"house": "Incidental",
+	"legacy_name": "INYakHauder",
+	"size": 2,
+	"source_line": 633,
+	"speed": 2.0,
+	"tasty_to_worms": true,
+	"tech_level": 1,
+	"turn_rate": 0.05,
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 633
+	"worm_attraction": 4
 }
 lists = {
 	"terrain": [
@@ -36,4 +37,3 @@ lists = {
 		"Ramp"
 	]
 }
-links = {}

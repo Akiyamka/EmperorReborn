@@ -1,20 +1,18 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_wui7t"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_wui7t")
 id = &"DeathHandSplat_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 71
 fields = {
-	"damage": 15.0,
-	"max_range": 0.0,
-	"warhead": "DeathHandSplat_W",
 	"blast_radius": 320.0,
+	"damage": 15.0,
 	"friendly_damage_amount": 100.0,
-	"ignites": true
+	"ignites": true,
+	"max_range": 0.0,
+	"warhead": "DeathHandSplat_W"
 }
-lists = {}
-links = {}

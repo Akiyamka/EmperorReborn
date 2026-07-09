@@ -1,28 +1,27 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_6lj70"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_6lj70")
 id = &"InkVine_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 49
 fields = {
+	"blast_radius": 64.0,
+	"burnt": true,
 	"damage": 750.0,
-	"max_range": 20.0,
-	"warhead": "Howitzer_W",
 	"debris": "DebrisLarge",
 	"explosion_type": "InkVineExplosion",
-	"blast_radius": 64.0,
 	"friendly_damage_amount": 50.0,
+	"ignites": false,
+	"max_range": 20.0,
 	"trajectory": true,
-	"burnt": true,
-	"ignites": false
+	"warhead": "Howitzer_W"
 }
 lists = {
 	"explosion_effects": [
 		"InkVineExplosion"
 	]
 }
-links = {}

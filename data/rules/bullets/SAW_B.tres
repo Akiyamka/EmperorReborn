@@ -1,13 +1,10 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_088qh"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_088qh")
 id = &"SAW_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 32
-fields = {}
-lists = {}
-links = {}

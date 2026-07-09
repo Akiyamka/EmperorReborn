@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_430ol"]
+
+[resource]
+script = ExtResource("1_430ol")
+id = &"HKHelipad"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 133
+fields = {
+	"clip_sphere": 125.0,
+	"icon": "icons\\\\HK_Helipad.tga",
+	"icon_grey": "icons\\\\grey_HK_Helipad.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 982,
+	"target_entity": "HKHelipad",
+	"target_entity_source_id": 10,
+	"target_entity_type": "building",
+	"xaf": "HK_Helipad",
+	"xaf_construction": "construction_hk_helipad_high.xaf"
+}

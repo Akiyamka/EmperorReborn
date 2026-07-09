@@ -1,45 +1,45 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_ywjrb"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_ywjrb")
 id = &"StuntATADVCarryall"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 90
 fields = {
-	"house": "Atreides",
-	"cost": 1200,
-	"build_time": 648,
-	"size": 3,
-	"speed": 17.0,
-	"turn_rate": 0.1,
 	"armour_type": "Medium",
-	"health": 900,
-	"tech_level": 6,
-	"storm_damage": 10,
-	"score": 3,
-	"debris": "DebrisLarge",
+	"build_time": 648,
 	"chaos_effect": "LargeChaosFX",
-	"hawk_effect": "LargeHawkFX",
+	"cost": 1200,
 	"damage_effect": "LargeDamageFX",
-	"explosion_type": "AerialExplosion",
-	"view_range_base": 4.0,
-	"view_range_bonus": 8.0,
-	"height_offset": 8.0,
+	"debris": "DebrisLarge",
 	"exclude_from_skirmish_lose": true,
-	"source_line": 652
+	"explosion_type": "AerialExplosion",
+	"hawk_effect": "LargeHawkFX",
+	"health": 900,
+	"height_offset": 8.0,
+	"house": "Atreides",
+	"legacy_name": "StuntATADVCarryall",
+	"score": 3,
+	"size": 3,
+	"source_line": 652,
+	"speed": 17.0,
+	"storm_damage": 10,
+	"tech_level": 6,
+	"turn_rate": 0.1,
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0
 }
 lists = {
+	"explosion_effects": [
+		"AerialExplosion"
+	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"Ramp"
-	],
-	"explosion_effects": [
-		"AerialExplosion"
 	]
 }
-links = {}

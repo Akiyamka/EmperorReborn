@@ -1,29 +1,53 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_itwwh"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_itwwh")
 id = &"GURefinery"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 110
 fields = {
-	"house": "Guild",
-	"building_group": "Refinery",
-	"cost": 1500,
-	"health": 3000,
-	"tech_level": 1,
-	"storm_damage": 10,
-	"can_be_engineered": true,
-	"is_con_yard": false,
 	"ai_exit": true,
-	"explosion_type": "BigExplosion",
+	"building_group": "Refinery",
+	"can_be_engineered": true,
+	"cost": 1500,
 	"debris": "DebrisLarge",
-	"view_range_base": 10.0,
-	"source_line": 466
+	"explosion_type": "BigExplosion",
+	"health": 3000,
+	"house": "Guild",
+	"is_con_yard": false,
+	"legacy_name": "GURefinery",
+	"source_line": 466,
+	"storm_damage": 10,
+	"tech_level": 1,
+	"view_range_base": 10.0
 }
 lists = {
+	"deploy_points": [
+		{
+			"angle": 0.0,
+			"seq": 0,
+			"tile_x": 2,
+			"tile_y": 0
+		},
+		{
+			"angle": -45.0,
+			"seq": 1,
+			"tile_x": 9,
+			"tile_y": 5
+		},
+		{
+			"angle": 45.0,
+			"seq": 2,
+			"tile_x": 1,
+			"tile_y": 5
+		}
+	],
+	"explosion_effects": [
+		"BigExplosion"
+	],
 	"occupy_rows": [
 		"sssssss",
 		"sssssss",
@@ -35,35 +59,11 @@ lists = {
 		"bbbbbbb",
 		"bbbbbbb"
 	],
-	"terrain": [
-		"Sand",
-		"Rock"
-	],
-	"deploy_points": [
-		{
-			"seq": 0,
-			"tile_x": 2,
-			"tile_y": 0,
-			"angle": 0.0
-		},
-		{
-			"seq": 1,
-			"tile_x": 9,
-			"tile_y": 5,
-			"angle": -45.0
-		},
-		{
-			"seq": 2,
-			"tile_x": 1,
-			"tile_y": 5,
-			"angle": 45.0
-		}
-	],
 	"roles": [
 		"Refinery"
 	],
-	"explosion_effects": [
-		"BigExplosion"
+	"terrain": [
+		"Sand",
+		"Rock"
 	]
 }
-links = {}

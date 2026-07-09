@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_pr7po"]
+
+[resource]
+script = ExtResource("1_pr7po")
+id = &"IMADVSardaukar"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 66
+fields = {
+	"icon": "icons\\\\IM_ADVSardaukar.tga",
+	"icon_grey": "icons\\\\grey_IM_ADVSardaukar.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Infantry",
+	"source_line": 528,
+	"target_entity": "IMADVSardaukar",
+	"target_entity_source_id": 62,
+	"target_entity_type": "unit",
+	"xaf": "IM_ADVSardaukar"
+}

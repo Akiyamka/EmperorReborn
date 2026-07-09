@@ -1,63 +1,64 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_ih10y"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_ih10y")
 id = &"IXInfiltrator"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 57
 fields = {
-	"house": "Ix",
-	"unit_group": "FromIXResCentre",
-	"cost": 500,
-	"build_time": 432,
-	"size": 2,
-	"speed": 7.0,
-	"turn_rate": 0.1,
-	"armour_type": "Light",
-	"health": 800,
-	"tech_level": 4,
-	"storm_damage": 10,
-	"tasty_to_worms": true,
-	"worm_attraction": 4,
+	"ai_tank": true,
 	"ai_threat": 80,
-	"debris": "DebrisSmall",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "Explosion",
+	"armour_type": "Light",
+	"build_time": 432,
 	"can_move_any_direction": true,
 	"can_self_repair": true,
-	"ai_tank": true,
-	"gets_height_advantage": false,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 500,
 	"crate_gift": true,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisSmall",
+	"explosion_type": "Explosion",
+	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
+	"health": 800,
+	"house": "Ix",
+	"legacy_name": "IXInfiltrator",
+	"size": 2,
+	"source_line": 609,
+	"speed": 7.0,
+	"storm_damage": 10,
+	"tasty_to_worms": true,
+	"tech_level": 4,
+	"turn_rate": 0.1,
+	"unit_group": "FromIXResCentre",
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 609
+	"worm_attraction": 4
 }
 lists = {
+	"explosion_effects": [
+		"Explosion"
+	],
+	"primary_buildings": [
+		"IXResCentre"
+	],
 	"terrain": [
 		"Sand",
 		"Rock",
 		"NBRock",
 		"Ramp"
-	],
-	"primary_buildings": [
-		"IXResCentre"
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
 links = {
 	"resources": [
 		{
 			"seq": 0,
-			"target": "SaboteurBomb",
-			"source_line": 9809
+			"source_line": 9810,
+			"target": "SaboteurBomb"
 		}
 	]
 }

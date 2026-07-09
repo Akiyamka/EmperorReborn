@@ -1,34 +1,35 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_ejaqc"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_ejaqc")
 id = &"INMaleCiv"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 78
 fields = {
-	"house": "Incidental",
-	"cost": 150,
-	"size": 1,
-	"speed": 2.0,
-	"turn_rate": 0.2,
-	"armour_type": "None",
+	"ai_foot": true,
 	"armour_modifier_percent": 50.0,
 	"armour_modifier_terrain": "InfRock",
-	"health": 400,
-	"tech_level": 1,
-	"tasty_to_worms": true,
-	"worm_attraction": 2,
-	"chaos_effect": "SmallChaosFX",
-	"hawk_effect": "SmallHawkFX",
+	"armour_type": "None",
 	"can_be_deviated": false,
-	"infantry": true,
+	"chaos_effect": "SmallChaosFX",
+	"cost": 150,
 	"crushable": true,
-	"ai_foot": true,
+	"hawk_effect": "SmallHawkFX",
+	"health": 400,
+	"house": "Incidental",
+	"infantry": true,
+	"legacy_name": "INMaleCiv",
+	"size": 1,
+	"source_line": 639,
+	"speed": 2.0,
+	"tasty_to_worms": true,
+	"tech_level": 1,
+	"turn_rate": 0.2,
 	"view_range_base": 12.0,
-	"source_line": 639
+	"worm_attraction": 2
 }
 lists = {
 	"terrain": [
@@ -39,4 +40,3 @@ lists = {
 		"Ramp"
 	]
 }
-links = {}

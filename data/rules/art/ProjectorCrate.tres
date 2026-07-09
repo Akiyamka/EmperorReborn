@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_25mq1"]
+
+[resource]
+script = ExtResource("1_25mq1")
+id = &"ProjectorCrate"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 364
+fields = {
+	"load_flag_only_preplaced": true,
+	"source_line": 2017,
+	"target_entity": "ProjectorCrate",
+	"target_entity_source_id": 4,
+	"target_entity_type": "crate_type",
+	"xaf": "Crate_IX_Pod_h0.XBF"
+}

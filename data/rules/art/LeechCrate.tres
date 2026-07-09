@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_thy53"]
+
+[resource]
+script = ExtResource("1_thy53")
+id = &"LeechCrate"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 359
+fields = {
+	"load_flag_only_preplaced": true,
+	"source_line": 1997,
+	"target_entity": "LeechCrate",
+	"target_entity_source_id": 1,
+	"target_entity_type": "crate_type",
+	"xaf": "Crate_TL_Egg_h0.XBF"
+}

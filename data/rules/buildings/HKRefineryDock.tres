@@ -1,37 +1,35 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_sky5q"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_sky5q")
 id = &"HKRefineryDock"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 46
 fields = {
-	"house": "Harkonnen",
-	"building_group": "RefineryDock",
-	"build_time": 618,
-	"health": 1000,
-	"tech_level": 3,
-	"power_used": 20,
-	"storm_damage": 5,
-	"is_con_yard": false,
-	"upgrade_tech_level": 3,
-	"upgrade_cost": 1200,
 	"ai_resource": true,
+	"build_time": 618,
+	"building_group": "RefineryDock",
 	"disable_if_no_spice_on_map": true,
-	"view_range_base": 10.0,
-	"source_line": 390
+	"health": 1000,
+	"house": "Harkonnen",
+	"is_con_yard": false,
+	"legacy_name": "HKRefineryDock",
+	"power_used": 20,
+	"source_line": 390,
+	"storm_damage": 5,
+	"tech_level": 3,
+	"upgrade_cost": 1200,
+	"upgrade_tech_level": 3,
+	"view_range_base": 10.0
 }
 lists = {
 	"occupy_rows": [
 		"ppp",
 		"ppp",
 		"ppp"
-	],
-	"terrain": [
-		"Rock"
 	],
 	"requires_primary": [
 		"HKConYard",
@@ -45,6 +43,8 @@ lists = {
 	],
 	"roles": [
 		"Dockable"
+	],
+	"terrain": [
+		"Rock"
 	]
 }
-links = {}

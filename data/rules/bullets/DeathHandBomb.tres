@@ -1,26 +1,25 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_fgu2f"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_fgu2f")
 id = &"DeathHandBomb"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 5
 fields = {
+	"blast_radius": 96.0,
+	"blow_up": true,
 	"damage": 5000.0,
-	"max_range": 0.0,
-	"warhead": "Death_W",
 	"debris": "DebrisSmall",
 	"explosion_type": "DHBigExplosion",
-	"blow_up": true,
-	"blast_radius": 96.0,
-	"reduce_damage_with_distance": false
+	"max_range": 0.0,
+	"reduce_damage_with_distance": false,
+	"warhead": "Death_W"
 }
 lists = {
 	"explosion_effects": [
 		"DHBigExplosion"
 	]
 }
-links = {}

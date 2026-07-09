@@ -1,51 +1,54 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_jjxia"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_jjxia")
 id = &"HKBuzzsaw"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 25
 fields = {
-	"house": "Harkonnen",
-	"unit_group": "FromFactory",
-	"cost": 350,
-	"build_time": 180,
-	"size": 2,
-	"speed": 8.0,
-	"turn_rate": 0.2,
+	"ai_tank": true,
+	"ai_threat": 50,
 	"armour_type": "Light",
+	"build_time": 180,
+	"cant_be_leeched": true,
+	"chaos_effect": "MediumChaosFX",
+	"cost": 350,
+	"crushes": true,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
+	"explosion_type": "Explosion",
+	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
 	"health": 1300,
-	"tech_level": 2,
+	"house": "Harkonnen",
+	"legacy_name": "HKBuzzsaw",
+	"reinforcement_value": 5,
+	"roof_height": 55,
+	"score": 2,
+	"size": 2,
+	"source_line": 558,
+	"special_ground_terrain": "Sand",
+	"speed": 8.0,
+	"starportable": true,
 	"storm_damage": 10,
 	"tasty_to_worms": true,
-	"worm_attraction": 5,
-	"ai_threat": 50,
-	"score": 2,
-	"reinforcement_value": 5,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "Explosion",
-	"crushes": true,
-	"starportable": true,
-	"ai_tank": true,
-	"gets_height_advantage": false,
-	"cant_be_leeched": true,
-	"special_ground_terrain": "Sand",
-	"roof_height": 55,
+	"tech_level": 2,
+	"turn_rate": 0.2,
+	"unit_group": "FromFactory",
 	"view_range_base": 4.0,
 	"view_range_bonus": 8.0,
 	"view_range_bonus_terrain": "InfRock",
-	"source_line": 558
+	"worm_attraction": 5
 }
 lists = {
-	"turrets": [
-		"HKBuzzsawRight",
-		"HKBuzzsawLeft"
+	"explosion_effects": [
+		"Explosion"
+	],
+	"primary_buildings": [
+		"HKFactory"
 	],
 	"terrain": [
 		"Sand",
@@ -53,29 +56,26 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"HKFactory"
+	"turrets": [
+		"HKBuzzsawRight",
+		"HKBuzzsawLeft"
 	],
 	"veterancy_levels": [
 		{
 			"level_order": 1,
-			"veterancy_score": 8,
-			"speed_override": 12.0
+			"speed_override": 12.0,
+			"veterancy_score": 8
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 2,
-			"veterancy_score": 20,
-			"can_self_repair": true
+			"veterancy_score": 20
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 40,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 50.0,
-			"extra_armour_percent": 50.0
+			"level_order": 3,
+			"veterancy_score": 40
 		}
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

@@ -1,48 +1,49 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_tpt75"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_tpt75")
 id = &"ATInfantry"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 6
 fields = {
-	"house": "Atreides",
-	"unit_group": "FromBarracks",
-	"cost": 60,
-	"build_time": 87,
-	"size": 1,
-	"speed": 6.0,
-	"turn_rate": 0.2,
-	"armour_type": "None",
+	"ai_foot": true,
+	"ai_threat": 20,
 	"armour_modifier_percent": 50.0,
 	"armour_modifier_terrain": "InfRock",
-	"health": 600,
-	"tech_level": 1,
-	"storm_damage": 138,
-	"tasty_to_worms": true,
-	"worm_attraction": 3,
-	"ai_threat": 20,
-	"score": 2,
-	"reinforcement_value": 1,
-	"chaos_effect": "SmallChaosFX",
-	"hawk_effect": "SmallHawkFX",
-	"can_move_any_direction": true,
+	"armour_type": "None",
+	"build_time": 87,
 	"can_be_deviated": false,
 	"can_be_repaired": false,
-	"infantry": true,
-	"crushable": true,
-	"ai_foot": true,
-	"gets_height_advantage": false,
 	"can_be_suppressed": true,
+	"can_move_any_direction": true,
+	"chaos_effect": "SmallChaosFX",
+	"cost": 60,
+	"crushable": true,
+	"gets_height_advantage": false,
+	"hawk_effect": "SmallHawkFX",
+	"health": 600,
+	"house": "Atreides",
+	"infantry": true,
+	"legacy_name": "ATInfantry",
+	"reinforcement_value": 1,
+	"score": 2,
+	"size": 1,
+	"source_line": 530,
+	"speed": 6.0,
+	"storm_damage": 138,
+	"tasty_to_worms": true,
+	"tech_level": 1,
+	"turn_rate": 0.2,
+	"unit_group": "FromBarracks",
 	"view_range_base": 7.0,
-	"source_line": 530
+	"worm_attraction": 3
 }
 lists = {
-	"turrets": [
-		"ATInfGun"
+	"primary_buildings": [
+		"ATBarracks"
 	],
 	"terrain": [
 		"Sand",
@@ -51,27 +52,26 @@ lists = {
 		"InfRock",
 		"Ramp"
 	],
-	"primary_buildings": [
-		"ATBarracks"
+	"turrets": [
+		"ATInfGun"
 	],
 	"veterancy_levels": [
 		{
-			"level_order": 1,
-			"veterancy_score": 5,
 			"extra_damage_percent": 50.0,
-			"health_override": 800
+			"health_override": 800,
+			"level_order": 1,
+			"veterancy_score": 5
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 2,
-			"veterancy_score": 10,
-			"can_self_repair": true
+			"veterancy_score": 10
 		},
 		{
-			"level_order": 3,
-			"veterancy_score": 20,
+			"elite": true,
 			"extra_armour_percent": 50.0,
-			"elite": true
+			"level_order": 3,
+			"veterancy_score": 20
 		}
 	]
 }
-links = {}

@@ -1,42 +1,50 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_i807g"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_i807g")
 id = &"HKHelipad"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 10
 fields = {
-	"house": "Harkonnen",
-	"building_group": "Helipad",
-	"cost": 800,
+	"ai_critical": true,
+	"ai_exit": false,
 	"build_time": 240,
+	"building_group": "Helipad",
+	"can_be_engineered": true,
+	"cost": 800,
+	"debris": "DebrisSmall",
+	"explosion_type": "MidExplosion",
 	"health": 2000,
-	"tech_level": 5,
+	"house": "Harkonnen",
+	"is_con_yard": false,
+	"legacy_name": "HKHelipad",
+	"num_infantry_when_gone": 1,
 	"power_used": 30,
-	"storm_damage": 5,
 	"roof_height": 72,
 	"score": 2,
-	"num_infantry_when_gone": 1,
-	"can_be_engineered": true,
-	"is_con_yard": false,
-	"ai_exit": false,
-	"ai_critical": true,
-	"explosion_type": "MidExplosion",
-	"debris": "DebrisSmall",
-	"view_range_base": 10.0,
-	"source_line": 337
+	"source_line": 337,
+	"storm_damage": 5,
+	"tech_level": 5,
+	"view_range_base": 10.0
 }
 lists = {
+	"deploy_points": [
+		{
+			"seq": 0,
+			"tile_x": 2,
+			"tile_y": 0
+		}
+	],
+	"explosion_effects": [
+		"MidExplosion"
+	],
 	"occupy_rows": [
 		"bb",
 		"bb",
 		"bb"
-	],
-	"terrain": [
-		"Rock"
 	],
 	"requires_primary": [
 		"HKConYard",
@@ -48,18 +56,10 @@ lists = {
 		"ATHanger",
 		"ORHanger"
 	],
-	"deploy_points": [
-		{
-			"seq": 0,
-			"tile_x": 2,
-			"tile_y": 0
-		}
-	],
 	"roles": [
 		"Helipad"
 	],
-	"explosion_effects": [
-		"MidExplosion"
+	"terrain": [
+		"Rock"
 	]
 }
-links = {}

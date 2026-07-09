@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_fy3o8"]
+
+[resource]
+script = ExtResource("1_fy3o8")
+id = &"INMedicalWreck"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 254
+fields = {
+	"clip_sphere": 50.0,
+	"load_flag_only_preplaced": true,
+	"source_line": 1652,
+	"target_entity": "INMedicalWreck",
+	"target_entity_source_id": 143,
+	"target_entity_type": "building",
+	"xaf": "IN_MedicalWreck"
+}

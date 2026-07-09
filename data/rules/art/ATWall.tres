@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_btviy"]
+
+[resource]
+script = ExtResource("1_btviy")
+id = &"ATWall"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 152
+fields = {
+	"icon": "icons\\\\HK_Wall.tga",
+	"icon_grey": "icons\\\\grey_HK_Wall.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 1140,
+	"target_entity": "ATWall",
+	"target_entity_source_id": 16,
+	"target_entity_type": "building",
+	"xaf": "AT_Wall",
+	"xaf_construction": "AT_Wall.xaf"
+}

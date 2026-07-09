@@ -1,78 +1,79 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_is5sm"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_is5sm")
 id = &"Harvester"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 54
 fields = {
-	"unit_group": "FromFactory",
-	"cost": 1000,
-	"build_time": 504,
-	"size": 3,
-	"speed": 4.0,
-	"turn_rate": 0.15,
+	"ai_critical": true,
+	"ai_threat": 5,
+	"ai_uncontrolled": true,
 	"armour_type": "Harvester",
+	"build_time": 504,
+	"chaos_effect": "LargeChaosFX",
+	"cost": 1000,
+	"crate_gift": true,
+	"crushes": true,
+	"damage_effect": "LargeDamageFX",
+	"debris": "DebrisLarge",
+	"exclude_from_skirmish_lose": true,
+	"explosion_type": "Explosion",
+	"hawk_effect": "LargeHawkFX",
 	"health": 3500,
-	"tech_level": 2,
+	"legacy_name": "Harvester",
+	"reinforcement_value": 5,
+	"roof_height": 44,
+	"score": 4,
+	"size": 3,
+	"source_line": 601,
+	"speed": 4.0,
+	"starportable": true,
 	"storm_damage": 10,
 	"tasty_to_worms": true,
-	"worm_attraction": 2,
-	"ai_threat": 5,
-	"score": 4,
-	"reinforcement_value": 5,
-	"debris": "DebrisLarge",
-	"chaos_effect": "LargeChaosFX",
-	"hawk_effect": "LargeHawkFX",
-	"damage_effect": "LargeDamageFX",
-	"explosion_type": "Explosion",
-	"crushes": true,
-	"starportable": true,
-	"ai_uncontrolled": true,
-	"ai_critical": true,
-	"crate_gift": true,
-	"roof_height": 44,
+	"tech_level": 2,
+	"turn_rate": 0.15,
+	"unit_group": "FromFactory",
 	"view_range_base": 4.0,
 	"view_range_bonus": 6.0,
 	"view_range_bonus_terrain": "InfRock",
-	"exclude_from_skirmish_lose": true,
-	"source_line": 601
+	"worm_attraction": 2
 }
 lists = {
-	"terrain": [
-		"Sand",
-		"Rock",
-		"NBRock",
-		"Ramp"
+	"explosion_effects": [
+		"Explosion"
 	],
 	"primary_buildings": [
 		"HKFactory",
 		"ATFactory",
 		"ORFactory"
 	],
-	"explosion_effects": [
-		"Explosion"
+	"terrain": [
+		"Sand",
+		"Rock",
+		"NBRock",
+		"Ramp"
 	]
 }
 links = {
 	"resources": [
 		{
 			"seq": 0,
-			"target": "HKRefinery",
-			"source_line": 6824
+			"source_line": 6825,
+			"target": "HKRefinery"
 		},
 		{
 			"seq": 1,
-			"target": "ATRefinery",
-			"source_line": 6824
+			"source_line": 6825,
+			"target": "ATRefinery"
 		},
 		{
 			"seq": 2,
-			"target": "ORRefinery",
-			"source_line": 6824
+			"source_line": 6825,
+			"target": "ORRefinery"
 		}
 	]
 }

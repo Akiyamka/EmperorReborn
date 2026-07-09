@@ -1,33 +1,37 @@
-[gd_resource type="Resource" script_class="BuildingConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/building_config.gd" id="1_jthax"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_jthax")
 id = &"INSandCrawlerWreck"
 entity_type = &"building"
 source_table = &"buildings"
 source_id = 144
 fields = {
-	"house": "Incidental",
-	"cost": 0,
 	"build_time": 309,
+	"cost": 0,
+	"counts_for_stats": false,
+	"debris": "DebrisSmall",
+	"explosion_type": "Explosion",
 	"health": 2000,
-	"tech_level": 4,
+	"house": "Incidental",
+	"is_con_yard": false,
+	"legacy_name": "INSandCrawlerWreck",
+	"num_infantry_when_gone": 1,
+	"object_type_when_gone": "MoneyCrate",
 	"power_used": 75,
-	"storm_damage": 10,
 	"roof_height": 80,
 	"score": 3,
-	"num_infantry_when_gone": 1,
-	"is_con_yard": false,
-	"object_type_when_gone": "MoneyCrate",
-	"explosion_type": "Explosion",
-	"debris": "DebrisSmall",
-	"counts_for_stats": false,
-	"view_range_base": 10.0,
-	"source_line": 781
+	"source_line": 781,
+	"storm_damage": 10,
+	"tech_level": 4,
+	"view_range_base": 10.0
 }
 lists = {
+	"explosion_effects": [
+		"Explosion"
+	],
 	"occupy_rows": [
 		"bb",
 		"bb"
@@ -35,9 +39,5 @@ lists = {
 	"terrain": [
 		"Sand",
 		"Rock"
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

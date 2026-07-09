@@ -1,31 +1,30 @@
-[gd_resource type="Resource" script_class="BulletConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BulletConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/bullet_config.gd" id="1_b4sro"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_b4sro")
 id = &"Deviate_B"
 entity_type = &"bullet"
 source_table = &"bullets"
 source_id = 35
 fields = {
 	"damage": 250.0,
-	"max_range": 8.0,
-	"warhead": "Deviate_W",
 	"debris": "DebrisSmall",
-	"speed": 16.0,
+	"deviate": true,
 	"explosion_type": "DeviateHit",
+	"max_range": 8.0,
 	"missile_trail": 2,
+	"missile_trail_delta": 0.5,
+	"missile_trail_length": 12,
 	"missile_trail_size": 2,
 	"missile_trail_wiggle_freq": 10,
 	"missile_trail_wiggle_scale": 5,
-	"missile_trail_length": 12,
-	"missile_trail_delta": 0.5,
-	"deviate": true
+	"speed": 16.0,
+	"warhead": "Deviate_W"
 }
 lists = {
 	"explosion_effects": [
 		"DeviateHit"
 	]
 }
-links = {}

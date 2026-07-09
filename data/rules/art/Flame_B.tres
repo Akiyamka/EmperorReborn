@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_oa220"]
+
+[resource]
+script = ExtResource("1_oa220")
+id = &"Flame_B"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 277
+fields = {
+	"load_flag_only_preplaced": false,
+	"source_line": 1739,
+	"target_entity": "Flame_B",
+	"target_entity_source_id": 16,
+	"target_entity_type": "bullet",
+	"xaf": "Flamethrower.xaf"
+}

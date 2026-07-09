@@ -1,16 +1,14 @@
-[gd_resource type="Resource" script_class="ExplosionConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="ExplosionConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/explosion_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/explosion_config.gd" id="1_op05q"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_op05q")
 id = &"ORLightning"
 entity_type = &"explosion"
 source_table = &"explosion_types"
 source_id = 23
 fields = {
-	"source_line": 177,
-	"damage_to_tile": 80.0
+	"damage_to_tile": 80.0,
+	"source_line": 177
 }
-lists = {}
-links = {}

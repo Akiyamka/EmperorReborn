@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_bum54"]
+
+[resource]
+script = ExtResource("1_bum54")
+id = &"INPalace"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 163
+fields = {
+	"load_flag_only_preplaced": true,
+	"source_line": 1214,
+	"target_entity": "INPalace",
+	"target_entity_source_id": 53,
+	"target_entity_type": "building",
+	"xaf": "IN_Palace"
+}

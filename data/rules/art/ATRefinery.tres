@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ArtConfig" format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/art_config.gd" id="1_ro06e"]
+
+[resource]
+script = ExtResource("1_ro06e")
+id = &"ATRefinery"
+entity_type = &"art_config"
+source_table = &"art_configs"
+source_id = 114
+fields = {
+	"clip_sphere": 160.0,
+	"icon": "icons\\\\AT_Refinery.tga",
+	"icon_grey": "icons\\\\grey_AT_Refinery.tga",
+	"load_flag_only_preplaced": false,
+	"sidebar_type": "Buildings",
+	"source_line": 820,
+	"target_entity": "ATRefinery",
+	"target_entity_source_id": 17,
+	"target_entity_type": "building",
+	"xaf": "AT_Refinery",
+	"xaf_construction": "construction_AT_refinery_high.xaf"
+}

@@ -1,45 +1,46 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_g1exi"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_g1exi")
 id = &"GUNIAP"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 94
 fields = {
-	"house": "Guild",
-	"unit_group": "FromHanger",
-	"cost": 1000,
-	"build_time": 499,
-	"size": 2,
-	"speed": 6.0,
-	"turn_rate": 0.05,
-	"armour_type": "Aircraft",
-	"health": 1200,
-	"tech_level": 6,
-	"storm_damage": 10,
-	"ai_threat": 70,
-	"score": 2,
-	"debris": "DebrisMedium",
-	"chaos_effect": "MediumChaosFX",
-	"hawk_effect": "MediumHawkFX",
-	"damage_effect": "MediumDamageFX",
-	"explosion_type": "Explosion",
 	"ai_special": true,
-	"gets_height_advantage": false,
+	"ai_threat": 70,
+	"armour_type": "Aircraft",
+	"build_time": 499,
 	"can_fly": true,
+	"chaos_effect": "MediumChaosFX",
 	"circles": true,
-	"view_range_base": 4.0,
-	"view_range_bonus": 8.0,
-	"height_offset": 8.0,
+	"cost": 1000,
+	"damage_effect": "MediumDamageFX",
+	"debris": "DebrisMedium",
 	"exclude_from_skirmish_lose": true,
-	"source_line": 785
+	"explosion_type": "Explosion",
+	"gets_height_advantage": false,
+	"hawk_effect": "MediumHawkFX",
+	"health": 1200,
+	"height_offset": 8.0,
+	"house": "Guild",
+	"legacy_name": "GUNIAP",
+	"score": 2,
+	"size": 2,
+	"source_line": 785,
+	"speed": 6.0,
+	"storm_damage": 10,
+	"tech_level": 6,
+	"turn_rate": 0.05,
+	"unit_group": "FromHanger",
+	"view_range_base": 4.0,
+	"view_range_bonus": 8.0
 }
 lists = {
-	"turrets": [
-		"GUNIAPGun"
+	"explosion_effects": [
+		"Explosion"
 	],
 	"terrain": [
 		"Sand",
@@ -47,26 +48,25 @@ lists = {
 		"NBRock",
 		"Ramp"
 	],
+	"turrets": [
+		"GUNIAPGun"
+	],
 	"veterancy_levels": [
 		{
-			"level_order": 1,
-			"veterancy_score": 10,
+			"extra_armour_percent": 50.0,
 			"extra_damage_percent": 25.0,
-			"extra_armour_percent": 50.0
+			"level_order": 1,
+			"veterancy_score": 10
 		},
 		{
+			"extra_range_percent": 50.0,
 			"level_order": 2,
-			"veterancy_score": 24,
-			"extra_range_percent": 50.0
+			"veterancy_score": 24
 		},
 		{
+			"extra_damage_percent": 50.0,
 			"level_order": 3,
-			"veterancy_score": 48,
-			"extra_damage_percent": 50.0
+			"veterancy_score": 48
 		}
-	],
-	"explosion_effects": [
-		"Explosion"
 	]
 }
-links = {}

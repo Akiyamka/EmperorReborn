@@ -1,45 +1,43 @@
-[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="UnitConfig" format=3]
 
-[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="rules_script"]
+[ext_resource type="Script" path="res://scripts/rules/unit_config.gd" id="1_6svb3"]
 
 [resource]
-script = ExtResource("rules_script")
+script = ExtResource("1_6svb3")
 id = &"StoryFRADVFremen"
 entity_type = &"unit"
 source_table = &"units"
 source_id = 67
 fields = {
-	"house": "Fremen",
-	"unit_group": "FromFRCamp",
-	"cost": 650,
-	"build_time": 589,
-	"size": 1,
-	"speed": 4.0,
-	"turn_rate": 0.2,
-	"armour_type": "Earplugs",
+	"ai_foot": true,
+	"ai_threat": 70,
 	"armour_modifier_percent": 50.0,
 	"armour_modifier_terrain": "InfRock",
-	"health": 750,
-	"tech_level": 5,
-	"tasty_to_worms": true,
-	"worm_attraction": 1,
-	"ai_threat": 70,
-	"chaos_effect": "SmallChaosFX",
-	"hawk_effect": "SmallHawkFX",
-	"can_move_any_direction": true,
+	"armour_type": "Earplugs",
+	"build_time": 589,
 	"can_be_deviated": false,
 	"can_be_repaired": false,
-	"infantry": true,
+	"can_move_any_direction": true,
+	"chaos_effect": "SmallChaosFX",
+	"cost": 650,
 	"crushable": true,
-	"ai_foot": true,
+	"hawk_effect": "SmallHawkFX",
+	"health": 750,
+	"house": "Fremen",
+	"infantry": true,
+	"legacy_name": "StoryFRADVFremen",
+	"size": 1,
+	"source_line": 624,
 	"special_ground_terrain": "Sand",
+	"speed": 4.0,
+	"tasty_to_worms": true,
+	"tech_level": 5,
+	"turn_rate": 0.2,
+	"unit_group": "FromFRCamp",
 	"view_range_base": 12.0,
-	"source_line": 624
+	"worm_attraction": 1
 }
 lists = {
-	"turrets": [
-		"FRADVFremenGun"
-	],
 	"terrain": [
 		"Sand",
 		"Rock",
@@ -47,21 +45,24 @@ lists = {
 		"InfRock",
 		"Ramp"
 	],
+	"turrets": [
+		"FRADVFremenGun"
+	],
 	"veterancy_levels": [
 		{
+			"extra_damage_percent": 50.0,
 			"level_order": 1,
-			"veterancy_score": 4,
-			"extra_damage_percent": 50.0
+			"veterancy_score": 4
 		},
 		{
+			"extra_armour_percent": 50.0,
 			"level_order": 2,
-			"veterancy_score": 14,
-			"extra_armour_percent": 50.0
+			"veterancy_score": 14
 		},
 		{
+			"can_self_repair": true,
 			"level_order": 3,
-			"veterancy_score": 28,
-			"can_self_repair": true
+			"veterancy_score": 28
 		}
 	]
 }
@@ -69,8 +70,8 @@ links = {
 	"resources": [
 		{
 			"seq": 0,
-			"target": "WormRider",
-			"source_line": 10230
+			"source_line": 10231,
+			"target": "WormRider"
 		}
 	]
 }
