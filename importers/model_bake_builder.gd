@@ -401,8 +401,8 @@ func _animated_frame_shader(additive: bool) -> Shader:
 shader_type spatial;
 render_mode %s unshaded, cull_disabled, depth_draw_never;
 
-instance uniform float fx_frame = 0.0;
-instance uniform vec4 team_color = vec4(0.12, 0.44, 1.0, 1.0);
+instance uniform float fx_frame : instance_index(1) = 0.0;
+instance uniform vec4 team_color : instance_index(0) = vec4(0.12, 0.44, 1.0, 1.0);
 uniform sampler2D albedo_atlas : source_color;
 uniform bool use_team_color = false;
 uniform float frame_count = 1.0;
@@ -450,8 +450,8 @@ func _animated_shield_shader() -> Shader:
 shader_type spatial;
 render_mode blend_add, unshaded, cull_disabled, depth_draw_never;
 
-instance uniform float fx_time = 0.0;
-instance uniform vec4 team_color = vec4(0.12, 0.44, 1.0, 1.0);
+instance uniform float fx_time : instance_index(1) = 0.0;
+instance uniform vec4 team_color : instance_index(0) = vec4(0.12, 0.44, 1.0, 1.0);
 uniform sampler2D albedo_tex : source_color;
 uniform bool use_team_color = false;
 uniform float scroll_speed = 0.225;
@@ -516,7 +516,7 @@ func _model_texture_shader(additive: bool, alpha_blend: bool, has_alpha: bool) -
 	shader.code = """
 shader_type spatial;
 %s
-instance uniform vec4 team_color = vec4(0.12, 0.44, 1.0, 1.0);
+instance uniform vec4 team_color : instance_index(0) = vec4(0.12, 0.44, 1.0, 1.0);
 uniform sampler2D albedo_tex : source_color;
 uniform bool use_team_color = false;
 
@@ -548,8 +548,8 @@ func _scrolling_texture_shader(additive: bool) -> Shader:
 shader_type spatial;
 render_mode %s;
 
-instance uniform float fx_time = 0.0;
-instance uniform vec4 team_color = vec4(0.12, 0.44, 1.0, 1.0);
+instance uniform float fx_time : instance_index(1) = 0.0;
+instance uniform vec4 team_color : instance_index(0) = vec4(0.12, 0.44, 1.0, 1.0);
 uniform sampler2D albedo_tex : source_color;
 uniform bool use_team_color = false;
 uniform vec2 scroll_speed = vec2(0.18, 0.0);
