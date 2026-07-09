@@ -8,6 +8,8 @@ extends Control
 const QUEUE_GRID_COLUMNS := 3
 const QUEUE_GRID_ROWS := 5
 const QUEUE_SLOT_SIZE := Vector2(64, 64)
+const HARDCODED_BUILDING_SLOT := 0
+const HARDCODED_BUILDING_ID := &"ATSmWindtrap"
 
 const AT_WINDTRAP_ICON := preload("res://assets/unpacked_rfd/3DDATA/Textures/AT_Windtrap.tga")
 const AT_WINDTRAP_ICON_GREY := preload("res://assets/unpacked_rfd/3DDATA/Textures/Grey_AT_Windtrap.tga")
@@ -18,7 +20,7 @@ enum Tab { INFANTRY, VEHICLES, BUILDINGS, UPGRADES, STARPORT }
 
 signal command_pressed(command: StringName)
 signal tab_changed(tab: Tab)
-signal queue_slot_pressed(tab: Tab, slot: int)
+signal queue_slot_pressed(tab: Tab, slot: int, button_index: int)
 
 @onready var _credits_label: Label = %CreditsLabel
 @onready var _queue_grid: GridContainer = %QueueGrid
@@ -86,7 +88,29 @@ func _on_command_pressed(command: StringName) -> void:
 
 
 func get_slot(index: int) -> QueueSlot:
+	if index < 0 or index >= _queue_grid.get_child_count():
+		return null
 	return _queue_grid.get_child(index) as QueueSlot
+
+
+func set_building_slot_state(
+		state: QueueSlot.State,
+		progress := 0.0,
+		status_text := "",
+		tooltip := ""
+) -> void:
+	if active_tab != Tab.BUILDINGS:
+		return
+
+	var slot := get_slot(HARDCODED_BUILDING_SLOT)
+	if slot == null:
+		return
+
+	slot.state = state
+	slot.progress = progress
+	slot.status_text = status_text
+	if not tooltip.is_empty():
+		slot.tooltip_text = tooltip
 
 
 func _rebuild_queue_grid() -> void:
@@ -98,17 +122,18 @@ func _rebuild_queue_grid() -> void:
 		var slot := QueueSlot.new()
 		slot.custom_minimum_size = QUEUE_SLOT_SIZE
 		slot.tooltip_text = "Slot %d (empty)" % index
-		slot.pressed.connect(_on_slot_pressed.bind(index))
+		slot.pressed.connect(_on_slot_pressed.bind(index, MOUSE_BUTTON_LEFT))
+		slot.right_pressed.connect(_on_slot_pressed.bind(index, MOUSE_BUTTON_RIGHT))
 		_queue_grid.add_child(slot)
 
 	# Hardcoded first entry until production queues come from game rules.
 	if active_tab == Tab.BUILDINGS:
-		var windtrap := get_slot(0)
+		var windtrap := get_slot(HARDCODED_BUILDING_SLOT)
 		windtrap.icon_colored = AT_WINDTRAP_ICON
 		windtrap.icon_grey = AT_WINDTRAP_ICON_GREY
 		windtrap.state = QueueSlot.State.AVAILABLE
 		windtrap.tooltip_text = "Windtrap"
 
 
-func _on_slot_pressed(slot: int) -> void:
-	queue_slot_pressed.emit(active_tab, slot)
+func _on_slot_pressed(slot: int, button_index: int) -> void:
+	queue_slot_pressed.emit(active_tab, slot, button_index)

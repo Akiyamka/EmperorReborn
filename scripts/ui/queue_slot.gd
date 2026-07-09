@@ -10,6 +10,8 @@ enum State { DISABLED, AVAILABLE, PROGRESS, READY }
 const SLOT_SHADER := preload("res://scripts/ui/queue_slot.gdshader")
 const ICON_MARGIN := 3.0
 
+signal right_pressed
+
 var icon_colored: Texture2D:
 	set(value):
 		icon_colored = value
@@ -26,6 +28,10 @@ var state: State = State.DISABLED:
 var progress: float = 0.0:
 	set(value):
 		progress = clampf(value, 0.0, 100.0)
+		_apply()
+var status_text := "":
+	set(value):
+		status_text = value
 		_apply()
 
 var _icon_rect: TextureRect
@@ -57,6 +63,12 @@ func _ready() -> void:
 	_apply()
 
 
+func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+		right_pressed.emit()
+		accept_event()
+
+
 func _apply() -> void:
 	if _icon_rect == null:
 		return
@@ -76,7 +88,7 @@ func _apply() -> void:
 			_status.text = ""
 		State.PROGRESS:
 			_icon_material.set_shader_parameter("progress", progress / 100.0)
-			_status.text = ""
+			_status.text = status_text
 		State.READY:
 			_icon_material.set_shader_parameter("progress", 1.0)
-			_status.text = "READY"
+			_status.text = status_text if not status_text.is_empty() else "READY"

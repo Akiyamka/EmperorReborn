@@ -16,12 +16,40 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 @export var default_state := &"idle"
 
 var current_state := &""
+var _scroll_fx_meshes: Array[MeshInstance3D] = []
+var _scroll_fx_time := 0.0
 
 
 func _ready() -> void:
 	add_to_group("rts_buildings")
+	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_refresh_owner_visuals()
 	play_state(default_state)
+
+
+func _process(delta: float) -> void:
+	if _scroll_fx_meshes.is_empty():
+		return
+	# Scrolling textures (e.g. the windtrap's spinning blades/spotlights) need
+	# a continuously advancing phase; a baked animation track would snap back
+	# to 0 every time the (often sub-second) state clip loops, so it is driven
+	# here every frame instead (mirrors RTSUnit's energy-shield fx_time).
+	_scroll_fx_time += delta
+	for mesh_instance in _scroll_fx_meshes:
+		mesh_instance.set_instance_shader_parameter("fx_time", _scroll_fx_time)
+
+
+func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	_collect_scroll_fx_meshes_from(self, result)
+	return result
+
+
+func _collect_scroll_fx_meshes_from(node: Node, result: Array[MeshInstance3D]) -> void:
+	if node is MeshInstance3D and node.has_meta("scroll_fx"):
+		result.append(node)
+	for child in node.get_children():
+		_collect_scroll_fx_meshes_from(child, result)
 
 
 func play_state(state: StringName) -> void:

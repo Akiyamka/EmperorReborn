@@ -9,6 +9,7 @@
 [ext_resource type="PackedScene" path="res://scenes/units/niab_tank.tscn" id="8_niab"]
 [ext_resource type="PackedScene" path="res://assets/converted_buildings/ATBarracks/ATBarracks.scn" id="9_at_barracks"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="10_side_panel"]
+[ext_resource type="PackedScene" path="res://assets/converted_buildings/ATSmWindtrap/ATSmWindtrap.scn" id="11_at_windtrap"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -47,6 +48,10 @@ metadata/_edit_lock_ = true
 
 [node name="ATBarracks" parent="Buildings" unique_id=226675699 instance=ExtResource("9_at_barracks")]
 transform = Transform3D(0.70710677, 0, -0.70710677, 0, 1, 0, 0.70710677, 0, 0.70710677, 118.0, 8.0, 148.0)
+owner_player_id = 1
+
+[node name="ATSmWindtrap" parent="Buildings" instance=ExtResource("11_at_windtrap")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 112.0, 8.0, 140.0)
 owner_player_id = 1
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]

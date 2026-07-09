@@ -1,6 +1,7 @@
 extends Node3D
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
+const BuildingControllerScript := preload("res://scripts/buildings/building_controller.gd")
 const LOCAL_PLAYER_ID := 1
 const ENEMY_PLAYER_ID := 2
 
@@ -13,12 +14,13 @@ const ENEMY_PLAYER_ID := 2
 
 var selected_unit = null
 var _fps_update_time := 0.0
+var _building_controller
 
 
 func _ready() -> void:
 	_configure_demo_players()
 	side_panel.command_pressed.connect(_on_panel_command)
-	side_panel.queue_slot_pressed.connect(_on_panel_queue_slot)
+	_setup_building_controller()
 	_update_selection_label()
 	_update_fps_label()
 	_place_on_map()
@@ -28,22 +30,12 @@ func _on_panel_command(command: StringName) -> void:
 	_update_selection_label("Command: %s (not implemented)" % command)
 
 
-# Demo production loop until real queues exist: available -> progress -> ready.
-func _on_panel_queue_slot(tab: SidePanel.Tab, slot_index: int) -> void:
-	var slot := side_panel.get_slot(slot_index)
-	if slot == null:
-		return
-	match slot.state:
-		QueueSlot.State.AVAILABLE:
-			slot.state = QueueSlot.State.PROGRESS
-			slot.progress = 0.0
-			var tween := slot.create_tween()
-			tween.tween_property(slot, "progress", 100.0, 5.0)
-			tween.tween_callback(func() -> void: slot.state = QueueSlot.State.READY)
-			_update_selection_label("Tab %d slot %d: building..." % [tab, slot_index])
-		QueueSlot.State.READY:
-			slot.state = QueueSlot.State.AVAILABLE
-			_update_selection_label("Tab %d slot %d: placed (not implemented)" % [tab, slot_index])
+func _setup_building_controller() -> void:
+	_building_controller = BuildingControllerScript.new()
+	_building_controller.name = "BuildingController"
+	add_child(_building_controller)
+	_building_controller.status_changed.connect(_update_selection_label)
+	_building_controller.setup(side_panel, terrain, camera, $Buildings)
 
 
 func _place_on_map() -> void:
@@ -75,6 +67,9 @@ func _snap_to_ground(point: Vector3) -> Vector3:
 
 
 func _process(delta: float) -> void:
+	if _building_controller != null:
+		_building_controller.process(delta)
+
 	_fps_update_time += delta
 	if _fps_update_time >= 0.25:
 		_fps_update_time = 0.0
@@ -82,6 +77,10 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _building_controller != null and _building_controller.handle_unhandled_input(event):
+		get_viewport().set_input_as_handled()
+		return
+
 	if event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
@@ -162,7 +161,7 @@ func _raycast(screen_position: Vector2, collision_mask: int = 0xffffffff) -> Dic
 
 func _update_selection_label(status := "") -> void:
 	if selected_unit == null:
-		selection_label.text = "No unit selected"
+		selection_label.text = status if not status.is_empty() else "No unit selected"
 		return
 
 	selection_label.text = "%s selected | %s" % [selected_unit.name, _owner_status(selected_unit)]
@@ -175,7 +174,7 @@ func _update_fps_label() -> void:
 
 
 func _configure_demo_players() -> void:
-	var players = get_node_or_null("/root/Players")
+	var players = _players()
 	if players == null:
 		push_warning("Players autoload is not available; units and buildings will stay neutral")
 		return
@@ -208,7 +207,7 @@ func _configure_demo_players() -> void:
 
 
 func _can_control(unit) -> bool:
-	var players = get_node_or_null("/root/Players")
+	var players = _players()
 	return players != null and unit.is_owned_by(players.local_player_id)
 
 
@@ -219,7 +218,7 @@ func _owner_status(unit) -> String:
 	if owner.is_neutral:
 		return "owner: neutral"
 
-	var players = get_node_or_null("/root/Players")
+	var players = _players()
 	var relation := "unknown"
 	if players != null:
 		match players.relation_between(players.local_player_id, owner.player_id):
@@ -237,3 +236,7 @@ func _owner_status(unit) -> String:
 			subhouses.append(String(subhouse_id))
 		faction += "/%s" % ", ".join(subhouses)
 	return "owner: %s (%s, %s)" % [owner.nickname, faction, relation]
+
+
+func _players():
+	return get_node_or_null("/root/Players")

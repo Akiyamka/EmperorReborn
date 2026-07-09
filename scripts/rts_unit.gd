@@ -37,6 +37,8 @@ var _base_materials := {}
 var _selection_material: StandardMaterial3D
 var _shield_meshes: Array[MeshInstance3D] = []
 var _shield_time := 0.0
+var _scroll_fx_meshes: Array[MeshInstance3D] = []
+var _scroll_fx_time := 0.0
 
 
 func _ready() -> void:
@@ -44,6 +46,7 @@ func _ready() -> void:
 	target_position = global_position
 	_capture_base_materials()
 	_shield_meshes = _collect_shield_meshes()
+	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	health = max_health
 	shields = max_shields
 	_selection_material = StandardMaterial3D.new()
@@ -52,14 +55,17 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	if shields <= 0.0 or _shield_meshes.is_empty():
-		return
-	# The shield shader takes its scroll/pulse phase from here: a continuous
+	# These shaders take their scroll/pulse phase from here: a continuous
 	# phase cannot come from animation tracks (it would snap on clip loops),
 	# and TIME in the shader would keep the editor viewport redrawing.
-	_shield_time += delta
-	for mesh_instance in _shield_meshes:
-		mesh_instance.set_instance_shader_parameter("fx_time", _shield_time)
+	if shields > 0.0 and not _shield_meshes.is_empty():
+		_shield_time += delta
+		for mesh_instance in _shield_meshes:
+			mesh_instance.set_instance_shader_parameter("fx_time", _shield_time)
+	if not _scroll_fx_meshes.is_empty():
+		_scroll_fx_time += delta
+		for mesh_instance in _scroll_fx_meshes:
+			mesh_instance.set_instance_shader_parameter("fx_time", _scroll_fx_time)
 
 
 func _physics_process(_delta: float) -> void:
@@ -159,6 +165,14 @@ func _collect_shield_meshes() -> Array[MeshInstance3D]:
 	var result: Array[MeshInstance3D] = []
 	for mesh_instance in _mesh_instances():
 		if String(mesh_instance.get_parent().name).to_lower().contains("shield"):
+			result.append(mesh_instance)
+	return result
+
+
+func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	for mesh_instance in _mesh_instances():
+		if mesh_instance.has_meta("scroll_fx"):
 			result.append(mesh_instance)
 	return result
 
