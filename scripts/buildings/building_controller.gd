@@ -462,6 +462,7 @@ func _try_place_ready_building(screen_position: Vector2) -> void:
 		building.call("setup", _placing_building_id)
 	buildings_root.add_child(building)
 	building.global_position = _snap_to_ground(_placement_world_center(_placement_anchor_cell))
+	building.set_meta(&"placement_anchor_cell", _placement_anchor_cell)
 
 	var players = _players()
 	if players != null and building.has_method("set_owner_player_id"):
@@ -563,6 +564,7 @@ func _rebuild_placement_preview(anchor_cell: Vector2i) -> void:
 
 	var has_cells := false
 	var can_build := true
+	var occupied_building_cells := _occupied_building_nav_cells()
 	for row_index in _placement_occupy_rows.size():
 		var row := _placement_occupy_rows[row_index]
 		for column_index in row.length():
@@ -572,10 +574,13 @@ func _rebuild_placement_preview(anchor_cell: Vector2i) -> void:
 
 			has_cells = true
 			var grid_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
-			var cell_buildable := _is_occupy_cell_buildable(grid_cell)
-			can_build = can_build and cell_buildable
+			var cell_available := (
+				_is_occupy_cell_buildable(grid_cell)
+				and _is_occupy_cell_unoccupied(grid_cell, occupied_building_cells)
+			)
+			can_build = can_build and cell_available
 
-			var placement_scene := _placement_scene_for_marker(marker, cell_buildable)
+			var placement_scene := _placement_scene_for_marker(marker, cell_available)
 			var preview_cell := placement_scene.instantiate() as Node3D
 			if preview_cell == null:
 				continue
@@ -798,6 +803,68 @@ func _is_occupy_cell_buildable(nav_cell: Vector2i) -> bool:
 			if not _is_nav_cell_buildable(nav_cell + Vector2i(x, y)):
 				return false
 	return true
+
+
+func _is_occupy_cell_unoccupied(nav_cell: Vector2i, occupied_building_cells: Dictionary) -> bool:
+	for y in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
+		for x in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
+			if occupied_building_cells.has(nav_cell + Vector2i(x, y)):
+				return false
+	return true
+
+
+func _occupied_building_nav_cells() -> Dictionary:
+	var cells := {}
+	if terrain == null or terrain.navigation_grid == null or not terrain.navigation_grid.is_loaded():
+		return cells
+
+	for node in get_tree().get_nodes_in_group("buildings"):
+		var building := node as Node3D
+		if building == null:
+			continue
+
+		var config = building.get("building_config") as Resource
+		if config == null:
+			config = _building_config(StringName(String(building.get("config_id"))))
+		var occupy_rows := _building_occupy_rows(config)
+		if occupy_rows.is_empty():
+			continue
+
+		var anchor_cell := _building_placement_anchor(building, occupy_rows)
+		for row_index in occupy_rows.size():
+			var row := occupy_rows[row_index]
+			for column_index in row.length():
+				if _is_empty_occupy_marker(row.substr(column_index, 1)):
+					continue
+
+				var occupy_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
+				for y in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
+					for x in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
+						cells[occupy_cell + Vector2i(x, y)] = true
+	return cells
+
+
+func _building_placement_anchor(building: Node3D, occupy_rows: Array[String]) -> Vector2i:
+	var saved_anchor = building.get_meta(&"placement_anchor_cell", null)
+	if saved_anchor is Vector2i:
+		return saved_anchor
+
+	var nav_size := _occupy_rows_nav_size(occupy_rows)
+	var center_cell: Vector2i = terrain.navigation_grid.world_to_grid(building.global_position)
+	return center_cell - Vector2i(
+		int(floor(float(nav_size.x) * 0.5)),
+		int(floor(float(nav_size.y) * 0.5))
+	)
+
+
+func _occupy_rows_nav_size(occupy_rows: Array[String]) -> Vector2i:
+	var width := 0
+	for row in occupy_rows:
+		width = maxi(width, row.length())
+	return Vector2i(
+		width * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL,
+		occupy_rows.size() * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL
+	)
 
 
 func _is_nav_cell_buildable(grid_cell: Vector2i) -> bool:
