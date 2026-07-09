@@ -1,11 +1,12 @@
 class_name QueueSlot
 extends Button
 ## One icon slot in the production grid.
-## DISABLED shows the grey icon, AVAILABLE the colored one, PROGRESS blends
-## both with a clockwise radial mask (see queue_slot.gdshader), READY shows
-## the colored icon with a READY caption.
+## DISABLED hides unavailable technology options, BLOCKED shows a grey icon
+## for an occupied queue, AVAILABLE the colored icon, PROGRESS blends both
+## with a clockwise radial mask (see queue_slot.gdshader), READY shows the
+## colored icon with a READY caption.
 
-enum State { DISABLED, AVAILABLE, PROGRESS, READY }
+enum State { DISABLED, AVAILABLE, PROGRESS, READY, BLOCKED }
 
 const SLOT_SHADER := preload("res://scripts/ui/queue_slot.gdshader")
 const ICON_MARGIN := 3
@@ -78,9 +79,9 @@ func _apply() -> void:
 	# With no grey variant, fall back to the colored icon on both sides of the mask.
 	_icon_material.set_shader_parameter("grey_texture", icon_grey if icon_grey else icon_colored)
 
-	disabled = state == State.DISABLED or icon_colored == null
+	disabled = state == State.DISABLED or state == State.BLOCKED or icon_colored == null
 	match state:
-		State.DISABLED:
+		State.DISABLED, State.BLOCKED:
 			_icon_material.set_shader_parameter("progress", 0.0)
 			_status.text = ""
 		State.AVAILABLE:

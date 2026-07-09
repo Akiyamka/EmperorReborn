@@ -4,6 +4,7 @@ extends Node3D
 signal status_changed(status: String)
 
 const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
+const TechnologyTreeScript := preload("res://scripts/technology_tree.gd")
 const BUILD_TICKS_PER_SECOND := 60.0
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted_placement/build_arrow.scn")
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted_placement/build_building.scn")
@@ -19,7 +20,9 @@ var terrain: MapLoader
 var camera: Camera3D
 var buildings_root: Node3D
 
-var _hardcoded_building_config: Resource
+var _building_configs: Dictionary = {}
+var _technology_tree = TechnologyTreeScript.new()
+var _building_availability: Dictionary = {}
 var _building_order
 var _building_lack_funds := false
 var _local_player_resource = null
@@ -40,7 +43,7 @@ func setup(panel: SidePanel, map_loader: MapLoader, placement_camera: Camera3D, 
 	buildings_root = building_parent
 
 	_bind_local_player_roster()
-	_load_hardcoded_building()
+	_load_building_configs()
 
 	if side_panel != null:
 		side_panel.queue_slot_pressed.connect(_on_panel_queue_slot)
@@ -52,6 +55,11 @@ func setup(panel: SidePanel, map_loader: MapLoader, placement_camera: Camera3D, 
 
 
 func process(delta: float) -> void:
+	for building_id in SidePanel.BUILDING_IDS:
+		var building_available := _is_building_available(building_id)
+		if building_available != _building_availability.get(building_id, false):
+			_building_availability[building_id] = building_available
+			_refresh_building_queue_slot()
 	_process_building_order(delta)
 	_process_building_placement()
 
@@ -168,14 +176,15 @@ func _find_building(node: Node) -> Node3D:
 
 
 func _on_panel_queue_slot(tab: SidePanel.Tab, slot_index: int, button_index: int) -> void:
-	if tab != SidePanel.Tab.BUILDINGS or slot_index != SidePanel.HARDCODED_BUILDING_SLOT:
+	if tab != SidePanel.Tab.BUILDINGS or slot_index < 0 or slot_index >= SidePanel.BUILDING_IDS.size():
 		return
+	var building_id: StringName = SidePanel.BUILDING_IDS[slot_index]
 
 	match button_index:
 		MOUSE_BUTTON_LEFT:
-			_on_building_slot_left_pressed()
+			_on_building_slot_left_pressed(building_id)
 		MOUSE_BUTTON_RIGHT:
-			_on_building_slot_right_pressed()
+			_on_building_slot_right_pressed(building_id)
 
 
 func _on_panel_tab_changed(_tab: SidePanel.Tab) -> void:
@@ -230,20 +239,25 @@ func _refresh_player_credits() -> void:
 	side_panel.set_energy(player.energy if player != null else 0)
 
 
-func _load_hardcoded_building() -> void:
+func _load_building_configs() -> void:
 	var rules := get_node_or_null("/root/Rules")
 	if rules == null:
 		push_warning("Rules autoload is not available; building production uses no rules")
 		return
 
-	_hardcoded_building_config = rules.call("building", SidePanel.HARDCODED_BUILDING_ID)
-	if _hardcoded_building_config == null:
-		push_warning("Building rules config not found: %s" % String(SidePanel.HARDCODED_BUILDING_ID))
+	for building_id in SidePanel.BUILDING_IDS:
+		var config: Resource = rules.call("building", building_id)
+		if config == null:
+			push_warning("Building rules config not found: %s" % String(building_id))
+			continue
+		_building_configs[building_id] = config
 
 
-func _on_building_slot_left_pressed() -> void:
+func _on_building_slot_left_pressed(building_id: StringName) -> void:
 	if _building_order == null:
-		_start_building_order()
+		_start_building_order(building_id)
+	elif _building_order.building_id != building_id:
+		status_changed.emit("Building queue is busy")
 	elif _building_order.ready:
 		_begin_ready_building_placement()
 	elif _building_order.manually_paused:
@@ -257,8 +271,8 @@ func _on_building_slot_left_pressed() -> void:
 	_refresh_building_queue_slot()
 
 
-func _on_building_slot_right_pressed() -> void:
-	if _building_order == null:
+func _on_building_slot_right_pressed(building_id: StringName) -> void:
+	if _building_order == null or _building_order.building_id != building_id:
 		return
 
 	if _is_placing_building():
@@ -274,19 +288,24 @@ func _on_building_slot_right_pressed() -> void:
 		_refresh_building_queue_slot()
 
 
-func _start_building_order() -> void:
-	if _hardcoded_building_config == null:
+func _start_building_order(building_id: StringName) -> void:
+	var config: Resource = _building_configs.get(building_id)
+	if config == null:
 		status_changed.emit("Building rules are not loaded")
 		return
 	if _building_order != null:
 		status_changed.emit("Building queue is busy")
 		return
+	if not _is_building_available(building_id):
+		status_changed.emit("%s is not available" % _building_display_name(building_id))
+		_refresh_building_queue_slot()
+		return
 
 	var order := BuildingOrderScript.new()
-	order.building_id = SidePanel.HARDCODED_BUILDING_ID
-	order.display_name = _hardcoded_building_display_name()
-	order.cost = maxi(int(_hardcoded_building_config.field(&"cost", 0)), 0)
-	order.build_time_ticks = maxf(float(_hardcoded_building_config.field(&"build_time", 0.0)), 1.0)
+	order.building_id = building_id
+	order.display_name = _building_display_name(building_id)
+	order.cost = maxi(int(config.field(&"cost", 0)), 0)
+	order.build_time_ticks = maxf(float(config.field(&"build_time", 0.0)), 1.0)
 	_building_order = order
 	_building_lack_funds = false
 	_clear_building_placement()
@@ -296,7 +315,12 @@ func _start_building_order() -> void:
 
 
 func _process_building_order(delta: float) -> void:
-	if _building_order == null or _building_order.ready or _building_order.manually_paused:
+	if _building_order == null:
+		return
+	if not _building_order.ready and not _is_building_available(_building_order.building_id):
+		_cancel_building_order()
+		return
+	if _building_order.ready or _building_order.manually_paused:
 		return
 
 	if _building_order.cost <= 0:
@@ -856,45 +880,75 @@ func _set_building_lack_funds(value: bool) -> void:
 	_refresh_building_queue_slot()
 
 
+func _is_building_available(building_id: StringName) -> bool:
+	if not is_inside_tree():
+		return false
+	var config := _building_config(building_id)
+	if config == null:
+		return false
+	var player = _local_player()
+	if player == null:
+		return false
+	var buildings: Array[Node] = []
+	buildings.assign(get_tree().get_nodes_in_group("buildings"))
+	return _technology_tree.is_available(config, player, buildings)
+
+
 func _refresh_building_queue_slot() -> void:
 	if side_panel == null:
 		return
 
-	var tooltip := _hardcoded_building_tooltip()
-	if _building_order == null:
-		side_panel.set_building_slot_state(QueueSlot.State.AVAILABLE, 0.0, "", tooltip)
-		return
+	for slot_index in SidePanel.BUILDING_IDS.size():
+		var building_id: StringName = SidePanel.BUILDING_IDS[slot_index]
+		var tooltip := _building_tooltip(building_id)
+		if _building_order == null:
+			var state := QueueSlot.State.AVAILABLE if _is_building_available(building_id) else QueueSlot.State.DISABLED
+			side_panel.set_building_slot_state(slot_index, state, 0.0, "", tooltip)
+			continue
 
-	if _building_order.ready:
-		var ready_status_text := "PLACE" if _is_placing_building() else "READY"
-		side_panel.set_building_slot_state(QueueSlot.State.READY, 100.0, ready_status_text, tooltip)
-		return
+		if _building_order.building_id != building_id:
+			var state := QueueSlot.State.BLOCKED if _is_building_available(building_id) else QueueSlot.State.DISABLED
+			side_panel.set_building_slot_state(slot_index, state, 0.0, "", tooltip)
+			continue
 
-	var status_text := ""
-	if _building_order.manually_paused:
-		status_text = "PAUSED"
+		if _building_order.ready:
+			var ready_status_text := "PLACE" if _is_placing_building() else "READY"
+			side_panel.set_building_slot_state(
+				slot_index, QueueSlot.State.READY, 100.0, ready_status_text, tooltip
+			)
+			continue
 
-	side_panel.set_building_slot_state(
-		QueueSlot.State.PROGRESS,
-		_building_order.progress_percent(),
-		status_text,
-		tooltip
-	)
+		var status_text := ""
+		if _building_order.manually_paused:
+			status_text = "PAUSED"
+		side_panel.set_building_slot_state(
+			slot_index,
+			QueueSlot.State.PROGRESS,
+			_building_order.progress_percent(),
+			status_text,
+			tooltip
+		)
 
 
-func _hardcoded_building_display_name() -> String:
-	return "Windtrap"
+func _building_display_name(building_id: StringName) -> String:
+	match building_id:
+		&"ATSmWindtrap":
+			return "Windtrap"
+		&"ATBarracks":
+			return "Barracks"
+	return String(building_id)
 
 
-func _hardcoded_building_tooltip() -> String:
-	if _hardcoded_building_config == null:
-		return _hardcoded_building_display_name()
+func _building_tooltip(building_id: StringName) -> String:
+	var config: Resource = _building_configs.get(building_id)
+	if config == null:
+		return _building_display_name(building_id)
 
-	var cost := int(_hardcoded_building_config.field(&"cost", 0))
-	var build_time_ticks := float(_hardcoded_building_config.field(&"build_time", 0.0))
+	var cost := int(config.field(&"cost", 0))
+	var build_time_ticks := float(config.field(&"build_time", 0.0))
 	var build_seconds := build_time_ticks / BUILD_TICKS_PER_SECOND
 	return "%s\nCost: %d\nBuild: %.1fs" % [
-		_hardcoded_building_display_name(),
+		_building_display_name(building_id),
 		cost,
 		build_seconds,
 	]

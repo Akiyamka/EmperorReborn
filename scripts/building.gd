@@ -19,6 +19,7 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 		owner_changed.emit(owner_player_id)
 @export var default_state := &"idle"
 @export var max_health := 0.0
+@export var upgrade_level := 0
 
 var building_config: Resource
 var health := 0.0:
@@ -145,6 +146,10 @@ func play_state(state: StringName) -> void:
 
 func set_owner_player_id(player_id: int) -> void:
 	owner_player_id = player_id
+
+
+func set_upgrade_level(level: int) -> void:
+	upgrade_level = maxi(level, 0)
 
 
 func setup(building_id: StringName) -> void:
