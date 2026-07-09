@@ -17,8 +17,13 @@ var _fps_update_time := 0.0
 var _building_controller
 
 
-func _ready() -> void:
+func _enter_tree() -> void:
+	# Children initialize their owner visuals in _ready(), so the roster must
+	# exist before buildings and units enter the scene tree.
 	_configure_demo_players()
+
+
+func _ready() -> void:
 	side_panel.command_pressed.connect(_on_panel_command)
 	_setup_building_controller()
 	_update_selection_label()

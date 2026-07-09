@@ -24,6 +24,8 @@ var _building_order
 var _building_lack_funds := false
 var _local_player_resource = null
 var _placing_building_id: StringName = &""
+var _sell_mode := false
+var _selling_building: Node3D
 var _placement_preview_root: Node3D
 var _placement_occupy_rows: Array[String] = []
 var _placement_anchor_cell := INVALID_PLACEMENT_ANCHOR
@@ -43,6 +45,7 @@ func setup(panel: SidePanel, map_loader: MapLoader, placement_camera: Camera3D, 
 	if side_panel != null:
 		side_panel.queue_slot_pressed.connect(_on_panel_queue_slot)
 		side_panel.tab_changed.connect(_on_panel_tab_changed)
+		side_panel.command_pressed.connect(_on_panel_command)
 
 	_refresh_player_credits()
 	_refresh_building_queue_slot()
@@ -54,6 +57,17 @@ func process(delta: float) -> void:
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
+	if _sell_mode:
+		if not (event is InputEventMouseButton and event.pressed):
+			return false
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			_try_sell_building(event.position)
+			return true
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			_set_sell_mode(false)
+			return true
+		return false
+
 	if not _is_placing_building():
 		return false
 	if not (event is InputEventMouseButton and event.pressed):
@@ -67,6 +81,90 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 			_cancel_building_placement()
 			return true
 	return false
+
+
+func _on_panel_command(command: StringName) -> void:
+	if command == &"Sell":
+		_set_sell_mode(not _sell_mode)
+
+
+func _set_sell_mode(active: bool) -> void:
+	_sell_mode = active
+	if side_panel != null:
+		side_panel.set_sell_mode(active)
+	if active:
+		_cancel_building_placement()
+		status_changed.emit("Sell mode: select one of your buildings")
+	else:
+		status_changed.emit("Sell mode canceled")
+
+
+func _try_sell_building(screen_position: Vector2) -> void:
+	if _selling_building != null:
+		return
+
+	var hit := _raycast(screen_position, 2)
+	var building := _find_building(hit.get("collider") as Node)
+	if building == null:
+		status_changed.emit("Select one of your buildings to sell")
+		return
+
+	var players = _players()
+	if players == null or not building.has_method("is_owned_by") or not building.call("is_owned_by", players.local_player_id):
+		status_changed.emit("You can only sell your own buildings")
+		return
+
+	_selling_building = building
+	_set_sell_mode(false)
+	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
+	if player != null and player.has_animation(&"build"):
+		var build_animation := player.get_animation(&"build")
+		if build_animation != null:
+			build_animation.loop_mode = Animation.LOOP_NONE
+			_play_building_state(building, &"build")
+			player.seek(build_animation.length, true)
+		player.animation_finished.connect(_on_sold_building_animation_finished.bind(building), CONNECT_ONE_SHOT)
+		player.play_backwards(&"build")
+		return
+
+	_finish_selling_building(building)
+
+
+func _on_sold_building_animation_finished(_animation_name: StringName, building: Node3D) -> void:
+	_finish_selling_building(building)
+
+
+func _finish_selling_building(building: Node3D) -> void:
+	if building != _selling_building:
+		return
+
+	var refund := _building_sale_refund(building)
+	var player = _local_player()
+	if player != null and refund > 0:
+		player.add_money(refund)
+	var display_name := String(building.get("config_id"))
+	if display_name.is_empty():
+		display_name = building.name
+	_selling_building = null
+	building.queue_free()
+	status_changed.emit("%s sold; refunded %d" % [display_name, refund])
+
+
+func _building_sale_refund(building: Node3D) -> int:
+	var config = building.get("building_config")
+	if config == null:
+		config = _building_config(StringName(String(building.get("config_id"))))
+	var cost := int(config.field(&"cost", 0)) if config != null else 0
+	return maxi(cost / 2, 0)
+
+
+func _find_building(node: Node) -> Node3D:
+	var current := node
+	while current != null:
+		if current.is_in_group("buildings") and current is Node3D:
+			return current as Node3D
+		current = current.get_parent()
+	return null
 
 
 func _on_panel_queue_slot(tab: SidePanel.Tab, slot_index: int, button_index: int) -> void:

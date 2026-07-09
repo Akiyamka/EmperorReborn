@@ -62,6 +62,12 @@ func set_energy(amount: int) -> void:
 	_energy_label.text = _format_resource_amount(amount)
 
 
+func set_sell_mode(active: bool) -> void:
+	var sell_button := _commands.get_node_or_null("Sell") as Button
+	if sell_button != null:
+		sell_button.button_pressed = active
+
+
 func _format_resource_amount(amount: int) -> String:
 	var digits := str(absi(amount))
 	var grouped := ""

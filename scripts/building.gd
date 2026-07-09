@@ -43,6 +43,7 @@ func _ready() -> void:
 	_refresh_owner_visuals()
 	_refresh_generated_energy()
 	play_state(default_state)
+	_add_selection_collision()
 
 
 func _exit_tree() -> void:
@@ -72,6 +73,58 @@ func _collect_scroll_fx_meshes_from(node: Node, result: Array[MeshInstance3D]) -
 		result.append(node)
 	for child in node.get_children():
 		_collect_scroll_fx_meshes_from(child, result)
+
+
+func _add_selection_collision() -> void:
+	var bounds := AABB()
+	var has_bounds := false
+	for mesh_instance in _mesh_instances(self):
+		if mesh_instance.mesh == null:
+			continue
+		for corner in _aabb_corners(mesh_instance.get_aabb()):
+			var point := to_local(mesh_instance.to_global(corner))
+			if has_bounds:
+				bounds = bounds.expand(point)
+			else:
+				bounds = AABB(point, Vector3.ZERO)
+				has_bounds = true
+
+	if not has_bounds:
+		return
+
+	var body := StaticBody3D.new()
+	body.name = "SelectionCollision"
+	body.collision_layer = 2
+	body.collision_mask = 0
+	var collision := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(
+		maxf(bounds.size.x, 0.1),
+		maxf(bounds.size.y, 0.1),
+		maxf(bounds.size.z, 0.1)
+	)
+	collision.shape = shape
+	collision.position = bounds.get_center()
+	body.add_child(collision)
+	add_child(body)
+
+
+func _mesh_instances(node: Node) -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	if node is MeshInstance3D:
+		result.append(node)
+	for child in node.get_children():
+		result.append_array(_mesh_instances(child))
+	return result
+
+
+func _aabb_corners(bounds: AABB) -> Array[Vector3]:
+	var corners: Array[Vector3] = []
+	for x in [bounds.position.x, bounds.end.x]:
+		for y in [bounds.position.y, bounds.end.y]:
+			for z in [bounds.position.z, bounds.end.z]:
+				corners.append(Vector3(x, y, z))
+	return corners
 
 
 func play_state(state: StringName) -> void:

@@ -97,6 +97,7 @@ tooltip_text = "Retreat"
 custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
 size_flags_horizontal = 3
+toggle_mode = true
 text = "$"
 tooltip_text = "Sell"
 

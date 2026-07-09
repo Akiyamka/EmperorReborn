@@ -19,7 +19,7 @@ var _players := {}
 var _relations := {}
 
 
-func _ready() -> void:
+func _enter_tree() -> void:
 	reset_for_match()
 
 
