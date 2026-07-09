@@ -151,7 +151,7 @@ func _parse_vertex_animation(buffer: StreamPeerBuffer) -> Dictionary:
 	var kind := buffer.get_16()
 	var flags := buffer.get_u16()
 	var entries := buffer.get_32()
-	var animated_vertex_count := entries / used_frames
+	var animated_vertex_count := int(entries / float(used_frames))
 	var used_positions: Array[PackedVector3Array] = []
 	for frame_index in used_frames:
 		var positions := PackedVector3Array()
@@ -170,7 +170,7 @@ func _parse_vertex_animation(buffer: StreamPeerBuffer) -> Dictionary:
 			var frame_offset := buffer.get_32()
 			if frame_offset <= 0:
 				continue
-			var used_index := (frame_offset - 1) / (animated_vertex_count * 4)
+			var used_index := int(float(frame_offset - 1) / (animated_vertex_count * 4))
 			if used_index >= 0 and used_index < used_positions.size():
 				frames[timeline_frame] = used_positions[used_index]
 	else:

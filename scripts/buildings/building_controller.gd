@@ -768,8 +768,8 @@ func _refresh_building_queue_slot() -> void:
 		return
 
 	if _building_order.ready:
-		var status_text := "PLACE" if _is_placing_building() else "READY"
-		side_panel.set_building_slot_state(QueueSlot.State.READY, 100.0, status_text, tooltip)
+		var ready_status_text := "PLACE" if _is_placing_building() else "READY"
+		side_panel.set_building_slot_state(QueueSlot.State.READY, 100.0, ready_status_text, tooltip)
 		return
 
 	var status_text := ""
@@ -825,6 +825,8 @@ func _snap_to_ground(point: Vector3) -> Vector3:
 
 
 func _players():
+	if not is_inside_tree():
+		return null
 	return get_node_or_null("/root/Players")
 
 

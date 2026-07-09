@@ -8,7 +8,7 @@ extends Button
 enum State { DISABLED, AVAILABLE, PROGRESS, READY }
 
 const SLOT_SHADER := preload("res://scripts/ui/queue_slot.gdshader")
-const ICON_MARGIN := 3.0
+const ICON_MARGIN := 3
 
 signal right_pressed
 

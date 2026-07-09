@@ -55,7 +55,7 @@ func _process(delta: float) -> void:
 	# Scrolling textures (e.g. the windtrap's spinning blades/spotlights) need
 	# a continuously advancing phase; a baked animation track would snap back
 	# to 0 every time the (often sub-second) state clip loops, so it is driven
-	# here every frame instead (mirrors RTSUnit's energy-shield fx_time).
+	# here every frame instead (mirrors Unit's energy-shield fx_time).
 	_scroll_fx_time += delta
 	for mesh_instance in _scroll_fx_meshes:
 		mesh_instance.set_instance_shader_parameter("fx_time", _scroll_fx_time)

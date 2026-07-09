@@ -40,8 +40,8 @@ func create_player(
 		starting_money: int = 0,
 		starting_energy: int = 0
 ) -> Resource:
-	var player := PlayerDataScript.new()
-	player.configure(
+	var new_player := PlayerDataScript.new()
+	new_player.configure(
 		player_id,
 		nickname,
 		team_color,
@@ -51,8 +51,8 @@ func create_player(
 		starting_money,
 		starting_energy
 	)
-	add_player(player)
-	return player
+	add_player(new_player)
+	return new_player
 
 
 func add_player(player) -> void:

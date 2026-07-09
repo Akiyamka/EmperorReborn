@@ -1,5 +1,5 @@
 extends CharacterBody3D
-class_name RTSUnit
+class_name Unit
 
 signal owner_changed(player_id: int)
 

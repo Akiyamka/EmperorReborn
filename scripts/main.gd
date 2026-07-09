@@ -50,7 +50,7 @@ func _place_on_map() -> void:
 			var spot: Vector3 = building.global_position
 			building.global_position = _snap_to_ground(spot)
 
-	for unit in get_tree().get_nodes_in_group("rts_units"):
+	for unit in get_tree().get_nodes_in_group("units"):
 		var spot: Vector3 = unit.global_position
 		unit.global_position = _snap_to_ground(spot) + Vector3.UP * 0.7
 		unit.stop_at_current_position()
@@ -144,7 +144,7 @@ func _clear_selection() -> void:
 func _find_unit(node: Node):
 	var current := node
 	while current != null:
-		if current.is_in_group("rts_units"):
+		if current.is_in_group("units"):
 			return current
 		current = current.get_parent()
 	return null
@@ -212,16 +212,16 @@ func _can_control(unit) -> bool:
 
 
 func _owner_status(unit) -> String:
-	var owner = unit.owner_player()
-	if owner == null:
+	var unit_owner = unit.owner_player()
+	if unit_owner == null:
 		return "owner: missing"
-	if owner.is_neutral:
+	if unit_owner.is_neutral:
 		return "owner: neutral"
 
 	var players = _players()
 	var relation := "unknown"
 	if players != null:
-		match players.relation_between(players.local_player_id, owner.player_id):
+		match players.relation_between(players.local_player_id, unit_owner.player_id):
 			PlayerDataScript.Relation.ALLY:
 				relation = "ally"
 			PlayerDataScript.Relation.ENEMY:
@@ -229,13 +229,13 @@ func _owner_status(unit) -> String:
 			_:
 				relation = "neutral"
 
-	var faction := String(owner.house_id)
-	if owner.has_subhouses():
+	var faction := String(unit_owner.house_id)
+	if unit_owner.has_subhouses():
 		var subhouses := []
-		for subhouse_id in owner.subhouse_ids:
+		for subhouse_id in unit_owner.subhouse_ids:
 			subhouses.append(String(subhouse_id))
 		faction += "/%s" % ", ".join(subhouses)
-	return "owner: %s (%s, %s)" % [owner.nickname, faction, relation]
+	return "owner: %s (%s, %s)" % [unit_owner.nickname, faction, relation]
 
 
 func _players():

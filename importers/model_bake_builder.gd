@@ -5,7 +5,7 @@ const ModelXbfScript := preload("res://importers/xbf/model_xbf.gd")
 
 # Effect submeshes the original game toggles from gameplay code rather than
 # from the baked animation: the leech parasite overlay and the energy shield
-# (RTSUnit shows it while `shields` > 0). They are baked hidden; gameplay code
+# (Unit shows it while `shields` > 0). They are baked hidden; gameplay code
 # flips `visible` on the matching "Mesh" instance when the effect applies.
 # Other FX (flashes, lightning, ...) are already driven by the animation
 # tracks and must stay visible.
@@ -128,7 +128,7 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 			# every time the (often sub-second) clip loops. So we only tag the
 			# mesh here (as metadata - PackedScene.pack() does not persist
 			# set_instance_shader_parameter overrides) and let the owning
-			# RTSUnit/Building drive fx_time every frame at runtime (mirrors
+			# Unit/Building drive fx_time every frame at runtime (mirrors
 			# the energy-shield fx_time driver). Mirrored parts sharing one
 			# scrolling texture (the two front spotlights, the two wind
 			# blades) don't need an artificial direction flip here: their
@@ -238,7 +238,7 @@ func _model_material(texture_name: String) -> Material:
 		shield_material.shader = _animated_shield_shader()
 		shield_material.set_shader_parameter("albedo_tex", texture)
 		shield_material.set_shader_parameter("use_team_color", team_colored)
-		# Not added to _scrolling_materials: RTSUnit already drives the
+		# Not added to _scrolling_materials: Unit already drives the
 		# shield's fx_time by name match (and only while shields are up), so
 		# tagging it here too would double-write the same parameter.
 		_material_cache[texture_name] = shield_material
@@ -442,7 +442,7 @@ func _animated_shield_shader() -> Shader:
 	if _shield_shader != null:
 		return _shield_shader
 	_shield_shader = Shader.new()
-	# fx_time is driven by RTSUnit while the shield is up (a continuous phase
+	# fx_time is driven by Unit while the shield is up (a continuous phase
 	# cannot come from sliced animation tracks — it would snap on clip loops),
 	# and must not be TIME: TIME in a shader forces the editor 3D viewport to
 	# redraw continuously (see the animated-frame shader above).
