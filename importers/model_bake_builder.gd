@@ -128,7 +128,7 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 			# every time the (often sub-second) clip loops. So we only tag the
 			# mesh here (as metadata - PackedScene.pack() does not persist
 			# set_instance_shader_parameter overrides) and let the owning
-			# RTSUnit/RTSBuilding drive fx_time every frame at runtime (mirrors
+			# RTSUnit/Building drive fx_time every frame at runtime (mirrors
 			# the energy-shield fx_time driver). Mirrored parts sharing one
 			# scrolling texture (the two front spotlights, the two wind
 			# blades) don't need an artificial direction flip here: their

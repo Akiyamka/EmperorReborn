@@ -2,7 +2,7 @@ class_name BuildingBakeBuilder
 extends RefCounted
 
 const ModelBakeBuilderScript := preload("res://importers/model_bake_builder.gd")
-const RTSBuildingScript := preload("res://scripts/rts_building.gd")
+const BuildingScript := preload("res://scripts/building.gd")
 
 const BUILDING_MODEL_DIR := "res://assets/unpacked_rfd/3DDATA/Buildings"
 const DEFAULT_TEXTURE_DIR := "res://assets/unpacked_rfd/3DDATA/Textures"
@@ -43,8 +43,9 @@ func build(building_id: StringName) -> PackedScene:
 
 	var root := Node3D.new()
 	root.name = String(building_id)
-	root.set_script(RTSBuildingScript)
-	root.add_to_group("rts_buildings")
+	root.set_script(BuildingScript)
+	root.add_to_group("buildings")
+	root.set("config_id", building_id)
 	root.set_meta("building_id", String(building_id))
 	root.set_meta("source_prefix", prefix)
 

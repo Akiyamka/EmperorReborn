@@ -23,6 +23,7 @@ signal tab_changed(tab: Tab)
 signal queue_slot_pressed(tab: Tab, slot: int, button_index: int)
 
 @onready var _credits_label: Label = %CreditsLabel
+@onready var _energy_label: Label = %EnergyLabel
 @onready var _queue_grid: GridContainer = %QueueGrid
 @onready var _queue_tabs: VBoxContainer = %QueueTabs
 @onready var _secondary_tabs: HBoxContainer = %SecondaryTabs
@@ -49,17 +50,26 @@ func _ready() -> void:
 
 	_set_active_tab(Tab.INFANTRY)
 	set_credits(0)
+	set_energy(0)
 
 
 ## Fits up to 999 999 999, grouped by thousands.
 func set_credits(amount: int) -> void:
+	_credits_label.text = _format_resource_amount(amount)
+
+
+func set_energy(amount: int) -> void:
+	_energy_label.text = _format_resource_amount(amount)
+
+
+func _format_resource_amount(amount: int) -> String:
 	var digits := str(absi(amount))
 	var grouped := ""
 	for i in digits.length():
 		if i > 0 and (digits.length() - i) % 3 == 0:
 			grouped += " "
 		grouped += digits[i]
-	_credits_label.text = ("-" if amount < 0 else "") + grouped
+	return ("-" if amount < 0 else "") + grouped
 
 
 ## External API for future game logic, e.g. blinking when production is done.

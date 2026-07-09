@@ -45,7 +45,7 @@ func _place_on_map() -> void:
 	# Terrain collision is not queryable until the first physics frame.
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	for building in get_tree().get_nodes_in_group("rts_buildings"):
+	for building in get_tree().get_nodes_in_group("buildings"):
 		if building is Node3D:
 			var spot: Vector3 = building.global_position
 			building.global_position = _snap_to_ground(spot)

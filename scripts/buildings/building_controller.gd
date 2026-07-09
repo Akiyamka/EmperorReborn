@@ -129,6 +129,7 @@ func _refresh_player_credits() -> void:
 
 	var player = _local_player()
 	side_panel.set_credits(player.money if player != null else 0)
+	side_panel.set_energy(player.energy if player != null else 0)
 
 
 func _load_hardcoded_building() -> void:
@@ -335,6 +336,8 @@ func _try_place_ready_building(screen_position: Vector2) -> void:
 		return
 
 	var display_name := String(_building_order.display_name)
+	if building.has_method("setup"):
+		building.call("setup", _placing_building_id)
 	buildings_root.add_child(building)
 	building.global_position = _snap_to_ground(_placement_world_center(_placement_anchor_cell))
 
