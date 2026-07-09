@@ -135,6 +135,7 @@ func _matches_state_file(file_name: String, prefix: String, suffix: String) -> b
 func _building_prefix_from_id(building_id: String) -> String:
 	var aliases := {
 		"ATBarracks": "at_barracks",
+		"ATSmWindtrap": "AT_Windtrap",
 	}
 	if aliases.has(building_id):
 		return aliases[building_id]
@@ -176,7 +177,10 @@ func _add_state_player(root: Node3D, states_root: Node3D, state_nodes: Array[Nod
 		anim.resource_name = state_name
 		var source_animation := _state_source_animation(active_node)
 		anim.length = maxf(source_animation.length if source_animation != null else 0.1, 0.1)
-		anim.loop_mode = source_animation.loop_mode if source_animation != null else Animation.LOOP_NONE
+		var loop_mode := Animation.LOOP_NONE
+		if state_name != "build" and source_animation != null:
+			loop_mode = source_animation.loop_mode
+		anim.loop_mode = loop_mode
 
 		for node in state_nodes:
 			var track := anim.add_track(Animation.TYPE_VALUE)
@@ -199,13 +203,26 @@ func _state_source_animation(state_node: Node3D) -> Animation:
 	var player := state_node.get_node_or_null("AnimationPlayer") as AnimationPlayer
 	if player == null:
 		return null
-	for animation_name in [&"Stationary", &"timeline"]:
-		if player.has_animation(animation_name):
-			return player.get_animation(animation_name)
-	var animation_list := player.get_animation_list()
-	if animation_list.is_empty():
-		return null
-	return player.get_animation(animation_list[0])
+	# "timeline" is the raw, unsliced union track ModelBakeBuilder always
+	# produces as a slicing source; every other clip name comes straight from
+	# the source xbf's own FX animation table (e.g. "Stationary", "Explode",
+	# "Build", ...) and carries that table's authored duration. Any of those
+	# beats "timeline" as the state's clip, so pick the longest one instead of
+	# hardcoding a couple of expected names - a model whose table entry isn't
+	# named "Stationary" (H3's "Explode", for instance) must not silently fall
+	# back to the ~1-frame "timeline" and look like it has no animation at all.
+	var best: Animation = null
+	for animation_name in player.get_animation_list():
+		if animation_name == "timeline":
+			continue
+		var candidate := player.get_animation(animation_name)
+		if best == null or candidate.length > best.length:
+			best = candidate
+	if best != null:
+		return best
+	if player.has_animation("timeline"):
+		return player.get_animation("timeline")
+	return null
 
 
 func _copy_animation_tracks(source: Animation, target: Animation, path_prefix: String) -> void:

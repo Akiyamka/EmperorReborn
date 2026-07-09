@@ -22,6 +22,9 @@ var world_scale := 0.0625
 const TEXTURE_FX_FPS := 4.0
 const MIN_ANIMATION_AXIS_SCALE := 0.0001
 const TEXTURE_PREFIX_MARKERS := "=@!%&"
+const SUPPRESSED_MISSING_TEXTURES := {
+	"at_wt_front64.tga": true,
+}
 
 var missing_textures: PackedStringArray = []
 var copied_textures: PackedStringArray = []
@@ -30,7 +33,6 @@ var _animated_texture_sequences := {}
 var _animated_material_frames := {}
 var _scrolling_materials := {}
 var _pending_frame_tracks: Array[Dictionary] = []
-var _pending_scroll_tracks: Array[Dictionary] = []
 var _animated_frame_shader_add: Shader
 var _animated_frame_shader_mix: Shader
 var _model_texture_shaders := {}
@@ -47,7 +49,6 @@ func build(xbf_path: String) -> PackedScene:
 	_animated_material_frames.clear()
 	_scrolling_materials.clear()
 	_pending_frame_tracks.clear()
-	_pending_scroll_tracks.clear()
 	_model_texture_shaders.clear()
 	_scrolling_texture_shaders.clear()
 	_has_shield_fx_marker = false
@@ -71,7 +72,12 @@ func build(xbf_path: String) -> PackedScene:
 		root.add_child(child)
 		max_frame = maxi(max_frame, _object_animation_length(object))
 
-	if anim.get_track_count() > 0 or not _pending_frame_tracks.is_empty() or not _pending_scroll_tracks.is_empty():
+	# Build the library even when nothing produced a track: the FX table can
+	# still declare a named entry (e.g. H3's "Explode", 50 frames) purely as a
+	# duration/timing cue with no baked per-object motion, and dropping the
+	# AnimationPlayer here would silently throw that duration away, collapsing
+	# the state to ~1 frame downstream in BuildingBakeBuilder.
+	if anim.get_track_count() > 0 or not _pending_frame_tracks.is_empty() or not xbf.animation_entries.is_empty():
 		anim.length = maxf(max_frame / fps, 1.0 / fps)
 		_add_shader_fx_tracks(anim)
 		var library := AnimationLibrary.new()
@@ -99,7 +105,8 @@ func build(xbf_path: String) -> PackedScene:
 
 func _build_object_node(object: Dictionary, texture_names: PackedStringArray, node_path: String, anim: Animation) -> Node3D:
 	var node := Node3D.new()
-	node.name = _safe_node_name(String(object.name))
+	var raw_name := String(object.name)
+	node.name = _safe_node_name(raw_name)
 	node.transform = _to_godot_transform(object.transform)
 	var child_path: String = "%s/%s" % [node_path, node.name] if node_path != "." else node.name
 	_add_animation_track(anim, child_path, object)
@@ -109,14 +116,26 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		var mesh_instance := MeshInstance3D.new()
 		mesh_instance.name = "Mesh"
 		mesh_instance.mesh = mesh
-		mesh_instance.visible = not _is_effect_object(String(object.name))
+		mesh_instance.visible = not _is_effect_object(raw_name)
 		node.add_child(mesh_instance)
 		_add_vertex_animation_track(anim, "%s/Mesh" % child_path, object, texture_names)
 		var atlas_frames := _mesh_animated_frame_count(mesh)
 		if atlas_frames > 1:
 			_pending_frame_tracks.append({"path": "%s/Mesh" % child_path, "frames": atlas_frames})
 		if _mesh_has_scrolling_texture(mesh):
-			_pending_scroll_tracks.append({"path": "%s/Mesh" % child_path})
+			# A scrolling UV phase has to keep advancing continuously while the
+			# model is on screen; a baked animation track would snap back to 0
+			# every time the (often sub-second) clip loops. So we only tag the
+			# mesh here (as metadata - PackedScene.pack() does not persist
+			# set_instance_shader_parameter overrides) and let the owning
+			# RTSUnit/RTSBuilding drive fx_time every frame at runtime (mirrors
+			# the energy-shield fx_time driver). Mirrored parts sharing one
+			# scrolling texture (the two front spotlights, the two wind
+			# blades) don't need an artificial direction flip here: their
+			# source vertex positions are already authored as true mirror
+			# images of each other, so one shared, uniform scroll direction
+			# converges/diverges on its own from that geometry.
+			mesh_instance.set_meta("scroll_fx", true)
 
 	for child_object: Dictionary in object.children:
 		var child := _build_object_node(child_object, texture_names, child_path, anim)
@@ -219,7 +238,9 @@ func _model_material(texture_name: String) -> Material:
 		shield_material.shader = _animated_shield_shader()
 		shield_material.set_shader_parameter("albedo_tex", texture)
 		shield_material.set_shader_parameter("use_team_color", team_colored)
-		_scrolling_materials[shield_material] = true
+		# Not added to _scrolling_materials: RTSUnit already drives the
+		# shield's fx_time by name match (and only while shields are up), so
+		# tagging it here too would double-write the same parameter.
 		_material_cache[texture_name] = shield_material
 		return shield_material
 	if _is_scrolling_texture(texture_name) and texture != null:
@@ -531,7 +552,7 @@ instance uniform float fx_time = 0.0;
 instance uniform vec4 team_color = vec4(0.12, 0.44, 1.0, 1.0);
 uniform sampler2D albedo_tex : source_color;
 uniform bool use_team_color = false;
-uniform vec2 scroll_speed = vec2(0.0, 0.18);
+uniform vec2 scroll_speed = vec2(0.18, 0.0);
 
 vec3 apply_team_color(vec3 rgb) {
 	if (!use_team_color) {
@@ -578,7 +599,8 @@ func _ensure_model_texture(texture_name: String) -> String:
 	if not ResourceLoader.exists(source_path) and not FileAccess.file_exists(source_path):
 		source_path = _find_source_texture_case_insensitive(clean_file)
 	if not FileAccess.file_exists(source_path):
-		missing_textures.append(texture_name)
+		if not _is_suppressed_missing_texture(texture_name):
+			missing_textures.append(texture_name)
 		return ""
 	if texture_output_dir.is_empty():
 		return source_path
@@ -691,7 +713,30 @@ func _is_animated_texture(texture_name: String) -> bool:
 
 
 func _is_scrolling_texture(texture_name: String) -> bool:
-	return _is_animated_texture(texture_name)
+	var file_name := texture_name.get_file().to_lower()
+	# The windtrap's "front2" texture ("AT_WT_Front2_64.tga",
+	# "%HK_WT_Front2_128.tga", "or_wt_front2_128.tga", ...) is what the
+	# spotlight beam meshes use and is meant to scroll, but only AT/OR carry
+	# no "%" marker on it in the source data (HK's copy happens to have one).
+	# The base building shell also references a *different*, unmarked
+	# "front" texture without the "2" (e.g. "AT_WT_Front64.tga",
+	# "hk_wt_front128.tga") that must stay static, so match specifically on
+	# "front2" rather than "front".
+	if file_name.contains("front2"):
+		return true
+	if not _is_animated_texture(texture_name):
+		return false
+	# "spotlight.tga" carries the "%" marker but is a static light-cone
+	# cutout, not a panning texture - "%" on a lone (non-sequence) file
+	# is evidently reused for more than one purpose in the source data,
+	# so this one is excluded rather than assumed to scroll.
+	if file_name.contains("spotlight"):
+		return false
+	return true
+
+
+func _is_suppressed_missing_texture(texture_name: String) -> bool:
+	return bool(SUPPRESSED_MISSING_TEXTURES.get(_texture_sequence_key(texture_name), false))
 
 
 func _texture_has_prefix(texture_name: String, marker: String) -> bool:
@@ -892,13 +937,6 @@ func _add_shader_fx_tracks(anim: Animation) -> void:
 		anim.value_track_set_update_mode(track, Animation.UPDATE_DISCRETE)
 		for i in key_count + 1:
 			anim.track_insert_key(track, i / TEXTURE_FX_FPS, float(i % frame_count))
-
-	for entry: Dictionary in _pending_scroll_tracks:
-		var track := anim.add_track(Animation.TYPE_VALUE)
-		anim.track_set_path(track, NodePath("%s:instance_shader_parameters/fx_time" % String(entry["path"])))
-		anim.track_set_interpolation_type(track, Animation.INTERPOLATION_LINEAR)
-		anim.track_insert_key(track, 0.0, 0.0)
-		anim.track_insert_key(track, anim.length, anim.length)
 
 
 func _slice_animation(source: Animation, entry: Dictionary) -> Animation:
