@@ -714,6 +714,10 @@ func _is_animated_texture(texture_name: String) -> bool:
 
 func _is_scrolling_texture(texture_name: String) -> bool:
 	var file_name := texture_name.get_file().to_lower()
+	# The Buzzsaw's tread texture has no "%" marker, but its UVs need to
+	# scroll continuously to show the vehicle moving.
+	if file_name == "hk_buzzsawtread_64.tga":
+		return true
 	# The windtrap's "front2" texture ("AT_WT_Front2_64.tga",
 	# "%HK_WT_Front2_128.tga", "or_wt_front2_128.tga", ...) is what the
 	# spotlight beam meshes use and is meant to scroll, but only AT/OR carry
