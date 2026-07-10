@@ -2,6 +2,7 @@ extends Node3D
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingControllerScript := preload("res://scripts/buildings/building_controller.gd")
+const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
 const LOCAL_PLAYER_ID := 1
 const ENEMY_PLAYER_ID := 2
 ## Temporary match composition data until building options come from the feature/rules catalog.
@@ -14,9 +15,9 @@ const DEMO_BUILDING_OPTION_IDS: Array[StringName] = [&"ATSmWindtrap", &"ATBarrac
 @onready var fps_label: Label = $HUD/FPS
 @onready var side_panel: SidePanel = $HUD/SidePanel
 
-var selected_unit = null
 var _fps_update_time := 0.0
 var _building_controller
+var _unit_command_controller
 
 
 func _enter_tree() -> void:
@@ -26,6 +27,7 @@ func _enter_tree() -> void:
 
 
 func _ready() -> void:
+	_setup_unit_command_controller()
 	_setup_building_controller()
 	_update_selection_label()
 	_update_fps_label()
@@ -60,6 +62,14 @@ func _setup_building_controller() -> void:
 	_building_controller.sell_mode_changed.connect(side_panel.set_sell_mode)
 	_building_controller.building_option_state_changed.connect(side_panel.set_building_option_state)
 	_building_controller.setup(terrain, camera, $Buildings, DEMO_BUILDING_OPTION_IDS)
+
+
+func _setup_unit_command_controller() -> void:
+	_unit_command_controller = UnitCommandControllerScript.new()
+	_unit_command_controller.name = "UnitCommandController"
+	add_child(_unit_command_controller)
+	_unit_command_controller.status_changed.connect(_update_selection_label)
+	_unit_command_controller.setup(camera, terrain)
 
 
 func _place_on_map() -> void:
@@ -105,92 +115,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	if event is InputEventMouseButton and event.pressed:
-		match event.button_index:
-			MOUSE_BUTTON_LEFT:
-				_select_at(event.position)
-				get_viewport().set_input_as_handled()
-			MOUSE_BUTTON_RIGHT:
-				_command_move(event.position)
-				get_viewport().set_input_as_handled()
-
-
-func _select_at(screen_position: Vector2) -> void:
-	_clear_selection()
-
-	var hit := _raycast(screen_position)
-	if hit.is_empty():
-		_update_selection_label()
-		return
-
-	var unit = _find_unit(hit.get("collider") as Node)
-	if unit == null:
-		_update_selection_label()
-		return
-
-	selected_unit = unit
-	selected_unit.set_selected(true)
-	_update_selection_label()
-
-
-func _command_move(screen_position: Vector2) -> void:
-	if selected_unit == null:
-		return
-
-	if not _can_control(selected_unit):
-		_update_selection_label("Cannot command this player")
-		return
-
-	var hit := _raycast(screen_position, 1)
-	if hit.is_empty():
-		return
-
-	var target: Vector3 = hit["position"]
-	selected_unit.move_to(target)
-	var nav_status := ""
-	if terrain.navigation_grid != null and terrain.navigation_grid.is_loaded():
-		var cell: Vector2i = terrain.navigation_grid.world_to_grid(target)
-		var debug: Dictionary = terrain.navigation_grid.cell_debug(cell)
-		nav_status = " | nav %s tile %s terrain %s" % [
-			str(cell),
-			str(debug.get("source_tile", "?")),
-			str(debug.get("terrain_name", "?")),
-		]
-	_update_selection_label("Moving to %.1f, %.1f%s" % [target.x, target.z, nav_status])
-
-
-func _clear_selection() -> void:
-	if selected_unit != null:
-		selected_unit.set_selected(false)
-		selected_unit = null
-
-
-func _find_unit(node: Node):
-	var current := node
-	while current != null:
-		if current.is_in_group("units"):
-			return current
-		current = current.get_parent()
-	return null
-
-
-func _raycast(screen_position: Vector2, collision_mask: int = 0xffffffff) -> Dictionary:
-	var ray_origin := camera.project_ray_origin(screen_position)
-	var ray_end := ray_origin + camera.project_ray_normal(screen_position) * 1000.0
-	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-	query.collision_mask = collision_mask
-	query.collide_with_areas = false
-	return get_world_3d().direct_space_state.intersect_ray(query)
+	if _unit_command_controller != null and _unit_command_controller.handle_unhandled_input(event):
+		get_viewport().set_input_as_handled()
 
 
 func _update_selection_label(status := "") -> void:
-	if selected_unit == null:
-		selection_label.text = status if not status.is_empty() else "No unit selected"
-		return
-
-	selection_label.text = "%s selected | %s" % [selected_unit.name, _owner_status(selected_unit)]
-	if not status.is_empty():
-		selection_label.text += " | %s" % status
+	selection_label.text = _unit_command_controller.selection_text(status)
 
 
 func _update_fps_label() -> void:
@@ -226,38 +156,6 @@ func _configure_demo_players() -> void:
 	)
 	players.local_player_id = LOCAL_PLAYER_ID
 	players.set_relation(LOCAL_PLAYER_ID, ENEMY_PLAYER_ID, PlayerDataScript.Relation.ENEMY)
-
-
-func _can_control(unit) -> bool:
-	var players = _players()
-	return players != null and unit.is_owned_by(players.local_player_id)
-
-
-func _owner_status(unit) -> String:
-	var unit_owner = unit.owner_player()
-	if unit_owner == null:
-		return "owner: missing"
-	if unit_owner.is_neutral:
-		return "owner: neutral"
-
-	var players = _players()
-	var relation := "unknown"
-	if players != null:
-		match players.relation_between(players.local_player_id, unit_owner.player_id):
-			PlayerDataScript.Relation.ALLY:
-				relation = "ally"
-			PlayerDataScript.Relation.ENEMY:
-				relation = "enemy"
-			_:
-				relation = "neutral"
-
-	var faction := String(unit_owner.house_id)
-	if unit_owner.has_subhouses():
-		var subhouses := []
-		for subhouse_id in unit_owner.subhouse_ids:
-			subhouses.append(String(subhouse_id))
-		faction += "/%s" % ", ".join(subhouses)
-	return "owner: %s (%s, %s)" % [unit_owner.nickname, faction, relation]
 
 
 func _players():

@@ -14,13 +14,13 @@
 
 ## Исходные hotspots и ограничения
 
-- `scenes/main.tscn` вручную поддерживается, но ссылается на generated scenes из `assets/converted/`; запуск main зависит от локально сконвертированных оригинальных assets.
-- `scripts/main.gd` одновременно создает demo players, координирует карту/камеру, selection, команды и HUD.
-- `scripts/buildings/building_controller.gd` (~570 строк) остается orchestration shell для availability, input/UI/status, scene-path/rules lookup и продажи; production queue и placement вынесены в отдельные feature objects, но UI contract все еще напрямую связан с `SidePanel`.
-- `scripts/ui/side_panel.gd` содержит gameplay-идентификаторы зданий и preload raw icons, поэтому gameplay зависит от состава конкретного UI.
+- `scenes/match/demo_match.tscn` вручную поддерживается, но ссылается на generated scenes из `assets/converted/`; запуск demo match зависит от локально сконвертированных оригинальных assets.
+- `scripts/match/match.gd` является composition root demo match: создает demo players, координирует карту/камеру и HUD wiring.
+- `scripts/buildings/building_controller.gd` остается orchestration shell для availability, queue/placement/sell, scene-path/rules lookup и feature presentation signals; production queue и placement вынесены в отдельные feature objects, UI contract адаптируется только в match composition root.
+- `scripts/ui/side_panel.gd` хранит UI-only icons/layout и cached feature presentation state; gameplay IDs принадлежат match composition data.
 - `scripts/map_loader.gd`, `scripts/map_navigation_grid.gd` и `scripts/baked_map_data.gd` являются runtime-частью карты, но `converters/map_bake_builder.gd` напрямую preload-ит и создает runtime-типы; граница generated data/conversion/runtime размыта.
 - `scripts/players/player_roster.gd`, `scripts/players/player_data.gd`, `scripts/buildings/building.gd` и `scripts/units/unit.gd` используют изменяемые Resources и сигналы жизненного цикла; до структурных правок нужны проверки reset/rebind/removal/ownership.
-- Есть asset-independent runners `tests/characterization/run.gd`, `tests/buildings/run.gd` и `tests/buildings/placement_run.gd`; авторитетная версия движка указана в `project.godot` как Godot 4.7, основной воспроизводимый запуск идет через `tools/godot-container`.
+- Есть asset-independent runners `tests/characterization/run.gd`, `tests/buildings/run.gd`, `tests/buildings/placement_run.gd` и `tests/match/unit_command_run.gd`; авторитетная версия движка указана в `project.godot` как Godot 4.7, основной воспроизводимый запуск идет через `tools/godot-container`.
 - `assets/` и `.godot/` игнорируются в `.gitignore`. Нельзя считать локальный `.godot` доказательством корректности путей или коммитить generated/original assets.
 
 ## Обязательное правило перемещений
@@ -85,7 +85,7 @@ Scope: ownership внутри scene tree, повторный setup controller и
 
 Критерии приемки: отдельные asset-independent seams существуют после соответствующего разделения; tests проверяют transitions через public API, signal connections не дублируются, failed map load не оставляет смешанное старое/новое состояние.
 
-Текущие blockers: `scripts/main.gd --check-only` и `make godot-check` загружают `SidePanel`/`BuildingController`/map dependencies и сообщают отсутствующие imported raw icons, stale global class `MapXbf` и ссылки generated terrain на `assets/unpacked_rfd`. Эти команды не считаются зелеными, даже если Godot возвращает zero exit code.
+Текущие blockers: `scripts/match/match.gd --check-only` и `make godot-check` загружают `SidePanel`/`BuildingController`/map dependencies и сообщают отсутствующие imported raw icons, stale global class `MapXbf` и ссылки generated terrain на `assets/unpacked_rfd`. Эти команды не считаются зелеными, даже если Godot возвращает zero exit code.
 
 ### [x] Этап 2. Безопасные механические перемещения (завершен 2026-07-10 в пределах подтвержденных safe moves)
 
@@ -156,8 +156,8 @@ rg 'res://scripts/unit\.gd' --glob '!REFACTORING_PLAN.md' --glob '!.godot/**' --
 
 | Пара, сохраненный UID | Tracked runtime readers | Converters/tools | Ignored generated outputs |
 | --- | --- | --- | --- |
-| `scripts/map_loader.gd(.uid)`, `uid://cqiexq260wh44` | `main.gd` и `BuildingController` используют `MapLoader`; сам loader preload-ит navigation grid и загружает `map_data.tres` | `map_bake_builder.gd` preload-ит script и назначает его корню через `set_script()` | `terrain.tscn` содержит ext_resource этого script; `main.tscn` инстанцирует generated terrain |
-| `scripts/map_navigation_grid.gd(.uid)`, `uid://bj5g580fdqsw8` | `map_loader.gd` создает grid; `main.gd` и `BuildingController` вызывают runtime queries через `terrain.navigation_grid` | `map_bake_builder.gd` и `nav_grid_check.gd` создают тот же класс; сам класс preload-ит `converters/xbf/map_xbf.gd` и читает CPF/XBF | Прямого script ext_resource нет, но baked nav arrays записываются в `map_data.tres` |
+| `scripts/map_loader.gd(.uid)`, `uid://cqiexq260wh44` | `match.gd` и `BuildingController` используют `MapLoader`; сам loader preload-ит navigation grid и загружает `map_data.tres` | `map_bake_builder.gd` preload-ит script и назначает его корню через `set_script()` | `terrain.tscn` содержит ext_resource этого script; `demo_match.tscn` инстанцирует generated terrain |
+| `scripts/map_navigation_grid.gd(.uid)`, `uid://bj5g580fdqsw8` | `map_loader.gd` создает grid; `match.gd` и `BuildingController` вызывают runtime queries через `terrain.navigation_grid` | `map_bake_builder.gd` и `nav_grid_check.gd` создают тот же класс; сам класс preload-ит `converters/xbf/map_xbf.gd` и читает CPF/XBF | Прямого script ext_resource нет, но baked nav arrays записываются в `map_data.tres` |
 | `scripts/baked_map_data.gd(.uid)`, `uid://dadroggstib3b` | `MapLoader` читает serialized data contract | `map_bake_builder.gd` создает и заполняет resource | `map_data.tres` содержит ext_resource этого script |
 | `scripts/terrain.gdshader(.uid)`, `uid://bbdgfua3yqgke` | Runtime получает shader через generated terrain materials | `map_bake_builder.gd` preload-ит shader при построении материалов | `terrain.tscn` содержит ext_resource shader |
 
@@ -221,11 +221,11 @@ make godot-check
 timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-after 10
 ```
 
-### [ ] Этап 4. Decouple gameplay от UI
+### [x] Этап 4. Decouple gameplay от UI (завершен 2026-07-10)
 
 #### [x] Этап 4A. ID intents и ownership build options (завершен 2026-07-10)
 
-Scope: `SidePanel` больше не содержит gameplay catalog `BUILDING_IDS`. Текущий composition root `scripts/main.gd` временно владеет ordered demo IDs `ATSmWindtrap`, `ATBarracks` и передает тот же список UI и `BuildingController`. UI хранит только slot-to-ID display mapping, отправляет intent с `building_id` и mouse button, а его icons/layout остаются UI concern. Controller принимает IDs в setup, держит private typed copy, загружает/проверяет/refresh-ит только их и не знает tab или slot index в queue intent handler; прямые `SidePanel`/`QueueSlot` presentation calls сознательно остаются до 4B.
+Scope: `SidePanel` больше не содержит gameplay catalog `BUILDING_IDS`. Текущий composition root `scripts/match/match.gd` временно владеет ordered demo IDs `ATSmWindtrap`, `ATBarracks` и передает тот же список UI и `BuildingController`. UI хранит только slot-to-ID display mapping, отправляет intent с `building_id` и mouse button, а его icons/layout остаются UI concern. Controller принимает IDs в setup, держит private typed copy, загружает/проверяет/refresh-ит только их и не знает tab или slot index в queue intent handler; прямые `SidePanel`/`QueueSlot` presentation calls сознательно остаются до 4B.
 
 Проверка и результат: UI gameplay catalog удален; `building_intent_pressed(building_id, button_index)` и `set_building_slot_state(building_id, ...)` не передают внешний slot/tab contract; один `DEMO_BUILDING_OPTION_IDS` передан обоим получателям. Сохранены порядок, icons, tabs и left/right queue semantics. Existing asset-independent runners remain the coverage for unchanged queue/placement/data behavior; ID-to-slot/UI signal path needs raw icon imports and SceneTree, so it was checked through the local UI fixture rather than a new asset-independent abstraction. Следующий шаг — 4B: убрать direct controller-to-`SidePanel`/`QueueSlot` presentation dependency.
 
@@ -233,13 +233,17 @@ Scope: `SidePanel` больше не содержит gameplay catalog `BUILDING
 
 Результат: добавлен feature-owned `BuildingOptionState` (`RefCounted`, UID `uid://c5fkodvshlk7d`) с `AVAILABLE`/`DISABLED`/`BLOCKED`/`PROGRESS`/`READY`, ID, progress, status и tooltip. `BuildingController` больше не упоминает UI и принимает только map/camera/buildings/options в `setup`; public `handle_building_intent(building_id, button_index)` безопасно отклоняет чужой ID/unsupported button, а `handle_command(command)` обрабатывает Sell и Repair, возвращая `false` для composition-root fallback. Outputs: `building_option_state_changed(BuildingOptionState)`, `resources_changed(credits, energy)`, `sell_mode_changed(active)` и existing `status_changed`.
 
-`main.gd` — единственный wiring: сначала configures options и connects panel intents/commands plus all controller outputs, затем calls setup so initial resources/options/sell emissions не теряются. Repair сохраняет status `Command: Repair (not implemented)` через controller, unknown command сохраняет прежний main fallback; panel command имеет одного consumer. `SidePanel` preload-ит feature state, cache-ит latest states по ID и resources/sell, maps enum исключительно в internal `QueueSlot.State` и reapplies cached state после building tab/grid rebuild. Поэтому скрытие/recreation UI не требует controller tab callback и не теряет READY/PROGRESS/DISABLED.
+`match.gd` — единственный wiring: сначала configures options и connects panel intents/commands plus all controller outputs, затем calls setup so initial resources/options/sell emissions не теряются. Repair сохраняет status `Command: Repair (not implemented)` через controller, unknown command сохраняет прежний match fallback; panel command имеет одного consumer. `SidePanel` preload-ит feature state, cache-ит latest states по ID и resources/sell, maps enum исключительно в internal `QueueSlot.State` и reapplies cached state после building tab/grid rebuild. Поэтому скрытие/recreation UI не требует controller tab callback и не теряет READY/PROGRESS/DISABLED.
 
 Проверка и результат: forbidden search `SidePanel|QueueSlot|PanelTab|scripts/ui|scenes/ui` в controller пуст; changed scripts `--check-only` прошли. Local clean-cache UI fixture прошел 16 assertions (resources, sell, enum mapping, cached progress/blocked state after tab rebuild, left/right ID intents); controller-without-UI smoke прошел 9 assertions, включая initial outputs, input validation и Repair/Sell routing. Existing runners: placement 20/20, queue 38/38, characterization 60/60. Clean UI fixture also confirms class registration of the new model; full main remains blocked only by ignored generated terrain references to missing `assets/unpacked_rfd` textures. Следующий шаг — только 4C composition-root cleanup/move.
 
-#### [ ] Этап 4C. Composition root cleanup/move
+#### [x] Этап 4C. Composition root cleanup/move (завершен 2026-07-10)
 
-Scope: после 4B очистить gameplay orchestration HUD в `scripts/main.gd` и выполнить его move отдельным mechanical batch, сохранив existing selection/movement and sell behavior.
+Результат: `UnitCommandController` (`scripts/match/unit_command_controller.gd`, UID `uid://c6542mna0xvf5`) владеет selected unit state, left-select/right-move input, owner/relation presentation, raycasts, ownership check и nav debug suffix. Его API — `setup(camera, terrain)`, `handle_unhandled_input(event) -> bool`, `selection_text(status)` и `status_changed`; он не знает HUD, building UI/controller или demo roster. `match.gd` остается lifecycle/composition root: demo players, SidePanel--BuildingController wiring, controller creation, priority building before unit input, initial map/entity snapping и FPS/HUD adapters. Building statuses проходят через `selection_text`, сохраняя selected-unit prefix.
+
+Механические moves: `scripts/main.gd(.uid)` -> `scripts/match/match.gd(.uid)` с preserved `uid://3psqgxv6e2ys`; `scenes/main.tscn` -> `scenes/match/demo_match.tscn` с preserved scene UID `uid://b3s2wqci2m81v`. Scene ext_resource и `project.godot` main scene обновлены; compatibility copies отсутствуют. Ignored local `scenes/debug/screenshot.gd` сознательно остается со старой ссылкой `res://scenes/main.tscn` и не входит в tracked refactor/commit. `tests/match/unit_command_run.gd` (UID `uid://cg5kwprkutaq`) добавляет 13 asset-independent assertions for ancestor selection/clear, owner text, enemy rejection before terrain raycast, movement mask/status and no-selection right click.
+
+Проверка и результат: changed scripts parse; new controller and moved match script registered on clean cache; placement 20/20, queue 38/38, characterization 60/60 and unit-command 13/13 passed. Tracked old `res://scripts/main.gd`/`res://scenes/main.tscn` references are absent and UIDs unique. Full new main scene remains blocked by the known ignored generated terrain references to missing `assets/unpacked_rfd` textures; ignored `.godot` still contains stale old paths and was not edited.
 
 Критерии номерного этапа: building gameplay запускается и тестируется без `SidePanel`; raw icon paths и layout остаются UI concerns; команды преобразуются в feature API в одном composition root.
 
@@ -249,6 +253,9 @@ Scope: после 4B очистить gameplay orchestration HUD в `scripts/mai
 rg 'SidePanel|scripts/ui|scenes/ui' scripts/buildings
 make godot-check
 ./tools/godot-container godot --headless --path /workspace --script res://tests/characterization/run.gd
+./tools/godot-container godot --headless --path /workspace --script res://tests/buildings/run.gd
+./tools/godot-container godot --headless --path /workspace --script res://tests/buildings/placement_run.gd
+./tools/godot-container godot --headless --path /workspace --script res://tests/match/unit_command_run.gd
 timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-after 10
 ```
 
@@ -261,7 +268,7 @@ Scope: определить стабильный формат baked map data; о
 - Runtime map не читает original formats и не импортирует `converters/`; XBF/CPF/CPT parsing и raw navigation build остаются converter-only.
 - Четыре `.gd/.gdshader` пары перемещены вместе с прежними UID; все runtime и converter references обновлены, старые paths отсутствуют.
 - `convert_map.gd` воспроизводимо регенерирует `map_data.tres` и `terrain.tscn`; generated output не содержит `res://assets/unpacked_rfd`, включая terrain texture fallback paths и source metadata.
-- Regenerated `terrain.tscn` использует актуальные MapLoader/shader paths, `map_data.tres` использует актуальный data script, а `main.tscn` инстанцирует существующий output.
+- Regenerated `terrain.tscn` использует актуальные MapLoader/shader paths, `map_data.tres` использует актуальный data script, а `demo_match.tscn` инстанцирует существующий output.
 - Отдельный clean-cache test загружает `map_data.tres` и `terrain.tscn`, подтверждает loaded navigation grid/runtime queries и явное согласованное состояние после failed load.
 - Converter и `nav_grid_check.gd` запускаются headless отдельно; ошибки версии/формы baked data валидируются понятной диагностикой.
 
@@ -301,4 +308,5 @@ git status --short
 - 2026-07-10: этап 3B завершен: `BuildingPlacement` получил injected camera/grid/root/preview dependencies, spatial state, validation, preview, spawn и animation; controller оставил input/UI/status/queue/rules orchestration. Asset-independent fake-grid runner прошел 20 assertions, включая resolver-fallback occupancy regression; camera physics and generated preview visuals остаются integration gap.
 - 2026-07-10: этап 3C и номерной этап 3 завершены: `Building` moved with preserved `uid://bqgxj7lpphjo0`, converter preload обновлен, а ignored `ATConYard`, `ATSmWindtrap` и `ATBarracks` scenes штатно regenerated (five H-state XBF each). Separate clean-cache dependency/load/instantiate check подтвердил новый script path для всех трех; generated output local-only и не входит в commit.
 - 2026-07-10: этап 4 разделен на 4A--4C. 4A завершен: demo option IDs временно принадлежат `main.gd` и одним ordered list передаются `SidePanel` и `BuildingController`; SidePanel sends ID-based building intents and resolves its own slot mapping, controller no longer reads UI catalog or accepts tab/slot queue input. Direct presentation dependency остается следующим scope 4B; main move — только 4C.
-- 2026-07-10: этап 4B завершен: controller publishes feature-owned option/resource/sell presentation and handles feature commands without loading UI; `main.gd` owns all UI adaptation and SidePanel caches typed option states across tab rebuilds. Clean local UI fixture, no-UI controller smoke and existing feature runners passed; generated terrain texture references remain the unrelated full-main blocker. 4C pending.
+- 2026-07-10: этап 4B завершен: controller publishes feature-owned option/resource/sell presentation and handles feature commands without loading UI; `match.gd` owns all UI adaptation and SidePanel caches typed option states across tab rebuilds. Clean local UI fixture, no-UI controller smoke and existing feature runners passed; generated terrain texture references remain the unrelated full-main blocker. 4C pending.
+- 2026-07-10: этап 4C и номерной этап 4 завершены: selection/move/ownership presentation extracted to `UnitCommandController`; composition root and demo scene moved with preserved UIDs, tracked entry-point references updated, and an asset-independent unit-command runner added. Full demo scene remains blocked only by ignored stale generated terrain texture paths; ignored editor cache old paths were not edited.

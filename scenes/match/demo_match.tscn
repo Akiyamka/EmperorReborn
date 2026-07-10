@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://b3s2wqci2m81v"]
 
-[ext_resource type="Script" uid="uid://3psqgxv6e2ys" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://3psqgxv6e2ys" path="res://scripts/match/match.gd" id="1_main"]
 [ext_resource type="Script" uid="uid://xoynnrvxuq2p" path="res://scripts/world/camera/rts_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="3_unit"]
 [ext_resource type="PackedScene" path="res://assets/converted/maps/#M70 Claw Rock/terrain.tscn" id="4_map"]

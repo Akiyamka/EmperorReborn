@@ -15,7 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="EmperorReborn"
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://scenes/match/demo_match.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 run/max_fps=60
 config/icon="res://icon.svg"
