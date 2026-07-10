@@ -4,41 +4,42 @@ extends Node3D
 signal status_changed(status: String)
 
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
+const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
 const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
 const PLACEMENT_SKIRT_SCENE := preload("res://assets/converted/placement/build_skirt.scn")
-const PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL := 2
-const PLACEMENT_CELL_SURFACE_OFFSET := 0.06
-const PLACEMENT_CELL_EMISSION_ENERGY := 1.8
-const INVALID_PLACEMENT_ANCHOR := Vector2i(-999999, -999999)
 
 var side_panel: SidePanel
-var terrain: MapLoader
 var camera: Camera3D
-var buildings_root: Node3D
 
 var _building_configs: Dictionary = {}
 var _technology_tree = TechnologyTreeScript.new()
 var _building_availability: Dictionary = {}
 var _building_queue = BuildingQueueScript.new()
+var _building_placement = BuildingPlacementScript.new()
 var _local_player_resource = null
-var _placing_building_id: StringName = &""
 var _sell_mode := false
 var _selling_building: Node3D
-var _placement_preview_root: Node3D
-var _placement_occupy_rows: Array[String] = []
-var _placement_anchor_cell := INVALID_PLACEMENT_ANCHOR
-var _placement_has_anchor := false
-var _placement_can_build := false
 
 
 func setup(panel: SidePanel, map_loader: MapLoader, placement_camera: Camera3D, building_parent: Node3D) -> void:
 	side_panel = panel
-	terrain = map_loader
 	camera = placement_camera
-	buildings_root = building_parent
+	if _building_placement.get_parent() != self:
+		add_child(_building_placement)
+	var navigation_grid = map_loader.navigation_grid if map_loader != null else null
+	_building_placement.setup(
+		placement_camera,
+		navigation_grid,
+		building_parent,
+		PLACEMENT_ARROW_SCENE,
+		PLACEMENT_BUILDING_SCENE,
+		PLACEMENT_CANT_BUILD_SCENE,
+		PLACEMENT_SKIRT_SCENE,
+		Callable(self, "_occupy_rows_for_existing_building")
+	)
 	if not _building_queue.order_ready.is_connected(_on_building_queue_ready):
 		_building_queue.order_ready.connect(_on_building_queue_ready)
 
@@ -61,7 +62,8 @@ func process(delta: float) -> void:
 			_building_availability[building_id] = building_available
 			_refresh_building_queue_slot()
 	_process_building_order(delta)
-	_process_building_placement()
+	if _building_placement.is_active():
+		_building_placement.process(get_viewport().get_mouse_position())
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
@@ -76,7 +78,7 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 			return true
 		return false
 
-	if not _is_placing_building():
+	if not _building_placement.is_active():
 		return false
 	if not (event is InputEventMouseButton and event.pressed):
 		return false
@@ -276,7 +278,7 @@ func _on_building_slot_right_pressed(building_id: StringName) -> void:
 	if order == null or order.building_id != building_id:
 		return
 
-	if _is_placing_building():
+	if _building_placement.is_active():
 		_cancel_building_placement()
 		return
 
@@ -308,7 +310,7 @@ func _start_building_order(building_id: StringName) -> void:
 		maxf(float(config.field(&"build_time", 0.0)), 1.0)
 	):
 		return
-	_clear_building_placement()
+	_building_placement.cancel()
 
 	status_changed.emit("%s ordered" % _building_queue.current_order().display_name)
 	_refresh_building_queue_slot()
@@ -344,7 +346,7 @@ func _cancel_building_order() -> void:
 	if player != null and refunded > 0:
 		player.add_money(refunded)
 
-	_clear_building_placement()
+	_building_placement.cancel()
 	status_changed.emit("%s canceled; refunded %d" % [display_name, refunded])
 	_refresh_building_queue_slot()
 
@@ -356,109 +358,56 @@ func _begin_ready_building_placement() -> void:
 
 	var config := _building_config(order.building_id)
 	var occupy_rows := _building_occupy_rows(config)
-	if occupy_rows.is_empty():
+	if not _building_placement.begin(order.building_id, order.display_name, occupy_rows):
 		status_changed.emit("%s has no occupy_rows" % order.display_name)
 		return
 
-	_placing_building_id = order.building_id
-	_placement_occupy_rows = occupy_rows
-	_placement_anchor_cell = INVALID_PLACEMENT_ANCHOR
-	_placement_has_anchor = false
-	_placement_can_build = false
-	_ensure_placement_preview_root()
-	_update_building_placement_preview(get_viewport().get_mouse_position())
+	_building_placement.process(get_viewport().get_mouse_position())
 	status_changed.emit("%s placement ready" % order.display_name)
 	_refresh_building_queue_slot()
 
 
-func _process_building_placement() -> void:
-	if not _is_placing_building():
-		return
-
-	_update_building_placement_preview(get_viewport().get_mouse_position())
-
-
 func _try_place_ready_building(screen_position: Vector2) -> void:
 	var order := _building_queue.current_order()
-	if order == null or not _is_placing_building():
+	if order == null or not _building_placement.is_active():
 		return
 
-	_update_building_placement_preview(screen_position)
-	if not _placement_has_anchor:
-		status_changed.emit("%s placement needs terrain" % order.display_name)
-		return
-	if not _placement_can_build:
-		status_changed.emit("%s cannot be placed there" % order.display_name)
-		return
+	var players = _players()
+	var owner_player_id = players.local_player_id if players != null else null
+	match _building_placement.try_place(screen_position, null, owner_player_id):
+		BuildingPlacementScript.PlaceResult.NEEDS_TERRAIN:
+			status_changed.emit("%s placement needs terrain" % order.display_name)
+			return
+		BuildingPlacementScript.PlaceResult.CANNOT_BUILD:
+			status_changed.emit("%s cannot be placed there" % order.display_name)
+			return
+		BuildingPlacementScript.PlaceResult.INACTIVE:
+			return
 
-	var scene_path := _building_scene_path(_placing_building_id)
+	var scene_path := _building_scene_path(order.building_id)
 	if not ResourceLoader.exists(scene_path):
 		status_changed.emit(
 			"%s placement valid; missing scene %s" % [order.display_name, scene_path]
 		)
 		return
-
 	var scene := load(scene_path) as PackedScene
-	var building := scene.instantiate() as Node3D if scene != null else null
-	if building == null:
-		status_changed.emit("%s scene is not a Node3D" % order.display_name)
-		return
-	if buildings_root == null:
-		status_changed.emit("Buildings root is missing")
-		return
-
-	var display_name := String(order.display_name)
-	if building.has_method("setup"):
-		building.call("setup", _placing_building_id)
-	buildings_root.add_child(building)
-	building.global_position = _snap_to_ground(_placement_world_center(_placement_anchor_cell))
-	building.set_meta(&"placement_anchor_cell", _placement_anchor_cell)
-
-	var players = _players()
-	if players != null and building.has_method("set_owner_player_id"):
-		building.call("set_owner_player_id", players.local_player_id)
-
-	_play_placed_building_animation(building)
-
-	_building_queue.take_ready()
-	_clear_building_placement()
-	status_changed.emit("%s placed" % display_name)
-	_refresh_building_queue_slot()
+	match _building_placement.try_place(screen_position, scene, owner_player_id):
+		BuildingPlacementScript.PlaceResult.PLACED:
+			_building_queue.take_ready()
+			status_changed.emit("%s placed" % order.display_name)
+			_refresh_building_queue_slot()
+		BuildingPlacementScript.PlaceResult.INVALID_SCENE:
+			status_changed.emit("%s scene is not a Node3D" % order.display_name)
+		BuildingPlacementScript.PlaceResult.MISSING_BUILDINGS_ROOT:
+			status_changed.emit("Buildings root is missing")
 
 
 func _cancel_building_placement() -> void:
-	if not _is_placing_building():
+	if not _building_placement.is_active():
 		return
-
-	var display_name: String = (
-		String(_building_queue.current_order().display_name)
-		if _building_queue.current_order() != null
-		else String(_placing_building_id)
-	)
-	_clear_building_placement()
+	var display_name := _building_placement.cancel()
 	status_changed.emit("%s placement canceled" % display_name)
 	_refresh_building_queue_slot()
-
-
-func _play_placed_building_animation(building: Node3D) -> void:
-	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(&"build"):
-		var build_animation := player.get_animation(&"build")
-		if build_animation != null:
-			build_animation.loop_mode = Animation.LOOP_NONE
-		var callback := Callable(self, "_on_placed_building_animation_finished").bind(building)
-		player.animation_finished.connect(callback, CONNECT_ONE_SHOT)
-		_play_building_state(building, &"build")
-		return
-
-	_play_building_state(building, &"idle")
-
-
-func _on_placed_building_animation_finished(_animation_name: StringName, building: Node3D) -> void:
-	if not is_instance_valid(building):
-		return
-
-	_play_building_state(building, &"idle")
 
 
 func _play_building_state(building: Node3D, state: StringName) -> void:
@@ -469,368 +418,6 @@ func _play_building_state(building: Node3D, state: StringName) -> void:
 	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
 	if player != null and player.has_animation(state):
 		player.play(state)
-
-
-func _clear_building_placement() -> void:
-	_placing_building_id = &""
-	_placement_occupy_rows.clear()
-	_placement_anchor_cell = INVALID_PLACEMENT_ANCHOR
-	_placement_has_anchor = false
-	_placement_can_build = false
-
-	if _placement_preview_root != null:
-		_clear_placement_preview_cells()
-		_placement_preview_root.queue_free()
-		_placement_preview_root = null
-
-
-func _update_building_placement_preview(screen_position: Vector2) -> void:
-	if not _is_placing_building():
-		return
-	if terrain == null or terrain.navigation_grid == null or not terrain.navigation_grid.is_loaded():
-		_hide_placement_preview()
-		return
-
-	var hit := _raycast(screen_position, 1)
-	if hit.is_empty():
-		_hide_placement_preview()
-		return
-
-	var hover_cell: Vector2i = terrain.navigation_grid.world_to_grid(hit["position"])
-	var anchor_cell := _placement_anchor_for_hover_cell(hover_cell)
-	_ensure_placement_preview_root()
-	if _placement_has_anchor and _placement_anchor_cell == anchor_cell and _placement_preview_root.visible:
-		return
-
-	_placement_preview_root.visible = true
-	_placement_anchor_cell = anchor_cell
-	_placement_has_anchor = true
-	_rebuild_placement_preview(anchor_cell)
-
-
-func _rebuild_placement_preview(anchor_cell: Vector2i) -> void:
-	_clear_placement_preview_cells()
-
-	var has_cells := false
-	var can_build := true
-	var occupied_building_cells := _occupied_building_nav_cells()
-	for row_index in _placement_occupy_rows.size():
-		var row := _placement_occupy_rows[row_index]
-		for column_index in row.length():
-			var marker := row.substr(column_index, 1)
-			if _is_empty_occupy_marker(marker):
-				continue
-
-			has_cells = true
-			var grid_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
-			var cell_available := (
-				_is_occupy_cell_buildable(grid_cell)
-				and _is_occupy_cell_unoccupied(grid_cell, occupied_building_cells)
-			)
-			can_build = can_build and cell_available
-
-			var placement_scene := _placement_scene_for_marker(marker, cell_available)
-			var preview_cell := placement_scene.instantiate() as Node3D
-			if preview_cell == null:
-				continue
-
-			preview_cell.name = "Cell_%d_%d_%s" % [column_index, row_index, marker]
-			_configure_placement_preview_cell(preview_cell)
-			_placement_preview_root.add_child(preview_cell)
-			var cell_center: Vector3 = _occupy_cell_world_center(grid_cell)
-			preview_cell.global_position = (
-				_snap_to_ground(cell_center)
-				+ Vector3.UP * PLACEMENT_CELL_SURFACE_OFFSET
-			)
-
-	_placement_can_build = has_cells and can_build
-	if has_cells:
-		_add_placement_arrow(anchor_cell)
-
-
-func _clear_placement_preview_cells() -> void:
-	if _placement_preview_root == null:
-		return
-
-	for child in _placement_preview_root.get_children():
-		_placement_preview_root.remove_child(child)
-		child.queue_free()
-
-
-func _add_placement_arrow(anchor_cell: Vector2i) -> void:
-	var arrow := PLACEMENT_ARROW_SCENE.instantiate() as Node3D
-	if arrow == null:
-		return
-
-	arrow.name = "CenterArrow"
-	_configure_placement_arrow_visuals(arrow)
-	_placement_preview_root.add_child(arrow)
-	arrow.global_position = (
-		_snap_to_ground(_placement_world_center(anchor_cell))
-		+ Vector3.UP * PLACEMENT_CELL_SURFACE_OFFSET
-	)
-
-
-func _configure_placement_preview_cell(cell: Node3D) -> void:
-	_configure_placement_preview_visuals(cell)
-
-
-func _configure_placement_arrow_visuals(node: Node) -> void:
-	if node is MeshInstance3D:
-		var mesh_instance := node as MeshInstance3D
-		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_restore_arrow_fill_materials(mesh_instance)
-
-	for child in node.get_children():
-		_configure_placement_arrow_visuals(child)
-
-
-func _restore_arrow_fill_materials(mesh_instance: MeshInstance3D) -> void:
-	if mesh_instance.mesh == null:
-		return
-
-	for surface_index in mesh_instance.mesh.get_surface_count():
-		var material := mesh_instance.get_active_material(surface_index)
-		if not _is_fully_transparent_albedo_material(material):
-			continue
-
-		var fill_material := StandardMaterial3D.new()
-		fill_material.albedo_color = Color.WHITE
-		fill_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		fill_material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
-		fill_material.disable_receive_shadows = true
-		fill_material.emission_enabled = true
-		fill_material.emission = Color.WHITE
-		fill_material.emission_energy_multiplier = PLACEMENT_CELL_EMISSION_ENERGY
-		mesh_instance.set_surface_override_material(surface_index, fill_material)
-
-
-func _is_fully_transparent_albedo_material(material: Material) -> bool:
-	if not (material is BaseMaterial3D):
-		return false
-
-	var base_material := material as BaseMaterial3D
-	if base_material.albedo_texture == null:
-		return false
-
-	var image := base_material.albedo_texture.get_image()
-	if image == null:
-		return false
-
-	for y in image.get_height():
-		for x in image.get_width():
-			if image.get_pixel(x, y).a > 0.0:
-				return false
-	return true
-
-
-func _configure_placement_preview_visuals(node: Node) -> void:
-	if node is MeshInstance3D:
-		var mesh_instance := node as MeshInstance3D
-		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_configure_placement_preview_materials(mesh_instance)
-
-	for child in node.get_children():
-		_configure_placement_preview_visuals(child)
-
-
-func _configure_placement_preview_materials(mesh_instance: MeshInstance3D) -> void:
-	mesh_instance.material_override = null
-	if mesh_instance.mesh == null:
-		return
-
-	for surface_index in mesh_instance.mesh.get_surface_count():
-		var material := _placement_blend_material(mesh_instance.get_active_material(surface_index))
-		if material != null:
-			mesh_instance.set_surface_override_material(surface_index, material)
-
-
-func _placement_blend_material(source_material: Material) -> Material:
-	if source_material == null:
-		return null
-
-	var material := source_material.duplicate() as Material
-	if material is BaseMaterial3D:
-		var base_material := material as BaseMaterial3D
-		base_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-		base_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		base_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		base_material.disable_receive_shadows = true
-		base_material.emission_enabled = true
-		base_material.emission = base_material.albedo_color
-		base_material.emission_energy_multiplier = PLACEMENT_CELL_EMISSION_ENERGY
-		if base_material.albedo_texture != null:
-			base_material.emission_texture = base_material.albedo_texture
-	return material
-
-
-func _hide_placement_preview() -> void:
-	_placement_anchor_cell = INVALID_PLACEMENT_ANCHOR
-	_placement_has_anchor = false
-	_placement_can_build = false
-	if _placement_preview_root != null:
-		_placement_preview_root.visible = false
-
-
-func _ensure_placement_preview_root() -> void:
-	if _placement_preview_root != null:
-		return
-
-	_placement_preview_root = Node3D.new()
-	_placement_preview_root.name = "BuildingPlacementPreview"
-	add_child(_placement_preview_root)
-
-
-func _placement_anchor_for_hover_cell(hover_cell: Vector2i) -> Vector2i:
-	var footprint_size := _placement_occupy_size()
-	var hover_occupy_cell := _nav_cell_to_occupy_cell(hover_cell)
-	var anchor_occupy_cell := hover_occupy_cell - Vector2i(
-		int(floor(float(footprint_size.x) * 0.5)),
-		int(floor(float(footprint_size.y) * 0.5))
-	)
-	return _occupy_cell_to_nav_cell(anchor_occupy_cell)
-
-
-func _placement_occupy_size() -> Vector2i:
-	var width := 0
-	for row in _placement_occupy_rows:
-		width = maxi(width, row.length())
-	return Vector2i(width, _placement_occupy_rows.size())
-
-
-func _placement_world_center(anchor_cell: Vector2i) -> Vector3:
-	var footprint_size := _placement_nav_size()
-	var start: Vector3 = terrain.navigation_grid.grid_to_world(anchor_cell, false)
-	var end: Vector3 = terrain.navigation_grid.grid_to_world(anchor_cell + footprint_size, false)
-	return (start + end) * 0.5
-
-
-func _placement_nav_size() -> Vector2i:
-	var occupy_size := _placement_occupy_size()
-	return Vector2i(
-		occupy_size.x * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL,
-		occupy_size.y * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL
-	)
-
-
-func _occupy_offset_to_nav_cell(column_index: int, row_index: int) -> Vector2i:
-	return Vector2i(
-		column_index * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL,
-		row_index * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL
-	)
-
-
-func _nav_cell_to_occupy_cell(nav_cell: Vector2i) -> Vector2i:
-	return Vector2i(
-		int(floor(float(nav_cell.x) / float(PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL))),
-		int(floor(float(nav_cell.y) / float(PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL)))
-	)
-
-
-func _occupy_cell_to_nav_cell(occupy_cell: Vector2i) -> Vector2i:
-	return Vector2i(
-		occupy_cell.x * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL,
-		occupy_cell.y * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL
-	)
-
-
-func _occupy_cell_world_center(nav_cell: Vector2i) -> Vector3:
-	var start: Vector3 = terrain.navigation_grid.grid_to_world(nav_cell, false)
-	var end: Vector3 = terrain.navigation_grid.grid_to_world(
-		nav_cell + Vector2i(
-			PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL,
-			PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL
-		),
-		false
-	)
-	return (start + end) * 0.5
-
-
-func _is_occupy_cell_buildable(nav_cell: Vector2i) -> bool:
-	for y in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
-		for x in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
-			if not _is_nav_cell_buildable(nav_cell + Vector2i(x, y)):
-				return false
-	return true
-
-
-func _is_occupy_cell_unoccupied(nav_cell: Vector2i, occupied_building_cells: Dictionary) -> bool:
-	for y in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
-		for x in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
-			if occupied_building_cells.has(nav_cell + Vector2i(x, y)):
-				return false
-	return true
-
-
-func _occupied_building_nav_cells() -> Dictionary:
-	var cells := {}
-	if terrain == null or terrain.navigation_grid == null or not terrain.navigation_grid.is_loaded():
-		return cells
-
-	for node in get_tree().get_nodes_in_group("buildings"):
-		var building := node as Node3D
-		if building == null:
-			continue
-
-		var config = building.get("building_config") as Resource
-		if config == null:
-			config = _building_config(StringName(String(building.get("config_id"))))
-		var occupy_rows := _building_occupy_rows(config)
-		if occupy_rows.is_empty():
-			continue
-
-		var anchor_cell := _building_placement_anchor(building, occupy_rows)
-		for row_index in occupy_rows.size():
-			var row := occupy_rows[row_index]
-			for column_index in row.length():
-				if _is_empty_occupy_marker(row.substr(column_index, 1)):
-					continue
-
-				var occupy_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
-				for y in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
-					for x in PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL:
-						cells[occupy_cell + Vector2i(x, y)] = true
-	return cells
-
-
-func _building_placement_anchor(building: Node3D, occupy_rows: Array[String]) -> Vector2i:
-	var saved_anchor = building.get_meta(&"placement_anchor_cell", null)
-	if saved_anchor is Vector2i:
-		return saved_anchor
-
-	var nav_size := _occupy_rows_nav_size(occupy_rows)
-	var center_cell: Vector2i = terrain.navigation_grid.world_to_grid(building.global_position)
-	return center_cell - Vector2i(
-		int(floor(float(nav_size.x) * 0.5)),
-		int(floor(float(nav_size.y) * 0.5))
-	)
-
-
-func _occupy_rows_nav_size(occupy_rows: Array[String]) -> Vector2i:
-	var width := 0
-	for row in occupy_rows:
-		width = maxi(width, row.length())
-	return Vector2i(
-		width * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL,
-		occupy_rows.size() * PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL
-	)
-
-
-func _is_nav_cell_buildable(grid_cell: Vector2i) -> bool:
-	var debug: Dictionary = terrain.navigation_grid.cell_debug(grid_cell)
-	return bool(debug.get("valid", false)) and bool(debug.get("buildable", false))
-
-
-func _placement_scene_for_marker(marker: String, buildable: bool) -> PackedScene:
-	if not buildable:
-		return PLACEMENT_CANT_BUILD_SCENE
-	if marker.to_lower() == "s":
-		return PLACEMENT_SKIRT_SCENE
-	return PLACEMENT_BUILDING_SCENE
-
-
-func _is_empty_occupy_marker(marker: String) -> bool:
-	return marker.is_empty() or marker == " " or marker == "." or marker == "_" or marker.to_lower() == "n"
 
 
 func _building_occupy_rows(config: Resource) -> Array[String]:
@@ -845,8 +432,11 @@ func _building_occupy_rows(config: Resource) -> Array[String]:
 	return rows
 
 
-func _is_placing_building() -> bool:
-	return _placing_building_id != &"" and not _placement_occupy_rows.is_empty()
+func _occupy_rows_for_existing_building(building: Node3D) -> Array[String]:
+	var config = building.get("building_config") as Resource
+	if config == null:
+		config = _building_config(StringName(String(building.get("config_id"))))
+	return _building_occupy_rows(config)
 
 
 func _building_config(building_id: StringName) -> Resource:
@@ -922,7 +512,7 @@ func _refresh_building_queue_slot() -> void:
 			continue
 
 		if order.ready:
-			var ready_status_text := "PLACE" if _is_placing_building() else "READY"
+			var ready_status_text := "PLACE" if _building_placement.is_active() else "READY"
 			side_panel.set_building_slot_state(
 				slot_index, QueueSlot.State.READY, 100.0, ready_status_text, tooltip
 			)
@@ -974,16 +564,6 @@ func _raycast(screen_position: Vector2, collision_mask: int = 0xffffffff) -> Dic
 	query.collision_mask = collision_mask
 	query.collide_with_areas = false
 	return get_world_3d().direct_space_state.intersect_ray(query)
-
-
-func _snap_to_ground(point: Vector3) -> Vector3:
-	var query := PhysicsRayQueryParameters3D.create(
-		Vector3(point.x, 200.0, point.z), Vector3(point.x, -200.0, point.z), 1
-	)
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		return Vector3(point.x, 0.0, point.z)
-	return hit["position"]
 
 
 func _players():
