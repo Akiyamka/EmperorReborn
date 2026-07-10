@@ -19,11 +19,11 @@ var camera: Camera3D
 
 var _building_configs: Dictionary = {}
 var _building_ids: Array[StringName] = []
-var _technology_tree = TechnologyTreeScript.new()
+var _technology_tree: TechnologyTree = TechnologyTreeScript.new()
 var _building_availability: Dictionary = {}
-var _building_queue = BuildingQueueScript.new()
-var _building_placement = BuildingPlacementScript.new()
-var _local_player_resource = null
+var _building_queue: BuildingQueue = BuildingQueueScript.new()
+var _building_placement: BuildingPlacement = BuildingPlacementScript.new()
+var _local_player_resource: PlayerData
 var _sell_mode := false
 var _selling_building: Node3D
 
@@ -218,9 +218,7 @@ func _bind_local_player_resource() -> void:
 		_local_player_resource.resources_changed.disconnect(callback)
 
 	_local_player_resource = null
-	var players = _players()
-	if players != null:
-		_local_player_resource = players.local_player()
+	_local_player_resource = _local_player()
 
 	if _local_player_resource != null and not _local_player_resource.resources_changed.is_connected(callback):
 		_local_player_resource.resources_changed.connect(callback)
@@ -570,8 +568,8 @@ func _players():
 	return get_node_or_null("/root/Players")
 
 
-func _local_player():
+func _local_player() -> PlayerData:
 	var players = _players()
 	if players == null:
 		return null
-	return players.local_player()
+	return players.local_player() as PlayerData

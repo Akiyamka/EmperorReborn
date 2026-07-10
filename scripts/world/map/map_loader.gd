@@ -10,8 +10,8 @@ extends Node3D
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 
 var terrain_aabb := AABB()
-var navigation_grid
-var map_data: Resource
+var navigation_grid: MapNavigationGrid
+var map_data: BakedMapData
 
 
 func _ready() -> void:
@@ -23,12 +23,16 @@ func load_map(path: String) -> void:
 		push_error("MapLoader: converted map data not found at %s" % path)
 		return
 
-	var candidate_data: Resource = load(path)
-	if candidate_data == null:
+	var loaded_resource: Resource = load(path)
+	if loaded_resource == null:
 		push_error("MapLoader: could not load %s" % path)
 		return
+	var candidate_data := loaded_resource as BakedMapData
+	if candidate_data == null:
+		push_error("MapLoader: expected BakedMapData at %s, got %s" % [path, loaded_resource.get_class()])
+		return
 
-	var candidate_grid = MapNavigationGridScript.new()
+	var candidate_grid: MapNavigationGrid = MapNavigationGridScript.new()
 	if not candidate_grid.load_baked(candidate_data):
 		push_error("MapLoader: invalid baked navigation in %s" % path)
 		return

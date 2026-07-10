@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_run_case("grid reload semantics", _test_grid_reload_semantics)
 	_run_case("map loader failed replacement is atomic", _test_map_loader_failed_replacement_is_atomic)
 	_run_case("map loader initial failure stays empty", _test_map_loader_initial_failure_stays_empty)
+	_run_case("map loader rejects wrong resource types atomically", _test_map_loader_wrong_resource_type_is_atomic)
 	_cleanup_temporary_files()
 
 	if _failures > 0:
@@ -153,7 +154,28 @@ func _test_map_loader_initial_failure_stays_empty(token: int) -> int:
 	return token
 
 
-func _valid_data(source_dir: String, bounds := AABB(Vector3.ZERO, Vector3(16.0, 1.0, 16.0))):
+func _test_map_loader_wrong_resource_type_is_atomic(token: int) -> int:
+	var wrong_resource_path := _save_temporary_resource(Resource.new(), "wrong-resource")
+	var initial_valid_path := _save_temporary_data(_valid_data("wrong-resource-initial"), "wrong-resource-initial")
+	var recovery_bounds := AABB(Vector3(32.0, 2.0, 48.0), Vector3(24.0, 1.0, 32.0))
+	var recovery_path := _save_temporary_data(_valid_data("wrong-resource-recovery", recovery_bounds), "wrong-resource-recovery")
+	var loader = MapLoaderScript.new()
+	loader.load_map(wrong_resource_path)
+	_expect(loader.map_data == null and loader.navigation_grid == null and loader.terrain_aabb == AABB(), "an initial wrong resource type must leave the loader empty")
+	loader.load_map(initial_valid_path)
+	_expect(loader.map_data != null and loader.map_data.source_map_dir == "wrong-resource-initial" and loader.navigation_grid != null and loader.navigation_grid.is_loaded(), "a valid map after an initial wrong resource type must initialize the loader")
+	var original_data = loader.map_data
+	var original_grid = loader.navigation_grid
+	var original_aabb: AABB = loader.terrain_aabb
+	loader.load_map(wrong_resource_path)
+	_expect(loader.map_data == original_data and loader.navigation_grid == original_grid and loader.terrain_aabb == original_aabb, "a wrong resource replacement must preserve the last valid map state")
+	loader.load_map(recovery_path)
+	_expect(loader.map_data != null and loader.map_data.source_map_dir == "wrong-resource-recovery" and loader.navigation_grid != null and loader.navigation_grid.world_bounds == recovery_bounds and loader.terrain_aabb == recovery_bounds, "a valid replacement after a wrong resource type must recover atomically")
+	loader.free()
+	return token
+
+
+func _valid_data(source_dir: String, bounds := AABB(Vector3.ZERO, Vector3(16.0, 1.0, 16.0))) -> BakedMapData:
 	var data = BakedMapDataScript.new()
 	var total := MapNavigationGridScript.NAV_SIZE * MapNavigationGridScript.NAV_SIZE
 	data.source_map_dir = source_dir
@@ -171,9 +193,13 @@ func _valid_data(source_dir: String, bounds := AABB(Vector3.ZERO, Vector3(16.0, 
 	return data
 
 
-func _save_temporary_data(data: Resource, suffix: String) -> String:
+func _save_temporary_data(data: BakedMapData, suffix: String) -> String:
+	return _save_temporary_resource(data, suffix)
+
+
+func _save_temporary_resource(resource: Resource, suffix: String) -> String:
 	var path := "user://map-runtime-contract-%d-%s.tres" % [Time.get_ticks_usec(), suffix]
-	var error := ResourceSaver.save(data, path)
+	var error := ResourceSaver.save(resource, path)
 	_expect(error == OK, "temporary %s resource must save" % suffix)
 	_temporary_paths.append(path)
 	return path

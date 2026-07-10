@@ -7,6 +7,7 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 
 var _camera: Camera3D
 var _terrain: MapLoader
+# Units are protocol-compatible group members in runtime and tests, not one concrete class.
 var _selected_unit = null
 
 

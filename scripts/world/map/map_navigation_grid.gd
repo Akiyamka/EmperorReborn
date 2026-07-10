@@ -35,7 +35,7 @@ var nav_report := {}
 var _is_loaded := false
 
 
-func load_baked(data: Resource) -> bool:
+func load_baked(data: BakedMapData) -> bool:
 	if data == null:
 		push_error("MapNavigationGrid: baked map data is missing")
 		return false

@@ -16,8 +16,8 @@ const DEMO_BUILDING_OPTION_IDS: Array[StringName] = [&"ATSmWindtrap", &"ATBarrac
 @onready var side_panel: SidePanel = $HUD/SidePanel
 
 var _fps_update_time := 0.0
-var _building_controller
-var _unit_command_controller
+var _building_controller: BuildingController
+var _unit_command_controller: UnitCommandController
 
 
 func _enter_tree() -> void:

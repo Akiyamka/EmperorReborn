@@ -335,9 +335,20 @@ make godot-check
 
 ### [ ] Этап 6. Финальная типизация, валидация и документация
 
-Scope: заменить оставшиеся необоснованные `Resource`/Variant/dynamic `call` на feature-типы, добавить валидацию обязательных exports/resources и документировать итоговые feature boundaries, generated-assets workflow и команды разработки. Не делать массовую косметическую переработку.
+Scope разделен на 6A и 6B, чтобы небольшая типизация/validation public feature boundaries не смешивалась с документацией, workflow и оставшимися defer. Не делать массовую косметическую переработку.
 
-Критерии приемки: headless parse не сообщает ошибок; public feature API типизированы; некорректные config/baked data завершаются понятной диагностикой; README и этот план отражают фактические пути и workflow; characterization и feature tests проходят.
+#### [x] Этап 6A. Типизация и validation public boundaries (завершен 2026-07-10)
+
+- `MapNavigationGrid.load_baked` принимает только `BakedMapData`; `MapLoader.map_data` и `navigation_grid` типизированы как `BakedMapData` и `MapNavigationGrid`. Loader явно проверяет результат resource load до candidate-grid construction: resource другого типа получает diagnostic `expected BakedMapData ...`, initial state остается empty, replacement сохраняет предыдущий atomic state и следующий valid map восстанавливает его.
+- `BuildingController` типизирует private queue, placement, technology tree и optional local `PlayerData`; `match.gd` типизирует оба feature controller. Dynamic rules configs/autoload остаются такими, поскольку rules catalog — runtime resource schema, а autoload не имеет статического feature interface.
+- `BuildingPlacement._navigation_grid` намеренно остается dynamic injected dependency: asset-independent placement runner supplies a protocol-compatible fake grid. `UnitCommandController._selected_unit` также остается dynamic: runtime group members и permanent tests используют protocol-compatible nodes rather than one concrete `Unit` class.
+- `tests/maps/run.gd` now has 42 assertions and covers wrong-resource `.tres` through the public loader API for initial failure, valid recovery, replacement failure preservation and final valid replacement. Completion-token guard remains in place.
+
+#### [ ] Этап 6B. Документация, workflow и remaining defers
+
+Scope: document final feature boundaries, generated-assets/raw conversion workflow and development commands; review remaining justified dynamic seams and only then update README/final plan status. Do not regenerate rules or make broad Variant cleanup without a separately reproducible need.
+
+Критерии номерного этапа: headless parse не сообщает ошибок; public feature API типизированы; некорректные config/baked data завершаются понятной диагностикой; README и этот план отражают фактические пути и workflow; characterization и feature tests проходят. Этап 6 не завершен до 6B.
 
 Проверка:
 
@@ -365,3 +376,4 @@ git status --short
 - 2026-07-10: этап 5 разделен на 5A--5C. 5A завершен: runner без map assets/parser покрывает 35 assertions runtime baked-grid/map-loader contract, включая recovery `MapLoader` после initial failures; воспроизведенные partial-state failures исправлены validate-before-commit в `MapNavigationGrid` и candidate commit-on-success в `MapLoader`. 5B split/move и 5C regeneration/load не начаты.
 - 2026-07-10: этап 5B завершен: raw navigation conversion перенесена в converter-only `MapNavigationGridBuilder`, runtime grid получил narrow atomic generated-data seam, а четыре map runtime/shader пары moved в `scripts/world/map/` с сохраненными UID. Converter users и asset-independent map runner используют новые paths; generated output не трогался, поэтому 5C regeneration/load остается pending.
 - 2026-07-10: этап 5C и номерной этап 5 завершены: standard converter regenerated ignored local `#M70 Claw Rock` map data/terrain from authoritative raw source, without `assets/unpacked_rfd`; builder failure теперь prevents writing invalid nav output. Clean temporary-cache load validated all eight 65,536-cell arrays, terrain `MapLoader` and demo match startup; `nav_grid_check`, `make godot-check` and all feature runners passed. Generated/raw assets remain local-only, so a fresh clone still requires the documented source plus regeneration workflow.
+- 2026-07-10: этап 6 разделен на 6A/6B. 6A завершен: public baked-map API и loader state типизированы, wrong-resource `.tres` rejects atomically with explicit diagnostic and permanent maps runner covers initial/replacement/recovery; private building/match controller fields получили concrete feature types. Dynamic rules/autoload, injected placement grid and selected protocol-compatible unit оставлены намеренно и задокументированы в 6A. Документация/workflow, rules regeneration и remaining defer не начинались: 6B и номерной этап 6 остаются pending.
