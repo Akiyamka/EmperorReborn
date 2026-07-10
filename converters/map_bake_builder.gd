@@ -61,6 +61,9 @@ func build(dir: String) -> Resource:
 		return null
 
 	var nav = MapNavigationGridBuilderScript.new().build(dir, scaled_aabb, xbf, world_scale)
+	if nav == null or not nav.is_loaded():
+		push_error("MapBakeBuilder: could not build a valid navigation grid for %s" % dir)
+		return null
 
 	var data: Resource = BakedMapDataScript.new()
 	data.source_map_dir = dir
@@ -75,18 +78,17 @@ func build(dir: String) -> Resource:
 	if xbf.has_tlv_meta():
 		data.xbf_summary = "meta_end=%d, %s" % [xbf.meta_end, xbf.logical_layer_summary()]
 
-	if nav != null and nav.is_loaded():
-		data.nav_world_bounds = nav.world_bounds
-		data.nav_cpf_values = nav.cpf_values
-		data.nav_terrain_type = nav.terrain_type
-		data.nav_source_tile_x = nav.source_tile_x
-		data.nav_source_tile_y = nav.source_tile_y
-		data.nav_spice_value = nav.spice_value
-		data.nav_pass_mask = nav.pass_mask
-		data.nav_movement_cost = nav.movement_cost
-		data.nav_buildable = nav.buildable
-		data.nav_cpf_report = nav.cpf_report
-		data.nav_report = nav.nav_report
+	data.nav_world_bounds = nav.world_bounds
+	data.nav_cpf_values = nav.cpf_values
+	data.nav_terrain_type = nav.terrain_type
+	data.nav_source_tile_x = nav.source_tile_x
+	data.nav_source_tile_y = nav.source_tile_y
+	data.nav_spice_value = nav.spice_value
+	data.nav_pass_mask = nav.pass_mask
+	data.nav_movement_cost = nav.movement_cost
+	data.nav_buildable = nav.buildable
+	data.nav_cpf_report = nav.cpf_report
+	data.nav_report = nav.nav_report
 
 	return data
 

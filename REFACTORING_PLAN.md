@@ -18,7 +18,7 @@
 - `scripts/match/match.gd` является composition root demo match: создает demo players, координирует карту/камеру и HUD wiring.
 - `scripts/buildings/building_controller.gd` остается orchestration shell для availability, queue/placement/sell, scene-path/rules lookup и feature presentation signals; production queue и placement вынесены в отдельные feature objects, UI contract адаптируется только в match composition root.
 - `scripts/ui/side_panel.gd` хранит UI-only icons/layout и cached feature presentation state; gameplay IDs принадлежат match composition data.
-- Runtime map находится в `scripts/world/map/`; `converters/map_navigation_grid_builder.gd` владеет чтением original map formats и source-grid construction, передавая в runtime только complete generated navigation arrays. Generated map output пока остается устаревшим до отдельной 5C regeneration.
+- Runtime map находится в `scripts/world/map/`; `converters/map_navigation_grid_builder.gd` владеет чтением original map formats и source-grid construction, передавая в runtime только complete generated navigation arrays. Standard 5C regeneration локально обновила ignored map output с актуальными runtime paths и raw-original texture paths.
 - `scripts/players/player_roster.gd`, `scripts/players/player_data.gd`, `scripts/buildings/building.gd` и `scripts/units/unit.gd` используют изменяемые Resources и сигналы жизненного цикла; до структурных правок нужны проверки reset/rebind/removal/ownership.
 - Есть asset-independent runners `tests/characterization/run.gd`, `tests/buildings/run.gd`, `tests/buildings/placement_run.gd`, `tests/match/unit_command_run.gd` и `tests/maps/run.gd`; авторитетная версия движка указана в `project.godot` как Godot 4.7, основной воспроизводимый запуск идет через `tools/godot-container`.
 - `assets/` и `.godot/` игнорируются в `.gitignore`. Нельзя считать локальный `.godot` доказательством корректности путей или коммитить generated/original assets.
@@ -85,7 +85,7 @@ Scope: ownership внутри scene tree, повторный setup controller и
 
 Критерии приемки: отдельные asset-independent seams существуют после соответствующего разделения; tests проверяют transitions через public API, signal connections не дублируются, failed map load не оставляет смешанное старое/новое состояние.
 
-Текущие blockers: `scripts/match/match.gd --check-only` и `make godot-check` загружают `SidePanel`/`BuildingController`/map dependencies и сообщают отсутствующие imported raw icons, stale global class `MapXbf` и ссылки generated terrain на `assets/unpacked_rfd`. Эти команды не считаются зелеными, даже если Godot возвращает zero exit code.
+Текущие blockers: previous generated-map `assets/unpacked_rfd` blocker закрыт 5C; local `make godot-check` загружает regenerated terrain без diagnostics. Полный demo по-прежнему не является portable CI proof: raw source и regenerated `assets/converted/` ignored/local, поэтому clean repository без этих локальных inputs не может загрузить map scene.
 
 ### [x] Этап 2. Безопасные механические перемещения (завершен 2026-07-10 в пределах подтвержденных safe moves)
 
@@ -154,23 +154,23 @@ rg 'res://scripts/unit\.gd' --glob '!REFACTORING_PLAN.md' --glob '!.godot/**' --
 
 Ни один map-файл не перемещен: частичный move потребовал бы ручной правки ignored generated outputs или оставил бы map feature еще сильнее разделенным между runtime и converters.
 
-| Пара, сохраненный UID | Tracked runtime readers | Converters/tools | Ignored generated outputs (stale до 5C) |
+| Пара, сохраненный UID | Tracked runtime readers | Converters/tools | Ignored generated outputs (regenerated 5C, local) |
 | --- | --- | --- | --- |
-| `scripts/world/map/map_loader.gd(.uid)`, `uid://cqiexq260wh44` | `match.gd` и `BuildingController` используют `MapLoader`; loader preload-ит moved navigation grid и загружает Godot-native `map_data.tres` | `map_bake_builder.gd` preload-ит moved script и назначает его root через `set_script()` | `terrain.tscn` еще содержит old ext_resource path; не редактируется вручную |
+| `scripts/world/map/map_loader.gd(.uid)`, `uid://cqiexq260wh44` | `match.gd` и `BuildingController` используют `MapLoader`; loader preload-ит moved navigation grid и загружает Godot-native `map_data.tres` | `map_bake_builder.gd` preload-ит moved script и назначает его root через `set_script()` | `terrain.tscn` использует moved loader path; `demo_match.tscn` инстанцирует output |
 | `scripts/world/map/map_navigation_grid.gd(.uid)`, `uid://bj5g580fdqsw8` | `map_loader.gd` создает grid; `match.gd` и `BuildingController` вызывают runtime queries через `terrain.navigation_grid` | `map_navigation_grid_builder.gd` создает complete grid через typed `load_generated`; `map_bake_builder.gd` и `nav_grid_check.gd` вызывают builder | Прямого script ext_resource нет, baked nav arrays записываются в `map_data.tres` |
-| `scripts/world/map/baked_map_data.gd(.uid)`, `uid://dadroggstib3b` | `MapLoader` читает serialized data contract | `map_bake_builder.gd` создает и заполняет resource | `map_data.tres` еще содержит old script path; не редактируется вручную |
-| `scripts/world/map/terrain.gdshader(.uid)`, `uid://bbdgfua3yqgke` | Runtime получает shader через generated terrain materials | `map_bake_builder.gd` preload-ит moved shader при построении материалов | `terrain.tscn` еще содержит old shader path; не редактируется вручную |
+| `scripts/world/map/baked_map_data.gd(.uid)`, `uid://dadroggstib3b` | `MapLoader` читает serialized data contract | `map_bake_builder.gd` создает и заполняет resource | `map_data.tres` использует moved data-script path и raw source metadata |
+| `scripts/world/map/terrain.gdshader(.uid)`, `uid://bbdgfua3yqgke` | Runtime получает shader через generated terrain materials | `map_bake_builder.gd` preload-ит moved shader при построении материалов | `terrain.tscn` использует moved shader и 16 existing raw-original texture paths |
 | `converters/map_navigation_grid_builder.gd(.uid)`, `uid://b0euq7dc7dfg0` | Нет runtime readers | Единственный owner raw map navigation input, terrain attrs, source resampling, reports и debug summary | Не сериализуется |
 
-Read/write path: `convert_map.gd` вызывает `MapBakeBuilder`; converter-only `MapNavigationGridBuilder` читает XBF/CPF, строит source-derived navigation arrays/reports и atomically передает их runtime `MapNavigationGrid.load_generated(...)`. `MapBakeBuilder` serializes these arrays in `BakedMapData` and writes `map_data.tres` plus `terrain.tscn`. Текущий generated output устарел: `terrain.tscn` содержит 16 texture references на `res://assets/unpacked_rfd`, а `map_data.tres` еще 2 metadata paths туда же.
+Read/write path: `convert_map.gd` вызывает `MapBakeBuilder`; converter-only `MapNavigationGridBuilder` читает XBF/CPF, строит source-derived navigation arrays/reports и atomically передает их runtime `MapNavigationGrid.load_generated(...)`. `MapBakeBuilder` serializes these arrays in `BakedMapData` and writes `map_data.tres` plus `terrain.tscn`. 5C standard regeneration записала local ignored output: all 16 terrain texture references и обе source metadata paths используют `res://assets/raw_original_content`, `assets/unpacked_rfd` отсутствует.
 
 Порядок будущего этапа 5:
 
 1. [x] Зафиксировать tests текущего Godot-native baked contract, runtime queries и failed-load semantics.
 2. [x] Отделить runtime baked-grid/query API от XBF/CPF parsing/building под `converters/`; runtime `scripts/` не импортирует `converters/`.
 3. [x] Одним batch переместить четыре пары в `scripts/world/map/`, сохранив UID, и обновить все tracked runtime/converter references.
-4. [ ] Исправить converter source/texture fallback paths, затем штатно пересоздать `map_data.tres` и `terrain.tscn`; generated файлы вручную не редактировать.
-5. [ ] Проверить regenerated output и загрузить карту с отдельным clean cache.
+4. [x] Исправить converter source/texture fallback paths, затем штатно пересоздать `map_data.tres` и `terrain.tscn`; generated файлы вручную не редактировать.
+5. [x] Проверить regenerated output и загрузить карту с отдельным clean cache.
 
 Этап 2 закрыт без заявления, что вся целевая структура уже достигнута. На момент закрытия сознательно оставлялись `scripts/main.gd` до decouple composition root в этапе 4 и четыре map-пары до этапа 5; эти defer затем закрыты в 4C и 5B соответственно. `scripts/rules/*_config.gd(.uid)` остается отложенным до восстановления воспроизводимого `rules-export` и финального path/type cleanup этапа 6. Building script move/regeneration закрыт в 3C.
 
@@ -260,7 +260,7 @@ make godot-check
 timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-after 10
 ```
 
-### [ ] Этап 5. Разделение runtime map и converters
+### [x] Этап 5. Разделение runtime map и converters (завершен 2026-07-10)
 
 Scope: определить стабильный формат baked map data; оставить `converters/` ответственным за XBF/CPF/CPT parsing и генерацию, а map feature runtime — только за загрузку Godot-native `.tres`/`.tscn`, навигационные запросы и освещение. Подэтапы не смешивают behavioral fix, split/move и regeneration.
 
@@ -297,13 +297,23 @@ Mechanical moves с сохранением UID:
 - `scripts/baked_map_data.gd(.uid)` -> `scripts/world/map/baked_map_data.gd(.uid)`, `uid://dadroggstib3b`.
 - `scripts/terrain.gdshader(.uid)` -> `scripts/world/map/terrain.gdshader(.uid)`, `uid://bbdgfua3yqgke`.
 
-Tracked runtime, converter and map runner preloads обновлены. Ignored generated `map_data.tres`/`terrain.tscn` сознательно не изменялись и еще содержат old paths/source texture references; это единственный 5C gap, не map-load claim.
+Tracked runtime, converter and map runner preloads обновлены. At 5B close ignored generated `map_data.tres`/`terrain.tscn` сознательно не изменялись и содержали old paths/source texture references; этот 5C gap затем закрыт standard regeneration, не ручной правкой outputs.
 
 Проверка: forbidden actual runtime-dependency search (`res://converters`, converter preload/parser symbols/calls) пуст; raw-format terms допустимы только в comments/diagnostic text, не в imports, file parsing или runtime construction. Old tracked paths отсутствуют вне plan/history; Godot зарегистрировал moved classes и builder, moved/runtime/converter `--check-only` прошли; maps 35/35, unit 13/13, placement 20/20, queue 38/38 и characterization 60/60 прошли. Конверсия карты не запускалась.
 
-#### [ ] Этап 5C. Regenerate и clean load
+#### [x] Этап 5C. Regenerate и clean load (завершен 2026-07-10)
 
-Scope: исправить converter source/texture fallback paths и штатно regenerate `map_data.tres`/`terrain.tscn`, не редактируя generated files вручную. Проверить отсутствующие `assets/unpacked_rfd` references, актуальные script/shader paths, clean-cache load map data/terrain и отдельно converter плюс `nav_grid_check.gd`.
+`MapBakeBuilder` уже использует authoritative `res://assets/raw_original_content/3DDATA/Textures`; stale output был следствием предыдущей generation из obsolete unpacked source path, а не ручной правки resource. Добавлен только fail-fast guard: если converter-only navigation builder вернул `null`/unloaded grid, `MapBakeBuilder.build()` emits `MapBakeBuilder: could not build a valid navigation grid for <dir>` and returns `null`, so `convert_map.gd` exits 1 before writing a 5A-rejected map.
+
+Standard regeneration (generated ignored/local, never hand-edited):
+
+```sh
+MAP="res://assets/raw_original_content/MAPS/#M70 Claw Rock" make godot-convert-map
+```
+
+Команда read authoritative `test.xbf`, `test.CPF`, `test.CPT` и `test.lit` from that source directory and resolved terrain textures under `assets/raw_original_content/3DDATA/Textures`; it wrote exactly `assets/converted/maps/#M70 Claw Rock/map_data.tres` plus `terrain.tscn`. Regenerated map data has moved `res://scripts/world/map/baked_map_data.gd`, its two source metadata paths point to `assets/raw_original_content`, and all eight nav arrays have 65,536 entries. Regenerated terrain root has moved `map_loader.gd`, uses moved `terrain.gdshader`, and its 16 texture ext_resources all exist under `assets/raw_original_content/3DDATA/Textures`; neither output contains `res://assets/unpacked_rfd`.
+
+Separate clean-cache verification mounted project read-only with an empty temporary `/workspace/.godot`: `map_data.tres` loaded as `BakedMapData`, all arrays/bounds passed, `MapNavigationGrid.load_baked()` returned loaded, and `terrain.tscn` instantiated under minimal Sun/WorldEnvironment dependencies with a loaded `MapLoader.navigation_grid`. The same clean-cache container started `scenes/match/demo_match.tscn --quit-after 10` with regenerated terrain and no diagnostics. `nav_grid_check.gd` was separately run against the same authoritative map through `EMPEROR_NAV_DEBUG_MAP`; it wrote ignored local `assets/converted/maps/#M70 Claw Rock/nav-grid-debug.png` and printed matching 128² source / 256² nav summaries. `make godot-check` also loaded regenerated terrain without diagnostics.
 
 Критерии номерного этапа после 5C:
 
@@ -354,3 +364,4 @@ git status --short
 - 2026-07-10: этап 4C и номерной этап 4 завершены: selection/move/ownership presentation extracted to `UnitCommandController`; composition root and demo scene moved with preserved UIDs, tracked entry-point references updated, and an asset-independent unit-command runner added. Full demo scene remains blocked only by ignored stale generated terrain texture paths; ignored editor cache old paths were not edited.
 - 2026-07-10: этап 5 разделен на 5A--5C. 5A завершен: runner без map assets/parser покрывает 35 assertions runtime baked-grid/map-loader contract, включая recovery `MapLoader` после initial failures; воспроизведенные partial-state failures исправлены validate-before-commit в `MapNavigationGrid` и candidate commit-on-success в `MapLoader`. 5B split/move и 5C regeneration/load не начаты.
 - 2026-07-10: этап 5B завершен: raw navigation conversion перенесена в converter-only `MapNavigationGridBuilder`, runtime grid получил narrow atomic generated-data seam, а четыре map runtime/shader пары moved в `scripts/world/map/` с сохраненными UID. Converter users и asset-independent map runner используют новые paths; generated output не трогался, поэтому 5C regeneration/load остается pending.
+- 2026-07-10: этап 5C и номерной этап 5 завершены: standard converter regenerated ignored local `#M70 Claw Rock` map data/terrain from authoritative raw source, without `assets/unpacked_rfd`; builder failure теперь prevents writing invalid nav output. Clean temporary-cache load validated all eight 65,536-cell arrays, terrain `MapLoader` and demo match startup; `nav_grid_check`, `make godot-check` and all feature runners passed. Generated/raw assets remain local-only, so a fresh clone still requires the documented source plus regeneration workflow.
