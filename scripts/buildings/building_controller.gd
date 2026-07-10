@@ -3,9 +3,8 @@ extends Node3D
 
 signal status_changed(status: String)
 
-const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
+const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
-const BUILD_TICKS_PER_SECOND := 60.0
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
 const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
@@ -23,8 +22,7 @@ var buildings_root: Node3D
 var _building_configs: Dictionary = {}
 var _technology_tree = TechnologyTreeScript.new()
 var _building_availability: Dictionary = {}
-var _building_order
-var _building_lack_funds := false
+var _building_queue = BuildingQueueScript.new()
 var _local_player_resource = null
 var _placing_building_id: StringName = &""
 var _sell_mode := false
@@ -41,6 +39,8 @@ func setup(panel: SidePanel, map_loader: MapLoader, placement_camera: Camera3D, 
 	terrain = map_loader
 	camera = placement_camera
 	buildings_root = building_parent
+	if not _building_queue.order_ready.is_connected(_on_building_queue_ready):
+		_building_queue.order_ready.connect(_on_building_queue_ready)
 
 	_bind_local_player_roster()
 	_load_building_configs()
@@ -254,37 +254,37 @@ func _load_building_configs() -> void:
 
 
 func _on_building_slot_left_pressed(building_id: StringName) -> void:
-	if _building_order == null:
+	var order := _building_queue.current_order()
+	if order == null:
 		_start_building_order(building_id)
-	elif _building_order.building_id != building_id:
+	elif order.building_id != building_id:
 		status_changed.emit("Building queue is busy")
-	elif _building_order.ready:
+	elif order.ready:
 		_begin_ready_building_placement()
-	elif _building_order.manually_paused:
-		_building_order.manually_paused = false
-		_building_lack_funds = false
-		status_changed.emit("%s construction resumed" % _building_order.display_name)
+	elif order.manually_paused:
+		_building_queue.resume()
+		status_changed.emit("%s construction resumed" % order.display_name)
 	else:
-		var status := "%s construction is waiting for credits" if _building_lack_funds else "%s construction is already running"
-		status_changed.emit(status % _building_order.display_name)
+		var status := "%s construction is waiting for credits" if _building_queue.lacks_funds() else "%s construction is already running"
+		status_changed.emit(status % order.display_name)
 
 	_refresh_building_queue_slot()
 
 
 func _on_building_slot_right_pressed(building_id: StringName) -> void:
-	if _building_order == null or _building_order.building_id != building_id:
+	var order := _building_queue.current_order()
+	if order == null or order.building_id != building_id:
 		return
 
 	if _is_placing_building():
 		_cancel_building_placement()
 		return
 
-	if _building_order.ready or _building_order.manually_paused:
+	if order.ready or order.manually_paused:
 		_cancel_building_order()
 	else:
-		_building_order.manually_paused = true
-		_building_lack_funds = false
-		status_changed.emit("%s construction paused" % _building_order.display_name)
+		_building_queue.pause()
+		status_changed.emit("%s construction paused" % order.display_name)
 		_refresh_building_queue_slot()
 
 
@@ -293,7 +293,7 @@ func _start_building_order(building_id: StringName) -> void:
 	if config == null:
 		status_changed.emit("Building rules are not loaded")
 		return
-	if _building_order != null:
+	if _building_queue.has_order():
 		status_changed.emit("Building queue is busy")
 		return
 	if not _is_building_available(building_id):
@@ -301,124 +301,73 @@ func _start_building_order(building_id: StringName) -> void:
 		_refresh_building_queue_slot()
 		return
 
-	var order := BuildingOrderScript.new()
-	order.building_id = building_id
-	order.display_name = _building_display_name(building_id)
-	order.cost = maxi(int(config.field(&"cost", 0)), 0)
-	order.build_time_ticks = maxf(float(config.field(&"build_time", 0.0)), 1.0)
-	_building_order = order
-	_building_lack_funds = false
+	if not _building_queue.start(
+		building_id,
+		_building_display_name(building_id),
+		maxi(int(config.field(&"cost", 0)), 0),
+		maxf(float(config.field(&"build_time", 0.0)), 1.0)
+	):
+		return
 	_clear_building_placement()
 
-	status_changed.emit("%s ordered" % order.display_name)
+	status_changed.emit("%s ordered" % _building_queue.current_order().display_name)
 	_refresh_building_queue_slot()
 
 
 func _process_building_order(delta: float) -> void:
-	if _building_order == null:
+	var order := _building_queue.current_order()
+	if order == null:
 		return
-	if not _building_order.ready and not _is_building_available(_building_order.building_id):
+	if not order.ready and not _is_building_available(order.building_id):
 		_cancel_building_order()
 		return
-	if _building_order.ready or _building_order.manually_paused:
-		return
-
-	if _building_order.cost <= 0:
-		_building_order.elapsed_ticks += delta * BUILD_TICKS_PER_SECOND
-		if _building_order.elapsed_ticks >= _building_order.build_time_ticks:
-			_mark_building_order_ready()
-		_refresh_building_queue_slot()
-		return
-
 	var player = _local_player()
-	if player == null:
-		_set_building_lack_funds(true)
-		return
-
-	if player.money <= 0:
-		_set_building_lack_funds(true)
-		return
-
-	_set_building_lack_funds(false)
-	var remaining_cost: int = int(_building_order.cost) - int(_building_order.paid_cost)
-	if remaining_cost <= 0:
-		_mark_building_order_ready()
-		return
-
-	var build_seconds: float = float(_building_order.build_time_ticks) / BUILD_TICKS_PER_SECOND
-	var credits_per_second: float = float(_building_order.cost) / build_seconds
-	_building_order.charge_accumulator += delta * credits_per_second
-
-	var credits_due: int = mini(int(floor(_building_order.charge_accumulator)), remaining_cost)
-	if credits_due <= 0:
-		return
-
-	var credits_paid: int = mini(credits_due, player.money)
-	_building_order.charge_accumulator -= float(credits_due)
-	if credits_paid <= 0:
-		_set_building_lack_funds(true)
-		return
-
-	if not player.spend_money(credits_paid):
-		_set_building_lack_funds(true)
-		return
-
-	_building_order.paid_cost += credits_paid
-	if credits_paid < credits_due:
-		_set_building_lack_funds(true)
-
-	if _building_order.paid_cost >= _building_order.cost:
-		_mark_building_order_ready()
-	else:
+	var available_credits: int = player.money if player != null else 0
+	var spend_credits: Callable = Callable(player, &"spend_money") if player != null else Callable()
+	if _building_queue.tick(delta, available_credits, spend_credits):
 		_refresh_building_queue_slot()
 
 
-func _mark_building_order_ready() -> void:
-	if _building_order == null:
-		return
-
-	_building_order.ready = true
-	_building_order.manually_paused = false
-	_building_lack_funds = false
-	status_changed.emit("%s ready" % _building_order.display_name)
+func _on_building_queue_ready(order: BuildingOrder) -> void:
+	status_changed.emit("%s ready" % order.display_name)
 	_refresh_building_queue_slot()
 
 
 func _cancel_building_order() -> void:
-	if _building_order == null:
+	var order := _building_queue.current_order()
+	if order == null:
 		return
 
-	var refunded: int = int(_building_order.paid_cost)
-	var display_name := String(_building_order.display_name)
+	var display_name := String(order.display_name)
+	var refunded := _building_queue.cancel()
 	var player = _local_player()
 	if player != null and refunded > 0:
 		player.add_money(refunded)
 
-	_building_order = null
-	_building_lack_funds = false
 	_clear_building_placement()
 	status_changed.emit("%s canceled; refunded %d" % [display_name, refunded])
 	_refresh_building_queue_slot()
 
 
 func _begin_ready_building_placement() -> void:
-	if _building_order == null or not _building_order.ready:
+	var order := _building_queue.current_order()
+	if order == null or not order.ready:
 		return
 
-	var config := _building_config(_building_order.building_id)
+	var config := _building_config(order.building_id)
 	var occupy_rows := _building_occupy_rows(config)
 	if occupy_rows.is_empty():
-		status_changed.emit("%s has no occupy_rows" % _building_order.display_name)
+		status_changed.emit("%s has no occupy_rows" % order.display_name)
 		return
 
-	_placing_building_id = _building_order.building_id
+	_placing_building_id = order.building_id
 	_placement_occupy_rows = occupy_rows
 	_placement_anchor_cell = INVALID_PLACEMENT_ANCHOR
 	_placement_has_anchor = false
 	_placement_can_build = false
 	_ensure_placement_preview_root()
 	_update_building_placement_preview(get_viewport().get_mouse_position())
-	status_changed.emit("%s placement ready" % _building_order.display_name)
+	status_changed.emit("%s placement ready" % order.display_name)
 	_refresh_building_queue_slot()
 
 
@@ -430,34 +379,35 @@ func _process_building_placement() -> void:
 
 
 func _try_place_ready_building(screen_position: Vector2) -> void:
-	if _building_order == null or not _is_placing_building():
+	var order := _building_queue.current_order()
+	if order == null or not _is_placing_building():
 		return
 
 	_update_building_placement_preview(screen_position)
 	if not _placement_has_anchor:
-		status_changed.emit("%s placement needs terrain" % _building_order.display_name)
+		status_changed.emit("%s placement needs terrain" % order.display_name)
 		return
 	if not _placement_can_build:
-		status_changed.emit("%s cannot be placed there" % _building_order.display_name)
+		status_changed.emit("%s cannot be placed there" % order.display_name)
 		return
 
 	var scene_path := _building_scene_path(_placing_building_id)
 	if not ResourceLoader.exists(scene_path):
 		status_changed.emit(
-			"%s placement valid; missing scene %s" % [_building_order.display_name, scene_path]
+			"%s placement valid; missing scene %s" % [order.display_name, scene_path]
 		)
 		return
 
 	var scene := load(scene_path) as PackedScene
 	var building := scene.instantiate() as Node3D if scene != null else null
 	if building == null:
-		status_changed.emit("%s scene is not a Node3D" % _building_order.display_name)
+		status_changed.emit("%s scene is not a Node3D" % order.display_name)
 		return
 	if buildings_root == null:
 		status_changed.emit("Buildings root is missing")
 		return
 
-	var display_name := String(_building_order.display_name)
+	var display_name := String(order.display_name)
 	if building.has_method("setup"):
 		building.call("setup", _placing_building_id)
 	buildings_root.add_child(building)
@@ -470,8 +420,7 @@ func _try_place_ready_building(screen_position: Vector2) -> void:
 
 	_play_placed_building_animation(building)
 
-	_building_order = null
-	_building_lack_funds = false
+	_building_queue.take_ready()
 	_clear_building_placement()
 	status_changed.emit("%s placed" % display_name)
 	_refresh_building_queue_slot()
@@ -482,8 +431,8 @@ func _cancel_building_placement() -> void:
 		return
 
 	var display_name: String = (
-		String(_building_order.display_name)
-		if _building_order != null
+		String(_building_queue.current_order().display_name)
+		if _building_queue.current_order() != null
 		else String(_placing_building_id)
 	)
 	_clear_building_placement()
@@ -940,13 +889,6 @@ func _building_art_config(building_id: StringName) -> Resource:
 	return rules.call("get_entity", &"art_config", building_id)
 
 
-func _set_building_lack_funds(value: bool) -> void:
-	if _building_lack_funds == value:
-		return
-	_building_lack_funds = value
-	_refresh_building_queue_slot()
-
-
 func _is_building_available(building_id: StringName) -> bool:
 	if not is_inside_tree():
 		return false
@@ -965,20 +907,21 @@ func _refresh_building_queue_slot() -> void:
 	if side_panel == null:
 		return
 
+	var order := _building_queue.current_order()
 	for slot_index in SidePanel.BUILDING_IDS.size():
 		var building_id: StringName = SidePanel.BUILDING_IDS[slot_index]
 		var tooltip := _building_tooltip(building_id)
-		if _building_order == null:
+		if order == null:
 			var state := QueueSlot.State.AVAILABLE if _is_building_available(building_id) else QueueSlot.State.DISABLED
 			side_panel.set_building_slot_state(slot_index, state, 0.0, "", tooltip)
 			continue
 
-		if _building_order.building_id != building_id:
+		if order.building_id != building_id:
 			var state := QueueSlot.State.BLOCKED if _is_building_available(building_id) else QueueSlot.State.DISABLED
 			side_panel.set_building_slot_state(slot_index, state, 0.0, "", tooltip)
 			continue
 
-		if _building_order.ready:
+		if order.ready:
 			var ready_status_text := "PLACE" if _is_placing_building() else "READY"
 			side_panel.set_building_slot_state(
 				slot_index, QueueSlot.State.READY, 100.0, ready_status_text, tooltip
@@ -986,12 +929,12 @@ func _refresh_building_queue_slot() -> void:
 			continue
 
 		var status_text := ""
-		if _building_order.manually_paused:
+		if order.manually_paused:
 			status_text = "PAUSED"
 		side_panel.set_building_slot_state(
 			slot_index,
 			QueueSlot.State.PROGRESS,
-			_building_order.progress_percent(),
+			order.progress_percent(),
 			status_text,
 			tooltip
 		)
@@ -1013,7 +956,7 @@ func _building_tooltip(building_id: StringName) -> String:
 
 	var cost := int(config.field(&"cost", 0))
 	var build_time_ticks := float(config.field(&"build_time", 0.0))
-	var build_seconds := build_time_ticks / BUILD_TICKS_PER_SECOND
+	var build_seconds := build_time_ticks / BuildingQueueScript.BUILD_TICKS_PER_SECOND
 	return "%s\nCost: %d\nBuild: %.1fs" % [
 		_building_display_name(building_id),
 		cost,
