@@ -3,7 +3,7 @@ extends Node3D
 
 const RTSCameraConfigScript := preload("res://scripts/rts_camera_config.gd")
 
-@export var config: Resource
+@export var config: RTSCameraConfig
 
 @onready var camera: Camera3D = $Camera3D
 
