@@ -2,7 +2,7 @@ class_name BuildingBakeBuilder
 extends RefCounted
 
 const ModelBakeBuilderScript := preload("res://converters/model_bake_builder.gd")
-const BuildingScript := preload("res://scripts/building.gd")
+const BuildingScript := preload("res://scripts/buildings/building.gd")
 
 const BUILDING_MODEL_DIR := "res://assets/raw_original_content/3DDATA/Buildings"
 const DEFAULT_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
