@@ -3,6 +3,10 @@ extends Node3D
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingControllerScript := preload("res://scripts/buildings/building_controller.gd")
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
+const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
+const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
+const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
+const PLACEMENT_SKIRT_SCENE := preload("res://assets/converted/placement/build_skirt.scn")
 const LOCAL_PLAYER_ID := 1
 const ENEMY_PLAYER_ID := 2
 ## Temporary match composition data until building options come from the feature/rules catalog.
@@ -61,7 +65,16 @@ func _setup_building_controller() -> void:
 	_building_controller.resources_changed.connect(_on_building_resources_changed)
 	_building_controller.sell_mode_changed.connect(side_panel.set_sell_mode)
 	_building_controller.building_option_state_changed.connect(side_panel.set_building_option_state)
-	_building_controller.setup(terrain, camera, $Buildings, DEMO_BUILDING_OPTION_IDS)
+	_building_controller.setup(
+		terrain,
+		camera,
+		$Buildings,
+		DEMO_BUILDING_OPTION_IDS,
+		PLACEMENT_ARROW_SCENE,
+		PLACEMENT_BUILDING_SCENE,
+		PLACEMENT_CANT_BUILD_SCENE,
+		PLACEMENT_SKIRT_SCENE
+	)
 
 
 func _setup_unit_command_controller() -> void:

@@ -8,90 +8,78 @@ would violate the original game's license. Instead, the project provides tools
 for converting resources from a legally owned copy of the original game into
 Godot-native formats that can be loaded by the browser build.
 
-## Run Locally
+## Development prerequisites
 
-Open this folder with Godot 4.4+ and press Play, or run:
+The authoritative engine version is **Godot 4.7**. Use Podman and the included
+container wrapper; it mounts this checkout at `/workspace` and includes Godot
+and Web export templates:
 
 ```sh
-godot4 --path .
+make godot-image  # once, or after changing Containerfile
+./tools/godot-container godot --version
 ```
 
-If your Godot executable is named `godot`, use:
+The helper uses rootless-friendly `--userns=keep-id` and a SELinux `:Z` mount.
+
+## Runtime layout
+
+- `scripts/buildings/` owns building queue, placement and controller behavior;
+  `scripts/match/` is the demo composition root and injects presentation scenes.
+- `scripts/world/camera/` and `scripts/world/map/` own runtime camera and baked-map
+  loading/navigation. Map parsing and baking remain converter-only.
+- `scripts/ui/` owns widgets and presentation adaptation; `scripts/players/` and
+  `scripts/rules/` own player state and the rules-resource schema.
+- `converters/` reads original formats and writes Godot resources. Runtime code
+  does not parse XBF/CPF/CPT files.
+
+## Assets and conversion
+
+Original inputs and generated outputs under `assets/` are ignored and local;
+never hand-edit a
+generated `.tres` or `.scn`. The authoritative original-content root for maps,
+models, placement and textures is `res://assets/raw_original_content/`; rules
+export additionally requires the local `res://assets/rules.db` database.
+
+With those legal local inputs present, regenerate the resources used by the demo
+with these commands:
 
 ```sh
-godot --path .
+make rules-export
+make godot-convert-placement
+make godot-convert-building BUILDING=ATConYard
+make godot-convert-building BUILDING=ATSmWindtrap
+make godot-convert-building BUILDING=ATBarracks
+MAP="res://assets/raw_original_content/MAPS/#M70 Claw Rock" make godot-convert-map
 ```
 
-## Web Export
-
-The project uses `gl_compatibility`, which is the browser-friendly renderer for Godot 4 Web exports.
-
-1. Install Godot Web export templates from `Editor > Manage Export Templates`.
-2. Open `Project > Export`.
-3. Select the included `Web` preset.
-4. Export to `exports/web/index.html`.
-5. Serve `exports/web/` through a local web server. Do not open `index.html` directly from the filesystem.
-
-For easiest hosting, keep Web export threads disabled unless your host serves the required `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers.
-
-## Using Godot via podman
-
-The repository includes a Podman image definition with Godot 4.7 and Web export templates installed. The project code is mounted into the container at `/workspace`, so the image does not need to be rebuilt when source files change.
-
-Build the image:
+The tracked demo unit wrappers require these per-model conversions:
 
 ```sh
-make godot-image
+./tools/godot-container godot --headless --path /workspace --script res://converters/convert_model.gd -- --source res://assets/raw_original_content/3DDATA/Units/AT_inf_H0.xbf
+./tools/godot-container godot --headless --path /workspace --script res://converters/convert_model.gd -- --source res://assets/raw_original_content/3DDATA/Units/Or_apc_H0.xbf
+./tools/godot-container godot --headless --path /workspace --script res://converters/convert_model.gd -- --source res://assets/raw_original_content/3DDATA/Units/GU_NIABTank_H0.xbf
 ```
 
-Validate/import the project in headless mode:
+There is deliberately no one-command bootstrap for every original asset or for
+the complete demo. A fresh clone needs the legal raw inputs and the applicable
+individual conversions above before generated scene references can load.
+
+## Verify and run
+
+Permanent asset-independent tests run sequentially and stop on the first
+failure (malformed-map diagnostics are expected by their assertions):
 
 ```sh
+make godot-test
 make godot-check
+timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-after 10
 ```
 
-Convert an unpacked Emperor map into Godot-native resources:
+`make godot-check` and demo startup require the local generated assets. For a
+clean-cache check, mount the checkout read-only with an empty temporary
+`/workspace/.godot` rather than deleting or trusting a user's existing `.godot`;
+stale editor cache paths are not source-of-truth.
 
-```sh
-./tools/godot-container godot --headless --path /workspace --script res://converters/convert_map.gd -- --source "res://assets/raw_original_content/MAPS/#M70 Claw Rock"
-```
-
-The converter writes `assets/converted/maps/<map>/map_data.tres` and
-`terrain.tscn`. Runtime loading only uses these converted Godot resources; it
-does not parse XBF/CPF/CPT files in-game. Select another converted map by
-instancing that map's generated `terrain.tscn` in the scene.
-
-Convert an unpacked Emperor building into a Godot-native scene:
-
-```sh
-./tools/godot-container godot --headless --path /workspace --script res://converters/convert_building.gd -- --building ATBarracks
-```
-
-Building conversion uses only `H*` model variants from `assets/raw_original_content/3DDATA/Buildings`.
-The generated scene is written to `assets/converted/buildings/<building>/<building>.scn`.
-
-Export the browser build to `exports/web/index.html`:
-
-```sh
-make godot-export-web
-```
-
-Re-export automatically when files change:
-
-```sh
-make godot-watch-export
-```
-
-Run arbitrary Godot commands:
-
-```sh
-./tools/godot-container godot --headless --path /workspace --quit
-```
-
-Open a shell inside the mounted project container:
-
-```sh
-make godot-shell
-```
-
-The helper uses rootless-friendly Podman flags: `--userns=keep-id` and `-v <project>:/workspace:Z`.
+Export the browser build with `make godot-export-web`; use
+`make godot-watch-export` for repeated exports. Serve `exports/web/` through a
+web server rather than opening `index.html` directly.

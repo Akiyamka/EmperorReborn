@@ -1,6 +1,6 @@
 GODOT_CONTAINER := ./tools/godot-container
 
-.PHONY: rules-export godot-image godot-check godot-convert-map godot-convert-building godot-convert-placement godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-placement godot-export-web godot-watch-export godot-shell godot-version
 
 rules-export:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/import_rules.gd -- --clean
@@ -10,6 +10,14 @@ godot-image:
 
 godot-check:
 	$(GODOT_CONTAINER) check
+
+godot-test:
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/characterization/run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/placement_run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/controller_run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/unit_command_run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/maps/run.gd
 
 godot-convert-map:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_map.gd -- --source "$(MAP)"

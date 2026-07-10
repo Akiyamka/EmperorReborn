@@ -10,10 +10,6 @@ const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd"
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
-const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
-const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
-const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
-const PLACEMENT_SKIRT_SCENE := preload("res://assets/converted/placement/build_skirt.scn")
 
 var camera: Camera3D
 
@@ -32,7 +28,11 @@ func setup(
 		map_loader: MapLoader,
 		placement_camera: Camera3D,
 		building_parent: Node3D,
-		building_ids: Array[StringName]
+		building_ids: Array[StringName],
+		arrow_scene: PackedScene,
+		building_preview_scene: PackedScene,
+		cant_build_preview_scene: PackedScene,
+		skirt_preview_scene: PackedScene
 ) -> void:
 	camera = placement_camera
 	_building_ids = building_ids.duplicate()
@@ -43,10 +43,10 @@ func setup(
 		placement_camera,
 		navigation_grid,
 		building_parent,
-		PLACEMENT_ARROW_SCENE,
-		PLACEMENT_BUILDING_SCENE,
-		PLACEMENT_CANT_BUILD_SCENE,
-		PLACEMENT_SKIRT_SCENE,
+		arrow_scene,
+		building_preview_scene,
+		cant_build_preview_scene,
+		skirt_preview_scene,
 		Callable(self, "_occupy_rows_for_existing_building")
 	)
 	if not _building_queue.order_ready.is_connected(_on_building_queue_ready):

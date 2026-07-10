@@ -20,7 +20,7 @@
 - `scripts/ui/side_panel.gd` хранит UI-only icons/layout и cached feature presentation state; gameplay IDs принадлежат match composition data.
 - Runtime map находится в `scripts/world/map/`; `converters/map_navigation_grid_builder.gd` владеет чтением original map formats и source-grid construction, передавая в runtime только complete generated navigation arrays. Standard 5C regeneration локально обновила ignored map output с актуальными runtime paths и raw-original texture paths.
 - `scripts/players/player_roster.gd`, `scripts/players/player_data.gd`, `scripts/buildings/building.gd` и `scripts/units/unit.gd` используют изменяемые Resources и сигналы жизненного цикла; до структурных правок нужны проверки reset/rebind/removal/ownership.
-- Есть asset-independent runners `tests/characterization/run.gd`, `tests/buildings/run.gd`, `tests/buildings/placement_run.gd`, `tests/match/unit_command_run.gd` и `tests/maps/run.gd`; авторитетная версия движка указана в `project.godot` как Godot 4.7, основной воспроизводимый запуск идет через `tools/godot-container`.
+- Есть asset-independent runners `tests/characterization/run.gd`, `tests/buildings/run.gd`, `tests/buildings/placement_run.gd`, `tests/buildings/controller_run.gd`, `tests/match/unit_command_run.gd` и `tests/maps/run.gd`; авторитетная версия движка указана в `project.godot` как Godot 4.7, основной воспроизводимый запуск идет через `tools/godot-container`.
 - `assets/` и `.godot/` игнорируются в `.gitignore`. Нельзя считать локальный `.godot` доказательством корректности путей или коммитить generated/original assets.
 
 ## Обязательное правило перемещений
@@ -49,7 +49,7 @@ timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-af
 
 Результат: Godot 4.7 `--check-only` для `scripts/rts_camera.gd` прошел. Временная camera-only сцена на отдельном чистом `.godot` cache прошла headless run с назначенным `.tres` и с `null` fallback. Полный main на том же чистом cache не сообщает ошибок камеры, но блокируется generated `assets/converted/maps/#M70 Claw Rock/terrain.tscn`: он ссылается на отсутствующие `res://assets/unpacked_rfd/3DDATA/Textures/*.tga`. Обычный `make godot-check` дополнительно использует stale пользовательский cache (старый camera path и дублированный global class `MapXbf`); этот cache не удалялся и не использовался как доказательство успешности этапа.
 
-### [ ] Этап 1. Lifecycle/data bugs и characterization tests (1A завершен, 1B deferred)
+### [x] Этап 1. Lifecycle/data bugs и characterization tests (завершен 2026-07-10)
 
 Исходный scope разделен, чтобы asset-independent data tests не загружали `BuildingController`, raw textures, generated placement/map scenes или converter-код.
 
@@ -79,13 +79,13 @@ Scope: минимальный runner `tests/characterization/run.gd`; observable
 # PASS
 ```
 
-#### [ ] Этап 1B. Scene-bound lifecycle characterization (queue transitions closed in 3A; map failure closed in 5A)
+#### [x] Этап 1B. Scene-bound lifecycle characterization (завершен 2026-07-10)
 
 Scope: ownership внутри scene tree, повторный setup controller и очистка состояния при неуспешной `MapLoader.load_map()`. Полные asset-independent building-order transitions (charge/pause/resume/cancel/refund/ready/consume) закрыты публичным `BuildingQueue` runner в этапе 3A; deferred map failure semantics закрыты asset-independent `tests/maps/run.gd` в этапе 5A. Не тащить private controller API или converter dependency в runner 1A.
 
-Критерии приемки: отдельные asset-independent seams существуют после соответствующего разделения; tests проверяют transitions через public API, signal connections не дублируются, failed map load не оставляет смешанное старое/новое состояние.
+Результат: 3A закрыла public queue transitions, 5A — atomic failed-map load, а 6B добавил `tests/buildings/controller_run.gd` (UID `uid://bikane8yj5tkp`, 6 assertions). Runner creates `BuildingController` with null map/camera/root/preview scenes and empty IDs, then verifies public child ownership, repeated setup without duplicate resource forwarding, expected credits/energy payload and no forwarding after `free()`. Placement scenes moved from the controller to the match composition root and are injected into `setup`, поэтому runner и controller parse не требуют ignored assets или UI. Повторный setup не выявил воспроизводимого duplicate/stale callback bug; compatibility API не добавлялся.
 
-Текущие blockers: previous generated-map `assets/unpacked_rfd` blocker закрыт 5C; local `make godot-check` загружает regenerated terrain без diagnostics. Полный demo по-прежнему не является portable CI proof: raw source и regenerated `assets/converted/` ignored/local, поэтому clean repository без этих локальных inputs не может загрузить map scene.
+Критерии приемки закрыты: отдельные asset-independent seams существуют; tests проверяют transitions через public API, signal connections не дублируются, failed map load не оставляет смешанное старое/новое состояние. Полный demo по-прежнему не является portable CI proof: raw source и regenerated `assets/converted/` ignored/local, поэтому clean repository без этих локальных inputs не может загрузить map scene.
 
 ### [x] Этап 2. Безопасные механические перемещения (завершен 2026-07-10 в пределах подтвержденных safe moves)
 
@@ -172,7 +172,7 @@ Read/write path: `convert_map.gd` вызывает `MapBakeBuilder`; converter-o
 4. [x] Исправить converter source/texture fallback paths, затем штатно пересоздать `map_data.tres` и `terrain.tscn`; generated файлы вручную не редактировать.
 5. [x] Проверить regenerated output и загрузить карту с отдельным clean cache.
 
-Этап 2 закрыт без заявления, что вся целевая структура уже достигнута. На момент закрытия сознательно оставлялись `scripts/main.gd` до decouple composition root в этапе 4 и четыре map-пары до этапа 5; эти defer затем закрыты в 4C и 5B соответственно. `scripts/rules/*_config.gd(.uid)` остается отложенным до восстановления воспроизводимого `rules-export` и финального path/type cleanup этапа 6. Building script move/regeneration закрыт в 3C.
+Этап 2 закрыт без заявления, что вся целевая структура уже достигнута. На момент закрытия сознательно оставлялись `scripts/main.gd` до decouple composition root в этапе 4 и четыре map-пары до этапа 5; эти defer затем закрыты в 4C и 5B соответственно. В финальном 6B audit `scripts/rules/*_config.gd(.uid)` осознанно оставлены в уже feature-first `scripts/rules/`: дополнительный `types/` не дает boundary benefit, но смена 19 paths потребовала бы regeneration сотен ignored resources. `make rules-export` остается воспроизводимым owner этого output. Building script move/regeneration закрыт в 3C.
 
 ### [x] Этап 3. Разделение BuildingController (завершен 2026-07-10)
 
@@ -333,7 +333,7 @@ make godot-check
 ./tools/godot-container godot --headless --path /workspace --script res://converters/nav_grid_check.gd
 ```
 
-### [ ] Этап 6. Финальная типизация, валидация и документация
+### [x] Этап 6. Финальная типизация, валидация и документация (завершен 2026-07-10)
 
 Scope разделен на 6A и 6B, чтобы небольшая типизация/validation public feature boundaries не смешивалась с документацией, workflow и оставшимися defer. Не делать массовую косметическую переработку.
 
@@ -344,20 +344,27 @@ Scope разделен на 6A и 6B, чтобы небольшая типиза
 - `BuildingPlacement._navigation_grid` намеренно остается dynamic injected dependency: asset-independent placement runner supplies a protocol-compatible fake grid. `UnitCommandController._selected_unit` также остается dynamic: runtime group members и permanent tests используют protocol-compatible nodes rather than one concrete `Unit` class.
 - `tests/maps/run.gd` now has 42 assertions and covers wrong-resource `.tres` through the public loader API for initial failure, valid recovery, replacement failure preservation and final valid replacement. Completion-token guard remains in place.
 
-#### [ ] Этап 6B. Документация, workflow и remaining defers
+#### [x] Этап 6B. Документация, workflow и remaining defers (завершен 2026-07-10)
 
-Scope: document final feature boundaries, generated-assets/raw conversion workflow and development commands; review remaining justified dynamic seams and only then update README/final plan status. Do not regenerate rules or make broad Variant cleanup without a separately reproducible need.
+- Four ignored placement-scene preloads moved from `BuildingController` to `match.gd`, which injects them explicitly after the existing map/camera/root/IDs arguments. Controller and placement no longer preload `res://assets`; exact demo scene constants and setup order remain in the composition root.
+- Added permanent `tests/buildings/controller_run.gd` (Godot UID `uid://bikane8yj5tkp`), 3 cases / 6 assertions. It verifies null-dependency setup with no UI/assets, one owned placement child across repeated setup, one public resource output for one money change, expected payload, and no output after free. No duplicate or stale callback bug reproduced, so no behavior fix was needed.
+- `make godot-test` runs characterization, queue, placement, controller, unit-command and maps runners sequentially; a nonzero runner stops make. All six also pass with the checkout read-only and an empty temporary `/workspace/.godot`. README records Godot 4.7/Podman, feature boundaries, local raw/generated asset workflow, exact rules/placement/building/map/model commands, test/check/demo commands and clean-cache guidance.
+- Final rules audit: configs already belong to `scripts/rules/`. Moving them to a cosmetic subfolder would force regeneration of hundreds of ignored rules resources while adding no feature boundary, so no move/regeneration is warranted; `make rules-export` remains the reproducible export command.
 
-Критерии номерного этапа: headless parse не сообщает ошибок; public feature API типизированы; некорректные config/baked data завершаются понятной диагностикой; README и этот план отражают фактические пути и workflow; characterization и feature tests проходят. Этап 6 не завершен до 6B.
+Критерии номерного этапа выполнены: public boundaries типизированы и validate invalid baked data; controller lifecycle seam is asset-independent and permanently tested; README/plan record actual paths and workflow; all permanent runners, check and local demo pass. Intentional dynamic seams remain rules/autoload runtime schema, injected fake-compatible placement grid and protocol-compatible selected unit. Raw inputs, generated `assets/` and user `.godot` remain local-only; a fresh clone needs legal inputs plus the documented conversions.
 
 Проверка:
 
 ```sh
+make godot-test
 make godot-check
-./tools/godot-container godot --headless --path /workspace --script res://tests/characterization/run.gd
 timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-after 10
 git status --short
 ```
+
+### Итог плана
+
+Этапы 0--6 завершены. Feature boundaries now separate camera, players, units, buildings, map runtime, UI composition and converters; permanent asset-independent coverage is 60 characterization, 38 queue, 20 placement, 6 controller, 13 unit-command and 42 map assertions. Remaining risks are deliberately operational rather than hidden runtime coupling: original game inputs and all generated outputs are ignored/local, the demo therefore is not fresh-clone CI proof, and stale user `.godot` must not be treated as source-of-truth.
 
 ## Журнал прогресса
 
@@ -377,3 +384,4 @@ git status --short
 - 2026-07-10: этап 5B завершен: raw navigation conversion перенесена в converter-only `MapNavigationGridBuilder`, runtime grid получил narrow atomic generated-data seam, а четыре map runtime/shader пары moved в `scripts/world/map/` с сохраненными UID. Converter users и asset-independent map runner используют новые paths; generated output не трогался, поэтому 5C regeneration/load остается pending.
 - 2026-07-10: этап 5C и номерной этап 5 завершены: standard converter regenerated ignored local `#M70 Claw Rock` map data/terrain from authoritative raw source, without `assets/unpacked_rfd`; builder failure теперь prevents writing invalid nav output. Clean temporary-cache load validated all eight 65,536-cell arrays, terrain `MapLoader` and demo match startup; `nav_grid_check`, `make godot-check` and all feature runners passed. Generated/raw assets remain local-only, so a fresh clone still requires the documented source plus regeneration workflow.
 - 2026-07-10: этап 6 разделен на 6A/6B. 6A завершен: public baked-map API и loader state типизированы, wrong-resource `.tres` rejects atomically with explicit diagnostic and permanent maps runner covers initial/replacement/recovery; private building/match controller fields получили concrete feature types. Dynamic rules/autoload, injected placement grid and selected protocol-compatible unit оставлены намеренно и задокументированы в 6A. Документация/workflow, rules regeneration и remaining defer не начинались: 6B и номерной этап 6 остаются pending.
+- 2026-07-10: 6B, 1B и номерной этап 6 завершены. Placement generated scenes теперь принадлежат match composition root и inject-ятся в `BuildingController.setup`, поэтому controller/placement не preload-ят ignored assets. Новый Godot-UID controller runner прошел 6 assertions for null-dependency setup, repeated ownership/resource forwarding and free lifecycle; duplicate/stale callback bug не воспроизведен. `make godot-test`, README workflow и final rules no-move decision добавлены; все stages 0--6 закрыты, while legal raw inputs/generated assets and user cache intentionally remain local-only.
