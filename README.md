@@ -53,10 +53,10 @@ make godot-check
 Convert an unpacked Emperor map into Godot-native resources:
 
 ```sh
-./tools/godot-container godot --headless --path /workspace --script res://importers/convert_map.gd -- --source "res://assets/unpacked_rfd/MAPS/#M70 Claw Rock"
+./tools/godot-container godot --headless --path /workspace --script res://converters/convert_map.gd -- --source "res://assets/raw_original_content/MAPS/#M70 Claw Rock"
 ```
 
-The converter writes `assets/converted_maps/<map>/map_data.tres` and
+The converter writes `assets/converted/maps/<map>/map_data.tres` and
 `terrain.tscn`. Runtime loading only uses these converted Godot resources; it
 does not parse XBF/CPF/CPT files in-game. Select another converted map by
 instancing that map's generated `terrain.tscn` in the scene.
@@ -64,11 +64,11 @@ instancing that map's generated `terrain.tscn` in the scene.
 Convert an unpacked Emperor building into a Godot-native scene:
 
 ```sh
-./tools/godot-container godot --headless --path /workspace --script res://importers/convert_building.gd -- --building ATBarracks
+./tools/godot-container godot --headless --path /workspace --script res://converters/convert_building.gd -- --building ATBarracks
 ```
 
-Building conversion uses only `H*` model variants from `assets/unpacked_rfd/3DDATA/Buildings`.
-The generated scene is written to `assets/converted_buildings/<building>/<building>.scn`.
+Building conversion uses only `H*` model variants from `assets/raw_original_content/3DDATA/Buildings`.
+The generated scene is written to `assets/converted/buildings/<building>/<building>.scn`.
 
 Export the browser build to `exports/web/index.html`:
 

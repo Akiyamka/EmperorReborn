@@ -1,7 +1,7 @@
 class_name RulesCatalog
 extends Resource
 
-const DEFAULT_RULES_ROOT := "res://data/rules"
+const DEFAULT_RULES_ROOT := "res://assets/converted/rules"
 const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
 
 @export_dir var rules_root := DEFAULT_RULES_ROOT

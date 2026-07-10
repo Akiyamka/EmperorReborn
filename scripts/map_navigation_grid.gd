@@ -1,7 +1,7 @@
 class_name MapNavigationGrid
 extends RefCounted
 
-const MapXbfScript := preload("res://importers/xbf/map_xbf.gd")
+const MapXbfScript := preload("res://converters/xbf/map_xbf.gd")
 const NAV_SIZE := 256
 const SOURCE_TILE_XBF_UNITS := 32.0
 

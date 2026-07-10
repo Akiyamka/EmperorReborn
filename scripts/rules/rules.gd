@@ -2,7 +2,7 @@ extends Node
 
 const RulesCatalogScript := preload("res://scripts/rules/rules_catalog.gd")
 
-@export_dir var rules_root := "res://data/rules"
+@export_dir var rules_root := "res://assets/converted/rules"
 
 var catalog = RulesCatalogScript.new()
 

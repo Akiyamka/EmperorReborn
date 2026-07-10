@@ -1,9 +1,9 @@
 class_name MapLoader
 extends Node3D
-## Loads a converted Godot-native Emperor map. Run importers/convert_map.gd first
+## Loads a converted Godot-native Emperor map. Run converters/convert_map.gd first
 ## to bake the original XBF/CPF/CPT files into map_data.tres + terrain.tscn.
 
-@export_file("*.tres") var map_data_path := "res://assets/converted_maps/#M70 Claw Rock/map_data.tres"
+@export_file("*.tres") var map_data_path := "res://assets/converted/maps/#M70 Claw Rock/map_data.tres"
 @export var sun_path: NodePath
 @export var environment_path: NodePath
 

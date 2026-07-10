@@ -10,10 +10,10 @@ const QUEUE_GRID_ROWS := 5
 const QUEUE_SLOT_SIZE := Vector2(64, 64)
 const BUILDING_IDS := [&"ATSmWindtrap", &"ATBarracks"]
 
-const AT_WINDTRAP_ICON := preload("res://assets/unpacked_rfd/3DDATA/Textures/AT_Windtrap.tga")
-const AT_WINDTRAP_ICON_GREY := preload("res://assets/unpacked_rfd/3DDATA/Textures/Grey_AT_Windtrap.tga")
-const AT_BARRACKS_ICON := preload("res://assets/unpacked_rfd/3DDATA/Textures/AT_Barracks.tga")
-const AT_BARRACKS_ICON_GREY := preload("res://assets/unpacked_rfd/3DDATA/Textures/Grey_AT_Barracks.tga")
+const AT_WINDTRAP_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Windtrap.tga")
+const AT_WINDTRAP_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Windtrap.tga")
+const AT_BARRACKS_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Barracks.tga")
+const AT_BARRACKS_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Barracks.tga")
 
 ## All five tabs switch the content of the same production grid,
 ## so exactly one of them is active at a time.

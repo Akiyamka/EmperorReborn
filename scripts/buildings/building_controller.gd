@@ -6,10 +6,10 @@ signal status_changed(status: String)
 const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
 const TechnologyTreeScript := preload("res://scripts/technology_tree.gd")
 const BUILD_TICKS_PER_SECOND := 60.0
-const PLACEMENT_ARROW_SCENE := preload("res://assets/converted_placement/build_arrow.scn")
-const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted_placement/build_building.scn")
-const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted_placement/build_cantbuild.scn")
-const PLACEMENT_SKIRT_SCENE := preload("res://assets/converted_placement/build_skirt.scn")
+const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
+const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
+const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
+const PLACEMENT_SKIRT_SCENE := preload("res://assets/converted/placement/build_skirt.scn")
 const PLACEMENT_NAV_CELLS_PER_OCCUPY_CELL := 2
 const PLACEMENT_CELL_SURFACE_OFFSET := 0.06
 const PLACEMENT_CELL_EMISSION_ENERGY := 1.8
@@ -923,7 +923,7 @@ func _building_scene_path(building_id: StringName) -> String:
 
 
 func _building_scene_path_for_name(scene_name: String) -> String:
-	return "res://assets/converted_buildings/%s/%s.scn" % [scene_name, scene_name]
+	return "res://assets/converted/buildings/%s/%s.scn" % [scene_name, scene_name]
 
 
 func _building_model_name(building_id: StringName) -> String:
