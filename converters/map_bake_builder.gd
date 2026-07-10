@@ -1,10 +1,10 @@
 class_name MapBakeBuilder
 extends RefCounted
 
-const TERRAIN_SHADER := preload("res://scripts/terrain.gdshader")
-const BakedMapDataScript := preload("res://scripts/baked_map_data.gd")
-const MapLoaderScript := preload("res://scripts/map_loader.gd")
-const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
+const TERRAIN_SHADER := preload("res://scripts/world/map/terrain.gdshader")
+const BakedMapDataScript := preload("res://scripts/world/map/baked_map_data.gd")
+const MapLoaderScript := preload("res://scripts/world/map/map_loader.gd")
+const MapNavigationGridBuilderScript := preload("res://converters/map_navigation_grid_builder.gd")
 const MapXbfScript := preload("res://converters/xbf/map_xbf.gd")
 
 const GROUND_TONE_WORLD_UNITS := 8192.0
@@ -60,9 +60,7 @@ func build(dir: String) -> Resource:
 	if terrain_scene == null:
 		return null
 
-	var nav = MapNavigationGridScript.new()
-	if not nav.load(dir, scaled_aabb, xbf, world_scale):
-		nav = null
+	var nav = MapNavigationGridBuilderScript.new().build(dir, scaled_aabb, xbf, world_scale)
 
 	var data: Resource = BakedMapDataScript.new()
 	data.source_map_dir = dir

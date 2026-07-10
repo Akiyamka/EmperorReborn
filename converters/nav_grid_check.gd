@@ -1,6 +1,6 @@
 extends SceneTree
 
-const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
+const MapNavigationGridBuilderScript := preload("res://converters/map_navigation_grid_builder.gd")
 const MapXbfScript := preload("res://converters/xbf/map_xbf.gd")
 const WORLD_SCALE := 0.0625
 
@@ -29,8 +29,8 @@ func _init() -> void:
 	bounds.position *= WORLD_SCALE
 	bounds.size *= WORLD_SCALE
 
-	var nav = MapNavigationGridScript.new()
-	if not nav.load(debug_dir, bounds, xbf, WORLD_SCALE):
+	var nav = MapNavigationGridBuilderScript.new().build(debug_dir, bounds, xbf, WORLD_SCALE)
+	if nav == null:
 		quit(1)
 		return
 

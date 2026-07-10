@@ -7,7 +7,7 @@ extends Node3D
 @export var sun_path: NodePath
 @export var environment_path: NodePath
 
-const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
+const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 
 var terrain_aabb := AABB()
 var navigation_grid

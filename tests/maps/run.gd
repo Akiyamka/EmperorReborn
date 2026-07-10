@@ -1,8 +1,8 @@
 extends SceneTree
 
-const BakedMapDataScript := preload("res://scripts/baked_map_data.gd")
-const MapLoaderScript := preload("res://scripts/map_loader.gd")
-const MapNavigationGridScript := preload("res://scripts/map_navigation_grid.gd")
+const BakedMapDataScript := preload("res://scripts/world/map/baked_map_data.gd")
+const MapLoaderScript := preload("res://scripts/world/map/map_loader.gd")
+const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 
 var _assertions := 0
 var _failures := 0
