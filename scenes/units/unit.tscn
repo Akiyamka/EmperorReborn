@@ -1,6 +1,6 @@
 [gd_scene load_steps=4 format=3 uid="uid://bklm37mbnlo4i"]
 
-[ext_resource type="Script" path="res://scripts/unit.gd" id="1_unit"]
+[ext_resource type="Script" path="res://scripts/units/unit.gd" id="1_unit"]
 [ext_resource type="PackedScene" path="res://assets/converted/models/AT_inf_H0/AT_inf_H0.scn" id="2_at_inf"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_unit"]
