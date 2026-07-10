@@ -1,7 +1,7 @@
 class_name RTSCamera
 extends Node3D
 
-const RTSCameraConfigScript := preload("res://scripts/rts_camera_config.gd")
+const RTSCameraConfigScript := preload("res://scripts/world/camera/rts_camera_config.gd")
 
 @export var config: RTSCameraConfig
 
