@@ -8,6 +8,7 @@ extends Control
 const QUEUE_GRID_COLUMNS := 3
 const QUEUE_GRID_ROWS := 5
 const QUEUE_SLOT_SIZE := Vector2(64, 64)
+const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 
 const AT_WINDTRAP_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Windtrap.tga")
 const AT_WINDTRAP_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Windtrap.tga")
@@ -38,6 +39,10 @@ var active_tab: Tab = Tab.INFANTRY
 var _tabs: Array[PanelTab] = []
 ## Ordered UI mapping from building-grid slots to the IDs supplied by composition.
 var _building_option_ids: Array[StringName] = []
+var _building_option_states: Dictionary = {}
+var _credits_amount := 0
+var _energy_amount := 0
+var _sell_mode_active := false
 
 
 func _ready() -> void:
@@ -55,29 +60,45 @@ func _ready() -> void:
 			button.pressed.connect(_on_command_pressed.bind(StringName(button.name)))
 
 	_set_active_tab(Tab.INFANTRY)
-	set_credits(0)
-	set_energy(0)
+	_apply_resources()
+	_apply_sell_mode()
 
 
 ## Fits up to 999 999 999, grouped by thousands.
 func set_credits(amount: int) -> void:
-	_credits_label.text = _format_resource_amount(amount)
+	_credits_amount = amount
+	if is_node_ready():
+		_credits_label.text = _format_resource_amount(_credits_amount)
 
 
 func set_energy(amount: int) -> void:
-	_energy_label.text = _format_resource_amount(amount)
+	_energy_amount = amount
+	if is_node_ready():
+		_energy_label.text = _format_resource_amount(_energy_amount)
 
 
 func set_sell_mode(active: bool) -> void:
+	_sell_mode_active = active
+	if is_node_ready():
+		_apply_sell_mode()
+
+
+func _apply_sell_mode() -> void:
 	var sell_button := _commands.get_node_or_null("Sell") as Button
 	if sell_button != null:
-		sell_button.button_pressed = active
+		sell_button.button_pressed = _sell_mode_active
 
 
 func configure_building_options(building_ids: Array[StringName]) -> void:
 	_building_option_ids = building_ids.duplicate()
 	if is_node_ready():
 		_rebuild_queue_grid()
+
+
+func set_building_option_state(option_state: BuildingOptionState) -> void:
+	_building_option_states[option_state.building_id] = option_state
+	if is_node_ready():
+		_apply_building_option_state(option_state)
 
 
 func _format_resource_amount(amount: int) -> String:
@@ -121,28 +142,40 @@ func get_slot(index: int) -> QueueSlot:
 	return _queue_grid.get_child(index) as QueueSlot
 
 
-func set_building_slot_state(
-		building_id: StringName,
-		state: QueueSlot.State,
-		progress := 0.0,
-		status_text := "",
-		tooltip := ""
-) -> void:
+func _apply_building_option_state(option_state: BuildingOptionState) -> void:
 	if active_tab != Tab.BUILDINGS:
 		return
 
-	var slot := _building_slot(building_id)
+	var slot := _building_slot(option_state.building_id)
 	if slot == null:
 		return
 
 	# Technology prerequisites remove unavailable options from the panel;
 	# grey icons remain reserved for queue-specific blocking states.
-	slot.visible = state != QueueSlot.State.DISABLED
-	slot.state = state
-	slot.progress = progress
-	slot.status_text = status_text
-	if not tooltip.is_empty():
-		slot.tooltip_text = tooltip
+	slot.visible = option_state.state != BuildingOptionStateScript.State.DISABLED
+	slot.state = _queue_slot_state(option_state.state)
+	slot.progress = option_state.progress
+	slot.status_text = option_state.status_text
+	if not option_state.tooltip.is_empty():
+		slot.tooltip_text = option_state.tooltip
+
+
+func _queue_slot_state(state: BuildingOptionState.State) -> QueueSlot.State:
+	match state:
+		BuildingOptionStateScript.State.AVAILABLE:
+			return QueueSlot.State.AVAILABLE
+		BuildingOptionStateScript.State.BLOCKED:
+			return QueueSlot.State.BLOCKED
+		BuildingOptionStateScript.State.PROGRESS:
+			return QueueSlot.State.PROGRESS
+		BuildingOptionStateScript.State.READY:
+			return QueueSlot.State.READY
+	return QueueSlot.State.DISABLED
+
+
+func _apply_resources() -> void:
+	_credits_label.text = _format_resource_amount(_credits_amount)
+	_energy_label.text = _format_resource_amount(_energy_amount)
 
 
 func _rebuild_queue_grid() -> void:
@@ -176,6 +209,9 @@ func _configure_building_slot(
 	slot.icon_grey = icon_data[1] as Texture2D
 	slot.state = QueueSlot.State.AVAILABLE
 	slot.tooltip_text = String(icon_data[2])
+	var option_state = _building_option_states.get(building_id) as BuildingOptionState
+	if option_state != null:
+		_apply_building_option_state(option_state)
 
 
 func _building_slot(building_id: StringName) -> QueueSlot:

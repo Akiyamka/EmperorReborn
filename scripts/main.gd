@@ -26,7 +26,6 @@ func _enter_tree() -> void:
 
 
 func _ready() -> void:
-	side_panel.command_pressed.connect(_on_panel_command)
 	_setup_building_controller()
 	_update_selection_label()
 	_update_fps_label()
@@ -34,7 +33,19 @@ func _ready() -> void:
 
 
 func _on_panel_command(command: StringName) -> void:
+	if _building_controller != null and _building_controller.handle_command(command):
+		return
 	_update_selection_label("Command: %s (not implemented)" % command)
+
+
+func _on_panel_building_intent(building_id: StringName, button_index: int) -> void:
+	if _building_controller != null:
+		_building_controller.handle_building_intent(building_id, button_index)
+
+
+func _on_building_resources_changed(credits: int, energy: int) -> void:
+	side_panel.set_credits(credits)
+	side_panel.set_energy(energy)
 
 
 func _setup_building_controller() -> void:
@@ -42,8 +53,13 @@ func _setup_building_controller() -> void:
 	_building_controller = BuildingControllerScript.new()
 	_building_controller.name = "BuildingController"
 	add_child(_building_controller)
+	side_panel.building_intent_pressed.connect(_on_panel_building_intent)
+	side_panel.command_pressed.connect(_on_panel_command)
 	_building_controller.status_changed.connect(_update_selection_label)
-	_building_controller.setup(side_panel, terrain, camera, $Buildings, DEMO_BUILDING_OPTION_IDS)
+	_building_controller.resources_changed.connect(_on_building_resources_changed)
+	_building_controller.sell_mode_changed.connect(side_panel.set_sell_mode)
+	_building_controller.building_option_state_changed.connect(side_panel.set_building_option_state)
+	_building_controller.setup(terrain, camera, $Buildings, DEMO_BUILDING_OPTION_IDS)
 
 
 func _place_on_map() -> void:
