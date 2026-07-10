@@ -8,12 +8,15 @@ extends Control
 const QUEUE_GRID_COLUMNS := 3
 const QUEUE_GRID_ROWS := 5
 const QUEUE_SLOT_SIZE := Vector2(64, 64)
-const BUILDING_IDS := [&"ATSmWindtrap", &"ATBarracks"]
 
 const AT_WINDTRAP_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Windtrap.tga")
 const AT_WINDTRAP_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Windtrap.tga")
 const AT_BARRACKS_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Barracks.tga")
 const AT_BARRACKS_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Barracks.tga")
+const BUILDING_ICONS := {
+	&"ATSmWindtrap": [AT_WINDTRAP_ICON, AT_WINDTRAP_ICON_GREY, "Windtrap"],
+	&"ATBarracks": [AT_BARRACKS_ICON, AT_BARRACKS_ICON_GREY, "Barracks"],
+}
 
 ## All five tabs switch the content of the same production grid,
 ## so exactly one of them is active at a time.
@@ -21,7 +24,7 @@ enum Tab { INFANTRY, VEHICLES, BUILDINGS, UPGRADES, STARPORT }
 
 signal command_pressed(command: StringName)
 signal tab_changed(tab: Tab)
-signal queue_slot_pressed(tab: Tab, slot: int, button_index: int)
+signal building_intent_pressed(building_id: StringName, button_index: int)
 
 @onready var _credits_label: Label = %CreditsLabel
 @onready var _energy_label: Label = %EnergyLabel
@@ -33,6 +36,8 @@ signal queue_slot_pressed(tab: Tab, slot: int, button_index: int)
 var active_tab: Tab = Tab.INFANTRY
 ## Indexed by Tab enum: Infantry, Vehicles, Buildings, Upgrades, Starport.
 var _tabs: Array[PanelTab] = []
+## Ordered UI mapping from building-grid slots to the IDs supplied by composition.
+var _building_option_ids: Array[StringName] = []
 
 
 func _ready() -> void:
@@ -67,6 +72,12 @@ func set_sell_mode(active: bool) -> void:
 	var sell_button := _commands.get_node_or_null("Sell") as Button
 	if sell_button != null:
 		sell_button.button_pressed = active
+
+
+func configure_building_options(building_ids: Array[StringName]) -> void:
+	_building_option_ids = building_ids.duplicate()
+	if is_node_ready():
+		_rebuild_queue_grid()
 
 
 func _format_resource_amount(amount: int) -> String:
@@ -111,7 +122,7 @@ func get_slot(index: int) -> QueueSlot:
 
 
 func set_building_slot_state(
-		slot_index: int,
+		building_id: StringName,
 		state: QueueSlot.State,
 		progress := 0.0,
 		status_text := "",
@@ -120,7 +131,7 @@ func set_building_slot_state(
 	if active_tab != Tab.BUILDINGS:
 		return
 
-	var slot := get_slot(slot_index)
+	var slot := _building_slot(building_id)
 	if slot == null:
 		return
 
@@ -147,23 +158,32 @@ func _rebuild_queue_grid() -> void:
 		slot.right_pressed.connect(_on_slot_pressed.bind(index, MOUSE_BUTTON_RIGHT))
 		_queue_grid.add_child(slot)
 
-	# Hardcoded entries until production queues come from game rules.
 	if active_tab == Tab.BUILDINGS:
-		_configure_building_slot(0, AT_WINDTRAP_ICON, AT_WINDTRAP_ICON_GREY, "Windtrap")
-		_configure_building_slot(1, AT_BARRACKS_ICON, AT_BARRACKS_ICON_GREY, "Barracks")
+		for slot_index in _building_option_ids.size():
+			_configure_building_slot(slot_index, _building_option_ids[slot_index])
 
 
 func _configure_building_slot(
-		slot_index: int, icon_colored: Texture2D, icon_grey: Texture2D, tooltip: String
+		slot_index: int, building_id: StringName
 ) -> void:
 	var slot := get_slot(slot_index)
 	if slot == null:
 		return
-	slot.icon_colored = icon_colored
-	slot.icon_grey = icon_grey
+	var icon_data: Array = BUILDING_ICONS.get(building_id, [])
+	if icon_data.size() != 3:
+		return
+	slot.icon_colored = icon_data[0] as Texture2D
+	slot.icon_grey = icon_data[1] as Texture2D
 	slot.state = QueueSlot.State.AVAILABLE
-	slot.tooltip_text = tooltip
+	slot.tooltip_text = String(icon_data[2])
 
 
-func _on_slot_pressed(slot: int, button_index: int) -> void:
-	queue_slot_pressed.emit(active_tab, slot, button_index)
+func _building_slot(building_id: StringName) -> QueueSlot:
+	var slot_index := _building_option_ids.find(building_id)
+	return get_slot(slot_index)
+
+
+func _on_slot_pressed(slot_index: int, button_index: int) -> void:
+	if active_tab != Tab.BUILDINGS or slot_index < 0 or slot_index >= _building_option_ids.size():
+		return
+	building_intent_pressed.emit(_building_option_ids[slot_index], button_index)

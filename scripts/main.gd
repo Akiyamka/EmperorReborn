@@ -4,6 +4,8 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingControllerScript := preload("res://scripts/buildings/building_controller.gd")
 const LOCAL_PLAYER_ID := 1
 const ENEMY_PLAYER_ID := 2
+## Temporary match composition data until building options come from the feature/rules catalog.
+const DEMO_BUILDING_OPTION_IDS: Array[StringName] = [&"ATSmWindtrap", &"ATBarracks"]
 
 @onready var camera: Camera3D = $CameraRig/Camera3D
 @onready var camera_rig: Node3D = $CameraRig
@@ -36,11 +38,12 @@ func _on_panel_command(command: StringName) -> void:
 
 
 func _setup_building_controller() -> void:
+	side_panel.configure_building_options(DEMO_BUILDING_OPTION_IDS)
 	_building_controller = BuildingControllerScript.new()
 	_building_controller.name = "BuildingController"
 	add_child(_building_controller)
 	_building_controller.status_changed.connect(_update_selection_label)
-	_building_controller.setup(side_panel, terrain, camera, $Buildings)
+	_building_controller.setup(side_panel, terrain, camera, $Buildings, DEMO_BUILDING_OPTION_IDS)
 
 
 func _place_on_map() -> void:

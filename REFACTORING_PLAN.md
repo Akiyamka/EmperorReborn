@@ -223,9 +223,21 @@ timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-af
 
 ### [ ] Этап 4. Decouple gameplay от UI
 
-Scope: убрать `SidePanel.BUILDING_IDS`, tab/slot details и вызовы `set_*` из gameplay. UI должен отображать типизированные presentation/state данные и посылать пользовательские intents; состав build options приходит из rules/building feature. Убрать gameplay orchestration статусов из HUD-кода `scripts/main.gd`.
+#### [x] Этап 4A. ID intents и ownership build options (завершен 2026-07-10)
 
-Критерии приемки: building gameplay запускается и тестируется без `SidePanel`; UI можно пересоздать/скрыть без потери gameplay state; raw icon paths и layout остаются UI concerns; команды преобразуются в feature API в одном composition root.
+Scope: `SidePanel` больше не содержит gameplay catalog `BUILDING_IDS`. Текущий composition root `scripts/main.gd` временно владеет ordered demo IDs `ATSmWindtrap`, `ATBarracks` и передает тот же список UI и `BuildingController`. UI хранит только slot-to-ID display mapping, отправляет intent с `building_id` и mouse button, а его icons/layout остаются UI concern. Controller принимает IDs в setup, держит private typed copy, загружает/проверяет/refresh-ит только их и не знает tab или slot index в queue intent handler; прямые `SidePanel`/`QueueSlot` presentation calls сознательно остаются до 4B.
+
+Проверка и результат: UI gameplay catalog удален; `building_intent_pressed(building_id, button_index)` и `set_building_slot_state(building_id, ...)` не передают внешний slot/tab contract; один `DEMO_BUILDING_OPTION_IDS` передан обоим получателям. Сохранены порядок, icons, tabs и left/right queue semantics. Existing asset-independent runners remain the coverage for unchanged queue/placement/data behavior; ID-to-slot/UI signal path needs raw icon imports and SceneTree, so it was checked through the local UI fixture rather than a new asset-independent abstraction. Следующий шаг — 4B: убрать direct controller-to-`SidePanel`/`QueueSlot` presentation dependency.
+
+#### [ ] Этап 4B. Controller presentation decoupling
+
+Scope: убрать typed `SidePanel`/`QueueSlot` и `set_*` calls из `BuildingController`; controller publishes feature-owned typed state and intents are adapted in composition root. UI recreation/hiding must not affect building gameplay state.
+
+#### [ ] Этап 4C. Composition root cleanup/move
+
+Scope: после 4B очистить gameplay orchestration HUD в `scripts/main.gd` и выполнить его move отдельным mechanical batch, сохранив existing selection/movement and sell behavior.
+
+Критерии номерного этапа: building gameplay запускается и тестируется без `SidePanel`; raw icon paths и layout остаются UI concerns; команды преобразуются в feature API в одном composition root.
 
 Проверка:
 
@@ -284,3 +296,4 @@ git status --short
 - 2026-07-10: этап 3A завершен: lifecycle одного building order извлечен в asset-independent `BuildingQueue` с созданными Godot UID и 38-assertion runner; controller теперь только передает player spending и оркестрирует availability/UI/placement handoff. Чистый isolated class-cache import, queue runner, characterization 60/60 и оба `--check-only` прошли.
 - 2026-07-10: этап 3B завершен: `BuildingPlacement` получил injected camera/grid/root/preview dependencies, spatial state, validation, preview, spawn и animation; controller оставил input/UI/status/queue/rules orchestration. Asset-independent fake-grid runner прошел 20 assertions, включая resolver-fallback occupancy regression; camera physics and generated preview visuals остаются integration gap.
 - 2026-07-10: этап 3C и номерной этап 3 завершены: `Building` moved with preserved `uid://bqgxj7lpphjo0`, converter preload обновлен, а ignored `ATConYard`, `ATSmWindtrap` и `ATBarracks` scenes штатно regenerated (five H-state XBF each). Separate clean-cache dependency/load/instantiate check подтвердил новый script path для всех трех; generated output local-only и не входит в commit.
+- 2026-07-10: этап 4 разделен на 4A--4C. 4A завершен: demo option IDs временно принадлежат `main.gd` и одним ordered list передаются `SidePanel` и `BuildingController`; SidePanel sends ID-based building intents and resolves its own slot mapping, controller no longer reads UI catalog or accepts tab/slot queue input. Direct presentation dependency остается следующим scope 4B; main move — только 4C.

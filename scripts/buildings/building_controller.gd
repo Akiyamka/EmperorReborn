@@ -15,6 +15,7 @@ var side_panel: SidePanel
 var camera: Camera3D
 
 var _building_configs: Dictionary = {}
+var _building_ids: Array[StringName] = []
 var _technology_tree = TechnologyTreeScript.new()
 var _building_availability: Dictionary = {}
 var _building_queue = BuildingQueueScript.new()
@@ -24,9 +25,16 @@ var _sell_mode := false
 var _selling_building: Node3D
 
 
-func setup(panel: SidePanel, map_loader: MapLoader, placement_camera: Camera3D, building_parent: Node3D) -> void:
+func setup(
+		panel: SidePanel,
+		map_loader: MapLoader,
+		placement_camera: Camera3D,
+		building_parent: Node3D,
+		building_ids: Array[StringName]
+) -> void:
 	side_panel = panel
 	camera = placement_camera
+	_building_ids = building_ids.duplicate()
 	if _building_placement.get_parent() != self:
 		add_child(_building_placement)
 	var navigation_grid = map_loader.navigation_grid if map_loader != null else null
@@ -47,7 +55,7 @@ func setup(panel: SidePanel, map_loader: MapLoader, placement_camera: Camera3D, 
 	_load_building_configs()
 
 	if side_panel != null:
-		side_panel.queue_slot_pressed.connect(_on_panel_queue_slot)
+		side_panel.building_intent_pressed.connect(_on_panel_building_intent)
 		side_panel.tab_changed.connect(_on_panel_tab_changed)
 		side_panel.command_pressed.connect(_on_panel_command)
 
@@ -56,7 +64,7 @@ func setup(panel: SidePanel, map_loader: MapLoader, placement_camera: Camera3D, 
 
 
 func process(delta: float) -> void:
-	for building_id in SidePanel.BUILDING_IDS:
+	for building_id in _building_ids:
 		var building_available := _is_building_available(building_id)
 		if building_available != _building_availability.get(building_id, false):
 			_building_availability[building_id] = building_available
@@ -177,11 +185,7 @@ func _find_building(node: Node) -> Node3D:
 	return null
 
 
-func _on_panel_queue_slot(tab: SidePanel.Tab, slot_index: int, button_index: int) -> void:
-	if tab != SidePanel.Tab.BUILDINGS or slot_index < 0 or slot_index >= SidePanel.BUILDING_IDS.size():
-		return
-	var building_id: StringName = SidePanel.BUILDING_IDS[slot_index]
-
+func _on_panel_building_intent(building_id: StringName, button_index: int) -> void:
 	match button_index:
 		MOUSE_BUTTON_LEFT:
 			_on_building_slot_left_pressed(building_id)
@@ -247,7 +251,7 @@ func _load_building_configs() -> void:
 		push_warning("Rules autoload is not available; building production uses no rules")
 		return
 
-	for building_id in SidePanel.BUILDING_IDS:
+	for building_id in _building_ids:
 		var config: Resource = rules.call("building", building_id)
 		if config == null:
 			push_warning("Building rules config not found: %s" % String(building_id))
@@ -498,23 +502,22 @@ func _refresh_building_queue_slot() -> void:
 		return
 
 	var order := _building_queue.current_order()
-	for slot_index in SidePanel.BUILDING_IDS.size():
-		var building_id: StringName = SidePanel.BUILDING_IDS[slot_index]
+	for building_id in _building_ids:
 		var tooltip := _building_tooltip(building_id)
 		if order == null:
 			var state := QueueSlot.State.AVAILABLE if _is_building_available(building_id) else QueueSlot.State.DISABLED
-			side_panel.set_building_slot_state(slot_index, state, 0.0, "", tooltip)
+			side_panel.set_building_slot_state(building_id, state, 0.0, "", tooltip)
 			continue
 
 		if order.building_id != building_id:
 			var state := QueueSlot.State.BLOCKED if _is_building_available(building_id) else QueueSlot.State.DISABLED
-			side_panel.set_building_slot_state(slot_index, state, 0.0, "", tooltip)
+			side_panel.set_building_slot_state(building_id, state, 0.0, "", tooltip)
 			continue
 
 		if order.ready:
 			var ready_status_text := "PLACE" if _building_placement.is_active() else "READY"
 			side_panel.set_building_slot_state(
-				slot_index, QueueSlot.State.READY, 100.0, ready_status_text, tooltip
+				building_id, QueueSlot.State.READY, 100.0, ready_status_text, tooltip
 			)
 			continue
 
@@ -522,7 +525,7 @@ func _refresh_building_queue_slot() -> void:
 		if order.manually_paused:
 			status_text = "PAUSED"
 		side_panel.set_building_slot_state(
-			slot_index,
+			building_id,
 			QueueSlot.State.PROGRESS,
 			order.progress_percent(),
 			status_text,
