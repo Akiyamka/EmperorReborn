@@ -4,7 +4,7 @@ extends Node3D
 signal status_changed(status: String)
 
 const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
-const TechnologyTreeScript := preload("res://scripts/technology_tree.gd")
+const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 const BUILD_TICKS_PER_SECOND := 60.0
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")

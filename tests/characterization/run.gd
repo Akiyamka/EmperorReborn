@@ -3,7 +3,7 @@ extends SceneTree
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const PlayerRosterScript := preload("res://scripts/players/player_roster.gd")
 const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
-const TechnologyTreeScript := preload("res://scripts/technology_tree.gd")
+const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
 
 var _assertions := 0
@@ -33,7 +33,7 @@ func _initialize() -> void:
 	_run_case("TechnologyTree unit requirements", _test_technology_tree_unit_requirements)
 
 	if _failures > 0:
-		printerr("Characterization tests: %d/%d assertions failed" % [_failures, _assertions])
+		printerr("Characterization tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
 		return
 
@@ -44,7 +44,11 @@ func _initialize() -> void:
 func _run_case(case_name: String, test: Callable) -> void:
 	_current_case = case_name
 	var failures_before := _failures
-	test.call()
+	var completed: Variant = test.call()
+	if completed != true:
+		_failures += 1
+		printerr("FAIL: %s: case aborted before normal completion" % case_name)
+		return
 	if _failures == failures_before:
 		print("PASS: %s" % case_name)
 
@@ -57,7 +61,7 @@ func _expect(condition: bool, message: String) -> void:
 	printerr("FAIL: %s: %s" % [_current_case, message])
 
 
-func _test_player_data_resources() -> void:
+func _test_player_data_resources() -> bool:
 	var player = PlayerDataScript.new()
 	var events: Array[Array] = []
 	player.resources_changed.connect(
@@ -90,9 +94,10 @@ func _test_player_data_resources() -> void:
 		_expect(events[1] == [7, 40, -5], "adding money must emit the new balance")
 		_expect(events[2] == [7, 25, -5], "spending must emit the new balance")
 		_expect(events[3] == [7, 25, -8], "energy changes must emit both current resources")
+	return true
 
 
-func _test_player_roster_reset_lifecycle() -> void:
+func _test_player_roster_reset_lifecycle() -> bool:
 	var roster = PlayerRosterScript.new()
 	roster.reset_for_match()
 	_expect(roster.player_count() == 0, "a reset match must contain no regular players")
@@ -118,9 +123,10 @@ func _test_player_roster_reset_lifecycle() -> void:
 		"reset must clear explicit relations"
 	)
 	roster.free()
+	return true
 
 
-func _test_player_roster_rebind_and_removal() -> void:
+func _test_player_roster_rebind_and_removal() -> bool:
 	var roster = PlayerRosterScript.new()
 	roster.reset_for_match()
 	var changed_ids: Array[int] = []
@@ -153,9 +159,10 @@ func _test_player_roster_rebind_and_removal() -> void:
 		"removal must clear that player's explicit relations"
 	)
 	roster.free()
+	return true
 
 
-func _test_player_roster_relations() -> void:
+func _test_player_roster_relations() -> bool:
 	var roster = PlayerRosterScript.new()
 	roster.reset_for_match()
 	roster.create_player(1, "One", Color.WHITE, &"Atreides", [], 9)
@@ -179,9 +186,10 @@ func _test_player_roster_relations() -> void:
 	_expect(roster.are_enemies(3, 1), "clearing an explicit relation must restore the default")
 	_expect(roster.shared_vision_player_ids(1) == [1, 2], "shared vision must include self and allies in id order")
 	roster.free()
+	return true
 
 
-func _test_building_order_progress() -> void:
+func _test_building_order_progress() -> bool:
 	var order = BuildingOrderScript.new()
 	_expect(not order.ready, "a new order must not be ready")
 	_expect(not order.manually_paused, "a new order must not be paused")
@@ -203,9 +211,10 @@ func _test_building_order_progress() -> void:
 	order.ready = true
 	order.elapsed_ticks = 0.0
 	_expect(is_equal_approx(order.progress_percent(), 100.0), "ready state must always report complete")
+	return true
 
 
-func _test_technology_tree_houses() -> void:
+func _test_technology_tree_houses() -> bool:
 	var tree = TechnologyTreeScript.new()
 	var player = PlayerDataScript.new()
 	player.configure(1, "Atreides", Color.WHITE, &"Atreides", [&"Fremen"], 1)
@@ -226,9 +235,10 @@ func _test_technology_tree_houses() -> void:
 		not tree.is_available(_config(&"building", &"Ix"), player, no_buildings),
 		"an unrelated house must be rejected"
 	)
+	return true
 
 
-func _test_technology_tree_building_requirements() -> void:
+func _test_technology_tree_building_requirements() -> bool:
 	var tree = TechnologyTreeScript.new()
 	var player = PlayerDataScript.new()
 	player.configure(1, "Builder", Color.WHITE, &"Atreides")
@@ -260,9 +270,10 @@ func _test_technology_tree_building_requirements() -> void:
 	primary.free()
 	secondary.free()
 	enemy_primary.free()
+	return true
 
 
-func _test_technology_tree_unit_requirements() -> void:
+func _test_technology_tree_unit_requirements() -> bool:
 	var tree = TechnologyTreeScript.new()
 	var player = PlayerDataScript.new()
 	player.configure(1, "Trainer", Color.WHITE, &"Atreides")
@@ -277,6 +288,7 @@ func _test_technology_tree_unit_requirements() -> void:
 
 	barracks.free()
 	windtrap.free()
+	return true
 
 
 func _config(
