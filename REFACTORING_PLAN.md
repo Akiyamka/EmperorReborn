@@ -45,19 +45,43 @@ timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-af
 
 Результат: Godot 4.7 `--check-only` для `scripts/rts_camera.gd` прошел. Временная camera-only сцена на отдельном чистом `.godot` cache прошла headless run с назначенным `.tres` и с `null` fallback. Полный main на том же чистом cache не сообщает ошибок камеры, но блокируется generated `assets/converted/maps/#M70 Claw Rock/terrain.tscn`: он ссылается на отсутствующие `res://assets/unpacked_rfd/3DDATA/Textures/*.tga`. Обычный `make godot-check` дополнительно использует stale пользовательский cache (старый camera path и дублированный global class `MapXbf`); этот cache не удалялся и не использовался как доказательство успешности этапа.
 
-### [ ] Этап 1. Lifecycle/data bugs и characterization tests
+### [ ] Этап 1. Lifecycle/data bugs и characterization tests (1A завершен, 1B deferred)
 
-Scope: сначала воспроизвести и зафиксировать текущее поведение player roster/resources, ownership, повторного setup/reset, building order (оплата, pause/resume/cancel/refund/ready) и неуспешной загрузки карты. Исправлять только подтвержденные lifecycle/data bugs; добавить минимальный headless runner в `tests/characterization/`, не начинать перемещения файлов.
+Исходный scope разделен, чтобы asset-independent data tests не загружали `BuildingController`, raw textures, generated placement/map scenes или converter-код.
 
-Критерии приемки: тесты детерминированно покрывают перечисленные переходы и регрессии; signal connections не дублируются и не оставляют устаревшее состояние; ошибки загрузки не сохраняют неконсистентные данные; main behavior не изменен вне подтвержденных багов.
+#### [x] Этап 1A. Asset-independent lifecycle/data baseline (завершен 2026-07-10)
 
-Проверка:
+Scope: минимальный runner `tests/characterization/run.gd`; observable behavior `PlayerData`, `PlayerRoster`, `BuildingOrder` и `TechnologyTree`; reset demo roster до создания игроков. Никаких перемещений или новых архитектурных слоев.
+
+Покрыто 60 assertions:
+
+- `PlayerData`: configure, дедупликация subhouses, clamp money, spend validation, signed energy и payload/count resource signals.
+- `PlayerRoster`: neutral/reset, отключение старых ресурсов, replacement/rebind без дублей, removal, local player, очистка relations, default/explicit/symmetric relations и shared vision.
+- `BuildingOrder`: default/paid/free progress, clamp, сохранение progress при pause и ready = 100%. Cancel/refund/readiness transitions остаются в controller и не тестируются через private API.
+- `TechnologyTree`: primary house и subhouses, building/unit requirement lists, ownership, secondary и upgraded-primary requirements.
+
+Исправлены только воспроизведенные bugs: `PlayerRoster.reset_for_match()` отключает signals всех прежних `PlayerData`; `TechnologyTree` учитывает `PlayerData.subhouse_ids`; `scripts/main.gd` всегда вызывает reset перед настройкой нового demo match вместо сохранения autoload state прошлого матча.
+
+Критерии приемки: runner не зависит от assets/editor cache, освобождает созданные Nodes, печатает имена cases и завершает процесс кодом 1 при failure; все assertions проходят; измененные независимые runtime scripts проходят `--check-only`.
+
+Проверка и результат:
 
 ```sh
-make godot-check
 ./tools/godot-container godot --headless --path /workspace --script res://tests/characterization/run.gd
-timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-after 10
+# PASS: 8 cases, 60 assertions
+./tools/godot-container godot --headless --path /workspace --script res://scripts/players/player_roster.gd --check-only
+# PASS
+./tools/godot-container godot --headless --path /workspace --script res://scripts/technology_tree.gd --check-only
+# PASS
 ```
+
+#### [ ] Этап 1B. Scene-bound lifecycle characterization (deferred)
+
+Scope: ownership внутри scene tree, повторный setup controller, полные building-order transitions (charge/pause/resume/cancel/refund/ready) и очистка состояния при неуспешной `MapLoader.load_map()`. Queue transitions выполнять при выделении queue в этапе 3; map failure semantics - вместе с runtime/converter boundary в этапе 5. Не тащить private controller API или converter dependency в runner 1A.
+
+Критерии приемки: отдельные asset-independent seams существуют после соответствующего разделения; tests проверяют transitions через public API, signal connections не дублируются, failed map load не оставляет смешанное старое/новое состояние.
+
+Текущие blockers: `scripts/main.gd --check-only` и `make godot-check` загружают `SidePanel`/`BuildingController`/map dependencies и сообщают отсутствующие imported raw icons, stale global class `MapXbf` и ссылки generated terrain на `assets/unpacked_rfd`. Эти команды не считаются зелеными, даже если Godot возвращает zero exit code.
 
 ### [ ] Этап 2. Безопасное перемещение по feature-папкам
 
@@ -137,3 +161,4 @@ git status --short
 ## Журнал прогресса
 
 - 2026-07-10: создан план. Этап 0 завершен: исправлен path camera config с сохранением UID, export `config` типизирован; узкие parse/runtime проверки камеры на чистом внешнем cache прошли. Полный main заблокирован устаревшими generated map assets, точная диагностика записана в результате этапа 0. Этап 1 не начат.
+- 2026-07-10: этап 1 разделен на 1A/1B. Этап 1A завершен: добавлен asset-independent runner (60 assertions), исправлены stale roster connections, subhouse availability и reset demo match. Scene-bound controller/ownership/map cases явно deferred в 1B к этапам 3/5; этап 2 не начат.

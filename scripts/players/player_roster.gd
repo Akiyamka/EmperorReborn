@@ -24,6 +24,8 @@ func _enter_tree() -> void:
 
 
 func reset_for_match() -> void:
+	for player_id in _players.keys():
+		_disconnect_existing_player(player_id)
 	_players.clear()
 	_relations.clear()
 	local_player_id = PlayerDataScript.NEUTRAL_PLAYER_ID

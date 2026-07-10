@@ -26,7 +26,11 @@ func is_available(config: Resource, player, buildings: Array[Node]) -> bool:
 
 func _belongs_to_player_house(config: Resource, player) -> bool:
 	var required_house := StringName(String(config.field(&"house", "")))
-	return String(required_house).is_empty() or required_house == player.house_id
+	return (
+		String(required_house).is_empty()
+		or required_house == player.house_id
+		or player.has_subhouse(required_house)
+	)
 
 
 func _requirements(config: Resource, primary: bool) -> Array:

@@ -184,9 +184,7 @@ func _configure_demo_players() -> void:
 		push_warning("Players autoload is not available; units and buildings will stay neutral")
 		return
 
-	if players.player_count() > 0:
-		return
-
+	players.reset_for_match()
 	players.create_player(
 		LOCAL_PLAYER_ID,
 		"Atreides Commander",
