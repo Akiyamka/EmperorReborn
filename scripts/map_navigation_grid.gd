@@ -73,11 +73,25 @@ func load(dir: String, bounds: AABB, source_xbf = null, _world_scale := 1.0) -> 
 
 
 func load_baked(data: Resource) -> bool:
-	map_dir = data.source_map_dir
-	world_bounds = data.nav_world_bounds
-	_xbf_to_world_scale = data.world_scale
-	_is_loaded = false
+	var total := NAV_SIZE * NAV_SIZE
+	if data == null:
+		push_error("MapNavigationGrid: baked map data is missing")
+		return false
 
+	var candidate_bounds: AABB = data.nav_world_bounds
+	if candidate_bounds.size.x <= 0.0 or candidate_bounds.size.z <= 0.0:
+		push_error("MapNavigationGrid: baked navigation bounds are invalid in %s" % data.resource_path)
+		return false
+	if data.nav_cpf_values.size() != total or data.nav_terrain_type.size() != total or data.nav_source_tile_x.size() != total or data.nav_source_tile_y.size() != total:
+		push_error("MapNavigationGrid: baked nav arrays have invalid size in %s" % data.resource_path)
+		return false
+	if data.nav_spice_value.size() != total or data.nav_pass_mask.size() != total or data.nav_movement_cost.size() != total or data.nav_buildable.size() != total:
+		push_error("MapNavigationGrid: baked nav attributes have invalid size in %s" % data.resource_path)
+		return false
+
+	map_dir = data.source_map_dir
+	world_bounds = candidate_bounds
+	_xbf_to_world_scale = data.world_scale
 	cpf_values = data.nav_cpf_values
 	terrain_type = data.nav_terrain_type
 	source_tile_x = data.nav_source_tile_x
@@ -88,17 +102,6 @@ func load_baked(data: Resource) -> bool:
 	buildable = data.nav_buildable
 	cpf_report = data.nav_cpf_report
 	nav_report = data.nav_report
-
-	var total := NAV_SIZE * NAV_SIZE
-	if terrain_type.size() != total or source_tile_x.size() != total or source_tile_y.size() != total:
-		push_error("MapNavigationGrid: baked nav arrays have invalid size in %s" % data.resource_path)
-		return false
-	if spice_value.size() != total or pass_mask.size() != total or movement_cost.size() != total or buildable.size() != total:
-		push_error("MapNavigationGrid: baked nav attributes have invalid size in %s" % data.resource_path)
-		return false
-	if cpf_values.size() != total:
-		cpf_values = _zero_i32_grid()
-
 	_is_loaded = true
 	return true
 
@@ -140,7 +143,7 @@ func grid_to_world(grid_position: Vector2i, centered := true) -> Vector3:
 
 
 func cell_debug(grid_position: Vector2i) -> Dictionary:
-	if not _in_bounds(grid_position.x, grid_position.y):
+	if not _is_loaded or not _in_bounds(grid_position.x, grid_position.y):
 		return {"valid": false, "grid": grid_position}
 
 	var i := _idx(grid_position.x, grid_position.y)

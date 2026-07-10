@@ -79,9 +79,9 @@ Scope: минимальный runner `tests/characterization/run.gd`; observable
 # PASS
 ```
 
-#### [ ] Этап 1B. Scene-bound lifecycle characterization (queue transitions closed in 3A; map deferred)
+#### [ ] Этап 1B. Scene-bound lifecycle characterization (queue transitions closed in 3A; map failure closed in 5A)
 
-Scope: ownership внутри scene tree, повторный setup controller и очистка состояния при неуспешной `MapLoader.load_map()`. Полные asset-independent building-order transitions (charge/pause/resume/cancel/refund/ready/consume) закрыты публичным `BuildingQueue` runner в этапе 3A; map failure semantics остаются вместе с runtime/converter boundary в этапе 5. Не тащить private controller API или converter dependency в runner 1A.
+Scope: ownership внутри scene tree, повторный setup controller и очистка состояния при неуспешной `MapLoader.load_map()`. Полные asset-independent building-order transitions (charge/pause/resume/cancel/refund/ready/consume) закрыты публичным `BuildingQueue` runner в этапе 3A; deferred map failure semantics закрыты asset-independent `tests/maps/run.gd` в этапе 5A. Не тащить private controller API или converter dependency в runner 1A.
 
 Критерии приемки: отдельные asset-independent seams существуют после соответствующего разделения; tests проверяют transitions через public API, signal connections не дублируются, failed map load не оставляет смешанное старое/новое состояние.
 
@@ -261,18 +261,46 @@ timeout 30s ./tools/godot-container godot --headless --path /workspace --quit-af
 
 ### [ ] Этап 5. Разделение runtime map и converters
 
-Scope: определить стабильный формат baked map data; оставить `converters/` ответственным за XBF/CPF/CPT parsing и генерацию, а map feature runtime - только за загрузку Godot-native `.tres`/`.tscn`, навигационные запросы и освещение. Устранить обратную зависимость converter builder на runtime scene construction через явный формат/adapter.
+Scope: определить стабильный формат baked map data; оставить `converters/` ответственным за XBF/CPF/CPT parsing и генерацию, а map feature runtime — только за загрузку Godot-native `.tres`/`.tscn`, навигационные запросы и освещение. Подэтапы не смешивают behavioral fix, split/move и regeneration.
 
-Критерии приемки:
+#### [x] Этап 5A. Runtime contract и атомарная загрузка (завершен 2026-07-10)
+
+Добавлен asset-independent `tests/maps/run.gd` (Godot-generated UID `uid://bukip8we7p1of`): 6 cases, 35 assertions, completion-token protection и exit 1. Runner создает только in-memory `BakedMapData` с полными `Packed*` arrays и временные `user://` `.tres`; он не читает raw/generated map assets и не вызывает XBF/CPF/CPT parser. Временные ресурсы удаляются в конце процесса.
+
+Зафиксированный runtime-only contract для сохранения в 5B:
+
+- `BakedMapData` передает `source_map_dir`, `world_scale`, `nav_world_bounds`, reports и все восемь 256×256 navigation arrays (`cpf`, terrain, source X/Y, spice, pass mask, movement cost, buildable). `MapNavigationGrid.load_baked(Resource)` требует positive X/Z bounds и ровно 65,536 элементов в каждом array.
+- Успешный `load_baked` одновременно публикует source/bounds/arrays/reports и `is_loaded() == true`. Rejection не изменяет уже loaded grid; initial rejection оставляет его unloaded, а `cell_debug` возвращает invalid result без обращения к partial arrays. Следующий valid load после rejection полностью заменяет grid.
+- `world_to_grid` clamp-ит X/Z world bounds, включая max edge в cell `(255,255)`; `grid_to_world(cell, true)` возвращает center, `false` — minimum corner. `cell_debug` для valid cell сохраняет grid/world center/source tile/CPF/terrain id+name/spice/pass mask/movement cost/buildable, а out-of-bounds/unloaded result — только `valid: false` и `grid`.
+- `MapLoader.load_map` строит candidate data/grid и commit-ит `map_data`, `terrain_aabb` и `navigation_grid` только после successful baked-grid validation; lighting и logging выполняются только после этого commit. Missing/unloadable/malformed replacement сохраняет последнюю valid map и ее AABB/grid; initial failure оставляет все три fields empty/default, а subsequent valid load atomically заполняет все три fields. Это закрывает deferred map-failure часть 1B.
+
+Воспроизведенный bug: прежний `MapNavigationGrid.load_baked` записывал fields до validation, а `MapLoader.load_map` заменял `map_data`/AABB и обнулял navigation grid при failure. Минимальный fix — validate-before-commit в grid и candidate commit-on-success в loader. Runner покрывает successful grid load, edge/center conversions, valid/out-of-bounds debug fields, invalid bounds and short terrain/CPF arrays, success after failure, valid replacement, malformed/missing loader replacement, initial missing/malformed state и successful loader recovery after initial failures.
+
+Проверка:
+
+```sh
+./tools/godot-container godot --headless --path /workspace --script res://tests/maps/run.gd
+# PASS: 35 assertions (intentional malformed fixtures emit validation diagnostics)
+```
+
+#### [ ] Этап 5B. Converter boundary split и mechanical map move
+
+Scope: отделить baked-grid/query runtime API от XBF/CPF/CPT parsing/building, чтобы `scripts/` не импортировал `converters/`; затем одним mechanical batch перенести `map_loader.gd`, `map_navigation_grid.gd`, `baked_map_data.gd` и `terrain.gdshader` вместе с прежними UID в `scripts/world/map/`, обновив tracked runtime/converter references. Сохранить contract 5A; не регенерировать generated output в этом подэтапе.
+
+#### [ ] Этап 5C. Regenerate и clean load
+
+Scope: исправить converter source/texture fallback paths и штатно regenerate `map_data.tres`/`terrain.tscn`, не редактируя generated files вручную. Проверить отсутствующие `assets/unpacked_rfd` references, актуальные script/shader paths, clean-cache load map data/terrain и отдельно converter плюс `nav_grid_check.gd`.
+
+Критерии номерного этапа после 5C:
 
 - Runtime map не читает original formats и не импортирует `converters/`; XBF/CPF/CPT parsing и raw navigation build остаются converter-only.
 - Четыре `.gd/.gdshader` пары перемещены вместе с прежними UID; все runtime и converter references обновлены, старые paths отсутствуют.
 - `convert_map.gd` воспроизводимо регенерирует `map_data.tres` и `terrain.tscn`; generated output не содержит `res://assets/unpacked_rfd`, включая terrain texture fallback paths и source metadata.
 - Regenerated `terrain.tscn` использует актуальные MapLoader/shader paths, `map_data.tres` использует актуальный data script, а `demo_match.tscn` инстанцирует существующий output.
-- Отдельный clean-cache test загружает `map_data.tres` и `terrain.tscn`, подтверждает loaded navigation grid/runtime queries и явное согласованное состояние после failed load.
+- Отдельный clean-cache test загружает `map_data.tres` и `terrain.tscn`, подтверждает loaded navigation grid/runtime queries и согласованное 5A failed-load state.
 - Converter и `nav_grid_check.gd` запускаются headless отдельно; ошибки версии/формы baked data валидируются понятной диагностикой.
 
-Проверка:
+Проверка после 5C:
 
 ```sh
 rg 'res://converters|XBF|CPF|CPT' scripts scenes
@@ -310,3 +338,4 @@ git status --short
 - 2026-07-10: этап 4 разделен на 4A--4C. 4A завершен: demo option IDs временно принадлежат `main.gd` и одним ordered list передаются `SidePanel` и `BuildingController`; SidePanel sends ID-based building intents and resolves its own slot mapping, controller no longer reads UI catalog or accepts tab/slot queue input. Direct presentation dependency остается следующим scope 4B; main move — только 4C.
 - 2026-07-10: этап 4B завершен: controller publishes feature-owned option/resource/sell presentation and handles feature commands without loading UI; `match.gd` owns all UI adaptation and SidePanel caches typed option states across tab rebuilds. Clean local UI fixture, no-UI controller smoke and existing feature runners passed; generated terrain texture references remain the unrelated full-main blocker. 4C pending.
 - 2026-07-10: этап 4C и номерной этап 4 завершены: selection/move/ownership presentation extracted to `UnitCommandController`; composition root and demo scene moved with preserved UIDs, tracked entry-point references updated, and an asset-independent unit-command runner added. Full demo scene remains blocked only by ignored stale generated terrain texture paths; ignored editor cache old paths were not edited.
+- 2026-07-10: этап 5 разделен на 5A--5C. 5A завершен: runner без map assets/parser покрывает 35 assertions runtime baked-grid/map-loader contract, включая recovery `MapLoader` после initial failures; воспроизведенные partial-state failures исправлены validate-before-commit в `MapNavigationGrid` и candidate commit-on-success в `MapLoader`. 5B split/move и 5C regeneration/load не начаты.

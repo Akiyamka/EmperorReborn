@@ -23,15 +23,19 @@ func load_map(path: String) -> void:
 		push_error("MapLoader: converted map data not found at %s" % path)
 		return
 
-	map_data = load(path)
-	if map_data == null:
+	var candidate_data: Resource = load(path)
+	if candidate_data == null:
 		push_error("MapLoader: could not load %s" % path)
 		return
 
-	terrain_aabb = map_data.terrain_aabb
-	navigation_grid = MapNavigationGridScript.new()
-	if not navigation_grid.load_baked(map_data):
-		navigation_grid = null
+	var candidate_grid = MapNavigationGridScript.new()
+	if not candidate_grid.load_baked(candidate_data):
+		push_error("MapLoader: invalid baked navigation in %s" % path)
+		return
+
+	map_data = candidate_data
+	terrain_aabb = candidate_data.terrain_aabb
+	navigation_grid = candidate_grid
 
 	_apply_lighting()
 	print("MapLoader: %s - %d surfaces, %d textures, map %s, aabb %s" % [
