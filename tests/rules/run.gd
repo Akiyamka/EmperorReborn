@@ -17,6 +17,10 @@ var _current_case := ""
 func _initialize() -> void:
 	_run_case("roster excludes ConYard, Wall, RefineryDock, and decorative buildings", _test_roster_filter)
 	_run_case("roster matches by primary house or subhouse", _test_roster_house_matching)
+	_run_case(
+		"wall_building_ids_for_house and refinery_dock_building_ids_for_house surface what the roster excludes",
+		_test_wall_and_dock_ids
+	)
 
 	if _failures > 0:
 		printerr("Rules tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -70,8 +74,11 @@ func _test_roster_filter() -> bool:
 	_expect(roster.has(&"ATBarracks"), "a real buildable building must be included")
 	_expect(roster.has(&"ATFactory"), "a second real buildable building must be included")
 	_expect(not roster.has(&"ATConYard"), "the Construction Yard must be excluded (built only via MCV)")
-	_expect(not roster.has(&"ATWall"), "Wall must be excluded (its own BuildWall mode)")
-	_expect(not roster.has(&"ATRefineryDock"), "RefineryDock must be excluded (its own UpgradeDock mode)")
+	_expect(not roster.has(&"ATWall"), "Wall must be excluded (surfaced via wall_building_ids_for_house instead)")
+	_expect(
+		not roster.has(&"ATRefineryDock"),
+		"RefineryDock must be excluded (surfaced via refinery_dock_building_ids_for_house instead)"
+	)
 	_expect(
 		not roster.has(&"ATINSultan"),
 		"a decorative building with no requires_primary must be excluded"
@@ -99,6 +106,41 @@ func _test_roster_house_matching() -> bool:
 	_expect(with_subhouse.has(&"ATBarracks"), "the primary house must still match alongside a subhouse")
 	_expect(with_subhouse.has(&"FRCamp"), "a listed subhouse must match")
 	_expect(not with_subhouse.has(&"ORBarracks"), "an unrelated house must not match even with a subhouse listed")
+	return true
+
+
+## Companion to _test_roster_filter(): the same Wall/RefineryDock entries the
+## general roster excludes must be exactly what these two methods return, so
+## BuildingController/BuildingUpgradeController can mix them back into their
+## own grids (docs/mechanics/production.md sections 2 and 4).
+func _test_wall_and_dock_ids() -> bool:
+	var catalog = _catalog_with([
+		_building(&"ATBarracks", &"Atreides", {}, [&"ATConYard"], [&"Barracks"]),
+		_building(
+			&"ATWall", &"Atreides", {"building_group": "Wall"}, [&"ATConYard"], [&"Wall"]
+		),
+		_building(
+			&"ATRefineryDock",
+			&"Atreides",
+			{"building_group": "RefineryDock"},
+			[&"ATConYard"],
+			[&"Dockable"]
+		),
+		_building(
+			&"ORWall", &"Ordos", {"building_group": "Wall"}, [&"ORConYard"], [&"Wall"]
+		),
+	])
+
+	var wall_ids: Array[StringName] = catalog.wall_building_ids_for_house(&"Atreides")
+	_expect(wall_ids == [&"ATWall"], "wall_building_ids_for_house must return only this house's Wall entries")
+
+	var dock_ids: Array[StringName] = catalog.refinery_dock_building_ids_for_house(&"Atreides")
+	_expect(dock_ids == [&"ATRefineryDock"], "refinery_dock_building_ids_for_house must return only this house's RefineryDock entries")
+
+	_expect(
+		not catalog.wall_building_ids_for_house(&"Ordos").has(&"ATWall"),
+		"wall_building_ids_for_house must not leak another house's wall across"
+	)
 	return true
 
 

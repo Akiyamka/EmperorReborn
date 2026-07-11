@@ -5,10 +5,15 @@ const DEFAULT_RULES_ROOT := "res://assets/converted/rules"
 const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
 
 ## Non-roster building_group/roles values: Wall and RefineryDock are built
-## through their own dedicated placement modes (BuildingController's
-## BuildWall/UpgradeDock), not the general building panel grid.
+## through their own interactive map-picking flows (a line pick for walls, a
+## refinery pick for docks) instead of the plain "queue then place" flow the
+## rest of the roster uses, so they are surfaced through their own methods
+## below (wall_building_ids_for_house/refinery_dock_building_ids_for_house)
+## rather than mixed into the general roster.
 const _EXCLUDED_BUILDING_GROUPS: Array[StringName] = [&"Wall", &"RefineryDock"]
 const _EXCLUDED_ROLES: Array[StringName] = [&"Wall", &"Dockable"]
+const _WALL_BUILDING_GROUP := &"Wall"
+const _REFINERY_DOCK_BUILDING_GROUP := &"RefineryDock"
 
 @export_dir var rules_root := DEFAULT_RULES_ROOT
 
@@ -98,6 +103,43 @@ func buildable_building_ids_for_house(
 		if not _matches_house(config, house_id, subhouse_ids):
 			continue
 		if _is_buildable_roster_building(config):
+			result.append(StringName(id_key))
+	return result
+
+
+## Wall counterpart to buildable_building_ids_for_house(): the id(s) of the
+## house's Wall building_group entries, so BuildingController can list wall
+## as a normal grid slot while still routing its click through the wall
+## line-picking flow instead of the plain queue-then-place flow.
+func wall_building_ids_for_house(
+		house_id: StringName, subhouse_ids: Array[StringName] = []
+) -> Array[StringName]:
+	return _building_ids_for_group(house_id, subhouse_ids, _WALL_BUILDING_GROUP)
+
+
+## RefineryDock counterpart to buildable_building_ids_for_house(): the id(s)
+## of the house's RefineryDock building_group entries, so
+## BuildingUpgradeController can list the dock as a normal upgrade grid slot
+## while still routing its click through the refinery-picking flow instead
+## of the plain global-purchase flow.
+func refinery_dock_building_ids_for_house(
+		house_id: StringName, subhouse_ids: Array[StringName] = []
+) -> Array[StringName]:
+	return _building_ids_for_group(house_id, subhouse_ids, _REFINERY_DOCK_BUILDING_GROUP)
+
+
+func _building_ids_for_group(
+		house_id: StringName, subhouse_ids: Array[StringName], building_group: StringName
+) -> Array[StringName]:
+	var result: Array[StringName] = []
+	var bucket: Dictionary = _by_type.get("building", {})
+	var keys := bucket.keys()
+	keys.sort()
+	for id_key in keys:
+		var config: Resource = bucket[id_key]
+		if not _matches_house(config, house_id, subhouse_ids):
+			continue
+		if StringName(String(config.field(&"building_group", ""))) == building_group:
 			result.append(StringName(id_key))
 	return result
 

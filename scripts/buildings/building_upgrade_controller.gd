@@ -47,6 +47,7 @@ var _upgrade_option_ids: Array[StringName] = []
 var _upgrade_queue: UpgradeQueue = UpgradeQueueScript.new()
 var _dock_placement: BuildingPlacement = BuildingPlacementScript.new()
 var _dock_mode := false
+var _dock_mode_building_id: StringName = &""
 
 
 func setup(
@@ -87,10 +88,6 @@ func process(delta: float) -> void:
 
 
 func handle_command(command: StringName) -> bool:
-	match command:
-		&"UpgradeDock":
-			_set_dock_mode(not _dock_mode)
-			return true
 	return false
 
 
@@ -121,13 +118,15 @@ func handle_upgrade_intent(building_id: StringName, button_index: int) -> bool:
 	return false
 
 
-func _set_dock_mode(active: bool) -> void:
+func _set_dock_mode(active: bool, building_id: StringName = &"") -> void:
 	_dock_mode = active
+	_dock_mode_building_id = building_id if active else &""
 	dock_mode_changed.emit(active)
 	if active:
 		status_changed.emit("Upgrade Dock mode: select one of your refineries")
 	else:
 		status_changed.emit("Upgrade Dock mode canceled")
+	_refresh_upgrade_option_states()
 
 
 func _on_dock_mode_click(screen_position: Vector2) -> void:
@@ -176,6 +175,10 @@ func _try_start_dock_upgrade(refinery: Node3D) -> void:
 
 
 func _on_upgrade_slot_left_pressed(building_id: StringName) -> void:
+	if _is_refinery_dock_id(building_id):
+		_on_dock_slot_left_pressed(building_id)
+		return
+
 	var order := _upgrade_queue.current_order()
 	if order == null:
 		_start_global_upgrade_order(building_id)
@@ -191,9 +194,53 @@ func _on_upgrade_slot_left_pressed(building_id: StringName) -> void:
 	_refresh_upgrade_option_states()
 
 
+## Dock's own entry point (docs section 4 "instance-bound"): a fresh click
+## starts refinery-picking mode instead of the plain global-purchase flow
+## _start_global_upgrade_order() uses; once an order for this dock id is
+## already in flight it falls back to the normal pause/resume handling.
+func _on_dock_slot_left_pressed(building_id: StringName) -> void:
+	var order := _upgrade_queue.current_order()
+	var dock_order_active := order != null and order.kind == UpgradeOrderScript.Kind.REFINERY_DOCK and order.upgrade_id == building_id
+
+	if order == null:
+		_set_dock_mode(true, building_id)
+	elif dock_order_active:
+		if order.manually_paused:
+			_upgrade_queue.resume()
+			status_changed.emit("%s upgrade resumed" % order.display_name)
+		else:
+			var status := "%s upgrade is waiting for credits" if _upgrade_queue.lacks_funds() else "%s upgrade is already running"
+			status_changed.emit(status % order.display_name)
+	else:
+		status_changed.emit("Upgrade queue is busy")
+
+	_refresh_upgrade_option_states()
+
+
 func _on_upgrade_slot_right_pressed(building_id: StringName) -> void:
+	if _is_refinery_dock_id(building_id):
+		_on_dock_slot_right_pressed(building_id)
+		return
+
 	var order := _upgrade_queue.current_order()
 	if order == null or order.kind != UpgradeOrderScript.Kind.GLOBAL_TYPE or order.upgrade_id != building_id:
+		return
+
+	if order.manually_paused:
+		_cancel_upgrade_order()
+	else:
+		_upgrade_queue.pause()
+		status_changed.emit("%s upgrade paused" % order.display_name)
+		_refresh_upgrade_option_states()
+
+
+func _on_dock_slot_right_pressed(building_id: StringName) -> void:
+	if _dock_mode and _dock_mode_building_id == building_id:
+		_set_dock_mode(false)
+		return
+
+	var order := _upgrade_queue.current_order()
+	if order == null or order.kind != UpgradeOrderScript.Kind.REFINERY_DOCK or order.upgrade_id != building_id:
 		return
 
 	if order.manually_paused:
@@ -367,6 +414,33 @@ func _is_refinery(building: Node3D) -> bool:
 	return config != null and config.list(&"roles").has(REFINERY_ROLE)
 
 
+func _is_refinery_dock_id(building_id: StringName) -> bool:
+	var config: Resource = _building_configs.get(building_id)
+	return config != null and String(config.field(&"building_group", "")) == "RefineryDock"
+
+
+## A dock has no player-wide "owned" flag to check availability against --
+## unlike GLOBAL_TYPE it can be bought again and again, capped per instance
+## by Refinery.can_add_dock() (docs section 4 "up to 2 docks per refinery").
+func _any_refinery_can_add_dock() -> bool:
+	if not is_inside_tree():
+		return false
+	var player := _local_player()
+	if player == null:
+		return false
+	for node in get_tree().get_nodes_in_group("buildings"):
+		var building := node as Node3D
+		if building == null:
+			continue
+		if int(building.get("owner_player_id")) != player.player_id:
+			continue
+		if not _is_refinery(building):
+			continue
+		if building.has_method("can_add_dock") and bool(building.call("can_add_dock")):
+			return true
+	return false
+
+
 func _is_upgrade_available(building_id: StringName) -> bool:
 	var config: Resource = _building_configs.get(building_id)
 	if config == null or float(config.field(&"upgrade_cost", 0)) <= 0.0:
@@ -410,6 +484,10 @@ func _refresh_upgrade_option_states() -> void:
 	for building_id in _upgrade_option_ids:
 		var tooltip := _upgrade_tooltip(building_id)
 
+		if _is_refinery_dock_id(building_id):
+			_emit_dock_option_state(building_id, order, tooltip)
+			continue
+
 		if player != null and player.has_purchased_upgrade(building_id):
 			upgrade_option_state_changed.emit(BuildingOptionStateScript.new(
 				building_id, BuildingOptionStateScript.State.READY, 100.0, "OWNED", tooltip
@@ -428,6 +506,32 @@ func _refresh_upgrade_option_states() -> void:
 		upgrade_option_state_changed.emit(BuildingOptionStateScript.new(
 			building_id, BuildingOptionStateScript.State.PROGRESS, order.progress_percent(), status_text, tooltip
 		))
+
+
+## Refinery docks have neither the GLOBAL_TYPE "purchased once, forever"
+## state (docs section 4 "binding": instance-bound, capped per refinery via
+## can_add_dock()) nor its plain queue-then-place flow (docks auto-place, no
+## manual placement click), so their grid state is derived separately here
+## instead of falling through the branches above.
+func _emit_dock_option_state(building_id: StringName, order: UpgradeOrder, tooltip: String) -> void:
+	if order != null and order.kind == UpgradeOrderScript.Kind.REFINERY_DOCK and order.upgrade_id == building_id:
+		var status_text := "PAUSED" if order.manually_paused else ""
+		upgrade_option_state_changed.emit(BuildingOptionStateScript.new(
+			building_id, BuildingOptionStateScript.State.PROGRESS, order.progress_percent(), status_text, tooltip
+		))
+		return
+
+	if _dock_mode and _dock_mode_building_id == building_id and order == null:
+		upgrade_option_state_changed.emit(BuildingOptionStateScript.new(
+			building_id, BuildingOptionStateScript.State.PROGRESS, 0.0, "Select a refinery", tooltip
+		))
+		return
+
+	var available := _any_refinery_can_add_dock()
+	var state := BuildingOptionStateScript.State.DISABLED
+	if available:
+		state = BuildingOptionStateScript.State.BLOCKED if order != null else BuildingOptionStateScript.State.AVAILABLE
+	upgrade_option_state_changed.emit(BuildingOptionStateScript.new(building_id, state, 0.0, "", tooltip))
 
 
 func _upgrade_display_name(building_id: StringName) -> String:

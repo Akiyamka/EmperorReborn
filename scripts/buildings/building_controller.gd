@@ -37,6 +37,7 @@ var _sell_mode := false
 var _selling_building: Node3D
 var _wall_line_mode := false
 var _wall_line_start_cell = null
+var _wall_line_building_id: StringName = &""
 var _wall_chain: WallChain
 var _building_double_click := DoubleClickTrackerScript.new()
 
@@ -142,9 +143,6 @@ func handle_command(command: StringName) -> bool:
 		&"Sell":
 			_set_sell_mode(not _sell_mode)
 			return true
-		&"BuildWall":
-			_set_wall_line_mode(not _wall_line_mode)
-			return true
 		&"Repair":
 			status_changed.emit("Command: Repair (not implemented)")
 			return true
@@ -175,9 +173,10 @@ func _set_sell_mode(active: bool) -> void:
 		status_changed.emit("Sell mode canceled")
 
 
-func _set_wall_line_mode(active: bool) -> void:
+func _set_wall_line_mode(active: bool, building_id: StringName = &"") -> void:
 	_wall_line_mode = active
 	_wall_line_start_cell = null
+	_wall_line_building_id = building_id if active else &""
 	wall_mode_changed.emit(active)
 	if active:
 		_set_sell_mode(false)
@@ -185,6 +184,7 @@ func _set_wall_line_mode(active: bool) -> void:
 		status_changed.emit("Wall mode: click the line start, then the line end")
 	else:
 		status_changed.emit("Wall mode canceled")
+	_refresh_building_option_states()
 
 
 func _on_wall_line_click(screen_position: Vector2) -> void:
@@ -195,11 +195,13 @@ func _on_wall_line_click(screen_position: Vector2) -> void:
 	if _wall_line_start_cell == null:
 		_wall_line_start_cell = cell
 		status_changed.emit("Wall start set; click the line end")
+		_refresh_building_option_states()
 		return
 
 	var start_cell: Vector2i = _wall_line_start_cell
+	var building_id := _wall_line_building_id
 	_set_wall_line_mode(false)
-	_start_wall_chain(start_cell, cell)
+	_start_wall_chain(start_cell, cell, building_id)
 
 
 func _try_sell_building(screen_position: Vector2) -> void:
@@ -370,6 +372,10 @@ func _load_building_configs() -> void:
 
 
 func _on_building_slot_left_pressed(building_id: StringName) -> void:
+	if _is_wall_building_id(building_id):
+		_on_wall_slot_left_pressed(building_id)
+		return
+
 	var order := _building_queue.current_order()
 	if order == null:
 		_start_building_order(building_id)
@@ -387,7 +393,37 @@ func _on_building_slot_left_pressed(building_id: StringName) -> void:
 	_refresh_building_option_states()
 
 
+## Wall's own entry point (docs/mechanics/production.md section 2 "walls"):
+## a fresh click starts the interactive line-picking mode instead of the
+## plain "queue then place" flow _start_building_order() uses, but once a
+## chain/order for this wall id is already in flight, clicking the same slot
+## again falls back to the normal pause/resume/ready-to-place handling below.
+func _on_wall_slot_left_pressed(building_id: StringName) -> void:
+	var order := _building_queue.current_order()
+	var chain_active := _wall_chain != null and _wall_chain.building_id == building_id
+
+	if order == null and not chain_active:
+		_set_wall_line_mode(true, building_id)
+	elif order != null and order.building_id == building_id:
+		if order.ready:
+			_begin_ready_building_placement()
+		elif order.manually_paused:
+			_building_queue.resume()
+			status_changed.emit("%s construction resumed" % order.display_name)
+		else:
+			var status := "%s construction is waiting for credits" if _building_queue.lacks_funds() else "%s construction is already running"
+			status_changed.emit(status % order.display_name)
+	else:
+		status_changed.emit("Building queue is busy")
+
+	_refresh_building_option_states()
+
+
 func _on_building_slot_right_pressed(building_id: StringName) -> void:
+	if _is_wall_building_id(building_id) and _wall_line_mode and _wall_line_building_id == building_id:
+		_set_wall_line_mode(false)
+		return
+
 	var order := _building_queue.current_order()
 	if order == null or order.building_id != building_id:
 		return
@@ -489,6 +525,8 @@ func _begin_ready_building_placement() -> void:
 
 
 func _start_wall_chain(from_nav_cell: Vector2i, to_nav_cell: Vector2i, building_id: StringName = &"ATWall") -> void:
+	if String(building_id).is_empty():
+		building_id = &"ATWall"
 	if _building_queue.has_order() or _wall_chain != null:
 		status_changed.emit("Building queue is busy")
 		return
@@ -732,6 +770,14 @@ func _refresh_building_option_states() -> void:
 	var order := _building_queue.current_order()
 	for building_id in _building_ids:
 		var tooltip := _building_tooltip(building_id)
+
+		if _is_wall_building_id(building_id) and _wall_line_mode and _wall_line_building_id == building_id:
+			var picking_status := "Pick line end" if _wall_line_start_cell != null else "Pick line start"
+			building_option_state_changed.emit(BuildingOptionStateScript.new(
+				building_id, BuildingOptionStateScript.State.PROGRESS, 0.0, picking_status, tooltip
+			))
+			continue
+
 		if order == null:
 			var state := BuildingOptionStateScript.State.AVAILABLE if _is_building_available(building_id) else BuildingOptionStateScript.State.DISABLED
 			building_option_state_changed.emit(BuildingOptionStateScript.new(building_id, state, 0.0, "", tooltip))

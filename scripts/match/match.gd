@@ -25,6 +25,12 @@ var _unit_command_controller: UnitCommandController
 ## Whole roster of the local player's house, gated by the technology tree
 ## rather than a hardcoded demo list -- see docs/mechanics/production.md.
 var _building_option_ids: Array[StringName] = []
+## Wall/RefineryDock ids mixed into the roster passed to BuildingController/
+## BuildingUpgradeController respectively, so both appear as ordinary grid
+## slots (docs/mechanics/production.md sections 2 and 4) even though they
+## still route through their own interactive map-picking flow.
+var _wall_building_ids: Array[StringName] = []
+var _refinery_dock_building_ids: Array[StringName] = []
 
 
 func _enter_tree() -> void:
@@ -32,6 +38,8 @@ func _enter_tree() -> void:
 	# exist before buildings and units enter the scene tree.
 	_configure_demo_players()
 	_building_option_ids = _local_player_building_option_ids()
+	_wall_building_ids = _local_player_wall_building_ids()
+	_refinery_dock_building_ids = _local_player_refinery_dock_building_ids()
 
 
 func _ready() -> void:
@@ -67,7 +75,8 @@ func _on_building_resources_changed(credits: int, energy: int) -> void:
 
 
 func _setup_building_controller() -> void:
-	side_panel.configure_building_options(_building_option_ids)
+	var building_grid_ids := _building_option_ids + _wall_building_ids
+	side_panel.configure_building_options(building_grid_ids)
 	_building_controller = BuildingControllerScript.new()
 	_building_controller.name = "BuildingController"
 	add_child(_building_controller)
@@ -76,13 +85,12 @@ func _setup_building_controller() -> void:
 	_building_controller.status_changed.connect(_update_selection_label)
 	_building_controller.resources_changed.connect(_on_building_resources_changed)
 	_building_controller.sell_mode_changed.connect(side_panel.set_sell_mode)
-	_building_controller.wall_mode_changed.connect(side_panel.set_wall_mode)
 	_building_controller.building_option_state_changed.connect(side_panel.set_building_option_state)
 	_building_controller.setup(
 		terrain,
 		camera,
 		$Buildings,
-		_building_option_ids,
+		building_grid_ids,
 		PLACEMENT_ARROW_SCENE,
 		PLACEMENT_BUILDING_SCENE,
 		PLACEMENT_CANT_BUILD_SCENE,
@@ -91,19 +99,19 @@ func _setup_building_controller() -> void:
 
 
 func _setup_building_upgrade_controller() -> void:
-	side_panel.configure_upgrade_options(_building_option_ids)
+	var upgrade_grid_ids := _building_option_ids + _refinery_dock_building_ids
+	side_panel.configure_upgrade_options(upgrade_grid_ids)
 	_building_upgrade_controller = BuildingUpgradeControllerScript.new()
 	_building_upgrade_controller.name = "BuildingUpgradeController"
 	add_child(_building_upgrade_controller)
 	side_panel.upgrade_intent_pressed.connect(_on_panel_upgrade_intent)
 	_building_upgrade_controller.status_changed.connect(_update_selection_label)
 	_building_upgrade_controller.upgrade_option_state_changed.connect(side_panel.set_upgrade_option_state)
-	_building_upgrade_controller.dock_mode_changed.connect(side_panel.set_dock_mode)
 	_building_upgrade_controller.setup(
 		terrain,
 		camera,
 		$Buildings,
-		_building_option_ids,
+		upgrade_grid_ids,
 		PLACEMENT_BUILDING_SCENE,
 		PLACEMENT_CANT_BUILD_SCENE,
 		PLACEMENT_SKIRT_SCENE
@@ -221,6 +229,32 @@ func _local_player_building_option_ids() -> Array[StringName]:
 		return []
 
 	return rules.buildable_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+
+
+func _local_player_wall_building_ids() -> Array[StringName]:
+	var players = _players()
+	var rules := get_node_or_null("/root/Rules")
+	if players == null or rules == null:
+		return []
+
+	var local_player = players.player(LOCAL_PLAYER_ID)
+	if local_player == null:
+		return []
+
+	return rules.wall_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+
+
+func _local_player_refinery_dock_building_ids() -> Array[StringName]:
+	var players = _players()
+	var rules := get_node_or_null("/root/Rules")
+	if players == null or rules == null:
+		return []
+
+	var local_player = players.player(LOCAL_PLAYER_ID)
+	if local_player == null:
+		return []
+
+	return rules.refinery_dock_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _players():

@@ -78,8 +78,6 @@ var _upgrade_option_states: Dictionary = {}
 var _credits_amount := 0
 var _energy_amount := 0
 var _sell_mode_active := false
-var _wall_mode_active := false
-var _dock_mode_active := false
 
 
 func _ready() -> void:
@@ -99,8 +97,6 @@ func _ready() -> void:
 	_set_active_tab(Tab.INFANTRY)
 	_apply_resources()
 	_apply_sell_mode()
-	_apply_wall_mode()
-	_apply_dock_mode()
 
 
 ## Fits up to 999 999 999, grouped by thousands.
@@ -122,36 +118,10 @@ func set_sell_mode(active: bool) -> void:
 		_apply_sell_mode()
 
 
-func set_wall_mode(active: bool) -> void:
-	_wall_mode_active = active
-	if is_node_ready():
-		_apply_wall_mode()
-
-
-## Refinery-dock instance-target picking mode (docs/mechanics/production.md
-## section 4 "refinery docks... instance-bound"); same UI shape as sell/wall.
-func set_dock_mode(active: bool) -> void:
-	_dock_mode_active = active
-	if is_node_ready():
-		_apply_dock_mode()
-
-
 func _apply_sell_mode() -> void:
 	var sell_button := _commands.get_node_or_null("Sell") as Button
 	if sell_button != null:
 		sell_button.button_pressed = _sell_mode_active
-
-
-func _apply_wall_mode() -> void:
-	var wall_button := _commands.get_node_or_null("BuildWall") as Button
-	if wall_button != null:
-		wall_button.button_pressed = _wall_mode_active
-
-
-func _apply_dock_mode() -> void:
-	var dock_button := _commands.get_node_or_null("UpgradeDock") as Button
-	if dock_button != null:
-		dock_button.button_pressed = _dock_mode_active
 
 
 func configure_building_options(building_ids: Array[StringName]) -> void:
@@ -167,9 +137,11 @@ func set_building_option_state(option_state: BuildingOptionState) -> void:
 
 
 ## Global per-type upgrades (docs/mechanics/production.md section 4). Mirrors
-## configure_building_options()/set_building_option_state() one tab over;
-## refinery docks do not appear in this grid -- they are instance-bound and
-## triggered through the "UpgradeDock" command button + a map click instead.
+## configure_building_options()/set_building_option_state() one tab over.
+## Refinery docks are instance-bound rather than global, but still appear as
+## an ordinary slot here -- clicking one starts BuildingUpgradeController's
+## refinery-picking mode instead of a plain purchase (see building_upgrade_
+## controller.gd _on_dock_slot_left_pressed()).
 func configure_upgrade_options(upgrade_ids: Array[StringName]) -> void:
 	_upgrade_option_ids = upgrade_ids.duplicate()
 	if is_node_ready():
