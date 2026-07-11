@@ -9,6 +9,8 @@ const UpgradeQueueScript := preload("res://scripts/buildings/upgrade_queue.gd")
 const UpgradeOrderScript := preload("res://scripts/buildings/upgrade_order.gd")
 const UpgradeEffectsScript := preload("res://scripts/buildings/upgrade_effects.gd")
 const RefineryDockLayoutScript := preload("res://scripts/buildings/refinery_dock_layout.gd")
+const BuildingScript := preload("res://scripts/buildings/building.gd")
+const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -53,6 +55,11 @@ func _initialize() -> void:
 	_run_case(
 		"a purchased upgrade is irreversible player state, not building state",
 		_test_player_purchase_state.bind(local_player)
+	)
+
+	_run_case(
+		"a purchase propagates end to end: existing buildings, future buildings, tech tree gating",
+		_test_purchase_propagates_end_to_end.bind(local_player)
 	)
 
 	players.reset_for_match()
@@ -269,4 +276,53 @@ func _test_player_purchase_state(token: int, local_player: PlayerData) -> int:
 	_expect(local_player.has_purchased_upgrade(&"ATBarracks"), "grant_upgrade must persist as player-owned state")
 	_expect(local_player.purchased_upgrade_ids().has(&"ATBarracks"), "purchased_upgrade_ids must list granted upgrades")
 	_expect(not local_player.has_purchased_upgrade(&"ATSmWindtrap"), "purchases must not leak across building types")
+	return token
+
+
+## docs/mechanics/production.md section 5: exercises the full purchase path
+## with real Building instances and real Rules data instead of stand-ins --
+## grant_upgrade + apply_to_existing_buildings must reach a building already
+## on the map, Building._sync_purchased_upgrade() must reach one built
+## afterwards, and TechnologyTree must then treat an
+## upgraded_primary_required entry as unlocked (ATRocketTurret requires an
+## upgraded ATConYard plus any house's Barracks, see
+## assets/converted/rules/buildings/ATRocketTurret.tres). Uses ATConYard
+## (not ATBarracks, already purchased by the previous case on this same
+## shared local_player) to stay independent of case order.
+func _test_purchase_propagates_end_to_end(token: int, local_player: PlayerData) -> int:
+	var rules = root.get_node("Rules")
+
+	var existing_con_yard := BuildingScript.new()
+	existing_con_yard.config_id = &"ATConYard"
+	existing_con_yard.owner_player_id = local_player.player_id
+	root.add_child(existing_con_yard)
+	_expect(existing_con_yard.upgrade_level == 0, "a building must start unupgraded before any purchase")
+
+	_expect(not local_player.has_purchased_upgrade(&"ATConYard"), "ATConYard must not be pre-purchased on a fresh player")
+	local_player.grant_upgrade(&"ATConYard")
+	UpgradeEffectsScript.apply_to_existing_buildings(get_nodes_in_group("buildings"), local_player.player_id, &"ATConYard")
+	_expect(existing_con_yard.upgrade_level == 1, "apply_to_existing_buildings must reach a building already on the map")
+
+	var later_con_yard := BuildingScript.new()
+	later_con_yard.config_id = &"ATConYard"
+	later_con_yard.owner_player_id = local_player.player_id
+	root.add_child(later_con_yard)
+	_expect(later_con_yard.upgrade_level == 1, "Building._sync_purchased_upgrade must pick up a purchase on placement")
+
+	var secondary_barracks := BuildingScript.new()
+	secondary_barracks.config_id = &"ATBarracks"
+	secondary_barracks.owner_player_id = local_player.player_id
+	root.add_child(secondary_barracks)
+
+	var tree := TechnologyTreeScript.new()
+	var turret_config: Resource = rules.building(&"ATRocketTurret")
+	var owned: Array[Node] = [existing_con_yard, later_con_yard, secondary_barracks]
+	_expect(
+		tree.is_available(turret_config, local_player, owned),
+		"an upgraded_primary_required entry must unlock once the primary building's purchase has propagated"
+	)
+
+	existing_con_yard.free()
+	later_con_yard.free()
+	secondary_barracks.free()
 	return token

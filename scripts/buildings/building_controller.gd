@@ -20,6 +20,11 @@ const WALL_BUILDING_GROUP := "Wall"
 const DOUBLE_CLICK_THRESHOLD_MS := 350
 
 var camera: Camera3D
+## docs/mechanics/production.md section 5 "map tech level": extension point
+## for a future map/mission tech-level cap (see TechnologyTree.UNLIMITED_
+## TECH_LEVEL for why it defaults to unlimited -- no map data source exists
+## yet to set this from).
+var max_tech_level: int = TechnologyTreeScript.UNLIMITED_TECH_LEVEL
 
 var _building_configs: Dictionary = {}
 var _building_ids: Array[StringName] = []
@@ -720,7 +725,7 @@ func _is_building_available(building_id: StringName) -> bool:
 		return false
 	var buildings: Array[Node] = []
 	buildings.assign(get_tree().get_nodes_in_group("buildings"))
-	return _technology_tree.is_available(config, player, buildings)
+	return _technology_tree.is_available(config, player, buildings, max_tech_level)
 
 
 func _refresh_building_option_states() -> void:

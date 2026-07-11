@@ -267,6 +267,20 @@ func _test_technology_tree_building_requirements() -> bool:
 	primary.upgrade_level = 1
 	_expect(tree.is_available(config, player, buildings), "an upgraded matching building must pass")
 
+	config = _config(&"building", &"Atreides", [&"ConYard"], [&"Windtrap"], false, 4)
+	_expect(
+		tree.is_available(config, player, buildings),
+		"max_tech_level defaulting to unlimited must not gate an entry"
+	)
+	_expect(
+		not tree.is_available(config, player, buildings, 3),
+		"a map tech level below the entry's tech_level must reject it"
+	)
+	_expect(
+		tree.is_available(config, player, buildings, 4),
+		"a map tech level at or above the entry's tech_level must accept it"
+	)
+
 	primary.free()
 	secondary.free()
 	enemy_primary.free()
@@ -296,13 +310,15 @@ func _config(
 		house: StringName = &"",
 		primary: Array = [],
 		secondary: Array = [],
-		upgraded_primary_required := false
+		upgraded_primary_required := false,
+		tech_level := 0
 ):
 	var config = RuleEntityConfigScript.new()
 	config.entity_type = entity_type
 	config.fields = {
 		"house": String(house),
 		"upgraded_primary_required": upgraded_primary_required,
+		"tech_level": tech_level,
 	}
 	if entity_type == &"building":
 		config.lists = {

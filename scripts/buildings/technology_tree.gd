@@ -6,11 +6,26 @@ const BUILDING_SECONDARY_REQUIREMENTS := &"requires_secondary"
 const UNIT_PRIMARY_REQUIREMENTS := &"primary_buildings"
 const UNIT_SECONDARY_REQUIREMENTS := &"secondary_buildings"
 
+## docs/mechanics/production.md section 5 "map tech level": campaign maps are
+## supposed to cap accessible tree depth. Checked for a real source
+## (Rules.txt [General], MAPINFO.INI, CAMPAIGN.TXT/MISSIONS.TXT, and
+## BakedMapData's exported fields) and none exists yet -- the project ships
+## one skirmish map and no campaign/mission data. UNLIMITED_TECH_LEVEL keeps
+## is_available() a no-op filter until that data source shows up.
+const UNLIMITED_TECH_LEVEL := -1
 
-func is_available(config: Resource, player, buildings: Array[Node]) -> bool:
+
+func is_available(
+		config: Resource,
+		player,
+		buildings: Array[Node],
+		max_tech_level: int = UNLIMITED_TECH_LEVEL
+) -> bool:
 	if config == null or player == null:
 		return false
 	if not _belongs_to_player_house(config, player):
+		return false
+	if max_tech_level != UNLIMITED_TECH_LEVEL and int(config.field(&"tech_level", 0)) > max_tech_level:
 		return false
 
 	var owned_buildings := _owned_buildings(buildings, player.player_id)
