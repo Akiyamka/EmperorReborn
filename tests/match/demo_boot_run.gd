@@ -142,4 +142,20 @@ func _test_upgrade_availability_polls() -> void:
 		"ATBarracks upgrade must become visible once a Barracks is placed, without any manual refresh call"
 	)
 
+	# Once purchased, the slot should disappear rather than linger with an
+	# "OWNED" label -- there is nothing left to do with a finished
+	# global-type upgrade.
+	var players = get_root().get_node_or_null("/root/Players")
+	var player = players.player(1)
+	player.grant_upgrade(&"ATBarracks")
+
+	for i in 5:
+		await process_frame
+
+	var slot_purchased = side_panel._upgrade_slot(&"ATBarracks")
+	_expect(
+		slot_purchased != null and not slot_purchased.visible,
+		"a purchased upgrade's slot must be hidden, not left visible with an OWNED label"
+	)
+
 	match_instance.queue_free()
