@@ -46,3 +46,7 @@ func bullet(entity_id: StringName) -> Resource:
 
 func warhead(entity_id: StringName) -> Resource:
 	return catalog.warhead(entity_id)
+
+
+func general_rules() -> Resource:
+	return catalog.general_rules()

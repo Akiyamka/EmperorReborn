@@ -15,6 +15,9 @@ const CELL_SURFACE_OFFSET := 0.06
 const CELL_EMISSION_ENERGY := 1.8
 const INVALID_ANCHOR := Vector2i(-999999, -999999)
 
+const UnitPushAsideScript := preload("res://scripts/buildings/unit_push_aside.gd")
+const BuildRadiusScript := preload("res://scripts/buildings/build_radius.gd")
+
 var _camera: Camera3D
 var _navigation_grid
 var _buildings_root: Node3D
@@ -23,6 +26,8 @@ var _building_preview_scene: PackedScene
 var _cant_build_preview_scene: PackedScene
 var _skirt_preview_scene: PackedScene
 var _existing_building_occupy_rows: Callable
+var _existing_building_is_wall: Callable
+var _build_radius_provider: Callable
 
 var _building_id: StringName = &""
 var _display_name := ""
@@ -30,6 +35,8 @@ var _occupy_rows: Array[String] = []
 var _anchor_cell := INVALID_ANCHOR
 var _has_anchor := false
 var _can_build := false
+var _is_wall_candidate := false
+var _skip_build_radius_check := false
 
 
 func setup(
@@ -40,7 +47,9 @@ func setup(
 		building_preview_scene: PackedScene,
 		cant_build_preview_scene: PackedScene,
 		skirt_preview_scene: PackedScene,
-		existing_building_occupy_rows: Callable
+		existing_building_occupy_rows: Callable,
+		existing_building_is_wall: Callable = Callable(),
+		build_radius_provider: Callable = Callable()
 	) -> void:
 	_camera = placement_camera
 	_navigation_grid = navigation_grid
@@ -50,10 +59,22 @@ func setup(
 	_cant_build_preview_scene = cant_build_preview_scene
 	_skirt_preview_scene = skirt_preview_scene
 	_existing_building_occupy_rows = existing_building_occupy_rows
+	_existing_building_is_wall = existing_building_is_wall
+	_build_radius_provider = build_radius_provider
 	name = "BuildingPlacementPreview"
 
 
-func begin(building_id: StringName, display_name: String, occupy_rows: Array[String]) -> bool:
+## skip_build_radius_check exists for the future MCV deploy flow (docs/mechanics/production.md
+## section 1 "MCV"): deploying an MCV into a Construction Yard is the one case that must bypass
+## the build radius check. Every other call site (the normal building/wall order flow) leaves it
+## at the default and is subject to the check.
+func begin(
+		building_id: StringName,
+		display_name: String,
+		occupy_rows: Array[String],
+		is_wall: bool = false,
+		skip_build_radius_check: bool = false
+	) -> bool:
 	if building_id == &"" or not _has_occupy_cells(occupy_rows):
 		return false
 
@@ -61,6 +82,8 @@ func begin(building_id: StringName, display_name: String, occupy_rows: Array[Str
 	_building_id = building_id
 	_display_name = display_name
 	_occupy_rows = occupy_rows.duplicate()
+	_is_wall_candidate = is_wall
+	_skip_build_radius_check = skip_build_radius_check
 	visible = false
 	return true
 
@@ -115,6 +138,7 @@ func try_place_at_hover_cell(
 	building.set_meta(&"placement_anchor_cell", _anchor_cell)
 	if owner_player_id != null and building.has_method("set_owner_player_id"):
 		building.call("set_owner_player_id", owner_player_id)
+	_push_units_out_of_footprint(_anchor_cell)
 	_play_placed_building_animation(building)
 	_clear()
 	return PlaceResult.PLACED
@@ -134,6 +158,12 @@ func display_name() -> String:
 	return _display_name
 
 
+## Public so callers that need a raw grid cell from a click without an active
+## placement (e.g. the wall line A/B picker) can reuse the same raycast path.
+func hover_cell_from_pointer(pointer_position: Vector2):
+	return _hover_cell_from_pointer(pointer_position)
+
+
 func _hover_cell_from_pointer(pointer_position: Vector2):
 	if _navigation_grid == null or not _navigation_grid.is_loaded():
 		return null
@@ -141,6 +171,24 @@ func _hover_cell_from_pointer(pointer_position: Vector2):
 	if hit.is_empty():
 		return null
 	return _navigation_grid.world_to_grid(hit["position"])
+
+
+func _push_units_out_of_footprint(anchor_cell: Vector2i) -> void:
+	if not is_inside_tree() or _navigation_grid == null:
+		return
+	var units := get_tree().get_nodes_in_group("units")
+	if units.is_empty():
+		return
+
+	var footprint_size := _nav_size()
+	var start: Vector3 = _navigation_grid.grid_to_world(anchor_cell, false)
+	var end: Vector3 = _navigation_grid.grid_to_world(anchor_cell + footprint_size, false)
+	var cell_step: Vector3 = (
+		_navigation_grid.grid_to_world(Vector2i(1, 0), false)
+		- _navigation_grid.grid_to_world(Vector2i.ZERO, false)
+	)
+	var margin := maxf(cell_step.length(), 0.1)
+	UnitPushAsideScript.push_units_out_of_footprint(units, start, end, margin)
 
 
 func _update_for_hover_cell(hover_cell: Vector2i) -> void:
@@ -193,15 +241,79 @@ func _rebuild_preview(anchor_cell: Vector2i) -> void:
 				+ Vector3.UP * CELL_SURFACE_OFFSET
 			)
 
-	_can_build = has_cells and can_build
+	_can_build = has_cells and can_build and (_skip_build_radius_check or _is_within_build_radius(anchor_cell))
 	if has_cells:
 		_add_arrow(anchor_cell)
+
+
+func _is_within_build_radius(anchor_cell: Vector2i) -> bool:
+	if _build_radius_provider.is_null():
+		return true
+	var radius_tiles := int(_build_radius_provider.call())
+	if radius_tiles <= 0:
+		return true
+	var candidate_cells := _footprint_nav_cells(anchor_cell)
+	var existing_footprints := _existing_building_footprints()
+	return BuildRadiusScript.is_within_radius(
+		candidate_cells, _is_wall_candidate, existing_footprints, radius_tiles
+	)
+
+
+func _footprint_nav_cells(anchor_cell: Vector2i) -> Array[Vector2i]:
+	return _occupy_rows_nav_cells(anchor_cell, _occupy_rows)
+
+
+func _existing_building_footprints() -> Array:
+	var footprints: Array = []
+	if _navigation_grid == null or not _navigation_grid.is_loaded():
+		return footprints
+
+	var buildings: Array = []
+	if is_inside_tree():
+		buildings = get_tree().get_nodes_in_group("buildings")
+	elif _buildings_root != null:
+		buildings = _buildings_root.get_children()
+
+	for node in buildings:
+		var building := node as Node3D
+		if building == null:
+			continue
+		var occupy_rows: Array[String] = []
+		if not _existing_building_occupy_rows.is_null():
+			occupy_rows.assign(_existing_building_occupy_rows.call(building))
+		if occupy_rows.is_empty():
+			continue
+		var anchor_cell := _building_anchor(building, occupy_rows)
+		var is_wall := false
+		if not _existing_building_is_wall.is_null():
+			is_wall = bool(_existing_building_is_wall.call(building))
+		footprints.append({
+			"cells": _occupy_rows_nav_cells(anchor_cell, occupy_rows),
+			"is_wall": is_wall,
+		})
+	return footprints
+
+
+func _occupy_rows_nav_cells(anchor_cell: Vector2i, occupy_rows: Array[String]) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for row_index in occupy_rows.size():
+		var row := occupy_rows[row_index]
+		for column_index in row.length():
+			if _is_empty_occupy_marker(row.substr(column_index, 1)):
+				continue
+			var occupy_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
+			for y in NAV_CELLS_PER_OCCUPY_CELL:
+				for x in NAV_CELLS_PER_OCCUPY_CELL:
+					cells.append(occupy_cell + Vector2i(x, y))
+	return cells
 
 
 func _clear() -> void:
 	_building_id = &""
 	_display_name = ""
 	_occupy_rows.clear()
+	_is_wall_candidate = false
+	_skip_build_radius_check = false
 	_anchor_cell = INVALID_ANCHOR
 	_has_anchor = false
 	_can_build = false
@@ -485,6 +597,7 @@ func _snap_to_ground(point: Vector3) -> Vector3:
 
 
 func _play_placed_building_animation(building: Node3D) -> void:
+	_set_building_invulnerable(building, true)
 	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
 	if player != null and player.has_animation(&"build"):
 		var build_animation := player.get_animation(&"build")
@@ -493,12 +606,21 @@ func _play_placed_building_animation(building: Node3D) -> void:
 		player.animation_finished.connect(_on_placed_building_animation_finished.bind(building), CONNECT_ONE_SHOT)
 		_play_building_state(building, &"build")
 		return
+	# No build clip means the building pops in instantly - there is no vulnerable
+	# transition window to protect, so invulnerability is skipped rather than timed.
 	_play_building_state(building, &"idle")
+	_set_building_invulnerable(building, false)
 
 
 func _on_placed_building_animation_finished(_animation_name: StringName, building: Node3D) -> void:
 	if is_instance_valid(building):
 		_play_building_state(building, &"idle")
+		_set_building_invulnerable(building, false)
+
+
+func _set_building_invulnerable(building: Node3D, value: bool) -> void:
+	if building.has_method("set_invulnerable"):
+		building.call("set_invulnerable", value)
 
 
 func _play_building_state(building: Node3D, state: StringName) -> void:

@@ -5,11 +5,17 @@ signal status_changed(status: String)
 signal building_option_state_changed(option_state: BuildingOptionState)
 signal resources_changed(credits: int, energy: int)
 signal sell_mode_changed(active: bool)
+signal wall_mode_changed(active: bool)
 
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
+const WallChainScript := preload("res://scripts/buildings/wall_chain.gd")
+const WallLineScript := preload("res://scripts/buildings/wall_line.gd")
+
+const DEFAULT_BUILD_RADIUS_TILES := 6
+const WALL_BUILDING_GROUP := "Wall"
 
 var camera: Camera3D
 
@@ -22,6 +28,9 @@ var _building_placement: BuildingPlacement = BuildingPlacementScript.new()
 var _local_player_resource: PlayerData
 var _sell_mode := false
 var _selling_building: Node3D
+var _wall_line_mode := false
+var _wall_line_start_cell = null
+var _wall_chain: WallChain
 
 
 func setup(
@@ -47,7 +56,9 @@ func setup(
 		building_preview_scene,
 		cant_build_preview_scene,
 		skirt_preview_scene,
-		Callable(self, "_occupy_rows_for_existing_building")
+		Callable(self, "_occupy_rows_for_existing_building"),
+		Callable(self, "_is_wall_building"),
+		Callable(self, "_build_radius_tiles")
 	)
 	if not _building_queue.order_ready.is_connected(_on_building_queue_ready):
 		_building_queue.order_ready.connect(_on_building_queue_ready)
@@ -57,6 +68,7 @@ func setup(
 	_refresh_player_resources()
 	_refresh_building_option_states()
 	sell_mode_changed.emit(_sell_mode)
+	wall_mode_changed.emit(_wall_line_mode)
 
 
 func process(delta: float) -> void:
@@ -82,6 +94,23 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 			return true
 		return false
 
+	if _wall_line_mode:
+		if not (event is InputEventMouseButton and event.pressed):
+			return false
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			_on_wall_line_click(event.position)
+			return true
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			_set_wall_line_mode(false)
+			return true
+		return false
+
+	if _wall_chain != null:
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+			_cancel_building_order()
+			return true
+		return false
+
 	if not _building_placement.is_active():
 		return false
 	if not (event is InputEventMouseButton and event.pressed):
@@ -101,6 +130,9 @@ func handle_command(command: StringName) -> bool:
 	match command:
 		&"Sell":
 			_set_sell_mode(not _sell_mode)
+			return true
+		&"BuildWall":
+			_set_wall_line_mode(not _wall_line_mode)
 			return true
 		&"Repair":
 			status_changed.emit("Command: Repair (not implemented)")
@@ -125,10 +157,38 @@ func _set_sell_mode(active: bool) -> void:
 	_sell_mode = active
 	sell_mode_changed.emit(active)
 	if active:
+		_set_wall_line_mode(false)
 		_cancel_building_placement()
 		status_changed.emit("Sell mode: select one of your buildings")
 	else:
 		status_changed.emit("Sell mode canceled")
+
+
+func _set_wall_line_mode(active: bool) -> void:
+	_wall_line_mode = active
+	_wall_line_start_cell = null
+	wall_mode_changed.emit(active)
+	if active:
+		_set_sell_mode(false)
+		_cancel_building_placement()
+		status_changed.emit("Wall mode: click the line start, then the line end")
+	else:
+		status_changed.emit("Wall mode canceled")
+
+
+func _on_wall_line_click(screen_position: Vector2) -> void:
+	var cell = _building_placement.hover_cell_from_pointer(screen_position)
+	if cell == null:
+		status_changed.emit("Wall placement needs terrain")
+		return
+	if _wall_line_start_cell == null:
+		_wall_line_start_cell = cell
+		status_changed.emit("Wall start set; click the line end")
+		return
+
+	var start_cell: Vector2i = _wall_line_start_cell
+	_set_wall_line_mode(false)
+	_start_wall_chain(start_cell, cell)
 
 
 func _try_sell_building(screen_position: Vector2) -> void:
@@ -331,6 +391,9 @@ func _process_building_order(delta: float) -> void:
 
 
 func _on_building_queue_ready(order: BuildingOrder) -> void:
+	if _wall_chain != null:
+		_place_wall_chain_segment()
+		return
 	status_changed.emit("%s ready" % order.display_name)
 	_refresh_building_option_states()
 
@@ -347,6 +410,10 @@ func _cancel_building_order() -> void:
 		player.add_money(refunded)
 
 	_building_placement.cancel()
+	# The wall chain only ever auto-orders its next cell once the current one
+	# succeeds (docs/mechanics/production.md section 2 "walls"), so cancelling
+	# the in-flight cell's order is enough to stop the whole chain.
+	_wall_chain = null
 	status_changed.emit("%s canceled; refunded %d" % [display_name, refunded])
 	_refresh_building_option_states()
 
@@ -358,13 +425,102 @@ func _begin_ready_building_placement() -> void:
 
 	var config := _building_config(order.building_id)
 	var occupy_rows := _building_occupy_rows(config)
-	if not _building_placement.begin(order.building_id, order.display_name, occupy_rows):
+	if not _building_placement.begin(order.building_id, order.display_name, occupy_rows, _is_wall_building_id(order.building_id)):
 		status_changed.emit("%s has no occupy_rows" % order.display_name)
 		return
 
 	_building_placement.process(get_viewport().get_mouse_position())
 	status_changed.emit("%s placement ready" % order.display_name)
 	_refresh_building_option_states()
+
+
+func _start_wall_chain(from_nav_cell: Vector2i, to_nav_cell: Vector2i, building_id: StringName = &"ATWall") -> void:
+	if _building_queue.has_order() or _wall_chain != null:
+		status_changed.emit("Building queue is busy")
+		return
+
+	var config := _building_config(building_id)
+	if config == null:
+		status_changed.emit("Wall rules are not loaded")
+		return
+
+	var cell_span := BuildingPlacementScript.NAV_CELLS_PER_OCCUPY_CELL
+	var from_occupy_cell := Vector2i(
+		int(floor(float(from_nav_cell.x) / float(cell_span))),
+		int(floor(float(from_nav_cell.y) / float(cell_span)))
+	)
+	var to_occupy_cell := Vector2i(
+		int(floor(float(to_nav_cell.x) / float(cell_span))),
+		int(floor(float(to_nav_cell.y) / float(cell_span)))
+	)
+	var occupy_cells := WallLineScript.occupy_cells_between(from_occupy_cell, to_occupy_cell)
+	var nav_cells: Array[Vector2i] = []
+	for occupy_cell in occupy_cells:
+		nav_cells.append(occupy_cell * cell_span)
+
+	var players = _players()
+	var owner_player_id = players.local_player_id if players != null else null
+	_wall_chain = WallChainScript.new(
+		building_id,
+		_building_display_name(building_id),
+		maxi(int(config.field(&"cost", 0)), 0),
+		maxf(float(config.field(&"build_time", 0.0)), 1.0),
+		nav_cells,
+		owner_player_id
+	)
+	_advance_wall_chain()
+
+
+func _advance_wall_chain() -> void:
+	if _wall_chain == null:
+		return
+	if not _building_queue.start(_wall_chain.building_id, _wall_chain.display_name, _wall_chain.cost, _wall_chain.build_time_ticks):
+		status_changed.emit("%s segment could not be queued" % _wall_chain.display_name)
+		_wall_chain = null
+		return
+	status_changed.emit(
+		"%s segment %d/%d ordered" % [_wall_chain.display_name, _wall_chain.segment_index(), _wall_chain.segment_count()]
+	)
+	_refresh_building_option_states()
+
+
+func _place_wall_chain_segment() -> void:
+	var chain := _wall_chain
+	_building_queue.take_ready()
+
+	var config := _building_config(chain.building_id)
+	var occupy_rows := _building_occupy_rows(config)
+	if not _building_placement.begin(chain.building_id, chain.display_name, occupy_rows, true):
+		status_changed.emit("%s has no occupy_rows" % chain.display_name)
+		_wall_chain = null
+		_refresh_building_option_states()
+		return
+
+	var scene_path := _building_scene_path(chain.building_id)
+	if not ResourceLoader.exists(scene_path):
+		status_changed.emit("%s placement valid; missing scene %s" % [chain.display_name, scene_path])
+		_building_placement.cancel()
+		_wall_chain = null
+		_refresh_building_option_states()
+		return
+
+	var scene := load(scene_path) as PackedScene
+	var placed := _building_placement.try_place_at_hover_cell(chain.current_cell(), scene, chain.owner_player_id)
+	if placed != BuildingPlacementScript.PlaceResult.PLACED:
+		status_changed.emit("%s segment could not be placed; wall chain stopped" % chain.display_name)
+		_wall_chain = null
+		_refresh_building_option_states()
+		return
+
+	if chain.advance():
+		status_changed.emit(
+			"%s segment %d/%d placed" % [chain.display_name, chain.segment_index() - 1, chain.segment_count()]
+		)
+		_advance_wall_chain()
+	else:
+		status_changed.emit("%s wall complete" % chain.display_name)
+		_wall_chain = null
+		_refresh_building_option_states()
 
 
 func _try_place_ready_building(screen_position: Vector2) -> void:
@@ -437,6 +593,31 @@ func _occupy_rows_for_existing_building(building: Node3D) -> Array[String]:
 	if config == null:
 		config = _building_config(StringName(String(building.get("config_id"))))
 	return _building_occupy_rows(config)
+
+
+func _is_wall_building(building: Node3D) -> bool:
+	var config = building.get("building_config") as Resource
+	if config == null:
+		config = _building_config(StringName(String(building.get("config_id"))))
+	return _is_wall_config(config)
+
+
+func _is_wall_building_id(building_id: StringName) -> bool:
+	return _is_wall_config(_building_config(building_id))
+
+
+func _is_wall_config(config: Resource) -> bool:
+	return config != null and String(config.field(&"building_group", "")) == WALL_BUILDING_GROUP
+
+
+func _build_radius_tiles() -> int:
+	var rules := get_node_or_null("/root/Rules")
+	if rules == null or not rules.has_method("general_rules"):
+		return DEFAULT_BUILD_RADIUS_TILES
+	var general_config: Resource = rules.call("general_rules")
+	if general_config == null:
+		return DEFAULT_BUILD_RADIUS_TILES
+	return int(general_config.field(&"max_building_placement_tile_dist", DEFAULT_BUILD_RADIUS_TILES))
 
 
 func _building_config(building_id: StringName) -> Resource:

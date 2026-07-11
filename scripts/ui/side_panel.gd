@@ -43,6 +43,7 @@ var _building_option_states: Dictionary = {}
 var _credits_amount := 0
 var _energy_amount := 0
 var _sell_mode_active := false
+var _wall_mode_active := false
 
 
 func _ready() -> void:
@@ -62,6 +63,7 @@ func _ready() -> void:
 	_set_active_tab(Tab.INFANTRY)
 	_apply_resources()
 	_apply_sell_mode()
+	_apply_wall_mode()
 
 
 ## Fits up to 999 999 999, grouped by thousands.
@@ -83,10 +85,22 @@ func set_sell_mode(active: bool) -> void:
 		_apply_sell_mode()
 
 
+func set_wall_mode(active: bool) -> void:
+	_wall_mode_active = active
+	if is_node_ready():
+		_apply_wall_mode()
+
+
 func _apply_sell_mode() -> void:
 	var sell_button := _commands.get_node_or_null("Sell") as Button
 	if sell_button != null:
 		sell_button.button_pressed = _sell_mode_active
+
+
+func _apply_wall_mode() -> void:
+	var wall_button := _commands.get_node_or_null("BuildWall") as Button
+	if wall_button != null:
+		wall_button.button_pressed = _wall_mode_active
 
 
 func configure_building_options(building_ids: Array[StringName]) -> void:

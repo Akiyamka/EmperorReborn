@@ -64,6 +64,7 @@ func _setup_building_controller() -> void:
 	_building_controller.status_changed.connect(_update_selection_label)
 	_building_controller.resources_changed.connect(_on_building_resources_changed)
 	_building_controller.sell_mode_changed.connect(side_panel.set_sell_mode)
+	_building_controller.wall_mode_changed.connect(side_panel.set_wall_mode)
 	_building_controller.building_option_state_changed.connect(side_panel.set_building_option_state)
 	_building_controller.setup(
 		terrain,

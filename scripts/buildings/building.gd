@@ -29,6 +29,7 @@ var health := 0.0:
 		_refresh_generated_energy()
 
 var current_state := &""
+var invulnerable := false
 var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
 var _generated_energy := 0
@@ -161,8 +162,12 @@ func setup(building_id: StringName) -> void:
 	health = max_health
 
 
+func set_invulnerable(value: bool) -> void:
+	invulnerable = value
+
+
 func take_damage(amount: float) -> void:
-	if amount <= 0.0 or health <= 0.0:
+	if invulnerable or amount <= 0.0 or health <= 0.0:
 		return
 
 	health -= amount

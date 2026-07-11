@@ -70,6 +70,10 @@ func warhead(entity_id: StringName) -> Resource:
 	return get_entity(&"warhead", entity_id)
 
 
+func general_rules() -> Resource:
+	return get_entity(&"general", &"general")
+
+
 func _scan_dir(path: String) -> void:
 	var dir := DirAccess.open(path)
 	if dir == null:
