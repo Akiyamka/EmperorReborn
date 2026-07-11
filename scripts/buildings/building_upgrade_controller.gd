@@ -443,7 +443,7 @@ func _any_refinery_can_add_dock() -> bool:
 
 func _is_upgrade_available(building_id: StringName) -> bool:
 	var config: Resource = _building_configs.get(building_id)
-	if config == null or float(config.field(&"upgrade_cost", 0)) <= 0.0:
+	if config == null or not _has_upgrade_definition(config):
 		return false
 	var player := _local_player()
 	if player == null or player.has_purchased_upgrade(building_id):
@@ -474,8 +474,17 @@ func _load_building_configs(building_ids: Array[StringName]) -> void:
 		if config == null:
 			continue
 		_building_configs[building_id] = config
-		if float(config.field(&"upgrade_cost", 0)) > 0.0:
+		if _has_upgrade_definition(config):
 			_upgrade_option_ids.append(building_id)
+
+
+## Rules.txt only defines an upgrade for a building when both fields are set
+## together (UpgradeCost/UpgradeTechLevel; verified across every converted
+## building config -- no entry has one without the other), so requiring both
+## rather than just upgrade_cost catches a config that got the field
+## partially stripped instead of silently treating it as upgradeable.
+func _has_upgrade_definition(config: Resource) -> bool:
+	return float(config.field(&"upgrade_cost", 0)) > 0.0 and int(config.field(&"upgrade_tech_level", 0)) > 0
 
 
 func _refresh_upgrade_option_states() -> void:
