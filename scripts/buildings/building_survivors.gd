@@ -21,13 +21,11 @@ const BASIC_INFANTRY_BY_HOUSE := {
 	&"Ordos": &"ORAATrooper",
 }
 
-## [Rules] in docs/mechanics/production.md §2.1: the survivor count is
-## parameterized in the original Rules.txt, but no matching field turned up
-## during verification (grepped for survivor/escapee/refugee-style keys).
-## Using a design default until the real field is identified; if it is found
-## later, read it here instead, e.g.
-## `rules.general_rules().field(&"building_survivor_count", DEFAULT_SURVIVOR_COUNT)`.
-const DEFAULT_SURVIVOR_COUNT := 2
+## [Rules] docs/mechanics/production.md §2.1: per-building NumInfantryWhenGone
+## in Rules.txt (e.g. ATConYard/ATBarracks = 3, ATSmWindtrap = 1). Used as
+## "num_infantry_when_gone" on building_config; this fallback only applies
+## when a building has no config or the field is absent.
+const DEFAULT_SURVIVOR_COUNT := 1
 
 const SURVIVOR_HEALTH_FRACTION := 0.7
 const SURVIVOR_INVULNERABILITY_SECONDS := 1.0
@@ -50,8 +48,14 @@ static func spawn_for_destroyed_building(building: Building) -> void:
 
 	var half_extents := _footprint_half_extents(building)
 	var origin := building.global_position
-	for i in DEFAULT_SURVIVOR_COUNT:
+	for i in _survivor_count(building):
 		_spawn_survivor(parent, unit_id, building.owner_player_id, origin, half_extents)
+
+
+static func _survivor_count(building: Building) -> int:
+	if building.building_config == null:
+		return DEFAULT_SURVIVOR_COUNT
+	return maxi(int(building.building_config.field(&"num_infantry_when_gone", DEFAULT_SURVIVOR_COUNT)), 0)
 
 
 static func _spawn_survivor(
