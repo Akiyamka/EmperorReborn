@@ -34,15 +34,19 @@ var _refinery_dock_building_ids: Array[StringName] = []
 
 
 func _enter_tree() -> void:
-	# Children initialize their owner visuals in _ready(), so the roster must
-	# exist before buildings and units enter the scene tree.
+	# Children initialize their owner visuals in _ready(), so the player
+	# roster must exist before buildings and units enter the scene tree.
+	# The Rules autoload's catalog, in contrast, only loads in its own
+	# _ready() -- _enter_tree() fires for the whole tree before any _ready()
+	# does, so a Rules-dependent roster computed here would always read an
+	# empty catalog. That computation is deferred to _ready() below instead.
 	_configure_demo_players()
-	_building_option_ids = _local_player_building_option_ids()
-	_wall_building_ids = _local_player_wall_building_ids()
-	_refinery_dock_building_ids = _local_player_refinery_dock_building_ids()
 
 
 func _ready() -> void:
+	_building_option_ids = _local_player_building_option_ids()
+	_wall_building_ids = _local_player_wall_building_ids()
+	_refinery_dock_building_ids = _local_player_refinery_dock_building_ids()
 	_setup_unit_command_controller()
 	_setup_building_controller()
 	_setup_building_upgrade_controller()

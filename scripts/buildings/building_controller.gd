@@ -713,6 +713,12 @@ func _build_radius_tiles() -> int:
 
 
 func _building_config(building_id: StringName) -> Resource:
+	# Guards against teardown-order signal cascades: a freed building's
+	# _exit_tree() can still trigger _refresh_building_option_states() (via
+	# the energy/resources signal chain) after this controller has left the
+	# tree, at which point absolute-path autoload lookups are invalid.
+	if not is_inside_tree():
+		return null
 	var rules := get_node_or_null("/root/Rules")
 	if rules == null:
 		return null
