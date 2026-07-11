@@ -530,9 +530,8 @@ func _refresh_upgrade_option_states() -> void:
 			continue
 
 		# A purchased global-type upgrade is done, not "ready to place" like a
-		# finished building order -- there is nothing left to do with it, so
-		# the slot just disappears (DISABLED -> hidden in side_panel.gd)
-		# instead of lingering with an "OWNED" label.
+		# finished building order, so the slot just disappears
+		# (DISABLED -> hidden in side_panel.gd).
 		if player != null and player.has_purchased_upgrade(building_id):
 			upgrade_option_state_changed.emit(BuildingOptionStateScript.new(
 				building_id, BuildingOptionStateScript.State.DISABLED, 0.0, "", tooltip
