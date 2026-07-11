@@ -1,3 +1,6 @@
+# IDE configs
+.zed
+
 # Godot local/editor state
 .godot/
 .import/
