@@ -13,9 +13,11 @@ const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.g
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 const WallChainScript := preload("res://scripts/buildings/wall_chain.gd")
 const WallLineScript := preload("res://scripts/buildings/wall_line.gd")
+const DoubleClickTrackerScript := preload("res://scripts/buildings/double_click_tracker.gd")
 
 const DEFAULT_BUILD_RADIUS_TILES := 6
 const WALL_BUILDING_GROUP := "Wall"
+const DOUBLE_CLICK_THRESHOLD_MS := 350
 
 var camera: Camera3D
 
@@ -31,6 +33,7 @@ var _selling_building: Node3D
 var _wall_line_mode := false
 var _wall_line_start_cell = null
 var _wall_chain: WallChain
+var _building_double_click := DoubleClickTrackerScript.new()
 
 
 func setup(
@@ -112,6 +115,9 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 		return false
 
 	if not _building_placement.is_active():
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			if _try_handle_building_double_click(event.position):
+				return true
 		return false
 	if not (event is InputEventMouseButton and event.pressed):
 		return false
@@ -248,6 +254,49 @@ func _building_sale_refund(building: Node3D) -> int:
 		config = _building_config(StringName(String(building.get("config_id"))))
 	var cost := int(config.field(&"cost", 0)) if config != null else 0
 	return maxi(cost / 2, 0)
+
+
+func _try_handle_building_double_click(screen_position: Vector2) -> bool:
+	var hit := _raycast(screen_position, 2)
+	var building := _find_building(hit.get("collider") as Node)
+	if building == null:
+		return false
+
+	var players = _players()
+	if players == null or not building.has_method("is_owned_by") or not building.call("is_owned_by", players.local_player_id):
+		return false
+
+	var now := Time.get_ticks_msec()
+	if not _building_double_click.register_click(building, now, DOUBLE_CLICK_THRESHOLD_MS):
+		return false
+
+	return _designate_primary_building(building, players.local_player_id)
+
+
+func _designate_primary_building(building: Node3D, player_id: int) -> bool:
+	var config = building.get("building_config") as Resource
+	if config == null:
+		config = _building_config(StringName(String(building.get("config_id"))))
+	if config == null or not bool(config.field(&"can_be_primary", false)):
+		return false
+
+	# §1 "primary Construction Yard": designating a Construction Yard makes it
+	# the player's main base (docs/mechanics/production.md section 1).
+	# §3 "primary building" (unit production exit point) is a different task
+	# and is intentionally not wired up here yet -- when it lands, it should
+	# call players.designate_primary_building(building, player_id, <building
+	# type key>) the same way, just with a different group key than
+	# PlayerRoster.MAIN_BASE_GROUP_KEY.
+	if not bool(config.field(&"is_con_yard", false)):
+		return false
+
+	var players = _players()
+	if players == null:
+		return false
+
+	players.set_main_base(player_id, building)
+	status_changed.emit("%s designated as primary Construction Yard (main base)" % String(building.get("config_id")))
+	return true
 
 
 func _find_building(node: Node) -> Node3D:

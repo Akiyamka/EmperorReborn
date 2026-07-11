@@ -3,6 +3,7 @@ extends Node3D
 
 signal owner_changed(player_id: int)
 signal health_changed(health: float, max_health: float)
+signal primary_changed(is_primary: bool)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
@@ -31,6 +32,17 @@ var health := 0.0:
 
 var current_state := &""
 var invulnerable := false
+# §1 "primary Construction Yard" / §3 "primary building": true for the one
+# instance (per player, per building group) a double-click has designated as
+# the exit point for that group's queue. Ownership of which group a building
+# belongs to lives with the caller (PrimaryBuildingRegistry); this flag is
+# just where the resulting state is rendered/queried from.
+var is_primary := false:
+	set(value):
+		if is_primary == value:
+			return
+		is_primary = value
+		primary_changed.emit(is_primary)
 var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
 var _generated_energy := 0
@@ -165,6 +177,10 @@ func setup(building_id: StringName) -> void:
 
 func set_invulnerable(value: bool) -> void:
 	invulnerable = value
+
+
+func set_primary(value: bool) -> void:
+	is_primary = value
 
 
 func take_damage(amount: float) -> void:
