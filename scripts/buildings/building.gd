@@ -5,6 +5,7 @@ signal owner_changed(player_id: int)
 signal health_changed(health: float, max_health: float)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
+const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
@@ -172,6 +173,10 @@ func take_damage(amount: float) -> void:
 
 	health -= amount
 	if health <= 0.0:
+		# §2.1 "Building destruction": no debris/ruins remain, so the footprint
+		# is freed immediately via queue_free() — survivors must be spawned
+		# first, before the building (and its footprint bounds) disappear.
+		BuildingSurvivorsScript.spawn_for_destroyed_building(self)
 		queue_free()
 
 

@@ -26,6 +26,7 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 var unit_config: Resource
 var target_position: Vector3
 var is_selected := false
+var invulnerable := false
 var health := 0.0:
 	set(value):
 		health = clampf(value, 0.0, max_health)
@@ -93,6 +94,26 @@ func setup(unit_id: StringName) -> void:
 	_apply_rules_config()
 	health = max_health
 	shields = max_shields
+
+
+func set_invulnerable(value: bool) -> void:
+	invulnerable = value
+
+
+func grant_temporary_invulnerability(duration: float) -> void:
+	# Mirrors Building.set_invulnerable/take_damage; used e.g. by
+	# BuildingSurvivors for the 1s post-spawn splash immunity from §2.1.
+	invulnerable = true
+	get_tree().create_timer(duration).timeout.connect(_clear_invulnerability)
+
+
+func take_damage(amount: float) -> void:
+	if invulnerable or amount <= 0.0 or health <= 0.0:
+		return
+
+	health -= amount
+	if health <= 0.0:
+		queue_free()
 
 
 func stop_at_current_position() -> void:
@@ -210,6 +231,10 @@ func _players():
 	if not is_inside_tree():
 		return null
 	return get_node_or_null("/root/Players")
+
+
+func _clear_invulnerability() -> void:
+	invulnerable = false
 
 
 func _capture_base_materials() -> void:

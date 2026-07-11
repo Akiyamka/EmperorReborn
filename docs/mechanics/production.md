@@ -99,7 +99,12 @@ Rules for placing a ready building on the map:
   invulnerability** against the splash that finished the building (the rule is
   recorded in section 3 §7.3 together with the `[design]` deviation about selling);
 - the survivor composition is always the same (verified): the basic infantryman
-  of the House that owned the building; the **quantity** is `[Rules]`;
+  of the House that owned the building; the **quantity** is `[Rules]` — no
+  matching field was found in `Rules.txt` during verification.
+  > `[design]` Our implementation defaults to **2 survivors** per destroyed
+  > building (`DEFAULT_SURVIVOR_COUNT` in `scripts/buildings/building_survivors.gd`)
+  > until the real parameter is identified; that constant is the place to wire
+  > it up to `Rules` if it turns up later;
 - survivors spawn with **70% HP** (verified);
 - no debris or ruins remain; footprint cells are freed immediately (verified).
 
