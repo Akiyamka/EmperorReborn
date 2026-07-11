@@ -142,6 +142,8 @@ Rules for placing a ready building on the map:
 - upgrades **are built over time**, like buildings, and have their **own queue —
   one per player** (verified). Thus, there are three queue types: buildings (one
   per player), upgrades (one per player), and units (one per building type).
+  Construction Yard upgrade timing is an original-data exception documented in
+  [`docs/quirks.md`](../quirks.md#construction-yard-upgrades-have-no-build-time-field).
 
 ---
 

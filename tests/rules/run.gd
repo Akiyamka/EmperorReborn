@@ -21,6 +21,7 @@ func _initialize() -> void:
 		"wall_building_ids_for_house and refinery_dock_building_ids_for_house surface what the roster excludes",
 		_test_wall_and_dock_ids
 	)
+	_run_case("upgrade roster includes an upgradeable Construction Yard", _test_upgrade_roster)
 
 	if _failures > 0:
 		printerr("Rules tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -141,6 +142,23 @@ func _test_wall_and_dock_ids() -> bool:
 		not catalog.wall_building_ids_for_house(&"Ordos").has(&"ATWall"),
 		"wall_building_ids_for_house must not leak another house's wall across"
 	)
+	return true
+
+
+func _test_upgrade_roster() -> bool:
+	var upgrade_fields := {"upgrade_cost": 600, "upgrade_tech_level": 4}
+	var catalog = _catalog_with([
+		_building(&"ATConYard", &"Atreides", upgrade_fields.merged({"is_con_yard": true}), [&"ConYard"]),
+		_building(&"ATBarracks", &"Atreides", upgrade_fields, [&"ATConYard"], [&"Barracks"]),
+		_building(&"ATSmWindtrap", &"Atreides", {}, [&"ATConYard"]),
+		_building(&"ORConYard", &"Ordos", upgrade_fields.merged({"is_con_yard": true}), [&"ConYard"]),
+	])
+
+	var upgrades: Array[StringName] = catalog.upgrade_building_ids_for_house(&"Atreides")
+	_expect(upgrades.has(&"ATConYard"), "an upgradeable Construction Yard must be available to the upgrade panel")
+	_expect(upgrades.has(&"ATBarracks"), "an upgradeable constructible building must remain included")
+	_expect(not upgrades.has(&"ATSmWindtrap"), "a building without upgrade fields must be excluded")
+	_expect(not upgrades.has(&"ORConYard"), "another house's Construction Yard must be excluded")
 	return true
 
 

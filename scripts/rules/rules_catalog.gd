@@ -128,6 +128,28 @@ func refinery_dock_building_ids_for_house(
 	return _building_ids_for_group(house_id, subhouse_ids, _REFINERY_DOCK_BUILDING_GROUP)
 
 
+## Upgrades are not the same roster as constructible buildings: Construction
+## Yards are deployed rather than built, but their global upgrade must still be
+## purchasable from the upgrade panel.
+func upgrade_building_ids_for_house(
+		house_id: StringName, subhouse_ids: Array[StringName] = []
+) -> Array[StringName]:
+	var result: Array[StringName] = []
+	var bucket: Dictionary = _by_type.get("building", {})
+	var keys := bucket.keys()
+	keys.sort()
+	for id_key in keys:
+		var config: Resource = bucket[id_key]
+		if not _matches_house(config, house_id, subhouse_ids):
+			continue
+		if float(config.field(&"upgrade_cost", 0)) <= 0.0:
+			continue
+		if int(config.field(&"upgrade_tech_level", 0)) <= 0:
+			continue
+		result.append(StringName(id_key))
+	return result
+
+
 func _building_ids_for_group(
 		house_id: StringName, subhouse_ids: Array[StringName], building_group: StringName
 ) -> Array[StringName]:

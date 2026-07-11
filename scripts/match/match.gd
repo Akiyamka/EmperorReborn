@@ -25,12 +25,11 @@ var _unit_command_controller: UnitCommandController
 ## Whole roster of the local player's house, gated by the technology tree
 ## rather than a hardcoded demo list -- see docs/mechanics/production.md.
 var _building_option_ids: Array[StringName] = []
-## Wall/RefineryDock ids mixed into the roster passed to BuildingController/
-## BuildingUpgradeController respectively, so both appear as ordinary grid
-## slots (docs/mechanics/production.md sections 2 and 4) even though they
-## still route through their own interactive map-picking flow.
+## Walls are mixed into the constructible roster; upgrades use their own rules
+## roster because it also includes deployed Construction Yards and refinery
+## docks. Both special building types still route through map-picking flows.
 var _wall_building_ids: Array[StringName] = []
-var _refinery_dock_building_ids: Array[StringName] = []
+var _upgrade_option_ids: Array[StringName] = []
 
 
 func _enter_tree() -> void:
@@ -46,7 +45,7 @@ func _enter_tree() -> void:
 func _ready() -> void:
 	_building_option_ids = _local_player_building_option_ids()
 	_wall_building_ids = _local_player_wall_building_ids()
-	_refinery_dock_building_ids = _local_player_refinery_dock_building_ids()
+	_upgrade_option_ids = _local_player_upgrade_option_ids()
 	_setup_unit_command_controller()
 	_setup_building_controller()
 	_setup_building_upgrade_controller()
@@ -103,7 +102,6 @@ func _setup_building_controller() -> void:
 
 
 func _setup_building_upgrade_controller() -> void:
-	var upgrade_grid_ids := _building_option_ids + _refinery_dock_building_ids
 	_building_upgrade_controller = BuildingUpgradeControllerScript.new()
 	_building_upgrade_controller.name = "BuildingUpgradeController"
 	add_child(_building_upgrade_controller)
@@ -114,7 +112,7 @@ func _setup_building_upgrade_controller() -> void:
 		terrain,
 		camera,
 		$Buildings,
-		upgrade_grid_ids,
+		_upgrade_option_ids,
 		PLACEMENT_BUILDING_SCENE,
 		PLACEMENT_CANT_BUILD_SCENE,
 		PLACEMENT_SKIRT_SCENE
@@ -252,7 +250,7 @@ func _local_player_wall_building_ids() -> Array[StringName]:
 	return rules.wall_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
-func _local_player_refinery_dock_building_ids() -> Array[StringName]:
+func _local_player_upgrade_option_ids() -> Array[StringName]:
 	var players = _players()
 	var rules := get_node_or_null("/root/Rules")
 	if players == null or rules == null:
@@ -262,7 +260,7 @@ func _local_player_refinery_dock_building_ids() -> Array[StringName]:
 	if local_player == null:
 		return []
 
-	return rules.refinery_dock_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return rules.upgrade_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _players():

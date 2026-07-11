@@ -28,6 +28,7 @@ var _skirt_preview_scene: PackedScene
 var _existing_building_occupy_rows: Callable
 var _existing_building_is_wall: Callable
 var _build_radius_provider: Callable
+var _placement_owner_player_id_provider: Callable
 
 var _building_id: StringName = &""
 var _display_name := ""
@@ -50,7 +51,8 @@ func setup(
 		skirt_preview_scene: PackedScene,
 		existing_building_occupy_rows: Callable,
 		existing_building_is_wall: Callable = Callable(),
-		build_radius_provider: Callable = Callable()
+		build_radius_provider: Callable = Callable(),
+		placement_owner_player_id_provider: Callable = Callable()
 	) -> void:
 	_camera = placement_camera
 	_navigation_grid = navigation_grid
@@ -62,6 +64,7 @@ func setup(
 	_existing_building_occupy_rows = existing_building_occupy_rows
 	_existing_building_is_wall = existing_building_is_wall
 	_build_radius_provider = build_radius_provider
+	_placement_owner_player_id_provider = placement_owner_player_id_provider
 	name = "BuildingPlacementPreview"
 
 
@@ -252,10 +255,14 @@ func _rebuild_preview(anchor_cell: Vector2i) -> void:
 			preview_cell.name = "Cell_%d_%d_%s" % [column_index, row_index, marker]
 			_configure_preview_visuals(preview_cell)
 			add_child(preview_cell)
-			preview_cell.global_position = (
+			var preview_position := (
 				_snap_to_ground(_occupy_cell_world_center(grid_cell))
 				+ Vector3.UP * CELL_SURFACE_OFFSET
 			)
+			if preview_cell.is_inside_tree():
+				preview_cell.global_position = preview_position
+			else:
+				preview_cell.position = preview_position
 
 	_can_build = has_cells and can_build
 	if has_cells:
@@ -294,6 +301,10 @@ func _existing_building_footprints() -> Array:
 		var building := node as Node3D
 		if building == null:
 			continue
+		if not _placement_owner_player_id_provider.is_null():
+			var player_id := int(_placement_owner_player_id_provider.call())
+			if int(building.get("owner_player_id")) != player_id:
+				continue
 		var occupy_rows: Array[String] = []
 		if not _existing_building_occupy_rows.is_null():
 			occupy_rows.assign(_existing_building_occupy_rows.call(building))

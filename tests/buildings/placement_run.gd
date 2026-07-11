@@ -35,6 +35,7 @@ class FootprintConfig extends Resource:
 class ExistingBuilding extends Node3D:
 	var building_config: Resource
 	var config_id: StringName
+	var owner_player_id := 0
 
 
 func _initialize() -> void:
@@ -43,6 +44,7 @@ func _initialize() -> void:
 	_run_case("footprint occupancy and single spawn handoff", _test_occupancy_and_single_spawn)
 	_run_case("resolver fallback occupancy", _test_resolver_fallback_occupancy)
 	_run_case("out-of-radius cells preview as blocked", _test_out_of_radius_preview_is_blocked)
+	_run_case("enemy buildings do not extend build radius", _test_enemy_building_does_not_extend_radius)
 
 	if _failures > 0:
 		printerr("BuildingPlacement tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -224,6 +226,49 @@ func _test_out_of_radius_preview_is_blocked(token: int) -> int:
 
 func _always_out_of_radius() -> int:
 	return 5
+
+
+func _test_enemy_building_does_not_extend_radius(token: int) -> int:
+	var buildings_root := Node3D.new()
+	get_root().add_child(buildings_root)
+	var placement = BuildingPlacementScript.new()
+	get_root().add_child(placement)
+	placement.setup(
+		null, FakeGrid.new(), buildings_root, null, null, null, null,
+		Callable(self, "_direct_config_rows"), Callable(), Callable(self, "_radius_two"),
+		Callable(self, "_owner_one")
+	)
+
+	var owned := ExistingBuilding.new()
+	owned.owner_player_id = 1
+	owned.building_config = FootprintConfig.new(_rows(["X"]))
+	owned.set_meta(&"placement_anchor_cell", Vector2i.ZERO)
+	owned.add_to_group("buildings")
+	buildings_root.add_child(owned)
+
+	var enemy := ExistingBuilding.new()
+	enemy.owner_player_id = 2
+	enemy.building_config = FootprintConfig.new(_rows(["X"]))
+	enemy.set_meta(&"placement_anchor_cell", Vector2i(20, 20))
+	enemy.add_to_group("buildings")
+	buildings_root.add_child(enemy)
+
+	placement.begin(&"OwnedRadius", "OwnedRadius", _rows(["X"]))
+	var result = placement.try_place_at_hover_cell(Vector2i(22, 20), null)
+	_expect(result == BuildingPlacementScript.PlaceResult.CANNOT_BUILD, "an enemy footprint must not make an otherwise distant cell buildable")
+
+	placement.cancel()
+	placement.queue_free()
+	buildings_root.queue_free()
+	return token
+
+
+func _radius_two() -> int:
+	return 2
+
+
+func _owner_one() -> int:
+	return 1
 
 
 func _test_resolver_fallback_occupancy(token: int) -> int:

@@ -68,3 +68,9 @@ func refinery_dock_building_ids_for_house(
 		house_id: StringName, subhouse_ids: Array[StringName] = []
 ) -> Array[StringName]:
 	return catalog.refinery_dock_building_ids_for_house(house_id, subhouse_ids)
+
+
+func upgrade_building_ids_for_house(
+		house_id: StringName, subhouse_ids: Array[StringName] = []
+) -> Array[StringName]:
+	return catalog.upgrade_building_ids_for_house(house_id, subhouse_ids)

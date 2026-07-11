@@ -67,7 +67,8 @@ func setup(
 		skirt_preview_scene,
 		Callable(self, "_occupy_rows_for_existing_building"),
 		Callable(self, "_is_wall_building"),
-		Callable(self, "_build_radius_tiles")
+		Callable(self, "_build_radius_tiles"),
+		Callable(self, "_local_player_id")
 	)
 	if not _building_queue.order_ready.is_connected(_on_building_queue_ready):
 		_building_queue.order_ready.connect(_on_building_queue_ready)
@@ -578,11 +579,12 @@ func _advance_wall_chain() -> void:
 
 func _place_wall_chain_segment() -> void:
 	var chain := _wall_chain
-	_building_queue.take_ready()
+	var completed_order := _building_queue.take_ready()
 
 	var config := _building_config(chain.building_id)
 	var occupy_rows := _building_occupy_rows(config)
 	if not _building_placement.begin(chain.building_id, chain.display_name, occupy_rows, true):
+		_refund_completed_wall_segment(completed_order)
 		status_changed.emit("%s has no occupy_rows" % chain.display_name)
 		_wall_chain = null
 		_refresh_building_option_states()
@@ -590,6 +592,7 @@ func _place_wall_chain_segment() -> void:
 
 	var scene_path := _building_scene_path(chain.building_id)
 	if not ResourceLoader.exists(scene_path):
+		_refund_completed_wall_segment(completed_order)
 		status_changed.emit("%s placement valid; missing scene %s" % [chain.display_name, scene_path])
 		_building_placement.cancel()
 		_wall_chain = null
@@ -599,6 +602,7 @@ func _place_wall_chain_segment() -> void:
 	var scene := load(scene_path) as PackedScene
 	var placed := _building_placement.try_place_at_hover_cell(chain.current_cell(), scene, chain.owner_player_id)
 	if placed != BuildingPlacementScript.PlaceResult.PLACED:
+		_refund_completed_wall_segment(completed_order)
 		status_changed.emit("%s segment could not be placed; wall chain stopped" % chain.display_name)
 		_wall_chain = null
 		_refresh_building_option_states()
@@ -613,6 +617,14 @@ func _place_wall_chain_segment() -> void:
 		status_changed.emit("%s wall complete" % chain.display_name)
 		_wall_chain = null
 		_refresh_building_option_states()
+
+
+func _refund_completed_wall_segment(order: BuildingOrder) -> void:
+	if order == null or order.paid_cost <= 0:
+		return
+	var player = _local_player()
+	if player != null:
+		player.add_money(order.paid_cost)
 
 
 func _try_place_ready_building(screen_position: Vector2) -> void:
@@ -860,3 +872,8 @@ func _local_player() -> PlayerData:
 	if players == null:
 		return null
 	return players.local_player() as PlayerData
+
+
+func _local_player_id() -> int:
+	var player := _local_player()
+	return player.player_id if player != null else -1

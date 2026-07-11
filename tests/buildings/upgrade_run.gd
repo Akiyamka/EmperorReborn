@@ -10,6 +10,8 @@ const UpgradeOrderScript := preload("res://scripts/buildings/upgrade_order.gd")
 const UpgradeEffectsScript := preload("res://scripts/buildings/upgrade_effects.gd")
 const RefineryDockLayoutScript := preload("res://scripts/buildings/refinery_dock_layout.gd")
 const BuildingScript := preload("res://scripts/buildings/building.gd")
+const BuildingUpgradeControllerScript := preload("res://scripts/buildings/building_upgrade_controller.gd")
+const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 
 var _assertions := 0
@@ -51,6 +53,10 @@ func _initialize() -> void:
 
 	_run_case("dock layout lays out docks in a column beside the refinery", _test_dock_layout_column)
 	_run_case("hover_cell_for_anchor inverts BuildingPlacement's footprint centering", _test_hover_cell_round_trip)
+	_run_case("destroyed docks are removed and refinery destruction removes its docks", _test_dock_lifecycle)
+	_run_case("missing survivor count means no survivors", _test_missing_survivor_count)
+	_run_case("refinery docks use UpgradeBuildTime", _test_dock_upgrade_build_time)
+	_run_case("Construction Yard upgrade uses its linked MCV build time", _test_con_yard_upgrade_build_time.bind(local_player))
 
 	_run_case(
 		"a purchased upgrade is irreversible player state, not building state",
@@ -267,6 +273,74 @@ func _test_hover_cell_round_trip(token: int) -> int:
 	var footprint := RefineryDockLayoutScript.occupy_size(dock_rows) * RefineryDockLayoutScript.NAV_CELLS_PER_OCCUPY_CELL
 	var recentered := hover - Vector2i(footprint.x / 2, footprint.y / 2)
 	_expect(recentered == anchor, "hover_cell_for_anchor must invert BuildingPlacement's centering")
+	return token
+
+
+func _test_dock_lifecycle(token: int) -> int:
+	var refinery := BuildingScript.new()
+	root.add_child(refinery)
+	var first_dock := Node3D.new()
+	root.add_child(first_dock)
+	refinery.register_dock(first_dock)
+	_expect(refinery.dock_count() == 1, "registering a dock must consume one refinery dock slot")
+	first_dock.free()
+	_expect(refinery.dock_count() == 0, "destroying a dock must release its refinery dock slot")
+
+	var second_dock := Node3D.new()
+	root.add_child(second_dock)
+	refinery.register_dock(second_dock)
+	refinery.free()
+	_expect(second_dock.is_queued_for_deletion(), "destroying a refinery must also remove its instance-bound docks")
+	second_dock.free()
+	return token
+
+
+func _test_missing_survivor_count(token: int) -> int:
+	var rules = root.get_node("Rules")
+	var building := BuildingScript.new()
+	building.building_config = rules.building(&"ATWall")
+	_expect(BuildingSurvivorsScript._survivor_count(building) == 0, "a building without NumInfantryWhenGone must not invent a survivor")
+	building.building_config = rules.building(&"ATSmWindtrap")
+	_expect(BuildingSurvivorsScript._survivor_count(building) == 1, "an explicit NumInfantryWhenGone value must still be honored")
+	building.free()
+	return token
+
+
+func _test_dock_upgrade_build_time(token: int) -> int:
+	var rules = root.get_node("Rules")
+	var controller := BuildingUpgradeControllerScript.new()
+	root.add_child(controller)
+	var no_ids: Array[StringName] = []
+	controller.setup(null, null, null, no_ids, null, null, null)
+	var dock_config: Resource = rules.building(&"ATRefineryDock")
+	_expect(
+		is_equal_approx(controller._upgrade_build_time_ticks(dock_config, true), 720.0),
+		"refinery docks must use Rules.txt UpgradeBuildTime instead of ordinary BuildTime"
+	)
+	controller.free()
+	return token
+
+
+func _test_con_yard_upgrade_build_time(token: int, local_player: PlayerData) -> int:
+	var controller := BuildingUpgradeControllerScript.new()
+	root.add_child(controller)
+	var upgrade_ids: Array[StringName] = [&"ATConYard"]
+	controller.setup(null, null, null, upgrade_ids, null, null, null)
+
+	var con_yard := BuildingScript.new()
+	con_yard.config_id = &"ATConYard"
+	con_yard.owner_player_id = local_player.player_id
+	root.add_child(con_yard)
+	controller._start_global_upgrade_order(&"ATConYard")
+	var order: UpgradeOrder = controller._upgrade_queue.current_order()
+	_expect(order != null, "an owned Construction Yard must start its upgrade order")
+	_expect(order != null and is_equal_approx(order.build_time_ticks, 864.0), "Construction Yard upgrade must use the linked MCV's 864-tick build time")
+
+	controller.process(0.1)
+	_expect(not local_player.has_purchased_upgrade(&"ATConYard"), "Construction Yard upgrade must not complete on its first short tick")
+
+	controller.free()
+	con_yard.free()
 	return token
 
 

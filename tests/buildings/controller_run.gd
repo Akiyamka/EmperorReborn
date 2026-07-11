@@ -1,6 +1,7 @@
 extends SceneTree
 
 const BuildingControllerScript := preload("res://scripts/buildings/building_controller.gd")
+const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
 const UpgradeEffectsScript := preload("res://scripts/buildings/upgrade_effects.gd")
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 
@@ -38,6 +39,7 @@ func _initialize() -> void:
 	_run_case("asset-independent setup owns one placement child", _test_asset_independent_setup)
 	_run_case("repeated setup forwards resources once", _test_repeated_setup_forwards_resources_once.bind(local_player))
 	_run_case("freed controller leaves no resource forwarding", _test_free_disconnects_resource_forwarding.bind(local_player))
+	_run_case("failed completed wall segment refunds paid credits", _test_completed_wall_refund.bind(local_player))
 	_run_case(
 		"losing and restoring a prerequisite building toggles menu availability",
 		_test_availability_reacts_to_prerequisite_loss.bind(local_player)
@@ -118,6 +120,19 @@ func _test_free_disconnects_resource_forwarding(token: int, local_player: Player
 	resource_outputs.clear()
 	local_player.add_money(1)
 	_expect(resource_outputs.is_empty(), "a freed controller must not forward later player resource changes")
+	return token
+
+
+func _test_completed_wall_refund(token: int, local_player: PlayerData) -> int:
+	var controller := _new_controller()
+	_setup_without_assets(controller)
+	var order := BuildingOrderScript.new()
+	order.paid_cost = 75
+	var money_before := local_player.money
+	controller._refund_completed_wall_segment(order)
+	_expect(local_player.money == money_before + 75, "a paid wall segment that cannot be placed must be fully refunded")
+	order = null
+	controller.free()
 	return token
 
 

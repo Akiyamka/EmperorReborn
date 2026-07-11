@@ -23,9 +23,9 @@ const BASIC_INFANTRY_BY_HOUSE := {
 
 ## [Rules] docs/mechanics/production.md §2.1: per-building NumInfantryWhenGone
 ## in Rules.txt (e.g. ATConYard/ATBarracks = 3, ATSmWindtrap = 1). Used as
-## "num_infantry_when_gone" on building_config; this fallback only applies
-## when a building has no config or the field is absent.
-const DEFAULT_SURVIVOR_COUNT := 1
+## "num_infantry_when_gone" on building_config. An absent field means Rules
+## defines no survivors for that building (not an implicit one survivor).
+const DEFAULT_SURVIVOR_COUNT := 0
 
 const SURVIVOR_HEALTH_FRACTION := 0.7
 const SURVIVOR_INVULNERABILITY_SECONDS := 1.0

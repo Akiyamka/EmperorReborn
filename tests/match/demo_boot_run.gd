@@ -15,6 +15,8 @@ var _current_case := ""
 
 func _initialize() -> void:
 	await _run_case("demo scene roster is non-empty after boot", _test_demo_roster_populated)
+	await _run_case("rules art configs resolve every demo panel icon", _test_demo_panel_icons)
+	await _run_case("rules sidebar type selects the panel tab", _test_rules_sidebar_tabs)
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
 	await _run_case("upgrade slot appears after its building is placed later", _test_upgrade_availability_polls)
 
@@ -67,6 +69,52 @@ func _test_demo_roster_populated() -> void:
 	match_instance.queue_free()
 
 
+func _test_demo_panel_icons() -> void:
+	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
+	var match_instance := scene.instantiate()
+	get_root().add_child(match_instance)
+	await process_frame
+	await process_frame
+
+	var side_panel = match_instance.get_node("HUD/SidePanel")
+	var option_ids: Array[StringName] = side_panel._building_option_ids.duplicate()
+	for upgrade_id in side_panel._upgrade_option_ids:
+		if not option_ids.has(upgrade_id):
+			option_ids.append(upgrade_id)
+	for option_id in option_ids:
+		var icon_data: Array[Texture2D] = side_panel._building_icon_data(option_id)
+		_expect(
+			icon_data.size() == 2 and icon_data[0] != null and icon_data[1] != null,
+			"Rules art config must resolve colored and grey icons for %s" % String(option_id)
+		)
+
+	match_instance.queue_free()
+
+
+func _test_rules_sidebar_tabs() -> void:
+	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
+	var match_instance := scene.instantiate()
+	get_root().add_child(match_instance)
+	await process_frame
+	await process_frame
+
+	var side_panel = match_instance.get_node("HUD/SidePanel")
+	_expect(
+		side_panel._art_tab_for_entity(&"ATBarracks", SidePanel.Tab.INFANTRY) == SidePanel.Tab.BUILDINGS,
+		"Buildings sidebar type must select the Buildings tab"
+	)
+	_expect(
+		side_panel._art_tab_for_entity(&"ATInfantry", SidePanel.Tab.VEHICLES) == SidePanel.Tab.INFANTRY,
+		"Infantry sidebar type must select the Infantry tab"
+	)
+	_expect(
+		side_panel._art_tab_for_entity(&"ATAPC", SidePanel.Tab.INFANTRY) == SidePanel.Tab.VEHICLES,
+		"Units sidebar type must select the Vehicles tab"
+	)
+
+	match_instance.queue_free()
+
+
 ## Regression test: BuildingUpgradeController.setup() filters its incoming
 ## roster down to buildings with upgrade_cost/upgrade_tech_level both set
 ## (see _has_upgrade_definition()), but match.gd used to hand the panel the
@@ -92,6 +140,10 @@ func _test_upgrade_panel_matches_controller() -> void:
 	_expect(
 		controller_ids.has(&"ATBarracks"),
 		"ATBarracks has both upgrade_cost and upgrade_tech_level and must be an upgrade option"
+	)
+	_expect(
+		controller_ids.has(&"ATConYard"),
+		"ATConYard is deployed rather than built but its global upgrade must still be an upgrade option"
 	)
 	_expect(
 		side_panel._upgrade_option_ids == controller_ids,

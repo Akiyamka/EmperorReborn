@@ -12,11 +12,9 @@ const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survi
 ## plain Buildings placed by BuildingUpgradeController next to this one (not
 ## children of it) and are tracked here purely so a second "Upgrade Dock"
 ## click knows the current count and where to lay out the next one. Rules
-## gives each RefineryDock its own health/storm_damage, i.e. the original
-## models them as independently destructible buildings rather than parts of
-## the refinery, so losing the refinery does *not* free its docks here --
-## they keep standing (and taking damage) on their own, same as any other
-## building.
+## gives each RefineryDock its own health/storm_damage, so a dock can be
+## destroyed independently. The instance-bound upgrade still belongs to its
+## refinery: losing the refinery removes every registered dock with it.
 const MAX_REFINERY_DOCKS := 2
 
 @export var config_id: StringName
@@ -77,6 +75,10 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	_set_generated_energy(0)
+	for dock in _docks.duplicate():
+		if is_instance_valid(dock) and not dock.is_queued_for_deletion():
+			dock.queue_free()
+	_docks.clear()
 
 
 func _process(delta: float) -> void:
@@ -191,6 +193,11 @@ func can_add_dock() -> bool:
 func register_dock(dock: Node3D) -> void:
 	if is_instance_valid(dock) and not _docks.has(dock):
 		_docks.append(dock)
+		dock.tree_exiting.connect(_on_registered_dock_exiting.bind(dock), CONNECT_ONE_SHOT)
+
+
+func _on_registered_dock_exiting(dock: Node3D) -> void:
+	_docks.erase(dock)
 
 
 func setup(building_id: StringName) -> void:

@@ -8,49 +8,18 @@ extends Control
 const QUEUE_GRID_COLUMNS := 3
 const QUEUE_GRID_ROWS := 5
 const QUEUE_SLOT_SIZE := Vector2(64, 64)
+const ICON_TEXTURE_ROOT := "res://assets/raw_original_content/3DDATA/Textures"
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
-
-const AT_WINDTRAP_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Windtrap.tga")
-const AT_WINDTRAP_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Windtrap.tga")
-const AT_BARRACKS_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Barracks.tga")
-const AT_BARRACKS_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Barracks.tga")
-const AT_FACTORY_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Factory.tga")
-const AT_FACTORY_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Factory.tga")
-const AT_HANGER_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Hanger.tga")
-const AT_HANGER_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Hanger.tga")
-const AT_HELIPAD_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Helipad.tga")
-const AT_HELIPAD_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Helipad.tga")
-const AT_OUTPOST_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Outpost.tga")
-const AT_OUTPOST_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Outpost.tga")
-const AT_PALACE_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Palace.tga")
-const AT_PALACE_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Palace.tga")
-const AT_PILLBOX_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Pillbox.tga")
-const AT_PILLBOX_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Pillbox.tga")
-const AT_REFINERY_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Refinery.tga")
-const AT_REFINERY_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Refinery.tga")
-const AT_ROCKETTURRET_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_RocketTurret.tga")
-const AT_ROCKETTURRET_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_RocketTurret.tga")
-const AT_STARPORT_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_StarPort.tga")
-const AT_STARPORT_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_StarPort.tga")
-## TODO: Harkonnen/Ordos/sub-house (Fremen, Ix, Guild, Imperial, Tleilaxu)
-## icons -- demo match always seats an Atreides local player for now.
-const BUILDING_ICONS := {
-	&"ATSmWindtrap": [AT_WINDTRAP_ICON, AT_WINDTRAP_ICON_GREY, "Windtrap"],
-	&"ATBarracks": [AT_BARRACKS_ICON, AT_BARRACKS_ICON_GREY, "Barracks"],
-	&"ATFactory": [AT_FACTORY_ICON, AT_FACTORY_ICON_GREY, "Factory"],
-	&"ATHanger": [AT_HANGER_ICON, AT_HANGER_ICON_GREY, "Hangar"],
-	&"ATHelipad": [AT_HELIPAD_ICON, AT_HELIPAD_ICON_GREY, "Helipad"],
-	&"ATOutpost": [AT_OUTPOST_ICON, AT_OUTPOST_ICON_GREY, "Outpost"],
-	&"ATPalace": [AT_PALACE_ICON, AT_PALACE_ICON_GREY, "Palace"],
-	&"ATPillbox": [AT_PILLBOX_ICON, AT_PILLBOX_ICON_GREY, "Pillbox"],
-	&"ATRefinery": [AT_REFINERY_ICON, AT_REFINERY_ICON_GREY, "Refinery"],
-	&"ATRocketTurret": [AT_ROCKETTURRET_ICON, AT_ROCKETTURRET_ICON_GREY, "Rocket Turret"],
-	&"ATStarport": [AT_STARPORT_ICON, AT_STARPORT_ICON_GREY, "Starport"],
-}
 
 ## All five tabs switch the content of the same production grid,
 ## so exactly one of them is active at a time.
 enum Tab { INFANTRY, VEHICLES, BUILDINGS, UPGRADES, STARPORT }
+
+const ART_SIDEBAR_TABS := {
+	"Infantry": Tab.INFANTRY,
+	"Units": Tab.VEHICLES,
+	"Buildings": Tab.BUILDINGS,
+}
 
 signal command_pressed(command: StringName)
 signal tab_changed(tab: Tab)
@@ -69,12 +38,16 @@ var active_tab: Tab = Tab.INFANTRY
 var _tabs: Array[PanelTab] = []
 ## Ordered UI mapping from building-grid slots to the IDs supplied by composition.
 var _building_option_ids: Array[StringName] = []
+var _building_option_ids_by_tab: Dictionary = {}
 var _building_option_states: Dictionary = {}
 ## Same grid, different tab (Tab.UPGRADES) -- see docs/mechanics/production.md
 ## section 4. IDs are building_ids: GLOBAL_TYPE upgrades are keyed by the
 ## building type they upgrade (reuses that building's icon/tooltip).
 var _upgrade_option_ids: Array[StringName] = []
 var _upgrade_option_states: Dictionary = {}
+var _icon_paths_by_filename: Dictionary = {}
+var _icon_textures: Dictionary = {}
+var _entity_tabs: Dictionary = {}
 var _credits_amount := 0
 var _energy_amount := 0
 var _sell_mode_active := false
@@ -126,6 +99,13 @@ func _apply_sell_mode() -> void:
 
 func configure_building_options(building_ids: Array[StringName]) -> void:
 	_building_option_ids = building_ids.duplicate()
+	_building_option_ids_by_tab.clear()
+	_entity_tabs.clear()
+	for building_id in _building_option_ids:
+		var tab := _art_tab_for_entity(building_id, Tab.BUILDINGS)
+		var tab_ids: Array = _building_option_ids_by_tab.get(tab, [])
+		tab_ids.append(building_id)
+		_building_option_ids_by_tab[tab] = tab_ids
 	if is_node_ready():
 		_rebuild_queue_grid()
 
@@ -196,7 +176,7 @@ func get_slot(index: int) -> QueueSlot:
 
 
 func _apply_building_option_state(option_state: BuildingOptionState) -> void:
-	if active_tab != Tab.BUILDINGS:
+	if active_tab != _art_tab_for_entity(option_state.building_id, Tab.BUILDINGS):
 		return
 
 	var slot := _building_slot(option_state.building_id)
@@ -260,12 +240,13 @@ func _rebuild_queue_grid() -> void:
 		slot.right_pressed.connect(_on_slot_pressed.bind(index, MOUSE_BUTTON_RIGHT))
 		_queue_grid.add_child(slot)
 
-	if active_tab == Tab.BUILDINGS:
-		for slot_index in _building_option_ids.size():
-			_configure_building_slot(slot_index, _building_option_ids[slot_index])
-	elif active_tab == Tab.UPGRADES:
+	if active_tab == Tab.UPGRADES:
 		for slot_index in _upgrade_option_ids.size():
 			_configure_upgrade_slot(slot_index, _upgrade_option_ids[slot_index])
+	else:
+		var tab_ids := _building_ids_for_tab(active_tab)
+		for slot_index in tab_ids.size():
+			_configure_building_slot(slot_index, tab_ids[slot_index])
 
 
 func _configure_building_slot(
@@ -274,40 +255,81 @@ func _configure_building_slot(
 	var slot := get_slot(slot_index)
 	if slot == null:
 		return
-	var icon_data: Array = BUILDING_ICONS.get(building_id, [])
-	if icon_data.size() != 3:
-		return
-	slot.icon_colored = icon_data[0] as Texture2D
-	slot.icon_grey = icon_data[1] as Texture2D
+	var icon_data := _building_icon_data(building_id)
+	if icon_data.size() == 2:
+		slot.icon_colored = icon_data[0] as Texture2D
+		slot.icon_grey = icon_data[1] as Texture2D
 	slot.state = QueueSlot.State.AVAILABLE
-	slot.tooltip_text = String(icon_data[2])
+	slot.tooltip_text = String(building_id)
 	var option_state = _building_option_states.get(building_id) as BuildingOptionState
 	if option_state != null:
 		_apply_building_option_state(option_state)
 
 
-## GLOBAL_TYPE upgrade ids are the building type they upgrade, so the same
-## BUILDING_ICONS entry doubles as this slot's icon/tooltip; unlike
-## _configure_building_slot() an unrecognized id still gets wired up (bare
-## square, no icon) instead of being skipped, since option_state's own
-## tooltip (cost/build time) is the primary info for this tab.
+## GLOBAL_TYPE upgrade ids are the building type they upgrade, so their art
+## config supplies this slot's icon as well.
 func _configure_upgrade_slot(slot_index: int, upgrade_id: StringName) -> void:
 	var slot := get_slot(slot_index)
 	if slot == null:
 		return
-	var icon_data: Array = BUILDING_ICONS.get(upgrade_id, [])
-	if icon_data.size() == 3:
+	var icon_data := _building_icon_data(upgrade_id)
+	if icon_data.size() == 2:
 		slot.icon_colored = icon_data[0] as Texture2D
 		slot.icon_grey = icon_data[1] as Texture2D
-		slot.tooltip_text = String(icon_data[2])
+	slot.tooltip_text = String(upgrade_id)
 	slot.state = QueueSlot.State.AVAILABLE
 	var option_state = _upgrade_option_states.get(upgrade_id) as BuildingOptionState
 	if option_state != null:
 		_apply_upgrade_option_state(option_state)
 
 
+func _building_icon_data(building_id: StringName) -> Array[Texture2D]:
+	var rules := get_node_or_null("/root/Rules")
+	if rules == null or not rules.has_method("get_entity"):
+		return []
+	var art_config: Resource = rules.call("get_entity", &"art_config", building_id)
+	if art_config == null:
+		return []
+	var colored := _icon_texture(String(art_config.field(&"icon", "")))
+	var grey := _icon_texture(String(art_config.field(&"icon_grey", "")))
+	if colored == null or grey == null:
+		return []
+	return [colored, grey]
+
+
+func _icon_texture(rules_path: String) -> Texture2D:
+	var filename := rules_path.replace("\\", "/").get_file().to_lower()
+	if filename.is_empty():
+		return null
+	if _icon_textures.has(filename):
+		return _icon_textures[filename] as Texture2D
+	_index_icon_paths()
+	var resource_path := String(_icon_paths_by_filename.get(filename, ""))
+	if resource_path.is_empty():
+		return null
+	var texture := load(resource_path) as Texture2D
+	if texture != null:
+		_icon_textures[filename] = texture
+	return texture
+
+
+func _index_icon_paths() -> void:
+	if not _icon_paths_by_filename.is_empty():
+		return
+	var directory := DirAccess.open(ICON_TEXTURE_ROOT)
+	if directory == null:
+		return
+	for filename in directory.get_files():
+		if filename.get_extension().to_lower() != "tga":
+			continue
+		_icon_paths_by_filename[filename.to_lower()] = ICON_TEXTURE_ROOT.path_join(filename)
+
+
 func _building_slot(building_id: StringName) -> QueueSlot:
-	var slot_index := _building_option_ids.find(building_id)
+	var tab := _art_tab_for_entity(building_id, Tab.BUILDINGS)
+	if tab != active_tab:
+		return null
+	var slot_index := _building_ids_for_tab(tab).find(building_id)
 	return get_slot(slot_index)
 
 
@@ -317,11 +339,33 @@ func _upgrade_slot(upgrade_id: StringName) -> QueueSlot:
 
 
 func _on_slot_pressed(slot_index: int, button_index: int) -> void:
-	if active_tab == Tab.BUILDINGS:
-		if slot_index < 0 or slot_index >= _building_option_ids.size():
-			return
-		building_intent_pressed.emit(_building_option_ids[slot_index], button_index)
-	elif active_tab == Tab.UPGRADES:
+	if active_tab == Tab.UPGRADES:
 		if slot_index < 0 or slot_index >= _upgrade_option_ids.size():
 			return
 		upgrade_intent_pressed.emit(_upgrade_option_ids[slot_index], button_index)
+		return
+	var tab_ids := _building_ids_for_tab(active_tab)
+	if slot_index < 0 or slot_index >= tab_ids.size():
+		return
+	building_intent_pressed.emit(tab_ids[slot_index], button_index)
+
+
+func _building_ids_for_tab(tab: Tab) -> Array:
+	return _building_option_ids_by_tab.get(tab, [])
+
+
+func _art_tab_for_entity(entity_id: StringName, fallback: Tab) -> Tab:
+	if _entity_tabs.has(entity_id):
+		return int(_entity_tabs[entity_id]) as Tab
+	if not is_inside_tree():
+		return fallback
+	var rules := get_node_or_null("/root/Rules")
+	if rules == null or not rules.has_method("get_entity"):
+		return fallback
+	var art_config: Resource = rules.call("get_entity", &"art_config", entity_id)
+	if art_config == null:
+		return fallback
+	var sidebar_type := String(art_config.field(&"sidebar_type", ""))
+	var tab := int(ART_SIDEBAR_TABS.get(sidebar_type, fallback)) as Tab
+	_entity_tabs[entity_id] = tab
+	return tab

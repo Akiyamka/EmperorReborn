@@ -39,6 +39,11 @@ const BuildingOptionStateScript := preload("res://scripts/buildings/building_opt
 
 const REFINERY_ROLE := "Refinery"
 const DEFAULT_BUILD_RADIUS_TILES := 6
+const DEFAULT_GLOBAL_UPGRADE_BUILD_TIME_TICKS := 60.0
+## Rules.txt defines this separately for all three refinery docks, but the
+## current generated rules database predates that column. Prefer the converted
+## field once available and preserve the verified Rules value until then.
+const DEFAULT_DOCK_UPGRADE_BUILD_TIME_TICKS := 720.0
 
 var camera: Camera3D
 
@@ -74,7 +79,8 @@ func setup(
 		skirt_preview_scene,
 		Callable(self, "_occupy_rows_for_existing_building"),
 		Callable(),
-		Callable(self, "_build_radius_tiles")
+		Callable(self, "_build_radius_tiles"),
+		Callable(self, "_local_player_id")
 	)
 	if not _upgrade_queue.order_ready.is_connected(_on_upgrade_queue_ready):
 		_upgrade_queue.order_ready.connect(_on_upgrade_queue_ready)
@@ -174,7 +180,7 @@ func _try_start_dock_upgrade(refinery: Node3D) -> void:
 		dock_building_id,
 		_upgrade_display_name(dock_building_id),
 		maxi(int(config.field(&"upgrade_cost", 0)), 0),
-		maxf(float(config.field(&"build_time", 0.0)), 1.0),
+		_upgrade_build_time_ticks(config, true),
 		UpgradeOrderScript.Kind.REFINERY_DOCK,
 		refinery
 	):
@@ -275,14 +281,14 @@ func _start_global_upgrade_order(building_id: StringName) -> void:
 		_refresh_upgrade_option_states()
 		return
 
-	# Rules has no separate "upgrade build time" field -- global upgrades
-	# reuse the building's own build_time as their construction time
-	# (docs/mechanics/production.md section 4).
+	# Global upgrades normally reuse the building's build_time. Construction
+	# Yards are deployed and therefore have no building time; their Resource=MCV
+	# rules link supplies the corresponding production time instead.
 	if not _upgrade_queue.start(
 		building_id,
 		_upgrade_display_name(building_id),
 		maxi(int(config.field(&"upgrade_cost", 0)), 0),
-		maxf(float(config.field(&"build_time", 0.0)), 1.0)
+		_upgrade_build_time_ticks(config, false)
 	):
 		return
 
@@ -588,9 +594,46 @@ func _upgrade_tooltip(building_id: StringName) -> String:
 		return _upgrade_display_name(building_id)
 
 	var cost := int(config.field(&"upgrade_cost", 0))
-	var build_time_ticks := float(config.field(&"build_time", 0.0))
+	var build_time_ticks := _upgrade_build_time_ticks(config, _is_refinery_dock_id(building_id))
 	var build_seconds := build_time_ticks / UpgradeQueueScript.BUILD_TICKS_PER_SECOND
 	return "%s\nCost: %d\nBuild: %.1fs" % [_upgrade_display_name(building_id), cost, build_seconds]
+
+
+func _upgrade_build_time_ticks(config: Resource, refinery_dock: bool) -> float:
+	if config == null:
+		return DEFAULT_GLOBAL_UPGRADE_BUILD_TIME_TICKS
+	if refinery_dock:
+		return maxf(float(config.field(&"upgrade_build_time", DEFAULT_DOCK_UPGRADE_BUILD_TIME_TICKS)), 1.0)
+	var build_time := float(config.field(&"build_time", 0.0))
+	if build_time > 0.0:
+		return build_time
+	var resource_build_time := _linked_resource_build_time(config)
+	return resource_build_time if resource_build_time > 0.0 else DEFAULT_GLOBAL_UPGRADE_BUILD_TIME_TICKS
+
+
+func _linked_resource_build_time(config: Resource) -> float:
+	if not is_inside_tree():
+		return 0.0
+	var rules := get_node_or_null("/root/Rules")
+	if rules == null:
+		return 0.0
+	var resource_links = config.link(&"resources", [])
+	if not (resource_links is Array):
+		return 0.0
+	for entry in resource_links:
+		if not (entry is Dictionary):
+			continue
+		var target_id := StringName(String(entry.get("target", "")))
+		if target_id == &"":
+			continue
+		for entity_type in [&"building", &"unit"]:
+			var linked_config: Resource = rules.call("get_entity", entity_type, target_id)
+			if linked_config == null:
+				continue
+			var build_time := float(linked_config.field(&"build_time", 0.0))
+			if build_time > 0.0:
+				return build_time
+	return 0.0
 
 
 func _occupy_rows_for_existing_building(building: Node3D) -> Array[String]:
@@ -688,3 +731,8 @@ func _local_player() -> PlayerData:
 	if players == null:
 		return null
 	return players.local_player() as PlayerData
+
+
+func _local_player_id() -> int:
+	var player := _local_player()
+	return player.player_id if player != null else -1
