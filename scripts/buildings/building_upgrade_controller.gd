@@ -48,6 +48,7 @@ var _upgrade_queue: UpgradeQueue = UpgradeQueueScript.new()
 var _dock_placement: BuildingPlacement = BuildingPlacementScript.new()
 var _dock_mode := false
 var _dock_mode_building_id: StringName = &""
+var _upgrade_availability: Dictionary = {}
 
 
 func setup(
@@ -93,6 +94,7 @@ func upgrade_option_ids() -> Array[StringName]:
 
 
 func process(delta: float) -> void:
+	_poll_upgrade_availability()
 	_process_upgrade_order(delta)
 
 
@@ -458,6 +460,27 @@ func _is_upgrade_available(building_id: StringName) -> bool:
 	if player == null or player.has_purchased_upgrade(building_id):
 		return false
 	return _player_owns_building_type(player.player_id, building_id)
+
+
+## Mirrors BuildingController.process()'s prerequisite-availability poll:
+## GLOBAL_TYPE availability depends on "does the player currently own a
+## building of this type" (_is_upgrade_available) and dock availability on
+## "does any owned refinery still have room" (_any_refinery_can_add_dock),
+## both of which change as buildings are placed/lost elsewhere on the map --
+## without this poll the panel only ever reflected the roster as it stood at
+## setup() and never noticed a building completing afterwards.
+func _poll_upgrade_availability() -> void:
+	var changed := false
+	for building_id in _upgrade_option_ids:
+		var available := (
+			_any_refinery_can_add_dock() if _is_refinery_dock_id(building_id)
+			else _is_upgrade_available(building_id)
+		)
+		if available != _upgrade_availability.get(building_id, false):
+			_upgrade_availability[building_id] = available
+			changed = true
+	if changed:
+		_refresh_upgrade_option_states()
 
 
 func _player_owns_building_type(player_id: int, building_id: StringName) -> bool:

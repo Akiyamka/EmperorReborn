@@ -16,6 +16,7 @@ var _current_case := ""
 func _initialize() -> void:
 	await _run_case("demo scene roster is non-empty after boot", _test_demo_roster_populated)
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
+	await _run_case("upgrade slot appears after its building is placed later", _test_upgrade_availability_polls)
 
 	if _failures > 0:
 		printerr("Match demo boot tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -95,6 +96,50 @@ func _test_upgrade_panel_matches_controller() -> void:
 	_expect(
 		side_panel._upgrade_option_ids == controller_ids,
 		"the panel's upgrade grid must exactly match the controller's filtered roster, not the raw building roster"
+	)
+
+	match_instance.queue_free()
+
+
+## Regression test: BuildingController.process() polls _is_building_available()
+## every frame and diffs it against a cached dict so the BUILDINGS grid
+## reacts to buildings appearing/disappearing elsewhere on the map, but
+## BuildingUpgradeController had no equivalent poll -- its option states were
+## only computed once at setup() and on queue events, so an upgrade slot for
+## a building type the player didn't yet own at boot (e.g. ATBarracks, before
+## any Barracks is built) stayed hidden forever even after that building was
+## placed. _poll_upgrade_availability() fixes this the same way
+## BuildingController already does it.
+func _test_upgrade_availability_polls() -> void:
+	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
+	var match_instance := scene.instantiate()
+	get_root().add_child(match_instance)
+	await process_frame
+	await process_frame
+
+	var side_panel = match_instance.get_node("HUD/SidePanel")
+	side_panel._set_active_tab(3) # Tab.UPGRADES
+	await process_frame
+
+	var slot_before = side_panel._upgrade_slot(&"ATBarracks")
+	_expect(
+		slot_before != null and not slot_before.visible,
+		"ATBarracks upgrade must start hidden -- the demo scene has no Barracks yet"
+	)
+
+	var barracks_scene := load("res://assets/converted/buildings/ATBarracks/ATBarracks.scn") as PackedScene
+	var barracks := barracks_scene.instantiate()
+	match_instance.get_node("Buildings").add_child(barracks)
+	barracks.call("setup", &"ATBarracks")
+	barracks.call("set_owner_player_id", 1)
+
+	for i in 5:
+		await process_frame
+
+	var slot_after = side_panel._upgrade_slot(&"ATBarracks")
+	_expect(
+		slot_after != null and slot_after.visible,
+		"ATBarracks upgrade must become visible once a Barracks is placed, without any manual refresh call"
 	)
 
 	match_instance.queue_free()
