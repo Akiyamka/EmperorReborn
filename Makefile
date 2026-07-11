@@ -1,6 +1,6 @@
 GODOT_CONTAINER := ./tools/godot-container
 
-.PHONY: rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-placement godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-placement godot-export-web godot-watch-export godot-shell godot-version
 
 rules-export:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/import_rules.gd -- --clean
@@ -28,6 +28,9 @@ godot-convert-map:
 
 godot-convert-building:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_building.gd -- --building "$(BUILDING)"
+
+godot-convert-all-buildings:
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_all_buildings.gd
 
 godot-convert-placement:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_placement.gd

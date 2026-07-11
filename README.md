@@ -49,6 +49,7 @@ make godot-convert-placement
 make godot-convert-building BUILDING=ATConYard
 make godot-convert-building BUILDING=ATSmWindtrap
 make godot-convert-building BUILDING=ATBarracks
+make godot-convert-all-buildings  # every rules-defined building with an H0 model
 MAP="res://assets/raw_original_content/MAPS/#M70 Claw Rock" make godot-convert-map
 ```
 
