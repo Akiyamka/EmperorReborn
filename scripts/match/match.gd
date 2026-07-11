@@ -104,7 +104,6 @@ func _setup_building_controller() -> void:
 
 func _setup_building_upgrade_controller() -> void:
 	var upgrade_grid_ids := _building_option_ids + _refinery_dock_building_ids
-	side_panel.configure_upgrade_options(upgrade_grid_ids)
 	_building_upgrade_controller = BuildingUpgradeControllerScript.new()
 	_building_upgrade_controller.name = "BuildingUpgradeController"
 	add_child(_building_upgrade_controller)
@@ -120,6 +119,11 @@ func _setup_building_upgrade_controller() -> void:
 		PLACEMENT_CANT_BUILD_SCENE,
 		PLACEMENT_SKIRT_SCENE
 	)
+	# setup() filters upgrade_grid_ids down to buildings that actually have
+	# an upgrade defined (see BuildingUpgradeController.upgrade_option_ids());
+	# the panel grid must be built from that filtered set, not the raw roster,
+	# or unfiltered slots default to QueueSlot's normal AVAILABLE look.
+	side_panel.configure_upgrade_options(_building_upgrade_controller.upgrade_option_ids())
 
 
 func _setup_unit_command_controller() -> void:

@@ -83,6 +83,15 @@ func setup(
 	dock_mode_changed.emit(_dock_mode)
 
 
+## The subset of building_ids passed to setup() that actually has an upgrade
+## defined (see _has_upgrade_definition()) -- callers must build their grid
+## from this, not from the raw roster passed into setup(), or slots with no
+## upgrade defined default to QueueSlot's normal AVAILABLE look since they
+## never receive an upgrade_option_state_changed signal to override it.
+func upgrade_option_ids() -> Array[StringName]:
+	return _upgrade_option_ids.duplicate()
+
+
 func process(delta: float) -> void:
 	_process_upgrade_order(delta)
 
