@@ -109,6 +109,14 @@ toggle_mode = true
 text = "Wall"
 tooltip_text = "Build wall: click line start, then line end"
 
+[node name="UpgradeDock" type="Button" parent="TopBlock/TopColumn/CommandButtons"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Dock"
+tooltip_text = "Upgrade Dock: select one of your refineries"
+
 [node name="BottomBlock" type="PanelContainer" parent="."]
 layout_mode = 1
 anchors_preset = 12

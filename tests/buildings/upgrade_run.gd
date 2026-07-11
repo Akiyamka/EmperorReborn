@@ -1,0 +1,272 @@
+extends SceneTree
+## docs/mechanics/production.md section 4 "Upgrades" (+ section 5 tech tree
+## link). Covers the parts that do not need a live BuildingUpgradeController
+## (queue/order math, dock layout math, player-owned purchase state, applying
+## a purchase to existing buildings) the same way placement_run.gd covers
+## BuildingPlacement in isolation.
+
+const UpgradeQueueScript := preload("res://scripts/buildings/upgrade_queue.gd")
+const UpgradeOrderScript := preload("res://scripts/buildings/upgrade_order.gd")
+const UpgradeEffectsScript := preload("res://scripts/buildings/upgrade_effects.gd")
+const RefineryDockLayoutScript := preload("res://scripts/buildings/refinery_dock_layout.gd")
+
+var _assertions := 0
+var _failures := 0
+var _current_case := ""
+var _completion_token := 4000
+
+
+class FakeBuilding extends Node3D:
+	var owner_player_id := 0
+	var config_id: StringName
+	var set_upgrade_level_calls: Array[int] = []
+
+	func set_upgrade_level(level: int) -> void:
+		set_upgrade_level_calls.append(level)
+
+
+func _initialize() -> void:
+	await process_frame
+	var players = root.get_node("Players")
+	players.reset_for_match()
+	var local_player = players.create_player(1, "Upgrade Tester", Color.RED, &"Atreides", [], 1, 1000, 0)
+	players.local_player_id = 1
+
+	_run_case("start rejects invalid orders", _test_start_rejects_invalid)
+	_run_case("tick spends credits gradually and completes", _test_tick_gradual_payment)
+	_run_case("tick reports lacking funds without spending", _test_tick_lacks_funds)
+	_run_case("pause and resume stop and restart ticking", _test_pause_resume)
+	_run_case("cancel refunds paid-in credits", _test_cancel_refund)
+	_run_case("free upgrades complete on elapsed time alone", _test_free_upgrade_time_only)
+	_run_case("order_ready fires exactly once per completed order", _test_order_ready_signal)
+
+	_run_case("progress_percent tracks cost or time", _test_progress_percent)
+
+	_run_case(
+		"apply_to_existing_buildings only touches the buying player's matching buildings",
+		_test_upgrade_effects_filters.bind(local_player)
+	)
+
+	_run_case("dock layout lays out docks in a column beside the refinery", _test_dock_layout_column)
+	_run_case("hover_cell_for_anchor inverts BuildingPlacement's footprint centering", _test_hover_cell_round_trip)
+
+	_run_case(
+		"a purchased upgrade is irreversible player state, not building state",
+		_test_player_purchase_state.bind(local_player)
+	)
+
+	players.reset_for_match()
+	if _failures > 0:
+		printerr("Upgrade tests: %d failures after %d assertions" % [_failures, _assertions])
+		quit(1)
+		return
+	print("Upgrade tests: %d assertions passed" % _assertions)
+	quit(0)
+
+
+func _run_case(case_name: String, test: Callable) -> void:
+	_current_case = case_name
+	_completion_token += 1
+	var token := _completion_token
+	var failures_before := _failures
+	var completed: Variant = test.call(token)
+	if completed != token:
+		_failures += 1
+		printerr("FAIL: %s: case did not return its completion token" % case_name)
+		return
+	if _failures == failures_before:
+		print("PASS: %s" % case_name)
+
+
+func _expect(condition: bool, message: String) -> void:
+	_assertions += 1
+	if condition:
+		return
+	_failures += 1
+	printerr("FAIL: %s: %s" % [_current_case, message])
+
+
+func _test_start_rejects_invalid(token: int) -> int:
+	var queue := UpgradeQueueScript.new()
+	_expect(not queue.start(&"", "Nothing", 100, 60.0), "an empty upgrade id must be rejected")
+	_expect(not queue.start(&"AT", "Negative cost", -1, 60.0), "a negative cost must be rejected")
+	_expect(not queue.start(&"AT", "Zero build time", 100, 0.0), "a non-positive build time must be rejected")
+	_expect(not queue.has_order(), "rejected starts must leave the queue empty")
+	_expect(queue.start(&"AT", "Valid", 100, 60.0), "a valid order must start")
+	_expect(not queue.start(&"AT2", "Second", 50, 30.0), "the queue is one order at a time, like BuildingQueue")
+	return token
+
+
+func _test_tick_gradual_payment(token: int) -> int:
+	var queue := UpgradeQueueScript.new()
+	queue.start(&"ATBarracks", "Barracks upgrade", 600, 60.0)
+	# GDScript lambdas capture outer locals by value, not by reference, so a
+	# plain int can't accumulate across calls -- box it in an Array (arrays
+	# are reference types) the way BuildingQueue's own tests do.
+	var spent_box := [0]
+	var spend := func(amount: int) -> bool:
+		spent_box[0] += amount
+		return true
+
+	# 600 credits over 60 "build ticks" of build time (60 ticks at
+	# BUILD_TICKS_PER_SECOND=60 == 1 real second) => 600/s while paying.
+	# tick()'s return value means "state changed for the UI", not "order
+	# complete" -- completion is read off current_order().ready.
+	queue.tick(0.5, 1000, spend)
+	_expect(not queue.current_order().ready, "a partial tick must not complete the order")
+	_expect(spent_box[0] > 0 and spent_box[0] < 600, "a partial tick must spend a partial amount")
+	_expect(queue.current_order().paid_cost == spent_box[0], "paid_cost must track what was actually spent")
+
+	var iterations := 0
+	while not queue.current_order().ready and iterations < 20:
+		queue.tick(0.5, 1000, spend)
+		iterations += 1
+
+	_expect(queue.current_order().ready, "enough ticks must complete the order")
+	_expect(spent_box[0] == 600, "total spend must equal exactly the order cost, no overpayment")
+	return token
+
+
+func _test_tick_lacks_funds(token: int) -> int:
+	var queue := UpgradeQueueScript.new()
+	queue.start(&"AT", "Broke", 100, 60.0)
+	var spend_called := false
+	var spend := func(_amount: int) -> bool:
+		spend_called = true
+		return true
+
+	queue.tick(0.5, 0, spend)
+	_expect(queue.lacks_funds(), "zero available credits must be reported as lacking funds")
+	_expect(not spend_called, "spend_credits must not be invoked with zero available credits")
+	_expect(queue.current_order().paid_cost == 0, "no credits must be paid while funds are lacking")
+	return token
+
+
+func _test_pause_resume(token: int) -> int:
+	var queue := UpgradeQueueScript.new()
+	queue.start(&"AT", "Pausable", 100, 60.0)
+	_expect(queue.pause(), "pausing an active order must succeed")
+	_expect(queue.current_order().manually_paused, "pause must flag the order as manually paused")
+	var spend := func(_amount: int) -> bool:
+		return true
+	_expect(not queue.tick(0.5, 1000, spend), "a paused order must not tick")
+	_expect(queue.resume(), "resuming a paused order must succeed")
+	_expect(not queue.current_order().manually_paused, "resume must clear the paused flag")
+	return token
+
+
+func _test_cancel_refund(token: int) -> int:
+	var queue := UpgradeQueueScript.new()
+	queue.start(&"AT", "Cancellable", 100, 60.0)
+	var spend := func(_amount: int) -> bool:
+		return true
+	queue.tick(1.0, 1000, spend)
+	var paid := queue.current_order().paid_cost
+	_expect(paid > 0, "the setup tick must have paid something")
+	var refund := queue.cancel()
+	_expect(refund == paid, "cancel must refund exactly what was paid in so far")
+	_expect(not queue.has_order(), "cancel must clear the active order")
+	return token
+
+
+func _test_free_upgrade_time_only(token: int) -> int:
+	var queue := UpgradeQueueScript.new()
+	# build_time_ticks=30 at BUILD_TICKS_PER_SECOND=60 is half a real second.
+	queue.start(&"AT", "Free", 0, 30.0)
+	queue.tick(0.2, 0)
+	_expect(not queue.current_order().ready, "an elapsed time under build_time_ticks must not finish a free upgrade")
+	queue.tick(0.4, 0)
+	_expect(queue.current_order().ready, "elapsed build time alone must finish a zero-cost upgrade")
+	return token
+
+
+func _test_order_ready_signal(token: int) -> int:
+	var queue := UpgradeQueueScript.new()
+	var ready_orders: Array[UpgradeOrder] = []
+	queue.order_ready.connect(func(order: UpgradeOrder) -> void:
+		ready_orders.append(order)
+	)
+	queue.start(&"AT", "Signal", 0, 0.5)
+	queue.tick(1.0, 0)
+	queue.tick(1.0, 0)
+	_expect(ready_orders.size() == 1, "order_ready must fire exactly once even if tick keeps being called")
+	return token
+
+
+func _test_progress_percent(token: int) -> int:
+	var costed := UpgradeOrderScript.new()
+	costed.cost = 200
+	costed.paid_cost = 50
+	_expect(is_equal_approx(costed.progress_percent(), 25.0), "cost-based progress must be paid/cost")
+
+	var timed := UpgradeOrderScript.new()
+	timed.build_time_ticks = 100.0
+	timed.elapsed_ticks = 40.0
+	_expect(is_equal_approx(timed.progress_percent(), 40.0), "free upgrades must fall back to elapsed/build_time")
+
+	var done := UpgradeOrderScript.new()
+	done.ready = true
+	_expect(is_equal_approx(done.progress_percent(), 100.0), "a ready order must always report 100%")
+	return token
+
+
+func _test_upgrade_effects_filters(token: int, _local_player: PlayerData) -> int:
+	var owned_match := FakeBuilding.new()
+	owned_match.owner_player_id = 1
+	owned_match.config_id = &"ATBarracks"
+
+	var owned_other_type := FakeBuilding.new()
+	owned_other_type.owner_player_id = 1
+	owned_other_type.config_id = &"ATSmWindtrap"
+
+	var other_player_match := FakeBuilding.new()
+	other_player_match.owner_player_id = 2
+	other_player_match.config_id = &"ATBarracks"
+
+	var buildings: Array = [owned_match, owned_other_type, other_player_match]
+	UpgradeEffectsScript.apply_to_existing_buildings(buildings, 1, &"ATBarracks")
+
+	_expect(owned_match.set_upgrade_level_calls == [1], "the owning player's matching-type building must be upgraded")
+	_expect(owned_other_type.set_upgrade_level_calls.is_empty(), "a different building type must not be upgraded")
+	_expect(other_player_match.set_upgrade_level_calls.is_empty(), "another player's building must not be upgraded")
+
+	owned_match.free()
+	owned_other_type.free()
+	other_player_match.free()
+	return token
+
+
+func _test_dock_layout_column(token: int) -> int:
+	var refinery_rows: Array = ["XXXX", "XXXX"]
+	var dock_rows: Array = ["XX", "XX"]
+	var refinery_anchor := Vector2i(10, 10)
+
+	var first := RefineryDockLayoutScript.dock_anchor_nav_cell(refinery_anchor, refinery_rows, dock_rows, 0)
+	var second := RefineryDockLayoutScript.dock_anchor_nav_cell(refinery_anchor, refinery_rows, dock_rows, 1)
+
+	_expect(first.x == second.x, "successive docks must line up on the same side of the refinery")
+	_expect(first.y != second.y, "the second dock must not overlap the first dock's row")
+	_expect(first.x > refinery_anchor.x, "docks must sit outside the refinery's own footprint")
+	return token
+
+
+func _test_hover_cell_round_trip(token: int) -> int:
+	var dock_rows: Array = ["XX", "XX"]
+	var anchor := Vector2i(20, 6)
+	var hover := RefineryDockLayoutScript.hover_cell_for_anchor(anchor, dock_rows)
+	# BuildingPlacement re-centers a hover cell by footprint size before using
+	# it as an anchor (see BuildingPlacement._anchor_for_hover_cell()); redo
+	# that same centering here and expect to land back on the anchor.
+	var footprint := RefineryDockLayoutScript.occupy_size(dock_rows) * RefineryDockLayoutScript.NAV_CELLS_PER_OCCUPY_CELL
+	var recentered := hover - Vector2i(footprint.x / 2, footprint.y / 2)
+	_expect(recentered == anchor, "hover_cell_for_anchor must invert BuildingPlacement's centering")
+	return token
+
+
+func _test_player_purchase_state(token: int, local_player: PlayerData) -> int:
+	_expect(not local_player.has_purchased_upgrade(&"ATBarracks"), "a fresh player must not start with a purchased upgrade")
+	local_player.grant_upgrade(&"ATBarracks")
+	_expect(local_player.has_purchased_upgrade(&"ATBarracks"), "grant_upgrade must persist as player-owned state")
+	_expect(local_player.purchased_upgrade_ids().has(&"ATBarracks"), "purchased_upgrade_ids must list granted upgrades")
+	_expect(not local_player.has_purchased_upgrade(&"ATSmWindtrap"), "purchases must not leak across building types")
+	return token

@@ -26,6 +26,7 @@ enum Tab { INFANTRY, VEHICLES, BUILDINGS, UPGRADES, STARPORT }
 signal command_pressed(command: StringName)
 signal tab_changed(tab: Tab)
 signal building_intent_pressed(building_id: StringName, button_index: int)
+signal upgrade_intent_pressed(upgrade_id: StringName, button_index: int)
 
 @onready var _credits_label: Label = %CreditsLabel
 @onready var _energy_label: Label = %EnergyLabel
@@ -40,10 +41,16 @@ var _tabs: Array[PanelTab] = []
 ## Ordered UI mapping from building-grid slots to the IDs supplied by composition.
 var _building_option_ids: Array[StringName] = []
 var _building_option_states: Dictionary = {}
+## Same grid, different tab (Tab.UPGRADES) -- see docs/mechanics/production.md
+## section 4. IDs are building_ids: GLOBAL_TYPE upgrades are keyed by the
+## building type they upgrade (reuses that building's icon/tooltip).
+var _upgrade_option_ids: Array[StringName] = []
+var _upgrade_option_states: Dictionary = {}
 var _credits_amount := 0
 var _energy_amount := 0
 var _sell_mode_active := false
 var _wall_mode_active := false
+var _dock_mode_active := false
 
 
 func _ready() -> void:
@@ -64,6 +71,7 @@ func _ready() -> void:
 	_apply_resources()
 	_apply_sell_mode()
 	_apply_wall_mode()
+	_apply_dock_mode()
 
 
 ## Fits up to 999 999 999, grouped by thousands.
@@ -91,6 +99,14 @@ func set_wall_mode(active: bool) -> void:
 		_apply_wall_mode()
 
 
+## Refinery-dock instance-target picking mode (docs/mechanics/production.md
+## section 4 "refinery docks... instance-bound"); same UI shape as sell/wall.
+func set_dock_mode(active: bool) -> void:
+	_dock_mode_active = active
+	if is_node_ready():
+		_apply_dock_mode()
+
+
 func _apply_sell_mode() -> void:
 	var sell_button := _commands.get_node_or_null("Sell") as Button
 	if sell_button != null:
@@ -103,6 +119,12 @@ func _apply_wall_mode() -> void:
 		wall_button.button_pressed = _wall_mode_active
 
 
+func _apply_dock_mode() -> void:
+	var dock_button := _commands.get_node_or_null("UpgradeDock") as Button
+	if dock_button != null:
+		dock_button.button_pressed = _dock_mode_active
+
+
 func configure_building_options(building_ids: Array[StringName]) -> void:
 	_building_option_ids = building_ids.duplicate()
 	if is_node_ready():
@@ -113,6 +135,22 @@ func set_building_option_state(option_state: BuildingOptionState) -> void:
 	_building_option_states[option_state.building_id] = option_state
 	if is_node_ready():
 		_apply_building_option_state(option_state)
+
+
+## Global per-type upgrades (docs/mechanics/production.md section 4). Mirrors
+## configure_building_options()/set_building_option_state() one tab over;
+## refinery docks do not appear in this grid -- they are instance-bound and
+## triggered through the "UpgradeDock" command button + a map click instead.
+func configure_upgrade_options(upgrade_ids: Array[StringName]) -> void:
+	_upgrade_option_ids = upgrade_ids.duplicate()
+	if is_node_ready():
+		_rebuild_queue_grid()
+
+
+func set_upgrade_option_state(option_state: BuildingOptionState) -> void:
+	_upgrade_option_states[option_state.building_id] = option_state
+	if is_node_ready():
+		_apply_upgrade_option_state(option_state)
 
 
 func _format_resource_amount(amount: int) -> String:
@@ -174,6 +212,22 @@ func _apply_building_option_state(option_state: BuildingOptionState) -> void:
 		slot.tooltip_text = option_state.tooltip
 
 
+func _apply_upgrade_option_state(option_state: BuildingOptionState) -> void:
+	if active_tab != Tab.UPGRADES:
+		return
+
+	var slot := _upgrade_slot(option_state.building_id)
+	if slot == null:
+		return
+
+	slot.visible = option_state.state != BuildingOptionStateScript.State.DISABLED
+	slot.state = _queue_slot_state(option_state.state)
+	slot.progress = option_state.progress
+	slot.status_text = option_state.status_text
+	if not option_state.tooltip.is_empty():
+		slot.tooltip_text = option_state.tooltip
+
+
 func _queue_slot_state(state: BuildingOptionState.State) -> QueueSlot.State:
 	match state:
 		BuildingOptionStateScript.State.AVAILABLE:
@@ -208,6 +262,9 @@ func _rebuild_queue_grid() -> void:
 	if active_tab == Tab.BUILDINGS:
 		for slot_index in _building_option_ids.size():
 			_configure_building_slot(slot_index, _building_option_ids[slot_index])
+	elif active_tab == Tab.UPGRADES:
+		for slot_index in _upgrade_option_ids.size():
+			_configure_upgrade_slot(slot_index, _upgrade_option_ids[slot_index])
 
 
 func _configure_building_slot(
@@ -228,12 +285,42 @@ func _configure_building_slot(
 		_apply_building_option_state(option_state)
 
 
+## GLOBAL_TYPE upgrade ids are the building type they upgrade, so the same
+## BUILDING_ICONS entry doubles as this slot's icon/tooltip; unlike
+## _configure_building_slot() an unrecognized id still gets wired up (bare
+## square, no icon) instead of being skipped, since option_state's own
+## tooltip (cost/build time) is the primary info for this tab.
+func _configure_upgrade_slot(slot_index: int, upgrade_id: StringName) -> void:
+	var slot := get_slot(slot_index)
+	if slot == null:
+		return
+	var icon_data: Array = BUILDING_ICONS.get(upgrade_id, [])
+	if icon_data.size() == 3:
+		slot.icon_colored = icon_data[0] as Texture2D
+		slot.icon_grey = icon_data[1] as Texture2D
+		slot.tooltip_text = String(icon_data[2])
+	slot.state = QueueSlot.State.AVAILABLE
+	var option_state = _upgrade_option_states.get(upgrade_id) as BuildingOptionState
+	if option_state != null:
+		_apply_upgrade_option_state(option_state)
+
+
 func _building_slot(building_id: StringName) -> QueueSlot:
 	var slot_index := _building_option_ids.find(building_id)
 	return get_slot(slot_index)
 
 
+func _upgrade_slot(upgrade_id: StringName) -> QueueSlot:
+	var slot_index := _upgrade_option_ids.find(upgrade_id)
+	return get_slot(slot_index)
+
+
 func _on_slot_pressed(slot_index: int, button_index: int) -> void:
-	if active_tab != Tab.BUILDINGS or slot_index < 0 or slot_index >= _building_option_ids.size():
-		return
-	building_intent_pressed.emit(_building_option_ids[slot_index], button_index)
+	if active_tab == Tab.BUILDINGS:
+		if slot_index < 0 or slot_index >= _building_option_ids.size():
+			return
+		building_intent_pressed.emit(_building_option_ids[slot_index], button_index)
+	elif active_tab == Tab.UPGRADES:
+		if slot_index < 0 or slot_index >= _upgrade_option_ids.size():
+			return
+		upgrade_intent_pressed.emit(_upgrade_option_ids[slot_index], button_index)

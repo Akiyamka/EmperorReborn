@@ -33,6 +33,13 @@ enum Relation {
 		energy = value
 		resources_changed.emit(player_id, money, energy)
 
+## docs/mechanics/production.md section 4/5: a global per-type upgrade is
+## purchased once and is irreversible -- it belongs to the player, not to any
+## one building instance, and is not lost when every building of that type
+## is destroyed. Keyed by building_id (config_id). Not @export: this is
+## runtime match state, not designer-configurable player data.
+var _purchased_upgrade_ids: Dictionary = {}
+
 
 func configure(
 		new_player_id: int,
@@ -73,6 +80,18 @@ func spend_money(amount: int) -> bool:
 
 func add_energy(amount: int) -> void:
 	energy += amount
+
+
+func has_purchased_upgrade(building_id: StringName) -> bool:
+	return _purchased_upgrade_ids.has(building_id)
+
+
+func grant_upgrade(building_id: StringName) -> void:
+	_purchased_upgrade_ids[building_id] = true
+
+
+func purchased_upgrade_ids() -> Array:
+	return _purchased_upgrade_ids.keys()
 
 
 func has_house() -> bool:

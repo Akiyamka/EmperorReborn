@@ -2,6 +2,7 @@ extends Node3D
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingControllerScript := preload("res://scripts/buildings/building_controller.gd")
+const BuildingUpgradeControllerScript := preload("res://scripts/buildings/building_upgrade_controller.gd")
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
@@ -21,6 +22,7 @@ const DEMO_BUILDING_OPTION_IDS: Array[StringName] = [&"ATSmWindtrap", &"ATBarrac
 
 var _fps_update_time := 0.0
 var _building_controller: BuildingController
+var _building_upgrade_controller: BuildingUpgradeController
 var _unit_command_controller: UnitCommandController
 
 
@@ -33,6 +35,7 @@ func _enter_tree() -> void:
 func _ready() -> void:
 	_setup_unit_command_controller()
 	_setup_building_controller()
+	_setup_building_upgrade_controller()
 	_update_selection_label()
 	_update_fps_label()
 	_place_on_map()
@@ -41,12 +44,19 @@ func _ready() -> void:
 func _on_panel_command(command: StringName) -> void:
 	if _building_controller != null and _building_controller.handle_command(command):
 		return
+	if _building_upgrade_controller != null and _building_upgrade_controller.handle_command(command):
+		return
 	_update_selection_label("Command: %s (not implemented)" % command)
 
 
 func _on_panel_building_intent(building_id: StringName, button_index: int) -> void:
 	if _building_controller != null:
 		_building_controller.handle_building_intent(building_id, button_index)
+
+
+func _on_panel_upgrade_intent(upgrade_id: StringName, button_index: int) -> void:
+	if _building_upgrade_controller != null:
+		_building_upgrade_controller.handle_upgrade_intent(upgrade_id, button_index)
 
 
 func _on_building_resources_changed(credits: int, energy: int) -> void:
@@ -72,6 +82,26 @@ func _setup_building_controller() -> void:
 		$Buildings,
 		DEMO_BUILDING_OPTION_IDS,
 		PLACEMENT_ARROW_SCENE,
+		PLACEMENT_BUILDING_SCENE,
+		PLACEMENT_CANT_BUILD_SCENE,
+		PLACEMENT_SKIRT_SCENE
+	)
+
+
+func _setup_building_upgrade_controller() -> void:
+	side_panel.configure_upgrade_options(DEMO_BUILDING_OPTION_IDS)
+	_building_upgrade_controller = BuildingUpgradeControllerScript.new()
+	_building_upgrade_controller.name = "BuildingUpgradeController"
+	add_child(_building_upgrade_controller)
+	side_panel.upgrade_intent_pressed.connect(_on_panel_upgrade_intent)
+	_building_upgrade_controller.status_changed.connect(_update_selection_label)
+	_building_upgrade_controller.upgrade_option_state_changed.connect(side_panel.set_upgrade_option_state)
+	_building_upgrade_controller.dock_mode_changed.connect(side_panel.set_dock_mode)
+	_building_upgrade_controller.setup(
+		terrain,
+		camera,
+		$Buildings,
+		DEMO_BUILDING_OPTION_IDS,
 		PLACEMENT_BUILDING_SCENE,
 		PLACEMENT_CANT_BUILD_SCENE,
 		PLACEMENT_SKIRT_SCENE
@@ -117,6 +147,8 @@ func _snap_to_ground(point: Vector3) -> Vector3:
 func _process(delta: float) -> void:
 	if _building_controller != null:
 		_building_controller.process(delta)
+	if _building_upgrade_controller != null:
+		_building_upgrade_controller.process(delta)
 
 	_fps_update_time += delta
 	if _fps_update_time >= 0.25:
@@ -126,6 +158,10 @@ func _process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _building_controller != null and _building_controller.handle_unhandled_input(event):
+		get_viewport().set_input_as_handled()
+		return
+
+	if _building_upgrade_controller != null and _building_upgrade_controller.handle_unhandled_input(event):
 		get_viewport().set_input_as_handled()
 		return
 

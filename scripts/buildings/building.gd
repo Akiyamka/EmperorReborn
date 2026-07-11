@@ -8,6 +8,17 @@ signal primary_changed(is_primary: bool)
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 
+## docs/mechanics/production.md section 4: max 2 docks per refinery. Docks are
+## plain Buildings placed by BuildingUpgradeController next to this one (not
+## children of it) and are tracked here purely so a second "Upgrade Dock"
+## click knows the current count and where to lay out the next one. Rules
+## gives each RefineryDock its own health/storm_damage, i.e. the original
+## models them as independently destructible buildings rather than parts of
+## the refinery, so losing the refinery does *not* free its docks here --
+## they keep standing (and taking damage) on their own, same as any other
+## building.
+const MAX_REFINERY_DOCKS := 2
+
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
 	set(value):
@@ -18,6 +29,7 @@ const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survi
 		if is_inside_tree():
 			_refresh_owner_visuals()
 			_refresh_generated_energy()
+			_sync_purchased_upgrade()
 		owner_changed.emit(owner_player_id)
 @export var default_state := &"idle"
 @export var max_health := 0.0
@@ -46,6 +58,7 @@ var is_primary := false:
 var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
 var _generated_energy := 0
+var _docks: Array[Node3D] = []
 
 
 func _ready() -> void:
@@ -57,6 +70,7 @@ func _ready() -> void:
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_refresh_owner_visuals()
 	_refresh_generated_energy()
+	_sync_purchased_upgrade()
 	play_state(default_state)
 	_add_selection_collision()
 
@@ -164,6 +178,19 @@ func set_owner_player_id(player_id: int) -> void:
 
 func set_upgrade_level(level: int) -> void:
 	upgrade_level = maxi(level, 0)
+
+
+func dock_count() -> int:
+	return _docks.size()
+
+
+func can_add_dock() -> bool:
+	return _docks.size() < MAX_REFINERY_DOCKS
+
+
+func register_dock(dock: Node3D) -> void:
+	if is_instance_valid(dock) and not _docks.has(dock):
+		_docks.append(dock)
 
 
 func setup(building_id: StringName) -> void:
@@ -279,3 +306,19 @@ func _players():
 	if not is_inside_tree():
 		return null
 	return get_node_or_null("/root/Players")
+
+
+## docs/mechanics/production.md section 4/5: a purchased global per-type
+## upgrade belongs to the player, so any building of that type this player
+## owns -- including ones built after the purchase -- should read as
+## upgraded. UpgradeEffects pushes the level onto buildings that already
+## exist when the purchase completes; this covers the building's own arrival
+## afterwards.
+func _sync_purchased_upgrade() -> void:
+	if not is_inside_tree() or String(config_id).is_empty() or upgrade_level > 0:
+		return
+	var player = owner_player()
+	if player == null or not player.has_method("has_purchased_upgrade"):
+		return
+	if player.has_purchased_upgrade(config_id):
+		set_upgrade_level(1)
