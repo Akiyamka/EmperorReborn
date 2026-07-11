@@ -14,9 +14,38 @@ const AT_WINDTRAP_ICON := preload("res://assets/raw_original_content/3DDATA/Text
 const AT_WINDTRAP_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Windtrap.tga")
 const AT_BARRACKS_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Barracks.tga")
 const AT_BARRACKS_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Barracks.tga")
+const AT_FACTORY_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Factory.tga")
+const AT_FACTORY_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Factory.tga")
+const AT_HANGER_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Hanger.tga")
+const AT_HANGER_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Hanger.tga")
+const AT_HELIPAD_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Helipad.tga")
+const AT_HELIPAD_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Helipad.tga")
+const AT_OUTPOST_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Outpost.tga")
+const AT_OUTPOST_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Outpost.tga")
+const AT_PALACE_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Palace.tga")
+const AT_PALACE_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Palace.tga")
+const AT_PILLBOX_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Pillbox.tga")
+const AT_PILLBOX_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Pillbox.tga")
+const AT_REFINERY_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_Refinery.tga")
+const AT_REFINERY_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_Refinery.tga")
+const AT_ROCKETTURRET_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_RocketTurret.tga")
+const AT_ROCKETTURRET_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_RocketTurret.tga")
+const AT_STARPORT_ICON := preload("res://assets/raw_original_content/3DDATA/Textures/AT_StarPort.tga")
+const AT_STARPORT_ICON_GREY := preload("res://assets/raw_original_content/3DDATA/Textures/Grey_AT_StarPort.tga")
+## TODO: Harkonnen/Ordos/sub-house (Fremen, Ix, Guild, Imperial, Tleilaxu)
+## icons -- demo match always seats an Atreides local player for now.
 const BUILDING_ICONS := {
 	&"ATSmWindtrap": [AT_WINDTRAP_ICON, AT_WINDTRAP_ICON_GREY, "Windtrap"],
 	&"ATBarracks": [AT_BARRACKS_ICON, AT_BARRACKS_ICON_GREY, "Barracks"],
+	&"ATFactory": [AT_FACTORY_ICON, AT_FACTORY_ICON_GREY, "Factory"],
+	&"ATHanger": [AT_HANGER_ICON, AT_HANGER_ICON_GREY, "Hangar"],
+	&"ATHelipad": [AT_HELIPAD_ICON, AT_HELIPAD_ICON_GREY, "Helipad"],
+	&"ATOutpost": [AT_OUTPOST_ICON, AT_OUTPOST_ICON_GREY, "Outpost"],
+	&"ATPalace": [AT_PALACE_ICON, AT_PALACE_ICON_GREY, "Palace"],
+	&"ATPillbox": [AT_PILLBOX_ICON, AT_PILLBOX_ICON_GREY, "Pillbox"],
+	&"ATRefinery": [AT_REFINERY_ICON, AT_REFINERY_ICON_GREY, "Refinery"],
+	&"ATRocketTurret": [AT_ROCKETTURRET_ICON, AT_ROCKETTURRET_ICON_GREY, "Rocket Turret"],
+	&"ATStarport": [AT_STARPORT_ICON, AT_STARPORT_ICON_GREY, "Starport"],
 }
 
 ## All five tabs switch the content of the same production grid,

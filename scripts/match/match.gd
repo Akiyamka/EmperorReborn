@@ -10,8 +10,6 @@ const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/bu
 const PLACEMENT_SKIRT_SCENE := preload("res://assets/converted/placement/build_skirt.scn")
 const LOCAL_PLAYER_ID := 1
 const ENEMY_PLAYER_ID := 2
-## Temporary match composition data until building options come from the feature/rules catalog.
-const DEMO_BUILDING_OPTION_IDS: Array[StringName] = [&"ATSmWindtrap", &"ATBarracks"]
 
 @onready var camera: Camera3D = $CameraRig/Camera3D
 @onready var camera_rig: Node3D = $CameraRig
@@ -24,12 +22,16 @@ var _fps_update_time := 0.0
 var _building_controller: BuildingController
 var _building_upgrade_controller: BuildingUpgradeController
 var _unit_command_controller: UnitCommandController
+## Whole roster of the local player's house, gated by the technology tree
+## rather than a hardcoded demo list -- see docs/mechanics/production.md.
+var _building_option_ids: Array[StringName] = []
 
 
 func _enter_tree() -> void:
 	# Children initialize their owner visuals in _ready(), so the roster must
 	# exist before buildings and units enter the scene tree.
 	_configure_demo_players()
+	_building_option_ids = _local_player_building_option_ids()
 
 
 func _ready() -> void:
@@ -65,7 +67,7 @@ func _on_building_resources_changed(credits: int, energy: int) -> void:
 
 
 func _setup_building_controller() -> void:
-	side_panel.configure_building_options(DEMO_BUILDING_OPTION_IDS)
+	side_panel.configure_building_options(_building_option_ids)
 	_building_controller = BuildingControllerScript.new()
 	_building_controller.name = "BuildingController"
 	add_child(_building_controller)
@@ -80,7 +82,7 @@ func _setup_building_controller() -> void:
 		terrain,
 		camera,
 		$Buildings,
-		DEMO_BUILDING_OPTION_IDS,
+		_building_option_ids,
 		PLACEMENT_ARROW_SCENE,
 		PLACEMENT_BUILDING_SCENE,
 		PLACEMENT_CANT_BUILD_SCENE,
@@ -89,7 +91,7 @@ func _setup_building_controller() -> void:
 
 
 func _setup_building_upgrade_controller() -> void:
-	side_panel.configure_upgrade_options(DEMO_BUILDING_OPTION_IDS)
+	side_panel.configure_upgrade_options(_building_option_ids)
 	_building_upgrade_controller = BuildingUpgradeControllerScript.new()
 	_building_upgrade_controller.name = "BuildingUpgradeController"
 	add_child(_building_upgrade_controller)
@@ -101,7 +103,7 @@ func _setup_building_upgrade_controller() -> void:
 		terrain,
 		camera,
 		$Buildings,
-		DEMO_BUILDING_OPTION_IDS,
+		_building_option_ids,
 		PLACEMENT_BUILDING_SCENE,
 		PLACEMENT_CANT_BUILD_SCENE,
 		PLACEMENT_SKIRT_SCENE
@@ -206,6 +208,19 @@ func _configure_demo_players() -> void:
 	)
 	players.local_player_id = LOCAL_PLAYER_ID
 	players.set_relation(LOCAL_PLAYER_ID, ENEMY_PLAYER_ID, PlayerDataScript.Relation.ENEMY)
+
+
+func _local_player_building_option_ids() -> Array[StringName]:
+	var players = _players()
+	var rules := get_node_or_null("/root/Rules")
+	if players == null or rules == null:
+		return []
+
+	var local_player = players.player(LOCAL_PLAYER_ID)
+	if local_player == null:
+		return []
+
+	return rules.buildable_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _players():

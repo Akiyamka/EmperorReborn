@@ -50,3 +50,9 @@ func warhead(entity_id: StringName) -> Resource:
 
 func general_rules() -> Resource:
 	return catalog.general_rules()
+
+
+func buildable_building_ids_for_house(
+		house_id: StringName, subhouse_ids: Array[StringName] = []
+) -> Array[StringName]:
+	return catalog.buildable_building_ids_for_house(house_id, subhouse_ids)

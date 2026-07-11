@@ -1,0 +1,132 @@
+extends SceneTree
+## Covers RulesCatalog.buildable_building_ids_for_house(): the panel-grid
+## roster filter documented in docs/mechanics/production.md. Real fixtures
+## (assets/converted/rules/buildings/*.tres) already exercise this indirectly
+## via demo_match, but this pins the filter rules directly against synthetic
+## configs so a future rules-conversion change that breaks them fails loudly
+## here instead of only showing up as a wrong panel roster in-game.
+
+const RulesCatalogScript := preload("res://scripts/rules/rules_catalog.gd")
+const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
+
+var _assertions := 0
+var _failures := 0
+var _current_case := ""
+
+
+func _initialize() -> void:
+	_run_case("roster excludes ConYard, Wall, RefineryDock, and decorative buildings", _test_roster_filter)
+	_run_case("roster matches by primary house or subhouse", _test_roster_house_matching)
+
+	if _failures > 0:
+		printerr("Rules tests: %d failures after %d assertions" % [_failures, _assertions])
+		quit(1)
+		return
+
+	print("Rules tests: %d assertions passed" % _assertions)
+	quit(0)
+
+
+func _run_case(case_name: String, test: Callable) -> void:
+	_current_case = case_name
+	var failures_before := _failures
+	var completed: Variant = test.call()
+	if completed != true:
+		_failures += 1
+		printerr("FAIL: %s: case aborted before normal completion" % case_name)
+		return
+	if _failures == failures_before:
+		print("PASS: %s" % case_name)
+
+
+func _expect(condition: bool, message: String) -> void:
+	_assertions += 1
+	if condition:
+		return
+	_failures += 1
+	printerr("FAIL: %s: %s" % [_current_case, message])
+
+
+func _test_roster_filter() -> bool:
+	var catalog = _catalog_with([
+		_building(&"ATConYard", &"Atreides", {"is_con_yard": true}, [&"ConYard"]),
+		_building(&"ATBarracks", &"Atreides", {}, [&"ATConYard"], [&"Barracks"]),
+		_building(&"ATFactory", &"Atreides", {}, [&"ATConYard"], [&"Factory"]),
+		_building(
+			&"ATWall", &"Atreides", {"building_group": "Wall"}, [&"ATConYard"], [&"Wall"]
+		),
+		_building(
+			&"ATRefineryDock",
+			&"Atreides",
+			{"building_group": "RefineryDock"},
+			[&"ATConYard"],
+			[&"Dockable"]
+		),
+		_building(&"ATINSultan", &"Atreides", {}, []),
+	])
+
+	var roster: Array[StringName] = catalog.buildable_building_ids_for_house(&"Atreides")
+
+	_expect(roster.has(&"ATBarracks"), "a real buildable building must be included")
+	_expect(roster.has(&"ATFactory"), "a second real buildable building must be included")
+	_expect(not roster.has(&"ATConYard"), "the Construction Yard must be excluded (built only via MCV)")
+	_expect(not roster.has(&"ATWall"), "Wall must be excluded (its own BuildWall mode)")
+	_expect(not roster.has(&"ATRefineryDock"), "RefineryDock must be excluded (its own UpgradeDock mode)")
+	_expect(
+		not roster.has(&"ATINSultan"),
+		"a decorative building with no requires_primary must be excluded"
+	)
+	_expect(roster.size() == 2, "only the two real buildable buildings must remain")
+	return true
+
+
+func _test_roster_house_matching() -> bool:
+	var catalog = _catalog_with([
+		_building(&"ATBarracks", &"Atreides", {}, [&"ATConYard"], [&"Barracks"]),
+		_building(&"FRCamp", &"Fremen", {}, [&"ATConYard"], [&"Camp"]),
+		_building(&"ORBarracks", &"Ordos", {}, [&"ORConYard"], [&"Barracks"]),
+	])
+
+	var without_subhouse: Array[StringName] = catalog.buildable_building_ids_for_house(&"Atreides")
+	_expect(without_subhouse.has(&"ATBarracks"), "the primary house must match")
+	_expect(not without_subhouse.has(&"FRCamp"), "an unlisted subhouse must not match")
+	_expect(not without_subhouse.has(&"ORBarracks"), "an unrelated house must not match")
+
+	var fremen_subhouse: Array[StringName] = [&"Fremen"]
+	var with_subhouse: Array[StringName] = catalog.buildable_building_ids_for_house(
+		&"Atreides", fremen_subhouse
+	)
+	_expect(with_subhouse.has(&"ATBarracks"), "the primary house must still match alongside a subhouse")
+	_expect(with_subhouse.has(&"FRCamp"), "a listed subhouse must match")
+	_expect(not with_subhouse.has(&"ORBarracks"), "an unrelated house must not match even with a subhouse listed")
+	return true
+
+
+func _catalog_with(configs: Array):
+	var catalog = RulesCatalogScript.new()
+	for config in configs:
+		var bucket: Dictionary = catalog._by_type.get(String(config.entity_type), {})
+		bucket[String(config.id)] = config
+		catalog._by_type[String(config.entity_type)] = bucket
+		catalog._all.append(config)
+	return catalog
+
+
+func _building(
+		id: StringName,
+		house: StringName,
+		extra_fields: Dictionary,
+		requires_primary: Array,
+		roles: Array = []
+):
+	var config = RuleEntityConfigScript.new()
+	config.id = id
+	config.entity_type = &"building"
+	var fields := {"house": String(house), "is_con_yard": false}
+	fields.merge(extra_fields, true)
+	config.fields = fields
+	config.lists = {
+		"requires_primary": requires_primary,
+		"roles": roles,
+	}
+	return config

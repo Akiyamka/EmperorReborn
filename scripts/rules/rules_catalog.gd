@@ -4,6 +4,12 @@ extends Resource
 const DEFAULT_RULES_ROOT := "res://assets/converted/rules"
 const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
 
+## Non-roster building_group/roles values: Wall and RefineryDock are built
+## through their own dedicated placement modes (BuildingController's
+## BuildWall/UpgradeDock), not the general building panel grid.
+const _EXCLUDED_BUILDING_GROUPS: Array[StringName] = [&"Wall", &"RefineryDock"]
+const _EXCLUDED_ROLES: Array[StringName] = [&"Wall", &"Dockable"]
+
 @export_dir var rules_root := DEFAULT_RULES_ROOT
 
 var _by_type: Dictionary = {}
@@ -72,6 +78,50 @@ func warhead(entity_id: StringName) -> Resource:
 
 func general_rules() -> Resource:
 	return get_entity(&"general", &"general")
+
+
+## Roster of player-buildable buildings for a house: everything a house could
+## potentially construct through the building panel, regardless of whether the
+## technology tree currently unlocks it. Excludes the Construction Yard
+## (built only via MCV deploy), Wall/RefineryDock (their own placement modes),
+## and decorative Incidental scenery (no requires_primary, so they never gate
+## behind the tech tree).
+func buildable_building_ids_for_house(
+		house_id: StringName, subhouse_ids: Array[StringName] = []
+) -> Array[StringName]:
+	var result: Array[StringName] = []
+	var bucket: Dictionary = _by_type.get("building", {})
+	var keys := bucket.keys()
+	keys.sort()
+	for id_key in keys:
+		var config: Resource = bucket[id_key]
+		if not _matches_house(config, house_id, subhouse_ids):
+			continue
+		if _is_buildable_roster_building(config):
+			result.append(StringName(id_key))
+	return result
+
+
+func _matches_house(
+		config: Resource, house_id: StringName, subhouse_ids: Array[StringName]
+) -> bool:
+	var config_house := StringName(String(config.field(&"house", "")))
+	return config_house == house_id or subhouse_ids.has(config_house)
+
+
+func _is_buildable_roster_building(config: Resource) -> bool:
+	if bool(config.field(&"is_con_yard", false)):
+		return false
+
+	var building_group := StringName(String(config.field(&"building_group", "")))
+	if building_group in _EXCLUDED_BUILDING_GROUPS:
+		return false
+
+	var roles: Array = config.list(&"roles")
+	if roles.size() == 1 and StringName(String(roles[0])) in _EXCLUDED_ROLES:
+		return false
+
+	return not config.list(&"requires_primary").is_empty()
 
 
 func _scan_dir(path: String) -> void:
