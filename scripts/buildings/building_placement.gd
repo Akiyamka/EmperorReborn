@@ -220,6 +220,11 @@ func _rebuild_preview(anchor_cell: Vector2i) -> void:
 
 	var has_cells := false
 	var can_build := true
+	# Checked once per anchor rather than per cell: it does not depend on the
+	# individual occupy cell, and every cell's preview material must reflect
+	# it, not just the aggregate _can_build result (otherwise the grid stays
+	# green while placement is silently blocked by radius).
+	var within_radius := _skip_build_radius_check or _is_within_build_radius(anchor_cell)
 	var occupied_cells := _occupied_building_nav_cells()
 	for row_index in _occupy_rows.size():
 		var row := _occupy_rows[row_index]
@@ -233,6 +238,7 @@ func _rebuild_preview(anchor_cell: Vector2i) -> void:
 			var cell_available := (
 				_is_occupy_cell_buildable(grid_cell)
 				and _is_occupy_cell_unoccupied(grid_cell, occupied_cells)
+				and within_radius
 			)
 			can_build = can_build and cell_available
 
@@ -251,7 +257,7 @@ func _rebuild_preview(anchor_cell: Vector2i) -> void:
 				+ Vector3.UP * CELL_SURFACE_OFFSET
 			)
 
-	_can_build = has_cells and can_build and (_skip_build_radius_check or _is_within_build_radius(anchor_cell))
+	_can_build = has_cells and can_build
 	if has_cells:
 		_add_arrow(anchor_cell)
 

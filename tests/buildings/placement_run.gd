@@ -42,6 +42,7 @@ func _initialize() -> void:
 	_run_case("failed placement keeps active state", _test_failed_placement_keeps_active)
 	_run_case("footprint occupancy and single spawn handoff", _test_occupancy_and_single_spawn)
 	_run_case("resolver fallback occupancy", _test_resolver_fallback_occupancy)
+	_run_case("out-of-radius cells preview as blocked", _test_out_of_radius_preview_is_blocked)
 
 	if _failures > 0:
 		printerr("BuildingPlacement tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -169,6 +170,60 @@ func _test_occupancy_and_single_spawn(token: int) -> int:
 	)
 	_free_pair(pair)
 	return token
+
+
+## Regression test: the per-cell preview material must reflect the build
+## radius check, not just the aggregate _can_build flag used by
+## try_place_at_hover_cell() -- otherwise the grid stays green while
+## placement is silently blocked by radius.
+func _test_out_of_radius_preview_is_blocked(token: int) -> int:
+	var buildings_root := Node3D.new()
+	get_root().add_child(buildings_root)
+
+	var available_template := Node3D.new()
+	available_template.set_meta(&"kind", "available")
+	var available_scene := PackedScene.new()
+	_expect(available_scene.pack(available_template) == OK, "available preview template must pack")
+	available_template.free()
+
+	var blocked_template := Node3D.new()
+	blocked_template.set_meta(&"kind", "blocked")
+	var blocked_scene := PackedScene.new()
+	_expect(blocked_scene.pack(blocked_template) == OK, "blocked preview template must pack")
+	blocked_template.free()
+
+	var placement = BuildingPlacementScript.new()
+	get_root().add_child(placement)
+	placement.setup(
+		null, FakeGrid.new(), buildings_root, null,
+		available_scene, blocked_scene, null,
+		Callable(), Callable(), Callable(self, "_always_out_of_radius")
+	)
+
+	placement.begin(&"Valid", "Valid", _rows(["X"]))
+	var result = placement.try_place_at_hover_cell(Vector2i(2, 4), null)
+	_expect(result == BuildingPlacementScript.PlaceResult.CANNOT_BUILD, "an out-of-radius footprint must reject placement")
+
+	var blocked_cells := 0
+	var available_cells := 0
+	for child in placement.get_children():
+		if not child.has_meta(&"kind"):
+			continue
+		if String(child.get_meta(&"kind")) == "blocked":
+			blocked_cells += 1
+		else:
+			available_cells += 1
+	_expect(blocked_cells == 1, "an out-of-radius cell must render with the blocked preview")
+	_expect(available_cells == 0, "an out-of-radius cell must not render with the available preview")
+
+	placement.cancel()
+	placement.queue_free()
+	buildings_root.queue_free()
+	return token
+
+
+func _always_out_of_radius() -> int:
+	return 5
 
 
 func _test_resolver_fallback_occupancy(token: int) -> int:
