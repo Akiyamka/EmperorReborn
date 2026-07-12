@@ -75,7 +75,6 @@ func register_unit(unit: Node3D) -> int:
 		"path": [] as Array[Vector2i],
 		"path_index": 0,
 		"destination": unit.global_position,
-		"original_destination": unit.global_position,
 		"command_id": 0,
 		"mode": MoveMode.FREE,
 		"group_speed": INF,
@@ -84,7 +83,6 @@ func register_unit(unit: Node3D) -> int:
 		"reported_enemy": false,
 		"yield_direction": Vector3.ZERO,
 		"yield_remaining": 0.0,
-		"was_displaced": false,
 		"direct_path": false,
 		"exit_point": Vector3.INF,
 	}
@@ -143,7 +141,6 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		var unit: Node3D = assignment["unit"]
 		var agent: Dictionary = _agents[unit.get_instance_id()]
 		agent["destination"] = assignment["position"]
-		agent["original_destination"] = assignment["position"]
 		agent["command_id"] = command_id
 		agent["mode"] = mode
 		agent["group_speed"] = group_speed
@@ -174,7 +171,6 @@ func stop(unit: Node3D) -> void:
 	agent["path"] = [] as Array[Vector2i]
 	agent["path_index"] = 0
 	agent["destination"] = unit.global_position
-	agent["original_destination"] = unit.global_position
 	agent["direct_path"] = false
 	agent["exit_point"] = Vector3.INF
 	_agents[unit.get_instance_id()] = agent
@@ -262,11 +258,14 @@ func _navigation_tick(delta: float) -> void:
 				_request_yield(friend, desired.normalized())
 		if float(agent["yield_remaining"]) > 0.0:
 			agent["yield_remaining"] = maxf(0.0, float(agent["yield_remaining"]) - delta)
-			if is_zero_approx(float(agent["yield_remaining"])) and bool(agent["was_displaced"]):
-				agent["was_displaced"] = false
-				var home: Vector3 = agent["original_destination"]
-				agent["destination"] = home
-				_route_agent(agent, unit.global_position, home)
+			if is_zero_approx(float(agent["yield_remaining"])):
+				# Yielding is intentionally one-way for now. Returning an idle unit
+				# to its former point makes units sharing a waypoint displace one
+				# another forever.
+				agent["destination"] = unit.global_position + velocity * delta
+				agent["path"] = [] as Array[Vector2i]
+				agent["path_index"] = 0
+				agent["direct_path"] = false
 		_agents[unit.get_instance_id()] = agent
 		resolved_positions[unit.get_instance_id()] = unit.global_position + velocity * delta
 		if unit.has_method("navigation_step"):
@@ -408,7 +407,6 @@ func _request_yield(unit: Node3D, direction: Vector3) -> void:
 		return
 	agent["yield_direction"] = direction
 	agent["yield_remaining"] = FRIENDLY_YIELD_SECONDS
-	agent["was_displaced"] = true
 	_agents[unit.get_instance_id()] = agent
 
 

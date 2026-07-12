@@ -81,11 +81,11 @@ func _on_panel_command(command: StringName) -> void:
 	_update_selection_label("Command: %s (not implemented)" % command)
 
 
-func _on_panel_building_intent(building_id: StringName, button_index: int) -> void:
+func _on_panel_building_intent(building_id: StringName, button_index: int, quantity: int) -> void:
 	if _building_controller != null and _building_controller.handle_building_intent(building_id, button_index):
 		return
 	if _unit_roster_controller != null:
-		_unit_roster_controller.handle_unit_intent(building_id, button_index)
+		_unit_roster_controller.handle_unit_intent(building_id, button_index, quantity)
 
 
 func _on_panel_upgrade_intent(upgrade_id: StringName, button_index: int) -> void:

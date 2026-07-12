@@ -11,7 +11,7 @@ enum State { DISABLED, AVAILABLE, PROGRESS, READY, BLOCKED }
 const SLOT_SHADER := preload("res://scripts/ui/queue_slot.gdshader")
 const ICON_MARGIN := 3
 
-signal right_pressed
+signal intent_pressed(button_index: int, quantity: int)
 
 var icon_colored: Texture2D:
 	set(value):
@@ -34,10 +34,15 @@ var status_text := "":
 	set(value):
 		status_text = value
 		_apply()
+var quantity := 0:
+	set(value):
+		quantity = maxi(value, 0)
+		_apply()
 
 var _icon_rect: TextureRect
 var _icon_material: ShaderMaterial
 var _status: Label
+var _quantity: Label
 
 
 func _ready() -> void:
@@ -61,12 +66,26 @@ func _ready() -> void:
 	_status.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_status)
 
+	_quantity = Label.new()
+	_quantity.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_quantity.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_quantity.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	_quantity.set_anchors_and_offsets_preset(
+		Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, ICON_MARGIN
+	)
+	add_child(_quantity)
+
 	_apply()
 
 
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
-		right_pressed.emit()
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		intent_pressed.emit(MOUSE_BUTTON_LEFT, 10 if event.shift_pressed else 1)
+		accept_event()
+	elif event.button_index == MOUSE_BUTTON_RIGHT:
+		intent_pressed.emit(MOUSE_BUTTON_RIGHT, 10 if event.shift_pressed else 1)
 		accept_event()
 
 
@@ -76,6 +95,8 @@ func _apply() -> void:
 
 	_icon_rect.visible = icon_colored != null
 	_icon_rect.texture = icon_colored
+	_quantity.text = str(quantity) if quantity > 0 else ""
+	_quantity.visible = quantity > 0
 	# With no grey variant, fall back to the colored icon on both sides of the mask.
 	_icon_material.set_shader_parameter("grey_texture", icon_grey if icon_grey else icon_colored)
 

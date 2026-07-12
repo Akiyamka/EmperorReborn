@@ -447,6 +447,38 @@ func _test_unit_production_rally_and_primary() -> void:
 	var units := match_instance.get_node("Units") as Node3D
 	var units_before := units.get_children().duplicate()
 	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_LEFT)
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_LEFT, 10)
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_LEFT)
+	_expect(
+		roster._unit_queue_size(&"ATBarracks") == 12,
+		"left click must add units, while shift+left click adds ten more"
+	)
+	var infantry_queue: BuildingQueue = roster._production_queues.get(&"ATBarracks")
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_RIGHT)
+	_expect(
+		infantry_queue != null and infantry_queue.current_order().manually_paused,
+		"right click must pause the active unit production order"
+	)
+	roster.process(2.0)
+	_expect(
+		units.get_children().size() == units_before.size(),
+		"a paused unit order must not complete"
+	)
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_RIGHT)
+	_expect(
+		roster._unit_queue_size(&"ATBarracks") == 11 and infantry_queue.current_order().manually_paused,
+		"a second right click must remove one queued unit without resuming production"
+	)
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_RIGHT, 10)
+	_expect(
+		roster._unit_queue_size(&"ATBarracks") == 1 and infantry_queue.current_order().manually_paused,
+		"shift+right click must remove ten queued units without resuming production"
+	)
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_LEFT)
+	_expect(
+		roster._unit_queue_size(&"ATBarracks") == 1 and not infantry_queue.current_order().manually_paused,
+		"left click on a paused unit order must resume it without adding another unit"
+	)
 	roster.process(2.0)
 
 	var produced: Unit
@@ -479,6 +511,14 @@ func _test_unit_production_rally_and_primary() -> void:
 	_expect(
 		not agent.is_empty() and bool(agent["route_ready"]),
 		"a produced unit must have its route toward the rally point ready"
+	)
+
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_LEFT)
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_RIGHT)
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_RIGHT, 10)
+	_expect(
+		roster._unit_queue_size(&"ATBarracks") == 0,
+		"shift+right click must not reduce the unit queue below zero"
 	)
 
 	match_instance.queue_free()

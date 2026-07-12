@@ -23,7 +23,7 @@ const ART_SIDEBAR_TABS := {
 
 signal command_pressed(command: StringName)
 signal tab_changed(tab: Tab)
-signal building_intent_pressed(building_id: StringName, button_index: int)
+signal building_intent_pressed(building_id: StringName, button_index: int, quantity: int)
 signal upgrade_intent_pressed(upgrade_id: StringName, button_index: int)
 
 @onready var _credits_label: Label = %CreditsLabel
@@ -189,6 +189,7 @@ func _apply_building_option_state(option_state: BuildingOptionState) -> void:
 	slot.state = _queue_slot_state(option_state.state)
 	slot.progress = option_state.progress
 	slot.status_text = option_state.status_text
+	slot.quantity = option_state.quantity
 	if not option_state.tooltip.is_empty():
 		slot.tooltip_text = option_state.tooltip
 
@@ -205,6 +206,7 @@ func _apply_upgrade_option_state(option_state: BuildingOptionState) -> void:
 	slot.state = _queue_slot_state(option_state.state)
 	slot.progress = option_state.progress
 	slot.status_text = option_state.status_text
+	slot.quantity = option_state.quantity
 	if not option_state.tooltip.is_empty():
 		slot.tooltip_text = option_state.tooltip
 
@@ -236,8 +238,7 @@ func _rebuild_queue_grid() -> void:
 		var slot := QueueSlot.new()
 		slot.custom_minimum_size = QUEUE_SLOT_SIZE
 		slot.tooltip_text = "Slot %d (empty)" % index
-		slot.pressed.connect(_on_slot_pressed.bind(index, MOUSE_BUTTON_LEFT))
-		slot.right_pressed.connect(_on_slot_pressed.bind(index, MOUSE_BUTTON_RIGHT))
+		slot.intent_pressed.connect(_on_slot_pressed.bind(index))
 		_queue_grid.add_child(slot)
 
 	if active_tab == Tab.UPGRADES:
@@ -338,7 +339,7 @@ func _upgrade_slot(upgrade_id: StringName) -> QueueSlot:
 	return get_slot(slot_index)
 
 
-func _on_slot_pressed(slot_index: int, button_index: int) -> void:
+func _on_slot_pressed(button_index: int, quantity: int, slot_index: int) -> void:
 	if active_tab == Tab.UPGRADES:
 		if slot_index < 0 or slot_index >= _upgrade_option_ids.size():
 			return
@@ -347,7 +348,7 @@ func _on_slot_pressed(slot_index: int, button_index: int) -> void:
 	var tab_ids := _building_ids_for_tab(active_tab)
 	if slot_index < 0 or slot_index >= tab_ids.size():
 		return
-	building_intent_pressed.emit(tab_ids[slot_index], button_index)
+	building_intent_pressed.emit(tab_ids[slot_index], button_index, quantity)
 
 
 func _building_ids_for_tab(tab: Tab) -> Array:

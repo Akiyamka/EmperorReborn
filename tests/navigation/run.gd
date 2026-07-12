@@ -40,6 +40,7 @@ func _initialize() -> void:
 	_test_interior_escape(grid)
 	_test_immediate_movement(grid)
 	_test_slots_and_collision(grid)
+	_test_yield_does_not_return(grid)
 	if _failures > 0:
 		printerr("Unit navigation tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
@@ -248,6 +249,29 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 		unit.queue_free()
 	left.queue_free()
 	right.queue_free()
+
+
+func _test_yield_does_not_return(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var unit := FakeUnit.new()
+	root.add_child(unit)
+	unit.global_position = Vector3(120.5, 0.0, 120.5)
+	navigation.command_move([unit], unit.global_position)
+	navigation.call("_request_yield", unit, Vector3.RIGHT)
+	for _iteration in 20:
+		navigation.call("_navigation_tick", 0.05)
+	var displaced_position := unit.global_position
+	_expect(displaced_position.x > 123.5, "a yielded unit must move aside")
+	for _iteration in 40:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(unit.global_position.distance_to(displaced_position) < 0.01, "a yielded unit must not return to its former destination")
+
+	navigation.queue_free()
+	unit.queue_free()
 
 
 ## A vertical wall at x=30 with an opening at y 126..130, plus a wall at x=60
