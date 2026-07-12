@@ -6,6 +6,8 @@ signal owner_changed(player_id: int)
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 
+const COLLISION_OBJECT_NAME := "#~~0"
+
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
 	set(value):
@@ -49,6 +51,7 @@ var _selection_halo
 func _ready() -> void:
 	_apply_rules_config()
 	target_position = global_position
+	_add_authored_collision()
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	health = max_health
@@ -230,6 +233,64 @@ func _players():
 
 func _clear_invulnerability() -> void:
 	invulnerable = false
+
+
+func _add_authored_collision() -> void:
+	for source in _collision_sources():
+		var shape := _collision_shape(source)
+		if shape == null:
+			push_warning("Unit: collision mesh %s has no usable convex shape" % source.get_path())
+			continue
+
+		var collision := CollisionShape3D.new()
+		collision.name = "AuthoredCollision"
+		collision.shape = shape
+		add_child(collision)
+		# The source mesh is nested beneath VisualRoot and model-space nodes;
+		# copying its global transform preserves its authored position and scale.
+		collision.global_transform = source.global_transform
+
+
+func _collision_sources() -> Array[Node3D]:
+	var result: Array[Node3D] = []
+	_collect_collision_sources(visual_root, COLLISION_OBJECT_NAME, result)
+	if result.is_empty():
+		_collect_collision_sources(visual_root, "slct", result, true)
+	return result
+
+
+func _collect_collision_sources(node: Node, original_name: String, result: Array[Node3D], prefix_match := false) -> void:
+	if node is Node3D and _is_collision_source(node, original_name, prefix_match):
+		_hide_collision_meshes(node)
+		result.append(node)
+		return
+	for child in node.get_children():
+		_collect_collision_sources(child, original_name, result, prefix_match)
+
+
+func _is_collision_source(node: Node3D, original_name: String, prefix_match: bool) -> bool:
+	var source_name := String(node.get_meta("original_name", ""))
+	var matches := source_name.to_lower().begins_with(original_name) if prefix_match else source_name == original_name
+	var points: PackedVector3Array = node.get_meta("collision_points", PackedVector3Array())
+	return matches and points.size() >= 4
+
+
+func _collision_shape(source: Node3D) -> Shape3D:
+	var points: PackedVector3Array = source.get_meta("collision_points", PackedVector3Array())
+	if points.size() >= 4:
+		var shape := ConvexPolygonShape3D.new()
+		shape.points = points
+		return shape
+	for child in source.get_children():
+		if child is MeshInstance3D and child.mesh != null:
+			return child.mesh.create_convex_shape(true, false)
+	return null
+
+
+func _hide_collision_meshes(node: Node) -> void:
+	for child in node.get_children():
+		if child is MeshInstance3D and child.has_meta("collision_mesh"):
+			child.visible = false
 
 
 func _add_selection_halo() -> void:

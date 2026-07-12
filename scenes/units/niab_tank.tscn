@@ -1,10 +1,7 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/units/unit.gd" id="1_unit"]
 [ext_resource type="PackedScene" path="res://assets/converted/models/GU_NIABTank_H0/GU_NIABTank_H0.scn" id="2_niab"]
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_niab"]
-size = Vector3(2.2, 1.2, 2.8)
 
 [node name="NIABTank" type="CharacterBody3D" groups=["units"]]
 collision_layer = 2
@@ -17,7 +14,3 @@ arrival_radius = 0.4
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0)
 
 [node name="GU_NIABTank_H0" parent="VisualRoot" instance=ExtResource("2_niab")]
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
-shape = SubResource("BoxShape3D_niab")

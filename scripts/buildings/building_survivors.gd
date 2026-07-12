@@ -108,13 +108,13 @@ static func _survivors_parent(building: Building) -> Node:
 
 
 static func _footprint_half_extents(building: Building) -> Vector3:
-	var shape_node := building.get_node_or_null("SelectionCollision/CollisionShape3D") as CollisionShape3D
-	if shape_node == null or not (shape_node.shape is BoxShape3D):
+	var collision_body := building.get_node_or_null("SelectionCollision") as StaticBody3D
+	if collision_body == null or not collision_body.has_meta("collision_bounds"):
 		return DEFAULT_HALF_EXTENTS
 
-	var box := shape_node.shape as BoxShape3D
+	var bounds: AABB = collision_body.get_meta("collision_bounds")
 	return Vector3(
-		box.size.x * 0.5 + SPAWN_SCATTER_MARGIN,
+		bounds.size.x * 0.5 + SPAWN_SCATTER_MARGIN,
 		0.0,
-		box.size.z * 0.5 + SPAWN_SCATTER_MARGIN
+		bounds.size.z * 0.5 + SPAWN_SCATTER_MARGIN
 	)

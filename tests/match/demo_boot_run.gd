@@ -14,6 +14,7 @@ var _current_case := ""
 
 
 func _initialize() -> void:
+	await _run_case("units and buildings use authored collision meshes", _test_authored_collision_meshes)
 	await _run_case("demo scene roster is non-empty after boot", _test_demo_roster_populated)
 	await _run_case("rules art configs resolve every demo panel icon", _test_demo_panel_icons)
 	await _run_case("rules sidebar type selects the panel tab", _test_rules_sidebar_tabs)
@@ -42,6 +43,52 @@ func _expect(condition: bool, message: String) -> void:
 		return
 	_failures += 1
 	printerr("FAIL: %s: %s" % [_current_case, message])
+
+
+func _test_authored_collision_meshes() -> void:
+	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
+	var match_instance := scene.instantiate()
+	get_root().add_child(match_instance)
+	await physics_frame
+
+	for unit_name in [&"ScoutA", &"OrdosAPC", &"NIABTank"]:
+		var unit := match_instance.get_node("Units/%s" % unit_name)
+		_expect(unit._collision_sources().size() > 0, "%s must expose an authored collision volume" % unit_name)
+		_expect(
+			_authored_collision_shapes(unit).size() > 0,
+			"%s must create a collision shape from its authored volume" % unit_name
+		)
+		for collision in _authored_collision_shapes(unit):
+			_expect(
+				collision.shape is ConvexPolygonShape3D,
+				"%s must not use a hand-authored box or capsule collision" % unit_name
+			)
+
+	for building_name in [&"ATConYard", &"ATSmWindtrap"]:
+		var building := match_instance.get_node("Buildings/%s" % building_name)
+		var body := building.get_node_or_null("SelectionCollision") as StaticBody3D
+		_expect(body != null, "%s must have a selection collision body" % building_name)
+		_expect(
+			body != null and _authored_collision_shapes(body).size() > 0,
+			"%s must create collision from its authored volume" % building_name
+		)
+		for collision in _authored_collision_shapes(body):
+			_expect(
+				collision.shape is ConvexPolygonShape3D,
+				"%s must not fall back to a generated box collision" % building_name
+			)
+
+	match_instance.queue_free()
+
+
+func _authored_collision_shapes(node: Node) -> Array[CollisionShape3D]:
+	var result: Array[CollisionShape3D] = []
+	if node == null:
+		return result
+	for child in node.get_children():
+		if child is CollisionShape3D:
+			result.append(child)
+	return result
 
 
 func _test_demo_roster_populated() -> void:

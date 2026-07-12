@@ -36,9 +36,9 @@ script = ExtResource("2_camera")
 config = ExtResource("6_camera_config")
 
 [node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=926810768]
-transform = Transform3D(1, 0, 0, 0, 0.49999997, 0.86602545, 0, -0.86602545, 0.49999997, 0, 24, 32)
+transform = Transform3D(1, 0, 0, 0, 0.49999997, 0.86602545, 0, -0.86602545, 0.49999997, 126.25389, 63.61711, 171.06927)
 current = true
-fov = 50.0
+fov = 30.0
 far = 500.0
 
 [node name="Terrain" parent="." unique_id=1242358657 instance=ExtResource("4_map")]
@@ -47,11 +47,11 @@ metadata/_edit_lock_ = true
 [node name="Buildings" type="Node3D" parent="." unique_id=251147608]
 
 [node name="ATConYard" parent="Buildings" unique_id=226675699 instance=ExtResource("9_at_con_yard")]
-transform = Transform3D(0.70710677, 0, -0.70710677, 0, 1, 0, 0.70710677, 0, 0.70710677, 118.0, 8.0, 148.0)
+transform = Transform3D(0.99999994, 0, 0, 0, 1, 0, 0, 0, 0.99999994, 118, 8, 127.7997)
 owner_player_id = 1
 
-[node name="ATSmWindtrap" parent="Buildings" instance=ExtResource("11_at_windtrap")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 112.0, 8.0, 140.0)
+[node name="ATSmWindtrap" parent="Buildings" unique_id=597995214 instance=ExtResource("11_at_windtrap")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 112, 8, 140)
 owner_player_id = 1
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
@@ -103,4 +103,5 @@ offset_bottom = 44.0
 text = "FPS: --"
 horizontal_alignment = 2
 
-[node name="SidePanel" parent="HUD" instance=ExtResource("10_side_panel")]
+[node name="SidePanel" parent="HUD" unique_id=1902101368 instance=ExtResource("10_side_panel")]
+layout_mode = 3

@@ -10,6 +10,7 @@ const ModelXbfScript := preload("res://converters/xbf/model_xbf.gd")
 # Other FX (flashes, lightning, ...) are already driven by the animation
 # tracks and must stay visible.
 const EFFECT_NAME_MARKERS: PackedStringArray = ["leech", "shield"]
+const COLLISION_OBJECT_NAME := "#~~0"
 const MODEL_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
 
 var source_texture_dir := MODEL_TEXTURE_DIR
@@ -108,12 +109,20 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 	var raw_name := String(object.name)
 	node.name = _safe_node_name(raw_name)
 	node.set_meta("original_name", raw_name)
+	if raw_name == COLLISION_OBJECT_NAME:
+		node.set_meta("collision_mesh", true)
+		# #~~0 is the root of the authored collision hierarchy. It commonly has
+		# no vertices itself: its child objects contain the actual volume.
+		node.set_meta("collision_points", _collision_points_from_hierarchy(object))
 	node.transform = _to_godot_transform(object.transform)
 	# Selection volumes and halo anchors are authored as vertex-only XBF
 	# objects.  They have no triangles, so no MeshInstance3D is generated for
 	# them; retain the data as metadata for gameplay visuals instead.
 	if raw_name.to_lower().begins_with("slct"):
 		node.set_meta("selection_bounds", _object_bounds(object.positions))
+		# A few source models have no #~~0 root. Their SLCT object is still an
+		# authored selection/collision volume, and is the runtime fallback.
+		node.set_meta("collision_points", _collision_points(object.positions))
 	elif raw_name == "#^^0":
 		node.set_meta("halo_anchor", true)
 		node.set_meta("halo_anchor_bounds", _object_bounds(object.positions))
@@ -125,7 +134,12 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		var mesh_instance := MeshInstance3D.new()
 		mesh_instance.name = "Mesh"
 		mesh_instance.mesh = mesh
-		mesh_instance.visible = not _is_effect_object(raw_name)
+		# #~~0 is an authored collision volume, not visible model geometry.
+		# Keep its mesh in the converted scene so Unit and Building can make
+		# the matching physics shape at runtime.
+		mesh_instance.visible = not (_is_effect_object(raw_name) or raw_name == COLLISION_OBJECT_NAME)
+		if raw_name == COLLISION_OBJECT_NAME:
+			mesh_instance.set_meta("collision_mesh", true)
 		node.add_child(mesh_instance)
 		_add_vertex_animation_track(anim, "%s/Mesh" % child_path, object, texture_names)
 		var atlas_frames := _mesh_animated_frame_count(mesh)
@@ -160,6 +174,29 @@ func _object_bounds(positions: PackedVector3Array) -> AABB:
 	for point in positions:
 		bounds = bounds.expand(point)
 	return bounds
+
+
+func _collision_points(positions: PackedVector3Array) -> PackedVector3Array:
+	var result := PackedVector3Array()
+	for point in positions:
+		result.append(Vector3(point.x, point.y, -point.z))
+	return result
+
+
+func _collision_points_from_hierarchy(root_object: Dictionary) -> PackedVector3Array:
+	var result := _collision_points(root_object.positions)
+	for child: Dictionary in root_object.children:
+		_append_collision_points(child, Transform3D.IDENTITY, result)
+	return result
+
+
+func _append_collision_points(object: Dictionary, parent_transform: Transform3D, result: PackedVector3Array) -> void:
+	var transform: Transform3D = parent_transform * object.transform
+	for point in object.positions:
+		var transformed: Vector3 = transform * point
+		result.append(Vector3(transformed.x, transformed.y, -transformed.z))
+	for child: Dictionary in object.children:
+		_append_collision_points(child, transform, result)
 
 
 func _assign_scene_owner(node: Node, scene_root: Node) -> void:

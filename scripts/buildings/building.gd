@@ -9,6 +9,8 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 
+const COLLISION_OBJECT_NAME := "#~~0"
+
 ## docs/mechanics/production.md section 4: max 2 docks per refinery. Docks are
 ## plain Buildings placed by BuildingUpgradeController next to this one (not
 ## children of it) and are tracked here purely so a second "Upgrade Dock"
@@ -119,35 +121,98 @@ func _collect_scroll_fx_meshes_from(node: Node, result: Array[MeshInstance3D]) -
 func _add_selection_collision() -> void:
 	var bounds := AABB()
 	var has_bounds := false
-	for mesh_instance in _mesh_instances(self):
-		if mesh_instance.mesh == null:
+	var body := StaticBody3D.new()
+	body.name = "SelectionCollision"
+	body.collision_layer = 2
+	body.collision_mask = 0
+	for source in _collision_sources():
+		var shape := _collision_shape(source)
+		if shape == null:
+			push_warning("Building: collision mesh %s has no usable convex shape" % source.get_path())
 			continue
-		for corner in _aabb_corners(mesh_instance.get_aabb()):
-			var point := to_local(mesh_instance.to_global(corner))
+
+		var collision := CollisionShape3D.new()
+		collision.name = "AuthoredCollision"
+		collision.shape = shape
+		# SelectionCollision is at the Building origin. Convert the source's
+		# world transform back into that local space before parenting it,
+		# so this works while the body itself is not in the scene tree yet.
+		collision.transform = global_transform.affine_inverse() * source.global_transform
+		body.add_child(collision)
+
+		for point in _collision_bounds_points(source):
+			point = to_local(source.to_global(point))
 			if has_bounds:
 				bounds = bounds.expand(point)
 			else:
 				bounds = AABB(point, Vector3.ZERO)
 				has_bounds = true
 
-	if not has_bounds:
+	if body.get_child_count() == 0:
+		body.free()
 		return
-
-	var body := StaticBody3D.new()
-	body.name = "SelectionCollision"
-	body.collision_layer = 2
-	body.collision_mask = 0
-	var collision := CollisionShape3D.new()
-	var shape := BoxShape3D.new()
-	shape.size = Vector3(
-		maxf(bounds.size.x, 0.1),
-		maxf(bounds.size.y, 0.1),
-		maxf(bounds.size.z, 0.1)
-	)
-	collision.shape = shape
-	collision.position = bounds.get_center()
-	body.add_child(collision)
+	if has_bounds:
+		body.set_meta("collision_bounds", bounds)
 	add_child(body)
+
+
+func _collision_sources() -> Array[Node3D]:
+	var result: Array[Node3D] = []
+	# A building packs several visual damage states, each with its own #~~0.
+	# Its footprint is the H0 (Idle) volume, rather than the union of hidden
+	# construction/destruction-state volumes.
+	var idle_state := get_node_or_null("States/Idle")
+	var source_root: Node = idle_state if idle_state != null else self
+	_collect_collision_sources(source_root, COLLISION_OBJECT_NAME, result)
+	if result.is_empty():
+		_collect_collision_sources(source_root, "slct", result, true)
+	return result
+
+
+func _collect_collision_sources(node: Node, original_name: String, result: Array[Node3D], prefix_match := false) -> void:
+	if node is Node3D and _is_collision_source(node, original_name, prefix_match):
+		_hide_collision_meshes(node)
+		result.append(node)
+		return
+	for child in node.get_children():
+		_collect_collision_sources(child, original_name, result, prefix_match)
+
+
+func _is_collision_source(node: Node3D, original_name: String, prefix_match: bool) -> bool:
+	var source_name := String(node.get_meta("original_name", ""))
+	var matches := source_name.to_lower().begins_with(original_name) if prefix_match else source_name == original_name
+	var points: PackedVector3Array = node.get_meta("collision_points", PackedVector3Array())
+	return matches and points.size() >= 4
+
+
+func _collision_shape(source: Node3D) -> Shape3D:
+	var points: PackedVector3Array = source.get_meta("collision_points", PackedVector3Array())
+	if points.size() >= 4:
+		var shape := ConvexPolygonShape3D.new()
+		shape.points = points
+		return shape
+	for child in source.get_children():
+		if child is MeshInstance3D and child.mesh != null:
+			return child.mesh.create_convex_shape(true, false)
+	return null
+
+
+func _collision_bounds_points(source: Node3D) -> PackedVector3Array:
+	var points: PackedVector3Array = source.get_meta("collision_points", PackedVector3Array())
+	if not points.is_empty():
+		return points
+	var bounds := PackedVector3Array()
+	for child in source.get_children():
+		if child is MeshInstance3D and child.mesh != null:
+			for corner in _aabb_corners(child.get_aabb()):
+				bounds.append(child.position + corner)
+	return bounds
+
+
+func _hide_collision_meshes(node: Node) -> void:
+	for child in node.get_children():
+		if child is MeshInstance3D and child.has_meta("collision_mesh"):
+			child.visible = false
 
 
 func _mesh_instances(node: Node) -> Array[MeshInstance3D]:
