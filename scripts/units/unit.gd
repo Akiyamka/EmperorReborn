@@ -12,6 +12,8 @@ const TERRAIN_RAY_HEIGHT := 200.0
 const MIN_SLOPE_SPEED_MULTIPLIER := 0.65
 const MAX_SLOPE_SPEED_MULTIPLIER := 1.50
 const SLOPE_PROBE_DISTANCE := 0.5
+const MOVING_ANIMATION := &"Move"
+const IDLE_ANIMATION := &"Stationary"
 
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
@@ -51,6 +53,7 @@ var _shield_time := 0.0
 var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
 var _selection_halo
+var _animation_players: Array[AnimationPlayer] = []
 
 
 func _ready() -> void:
@@ -64,6 +67,8 @@ func _ready() -> void:
 	_add_authored_collision()
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
+	_animation_players = _collect_animation_players()
+	_set_movement_animation(false)
 	health = max_health
 	shields = max_shields
 	_add_selection_halo()
@@ -95,12 +100,14 @@ func _physics_process(delta: float) -> void:
 		velocity = direction * move_speed * _slope_speed_multiplier(direction, delta)
 		look_at(global_position + velocity, Vector3.UP)
 
+	_set_movement_animation(not velocity.is_zero_approx(), _movement_animation_speed_scale())
 	move_and_slide()
 	_snap_to_terrain()
 
 
 func move_to(world_position: Vector3) -> void:
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
+	_set_movement_animation(global_position.distance_to(target_position) > arrival_radius)
 
 
 func _snap_to_terrain() -> void:
@@ -177,6 +184,7 @@ func take_damage(amount: float) -> void:
 func stop_at_current_position() -> void:
 	target_position = global_position
 	velocity = Vector3.ZERO
+	_set_movement_animation(false)
 
 
 func set_selected(value: bool) -> void:
@@ -263,6 +271,31 @@ func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:
 		if mesh_instance.has_meta("scroll_fx"):
 			result.append(mesh_instance)
 	return result
+
+
+func _collect_animation_players() -> Array[AnimationPlayer]:
+	var result: Array[AnimationPlayer] = []
+	if visual_root == null:
+		return result
+	for node in visual_root.find_children("*", "AnimationPlayer", true, false):
+		result.append(node as AnimationPlayer)
+	return result
+
+
+func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
+	for player in _animation_players:
+		var animation := MOVING_ANIMATION if is_moving else IDLE_ANIMATION
+		if not player.has_animation(animation):
+			continue
+		if player.current_animation != animation:
+			player.play(animation)
+		player.speed_scale = speed_scale if is_moving else 1.0
+
+
+func _movement_animation_speed_scale() -> float:
+	if move_speed <= 0.0:
+		return 1.0
+	return velocity.length() / move_speed
 
 
 func _refresh_owner_visuals() -> void:

@@ -23,6 +23,28 @@ Construction Yard upgrades therefore use the MCV's 864 ticks. A 60-tick
 fallback is reserved for malformed configs with neither a direct time nor a
 usable resource link.
 
+## Animation timing
+
+### Infantry base movement animation is too slow
+
+**Observed behavior:** At its configured normal movement speed, infantry's
+`Move` animation plays noticeably slower than the unit travels across the
+ground. Dynamic scaling still follows changes in the actual movement speed,
+but the clip's base rate is too low.
+
+**EmperorReborn compatibility status:** No per-model base-rate correction has
+been established yet. The infantry `Move` clip needs a tuned baseline speed
+multiplier.
+
+### Wind-blown flag animation is too fast
+
+**Observed behavior:** Building flags animated as if blown by wind cycle at an
+anomalously high speed relative to the rest of the scene.
+
+**EmperorReborn compatibility status:** No correction is applied yet. The
+flag animation rate needs separate tuning so it is not affected by unrelated
+unit movement animation scaling.
+
 ## Unit models
 
 ### Three unit rules have no convertible H0 model

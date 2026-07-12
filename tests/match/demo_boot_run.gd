@@ -16,6 +16,7 @@ var _current_case := ""
 func _initialize() -> void:
 	await _run_case("units and buildings use authored collision meshes", _test_authored_collision_meshes)
 	await _run_case("units follow terrain elevation", _test_units_follow_terrain)
+	await _run_case("units switch between stationary and movement animations", _test_unit_movement_animations)
 	await _run_case("demo scene roster is non-empty after boot", _test_demo_roster_populated)
 	await _run_case("rules art configs resolve every demo panel icon", _test_demo_panel_icons)
 	await _run_case("rules sidebar type selects the panel tab", _test_rules_sidebar_tabs)
@@ -116,6 +117,44 @@ func _terrain_hit_below(unit: CharacterBody3D) -> Dictionary:
 	)
 	query.exclude = [unit.get_rid()]
 	return get_root().get_world_3d().direct_space_state.intersect_ray(query)
+
+
+func _test_unit_movement_animations() -> void:
+	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
+	var match_instance := scene.instantiate()
+	get_root().add_child(match_instance)
+	await physics_frame
+	await physics_frame
+	await physics_frame
+
+	for unit_name in [&"ScoutA", &"OrdosAPC", &"NIABTank"]:
+		var unit := match_instance.get_node("Units/%s" % unit_name) as Unit
+		var player := _unit_animation_player(unit)
+		_expect(player != null, "%s must expose a model AnimationPlayer" % unit_name)
+		_expect(player != null and player.current_animation == &"Stationary", "%s must start stationary" % unit_name)
+		unit.move_to(unit.global_position + Vector3(30.0, 0.0, 0.0))
+		await physics_frame
+		_expect(player != null and player.current_animation == &"Move", "%s must play Move while travelling" % unit_name)
+		_expect(
+			player != null and is_equal_approx(player.speed_scale, unit.velocity.length() / unit.move_speed),
+			"%s Move animation speed must match its physical velocity" % unit_name
+		)
+		unit.stop_at_current_position()
+		_expect(player != null and player.current_animation == &"Stationary", "%s must return to Stationary when stopped" % unit_name)
+		_expect(player != null and is_equal_approx(player.speed_scale, 1.0), "%s must reset its animation speed when stopped" % unit_name)
+
+	match_instance.queue_free()
+
+
+func _unit_animation_player(unit: Unit) -> AnimationPlayer:
+	if unit == null:
+		return null
+	var players := unit.get_node("VisualRoot").find_children("*", "AnimationPlayer", true, false)
+	for node in players:
+		var player := node as AnimationPlayer
+		if player.has_animation(&"Move") and player.has_animation(&"Stationary"):
+			return player
+	return null
 
 
 func _authored_collision_shapes(node: Node) -> Array[CollisionShape3D]:
