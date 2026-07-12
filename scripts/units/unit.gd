@@ -7,6 +7,11 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 
 const COLLISION_OBJECT_NAME := "#~~0"
+const TERRAIN_COLLISION_MASK := 1
+const TERRAIN_RAY_HEIGHT := 200.0
+const MIN_SLOPE_SPEED_MULTIPLIER := 0.65
+const MAX_SLOPE_SPEED_MULTIPLIER := 1.50
+const SLOPE_PROBE_DISTANCE := 0.5
 
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
@@ -51,6 +56,11 @@ var _selection_halo
 func _ready() -> void:
 	_apply_rules_config()
 	target_position = global_position
+	# Terrain height is sampled explicitly below. Letting CharacterBody collide
+	# with the terrain mesh makes each triangle edge behave like a small wall,
+	# which prevents units from climbing otherwise traversable slopes. The
+	# collision layer remains enabled, so mouse rays can still select this unit.
+	collision_mask = 0
 	_add_authored_collision()
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
@@ -74,21 +84,64 @@ func _process(delta: float) -> void:
 			mesh_instance.set_instance_shader_parameter("fx_time", _scroll_fx_time)
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	var offset := target_position - global_position
 	offset.y = 0.0
 
 	if offset.length() <= arrival_radius:
 		velocity = Vector3.ZERO
 	else:
-		velocity = offset.normalized() * move_speed
+		var direction := offset.normalized()
+		velocity = direction * move_speed * _slope_speed_multiplier(direction, delta)
 		look_at(global_position + velocity, Vector3.UP)
 
 	move_and_slide()
+	_snap_to_terrain()
 
 
 func move_to(world_position: Vector3) -> void:
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
+
+
+func _snap_to_terrain() -> void:
+	# Units are moved horizontally, then projected back onto the terrain mesh.
+	# Keeping this independent of CharacterBody's floor state lets authored unit
+	# collision volumes remain usable for selection while the unit follows every
+	# height change in the map instead of retaining its spawn elevation.
+	var hit := _terrain_hit_at(global_position)
+	if hit.is_empty():
+		return
+
+	global_position.y = (hit["position"] as Vector3).y
+
+
+func _slope_speed_multiplier(direction: Vector3, delta: float) -> float:
+	var current_hit := _terrain_hit_at(global_position)
+	if current_hit.is_empty():
+		return 1.0
+
+	var probe_distance := maxf(move_speed * delta, SLOPE_PROBE_DISTANCE)
+	var ahead := global_position + direction * probe_distance
+	var ahead_hit := _terrain_hit_at(ahead)
+	if ahead_hit.is_empty():
+		return 1.0
+
+	var current_position: Vector3 = current_hit["position"]
+	var ahead_position: Vector3 = ahead_hit["position"]
+	var slope := (ahead_position.y - current_position.y) / probe_distance
+	if slope > 0.0:
+		return maxf(1.0 - slope * 0.65, MIN_SLOPE_SPEED_MULTIPLIER)
+	return minf(1.0 - slope * 0.75, MAX_SLOPE_SPEED_MULTIPLIER)
+
+
+func _terrain_hit_at(position: Vector3) -> Dictionary:
+	var query := PhysicsRayQueryParameters3D.create(
+		position + Vector3.UP * TERRAIN_RAY_HEIGHT,
+		position - Vector3.UP * TERRAIN_RAY_HEIGHT,
+		TERRAIN_COLLISION_MASK
+	)
+	query.exclude = [get_rid()]
+	return get_world_3d().direct_space_state.intersect_ray(query)
 
 
 func setup(unit_id: StringName) -> void:

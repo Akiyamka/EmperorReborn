@@ -57,15 +57,15 @@ owner_player_id = 1
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
 
 [node name="ScoutA" parent="Units" unique_id=1502406383 instance=ExtResource("3_unit")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 123.627304, 8.160141, 139.38583)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 123.627304, 10.932426, 139.38583)
 owner_player_id = 1
 
 [node name="ScoutB" parent="Units" unique_id=1281454651 instance=ExtResource("3_unit")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 126.627304, 8.160141, 137.38583)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 126.627304, 7.8839464, 137.38583)
 owner_player_id = 1
 
 [node name="ScoutC" parent="Units" unique_id=325326372 instance=ExtResource("3_unit")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 129.6273, 8.045668, 140.38583)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 129.6273, 7.8531647, 140.38583)
 owner_player_id = 1
 
 [node name="OrdosAPC" parent="Units" unique_id=1929728337 instance=ExtResource("7_or_apc")]
@@ -90,7 +90,7 @@ offset_left = 16.0
 offset_top = 46.0
 offset_right = 360.0
 offset_bottom = 74.0
-text = "No unit selected"
+text = "No entity selected"
 
 [node name="FPS" type="Label" parent="HUD" unique_id=1283044958]
 anchors_preset = 1

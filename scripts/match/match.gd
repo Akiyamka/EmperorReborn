@@ -146,7 +146,7 @@ func _place_on_map() -> void:
 
 	for unit in get_tree().get_nodes_in_group("units"):
 		var spot: Vector3 = unit.global_position
-		unit.global_position = _snap_to_ground(spot) + Vector3.UP * 0.7
+		unit.global_position = _snap_to_ground(spot)
 		unit.stop_at_current_position()
 
 

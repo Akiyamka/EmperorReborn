@@ -15,6 +15,7 @@ var _current_case := ""
 
 func _initialize() -> void:
 	await _run_case("units and buildings use authored collision meshes", _test_authored_collision_meshes)
+	await _run_case("units follow terrain elevation", _test_units_follow_terrain)
 	await _run_case("demo scene roster is non-empty after boot", _test_demo_roster_populated)
 	await _run_case("rules art configs resolve every demo panel icon", _test_demo_panel_icons)
 	await _run_case("rules sidebar type selects the panel tab", _test_rules_sidebar_tabs)
@@ -79,6 +80,42 @@ func _test_authored_collision_meshes() -> void:
 			)
 
 	match_instance.queue_free()
+
+
+func _test_units_follow_terrain() -> void:
+	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
+	var match_instance := scene.instantiate()
+	get_root().add_child(match_instance)
+	await physics_frame
+	await physics_frame
+	await physics_frame
+
+	for unit_name in [&"ScoutA", &"OrdosAPC", &"NIABTank"]:
+		var unit := match_instance.get_node("Units/%s" % unit_name) as CharacterBody3D
+		_expect(unit.collision_mask == 0, "%s must not physically collide with terrain triangles" % unit_name)
+		var terrain_hit := _terrain_hit_below(unit)
+		_expect(not terrain_hit.is_empty(), "%s must have terrain beneath it" % unit_name)
+		if not terrain_hit.is_empty():
+			var terrain_position: Vector3 = terrain_hit["position"]
+			_expect(
+				is_equal_approx(unit.global_position.y, terrain_position.y),
+				"%s must sit on the terrain instead of hovering at its spawn height" % unit_name
+			)
+
+	match_instance.queue_free()
+
+
+func _terrain_hit_below(unit: CharacterBody3D) -> Dictionary:
+	if unit == null:
+		return {}
+	var position := unit.global_position
+	var query := PhysicsRayQueryParameters3D.create(
+		position + Vector3.UP * 200.0,
+		position - Vector3.UP * 200.0,
+		1
+	)
+	query.exclude = [unit.get_rid()]
+	return get_root().get_world_3d().direct_space_state.intersect_ray(query)
 
 
 func _authored_collision_shapes(node: Node) -> Array[CollisionShape3D]:

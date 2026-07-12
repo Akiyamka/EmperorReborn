@@ -26,6 +26,20 @@ class FakeUnit extends Node3D:
 		return player
 
 
+class FakeBuilding extends Node3D:
+	var player = null
+	var selected := false
+
+	func set_selected(active: bool) -> void:
+		selected = active
+
+	func is_owned_by(player_id: int) -> bool:
+		return player != null and player.player_id == player_id
+
+	func owner_player():
+		return player
+
+
 class FakeUnitCommandController extends UnitCommandController:
 	var raycast_hits: Array[Dictionary] = []
 	var raycast_masks: Array[int] = []
@@ -45,6 +59,7 @@ func _initialize() -> void:
 	players.set_relation(1, 2, PlayerData.Relation.ENEMY)
 
 	_run_case("selection ownership and movement", _test_selection_ownership_and_movement.bind(local_player, enemy_player))
+	_run_case("building selection", _test_building_selection.bind(local_player))
 	players.reset_for_match()
 	if _failures > 0:
 		printerr("UnitCommandController tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -93,7 +108,7 @@ func _test_selection_ownership_and_movement(token: int, local_player, enemy_play
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
 	_expect(not local_unit.selected and not enemy_unit.selected, "enemy units must not become selected")
 	_expect(commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT)), "enemy move click must still be handled")
-	_expect(enemy_unit.move_targets.is_empty() and commands.selection_text() == "No unit selected", "enemy click leaves no commandable selection")
+	_expect(enemy_unit.move_targets.is_empty() and commands.selection_text() == "No entity selected", "enemy click leaves no commandable selection")
 	_expect(commands.raycast_masks == [0xffffffff, 0xffffffff], "enemy move must not issue a terrain raycast")
 
 	commands.raycast_hits.append({"collider": local_collider})
@@ -106,12 +121,38 @@ func _test_selection_ownership_and_movement(token: int, local_player, enemy_play
 
 	commands.raycast_hits.append({})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
-	_expect(commands.selection_text() == "No unit selected", "selection miss clears selection")
+	_expect(commands.selection_text() == "No entity selected", "selection miss clears selection")
 	_expect(commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT)), "right click with no selection is handled")
 
 	commands.queue_free()
 	local_unit.queue_free()
 	enemy_unit.queue_free()
+	return token
+
+
+func _test_building_selection(token: int, local_player) -> int:
+	var commands := FakeUnitCommandController.new()
+	root.add_child(commands)
+
+	var building := FakeBuilding.new()
+	building.name = "Construction Yard"
+	building.player = local_player
+	building.add_to_group("buildings")
+	root.add_child(building)
+	var collider := Node.new()
+	building.add_child(collider)
+
+	commands.raycast_hits.append({"collider": collider})
+	_expect(commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT)), "building click must be handled")
+	_expect(building.selected, "owned building must use the shared selection flow")
+	_expect(commands.selection_text() == "Construction Yard selected | owner: Atreides Commander (Atreides/Fremen, ally)", "building selection must include ownership")
+
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(building.selected, "right click must not clear a stationary building selection")
+	_expect(commands.raycast_masks == [0xffffffff], "stationary building must not request a terrain move raycast")
+
+	commands.queue_free()
+	building.queue_free()
 	return token
 
 
