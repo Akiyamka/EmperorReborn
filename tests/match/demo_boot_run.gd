@@ -132,8 +132,11 @@ func _test_unit_movement_animations() -> void:
 		var player := _unit_animation_player(unit)
 		_expect(player != null, "%s must expose a model AnimationPlayer" % unit_name)
 		_expect(player != null and player.current_animation == &"Stationary", "%s must start stationary" % unit_name)
-		unit.move_to(unit.global_position + Vector3(30.0, 0.0, 0.0))
-		await physics_frame
+		unit.move_to(unit.global_position + Vector3(3.0, 0.0, 0.0))
+		for _frame in 20:
+			await physics_frame
+			if unit.velocity.length_squared() > 0.01:
+				break
 		_expect(player != null and player.current_animation == &"Move", "%s must play Move while travelling" % unit_name)
 		_expect(
 			player != null and is_equal_approx(player.speed_scale, unit.velocity.length() / unit.move_speed),

@@ -120,6 +120,39 @@ func grid_to_world(grid_position: Vector2i, centered := true) -> Vector3:
 	return Vector3(x, world_bounds.position.y, z)
 
 
+func in_bounds(grid_position: Vector2i) -> bool:
+	return _in_bounds(grid_position.x, grid_position.y)
+
+
+func cell_index(grid_position: Vector2i) -> int:
+	return _idx(grid_position.x, grid_position.y) if in_bounds(grid_position) else -1
+
+
+func cell_size() -> Vector2:
+	if world_bounds.size.x <= 0.0 or world_bounds.size.z <= 0.0:
+		return Vector2.ZERO
+	return Vector2(
+		world_bounds.size.x / float(NAV_SIZE),
+		world_bounds.size.z / float(NAV_SIZE)
+	)
+
+
+func is_passable(grid_position: Vector2i, required_pass_mask: int) -> bool:
+	if not _is_loaded or not in_bounds(grid_position):
+		return false
+	return (pass_mask[cell_index(grid_position)] & required_pass_mask) != 0
+
+
+func cost_at(grid_position: Vector2i) -> float:
+	var index := cell_index(grid_position)
+	return movement_cost[index] if _is_loaded and index >= 0 else INF
+
+
+func terrain_at(grid_position: Vector2i) -> int:
+	var index := cell_index(grid_position)
+	return terrain_type[index] if _is_loaded and index >= 0 else TERRAIN_UNKNOWN
+
+
 func cell_debug(grid_position: Vector2i) -> Dictionary:
 	if not _is_loaded or not _in_bounds(grid_position.x, grid_position.y):
 		return {"valid": false, "grid": grid_position}
