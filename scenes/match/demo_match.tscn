@@ -10,7 +10,7 @@
 [ext_resource type="PackedScene" path="res://assets/converted/buildings/ATConYard/ATConYard.scn" id="9_at_con_yard"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="10_side_panel"]
 [ext_resource type="PackedScene" path="res://assets/converted/buildings/ATSmWindtrap/ATSmWindtrap.scn" id="11_at_windtrap"]
-[ext_resource type="Script" path="res://scripts/ui/selection_rectangle.gd" id="12_selection_rectangle"]
+[ext_resource type="Script" uid="uid://c3sursjoim88" path="res://scripts/ui/selection_rectangle.gd" id="12_selection_rectangle"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -37,7 +37,7 @@ script = ExtResource("2_camera")
 config = ExtResource("6_camera_config")
 
 [node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=926810768]
-transform = Transform3D(0.53517365, -0.7315681, 0.42237103, 0, 0.49999997, 0.86602545, -0.84474206, -0.46347398, 0.26758683, 171.36906, 118.05831, 151.8112)
+transform = Transform3D(0.53517365, -0.7315681, 0.42237103, 0, 0.49999997, 0.86602545, -0.84474206, -0.46347398, 0.26758683, 155.57027, 118.05831, 44.225647)
 current = true
 fov = 12.2
 far = 500.0

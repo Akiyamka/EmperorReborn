@@ -1,11 +1,11 @@
 class_name NavigationGridDebug
 extends Node3D
 ## Visual-only overlay for the immutable 256x256 baked navigation grid.
-## F8 toggles it without affecting navigation state or pathfinding costs.
+## N toggles it without affecting navigation state or pathfinding costs.
 
 const GRID_SHADER := preload("res://scripts/units/navigation/navigation_grid_debug.gdshader")
 
-@export var visible_by_default := true
+@export var visible_by_default := false
 var _configured := false
 
 
@@ -79,7 +79,7 @@ func toggle() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_F8 or event.physical_keycode == KEY_F8:
+		if event.keycode == KEY_N or event.physical_keycode == KEY_N:
 			toggle()
 			get_viewport().set_input_as_handled()
 

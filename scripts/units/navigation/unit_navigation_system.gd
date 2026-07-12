@@ -6,8 +6,6 @@ extends Node
 
 const UnitNavigationMapScript := preload("res://scripts/units/navigation/unit_navigation_map.gd")
 const UnitNavigationPlannerScript := preload("res://scripts/units/navigation/unit_navigation_planner.gd")
-const NavigationFlowFieldScript := preload("res://scripts/units/navigation/navigation_flow_field.gd")
-const NavigationPathQueryScript := preload("res://scripts/units/navigation/navigation_path_query.gd")
 
 signal destination_slots_assigned(command_id: int, assignments: Array[Dictionary])
 signal enemy_blocked(unit: Node3D, blockers: Array[Node3D])
@@ -73,10 +71,8 @@ func register_unit(unit: Node3D) -> int:
 		"pass_mask": profile["pass_mask"],
 		"terrain_mask": profile["terrain_mask"],
 		"clearance": profile["clearance"],
-		"field": null,
-		"path": null,
+		"path": [] as Array[Vector2i],
 		"path_index": 0,
-		"small_group": true,
 		"destination": unit.global_position,
 		"original_destination": unit.global_position,
 		"command_id": 0,
@@ -88,11 +84,11 @@ func register_unit(unit: Node3D) -> int:
 		"yield_direction": Vector3.ZERO,
 		"yield_remaining": 0.0,
 		"was_displaced": false,
-		"command_target": unit.global_position,
 		"direct_path": false,
 	}
 	_agents[key] = agent
 	_next_agent_id += 1
+	planner.prewarm(int(profile["pass_mask"]), int(profile["clearance"]), int(profile["terrain_mask"]))
 	unit.set_meta(&"navigation_agent_id", agent["id"])
 	if unit.has_method("set_navigation_managed"):
 		unit.call("set_navigation_managed", true)
@@ -113,7 +109,7 @@ func set_hold_position(unit: Node3D, active: bool) -> void:
 		return
 	agent["hold"] = active
 	if active:
-		agent["field"] = null
+		agent["path"] = [] as Array[Vector2i]
 		agent["destination"] = unit.global_position
 	_agents[unit.get_instance_id()] = agent
 
@@ -136,8 +132,6 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE) ->
 	_next_command_id += 1
 	var group_speed := _slowest_speed(ordered) if mode == MoveMode.FORMATION else INF
 	var assignments := _assign_slots(ordered, world_target, mode)
-	var target_cell: Vector2i = runtime_map.grid.world_to_grid(world_target)
-	var small_group := ordered.size() <= 4
 	for assignment in assignments:
 		var unit: Node3D = assignment["unit"]
 		var agent: Dictionary = _agents[unit.get_instance_id()]
@@ -149,23 +143,7 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE) ->
 		agent["hold"] = false
 		agent["blocked_time"] = 0.0
 		agent["reported_enemy"] = false
-		agent["command_target"] = world_target
-		agent["direct_path"] = _has_clear_line(unit.global_position, assignment["position"], agent)
-		agent["small_group"] = small_group
-		agent["path_index"] = 0
-		agent["path"] = null
-		agent["field"] = null
-		if not bool(agent["direct_path"]):
-			if small_group:
-				agent["path"] = planner.request_path(
-					runtime_map.grid.world_to_grid(unit.global_position),
-					runtime_map.grid.world_to_grid(assignment["position"]),
-					int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])
-				)
-			else:
-				agent["field"] = planner.request_field(
-				target_cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])
-			)
+		_route_agent(agent, unit.global_position, assignment["position"])
 		_agents[unit.get_instance_id()] = agent
 		if unit.has_method("set_navigation_destination"):
 			unit.call("set_navigation_destination", assignment["position"])
@@ -185,21 +163,32 @@ func stop(unit: Node3D) -> void:
 	var agent: Dictionary = _agent_for(unit)
 	if agent.is_empty():
 		return
-	agent["field"] = null
-	agent["path"] = null
+	agent["path"] = [] as Array[Vector2i]
+	agent["path_index"] = 0
 	agent["destination"] = unit.global_position
 	agent["original_destination"] = unit.global_position
 	agent["direct_path"] = false
 	_agents[unit.get_instance_id()] = agent
 
 
+## Computes the whole route synchronously: either a clear straight line or a
+## native A* grid path, so the unit can move on the very next navigation tick.
+func _route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void:
+	agent["path"] = [] as Array[Vector2i]
+	agent["path_index"] = 0
+	agent["direct_path"] = _has_clear_line(from, destination, agent)
+	if not bool(agent["direct_path"]):
+		agent["path"] = planner.find_path(
+			runtime_map.grid.world_to_grid(from),
+			runtime_map.grid.world_to_grid(destination),
+			int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])
+		)
+
+
 func agent_debug(unit: Node3D) -> Dictionary:
 	var agent := _agent_for(unit)
 	if agent.is_empty():
 		return {}
-	var field = agent["field"]
-	var path = agent["path"]
-	var cell: Vector2i = runtime_map.grid.world_to_grid(unit.global_position)
 	return {
 		"id": agent["id"],
 		"radius": agent["radius"],
@@ -209,8 +198,7 @@ func agent_debug(unit: Node3D) -> Dictionary:
 		"group_speed": agent["group_speed"],
 		"hold": agent["hold"],
 		"blocked_time": agent["blocked_time"],
-		"route_ready": (path is NavigationPathQueryScript and path.complete) or (field is NavigationFlowFieldScript and field.has_route_from(cell)),
-		"field_complete": field is NavigationFlowFieldScript and field.complete,
+		"route_ready": bool(agent["direct_path"]) or not (agent["path"] as Array).is_empty(),
 	}
 
 
@@ -225,7 +213,6 @@ func _physics_process(delta: float) -> void:
 	var tick_delta := 1.0 / NAVIGATION_TICK_RATE
 	while _navigation_accumulator >= tick_delta:
 		_navigation_accumulator -= tick_delta
-		planner.process()
 		_navigation_tick(tick_delta)
 	_blocker_refresh_remaining -= delta
 	if _blocker_refresh_remaining <= 0.0:
@@ -265,16 +252,7 @@ func _navigation_tick(delta: float) -> void:
 				agent["was_displaced"] = false
 				var home: Vector3 = agent["original_destination"]
 				agent["destination"] = home
-				agent["direct_path"] = _has_clear_line(unit.global_position, home, agent)
-				agent["field"] = null
-				agent["path"] = null
-				agent["path_index"] = 0
-				if not bool(agent["direct_path"]):
-					agent["path"] = planner.request_path(
-						runtime_map.grid.world_to_grid(unit.global_position),
-						runtime_map.grid.world_to_grid(home),
-						int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])
-					)
+				_route_agent(agent, unit.global_position, home)
 		_agents[unit.get_instance_id()] = agent
 		resolved_positions[unit.get_instance_id()] = unit.global_position + velocity * delta
 		if unit.has_method("navigation_step"):
@@ -294,32 +272,25 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 	if offset.length() <= arrival:
 		return Vector3.ZERO
 	var direction := Vector3.ZERO
-	var field = agent["field"]
-	var path = agent["path"]
+	var path: Array = agent["path"]
 	if bool(agent["direct_path"]):
 		direction = offset.normalized()
-	elif path is NavigationPathQueryScript and path.map_revision == runtime_map.revision:
-		if path.complete and not path.cells.is_empty():
-			var path_index := int(agent["path_index"])
-			if path_index == 0 and path.cells.size() > 1:
-				path_index = 1
-			while path_index < path.cells.size() - 1:
-				var probe: Vector3 = runtime_map.grid.grid_to_world(path.cells[path_index])
-				probe.y = unit.global_position.y
-				if unit.global_position.distance_to(probe) > maxf(0.35, float(agent["radius"]) * 0.4):
-					break
-				path_index += 1
-			agent["path_index"] = path_index
-			var waypoint: Vector3 = runtime_map.grid.grid_to_world(path.cells[path_index])
-			waypoint.y = unit.global_position.y
-			direction = unit.global_position.direction_to(waypoint)
-			direction.y = 0.0
-			direction = direction.normalized()
-	elif field is NavigationFlowFieldScript and field.map_revision == runtime_map.revision:
-		if offset.length() <= maxf(3.0, float(agent["radius"]) * 3.0):
-			direction = offset.normalized()
-		elif field.has_route_from(runtime_map.grid.world_to_grid(unit.global_position)):
-			direction = field.world_direction(unit.global_position)
+	elif not path.is_empty():
+		var path_index := int(agent["path_index"])
+		if path_index == 0 and path.size() > 1:
+			path_index = 1
+		while path_index < path.size() - 1:
+			var probe: Vector3 = runtime_map.grid.grid_to_world(path[path_index])
+			probe.y = unit.global_position.y
+			if unit.global_position.distance_to(probe) > maxf(0.35, float(agent["radius"]) * 0.4):
+				break
+			path_index += 1
+		agent["path_index"] = path_index
+		var waypoint: Vector3 = runtime_map.grid.grid_to_world(path[path_index])
+		waypoint.y = unit.global_position.y
+		direction = unit.global_position.direction_to(waypoint)
+		direction.y = 0.0
+		direction = direction.normalized()
 	if direction.is_zero_approx():
 		return Vector3.ZERO
 	var speed := _unit_speed(unit)
@@ -401,12 +372,21 @@ func _request_yield(unit: Node3D, direction: Vector3) -> void:
 		return
 	# A unit already following a route normally clears the queue by itself. The
 	# request mainly displaces idle friendlies that occupy a choke point.
-	if agent["field"] is NavigationFlowFieldScript and float(agent["yield_remaining"]) <= 0.0:
+	if _is_en_route(agent) and float(agent["yield_remaining"]) <= 0.0:
 		return
 	agent["yield_direction"] = direction
 	agent["yield_remaining"] = FRIENDLY_YIELD_SECONDS
 	agent["was_displaced"] = true
 	_agents[unit.get_instance_id()] = agent
+
+
+func _is_en_route(agent: Dictionary) -> bool:
+	if int(agent["command_id"]) <= 0:
+		return false
+	var unit: Node3D = agent["unit"]
+	var offset: Vector3 = (agent["destination"] as Vector3) - unit.global_position
+	offset.y = 0.0
+	return offset.length() > maxf(_arrival_radius(unit), float(agent["radius"]) * 0.35)
 
 
 func _sweep_fraction(start: Vector3, displacement: Vector3, obstacle: Vector3, combined_radius: float) -> float:
@@ -621,7 +601,6 @@ func _refresh_building_blockers() -> void:
 					for x in OCCUPY_CELL_SPAN:
 						blocked[origin + Vector2i(x, y)] = true
 	if runtime_map.replace_blocked_cells(blocked):
-		planner.invalidate_dynamic_fields()
 		_replan_after_map_change()
 
 
@@ -648,22 +627,7 @@ func _replan_after_map_change() -> void:
 					"unit": agent["unit"], "agent_id": agent["id"], "slot_id": -1,
 					"position": destination, "available": true,
 				})
-		var command_target: Vector3 = agent["command_target"]
-		agent["direct_path"] = _has_clear_line((agent["unit"] as Node3D).global_position, destination, agent)
-		agent["field"] = null
-		agent["path"] = null
-		agent["path_index"] = 0
-		if not bool(agent["direct_path"]):
-			if bool(agent["small_group"]):
-				agent["path"] = planner.request_path(
-					runtime_map.grid.world_to_grid((agent["unit"] as Node3D).global_position),
-					runtime_map.grid.world_to_grid(destination),
-					int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])
-				)
-			else:
-				agent["field"] = planner.request_field(
-					runtime_map.grid.world_to_grid(command_target), int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])
-				)
+		_route_agent(agent, (agent["unit"] as Node3D).global_position, destination)
 		_agents[key] = agent
 	for command_id in changed_by_command:
 		destination_slots_assigned.emit(command_id, changed_by_command[command_id])

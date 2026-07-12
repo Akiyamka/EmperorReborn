@@ -35,7 +35,8 @@ class FakeUnit extends Node3D:
 func _initialize() -> void:
 	await process_frame
 	var grid := _make_grid()
-	_test_budgeted_flow_field(grid)
+	_test_synchronous_paths(grid)
+	_test_immediate_movement(grid)
 	_test_slots_and_collision(grid)
 	if _failures > 0:
 		printerr("Unit navigation tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -45,56 +46,62 @@ func _initialize() -> void:
 	quit(0)
 
 
-func _test_budgeted_flow_field(grid: MapNavigationGrid) -> void:
+func _test_synchronous_paths(grid: MapNavigationGrid) -> void:
 	var runtime_map := NavigationMapScript.new()
 	_expect(runtime_map.setup(grid), "runtime map must accept a loaded baked grid")
-	var wall := {}
-	for y in MapNavigationGrid.NAV_SIZE:
-		if y < 126 or y > 130:
-			wall[Vector2i(30, y)] = true
-	_expect(runtime_map.replace_blocked_cells(wall), "dynamic wall must increment the map revision")
+	_expect(runtime_map.replace_blocked_cells(_wall_cells()), "dynamic walls must increment the map revision")
 
 	var planner := NavigationPlannerScript.new()
 	planner.setup(runtime_map)
-	planner.expansion_budget_per_tick = 8
-	var field = planner.request_field(Vector2i(40, 128), MapNavigationGrid.PASS_VEHICLE, 0, 1 << MapNavigationGrid.TERRAIN_ROCK)
-	planner.process()
-	_expect(not field.complete, "a small expansion budget must time-slice field generation")
-	planner.expansion_budget_per_tick = 256
-	var benchmark_start := Time.get_ticks_usec()
-	planner.process()
-	var benchmark_ms := float(Time.get_ticks_usec() - benchmark_start) / 1000.0
-	print("Navigation benchmark: 256 expansions = %.2f ms" % [benchmark_ms])
-	_expect(benchmark_ms < 10.0, "one planner tick must stay below the navigation frame budget")
-	for _iteration in 400:
-		planner.process()
-		if field.complete:
-			break
-	_expect(field.complete, "the queued field must eventually complete")
-	_expect(field.has_route_from(Vector2i(20, 128)), "the field must find the wall opening")
-	var cell := Vector2i(20, 128)
-	for _step in 128:
-		if cell == field.target_cell:
-			break
-		cell = field.next_cell(cell)
-	_expect(cell == field.target_cell, "following decreasing integration cost must reach the target")
+	var rock_mask := 1 << MapNavigationGrid.TERRAIN_ROCK
 
-	planner.expansion_budget_per_tick = 256
-	var query = planner.request_path(
-		Vector2i(20, 120), Vector2i(40, 120), MapNavigationGrid.PASS_VEHICLE, 0,
-		1 << MapNavigationGrid.TERRAIN_ROCK
+	var cold_start := Time.get_ticks_usec()
+	planner.prewarm(MapNavigationGrid.PASS_VEHICLE, 0, rock_mask)
+	var cold_ms := float(Time.get_ticks_usec() - cold_start) / 1000.0
+	var warm_start := Time.get_ticks_usec()
+	var path: Array[Vector2i] = planner.find_path(
+		Vector2i(20, 128), Vector2i(40, 100), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask
 	)
-	var path_ticks := 0
-	while not query.complete and not query.failed and path_ticks < 20:
-		planner.process()
-		path_ticks += 1
-	_expect(query.complete, "individual A* must find an indirect route")
-	_expect(path_ticks <= 6, "individual detours must become ready in well under one second")
+	var warm_ms := float(Time.get_ticks_usec() - warm_start) / 1000.0
+	print("Navigation benchmark: profile bake %.2f ms, detour path %.2f ms" % [cold_ms, warm_ms])
+	_expect(cold_ms < 50.0, "the one-off profile bake must stay within a loading hitch")
+	_expect(warm_ms < 5.0, "a detour path must compute within one frame")
+	_expect(not path.is_empty() and path[path.size() - 1] == Vector2i(40, 100), "synchronous A* must find an indirect route")
 	var crossed_opening := false
-	for path_cell in query.cells:
+	for path_cell in path:
 		if path_cell.x == 30 and path_cell.y >= 126 and path_cell.y <= 130:
 			crossed_opening = true
-	_expect(crossed_opening, "individual A* must route through the wall opening")
+	_expect(crossed_opening, "synchronous A* must route through the wall opening")
+
+	var narrow: Array[Vector2i] = planner.find_path(
+		Vector2i(55, 128), Vector2i(70, 128), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask
+	)
+	_expect(not narrow.is_empty() and narrow[narrow.size() - 1] == Vector2i(70, 128), "a single-cell gap must pass clearance zero")
+	var wide: Array[Vector2i] = planner.find_path(
+		Vector2i(55, 128), Vector2i(70, 128), MapNavigationGrid.PASS_VEHICLE, 1, rock_mask
+	)
+	_expect(not wide.is_empty() and wide[wide.size() - 1].x < 60, "clearance one must stop before a single-cell gap and go as close as possible")
+
+
+func _test_immediate_movement(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+	_expect(navigation.runtime_map.replace_blocked_cells(_wall_cells()), "walls must apply to the match runtime map")
+
+	var unit := FakeUnit.new()
+	root.add_child(unit)
+	unit.global_position = Vector3(20.5, 0.0, 128.5)
+	navigation.command_move([unit], Vector3(40.5, 0.0, 100.5), NavigationSystemScript.MoveMode.FREE)
+	_expect(bool(navigation.agent_debug(unit)["route_ready"]), "an obstructed order must have its route ready in the same frame")
+	var start_position := unit.global_position
+	for _iteration in 10:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(unit.global_position.distance_to(start_position) > 1.0, "the unit must start moving within half a second of the order")
+
+	navigation.queue_free()
+	unit.queue_free()
 
 
 func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
@@ -111,7 +118,8 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 	var assignments := navigation.command_move(units, Vector3(80.0, 0.0, 80.0), NavigationSystemScript.MoveMode.FREE)
 	_expect(assignments.size() == units.size(), "a group command must synchronously assign every destination")
 	_expect(navigation.command_log().size() == 1, "movement commands must be recorded for bug-report replay")
-	_expect(navigation.planner.pending_count() == 0, "a clear direct order must not build an unused flow field")
+	for unit in units:
+		_expect(bool(navigation.agent_debug(unit)["route_ready"]), "every unit in a group must have a route immediately")
 	var unique_slots := {}
 	for assignment in assignments:
 		unique_slots[assignment["position"]] = true
@@ -129,8 +137,6 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 	right.global_position = Vector3(102.0, 0.0, 100.0)
 	navigation.command_move([left], Vector3(110.0, 0.0, 100.0))
 	navigation.command_move([right], Vector3(90.0, 0.0, 100.0))
-	for _iteration in 100:
-		navigation.planner.process()
 	var minimum_distance := INF
 	for _iteration in 80:
 		navigation.call("_navigation_tick", 0.05)
@@ -142,6 +148,18 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 		unit.queue_free()
 	left.queue_free()
 	right.queue_free()
+
+
+## A vertical wall at x=30 with an opening at y 126..130, plus a wall at x=60
+## with a single-cell gap at y=128 for clearance checks.
+func _wall_cells() -> Dictionary:
+	var walls := {}
+	for y in MapNavigationGrid.NAV_SIZE:
+		if y < 126 or y > 130:
+			walls[Vector2i(30, y)] = true
+		if y != 128:
+			walls[Vector2i(60, y)] = true
+	return walls
 
 
 func _make_grid() -> MapNavigationGrid:
