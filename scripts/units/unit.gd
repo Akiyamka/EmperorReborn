@@ -2,6 +2,7 @@ extends CharacterBody3D
 class_name Unit
 
 signal owner_changed(player_id: int)
+signal navigation_enemy_encountered(enemies: Array[Node3D])
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
@@ -54,6 +55,8 @@ var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
 var _selection_halo
 var _animation_players: Array[AnimationPlayer] = []
+var _navigation_managed := false
+var _navigation_system = null
 
 
 func _ready() -> void:
@@ -90,6 +93,8 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if _navigation_managed:
+		return
 	var offset := target_position - global_position
 	offset.y = 0.0
 
@@ -106,8 +111,46 @@ func _physics_process(delta: float) -> void:
 
 
 func move_to(world_position: Vector3) -> void:
+	if _navigation_managed and _navigation_system != null:
+		_navigation_system.command_move([self], world_position)
+		return
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
 	_set_movement_animation(global_position.distance_to(target_position) > arrival_radius)
+
+
+func set_navigation_managed(active: bool) -> void:
+	_navigation_managed = active
+	if active:
+		velocity = Vector3.ZERO
+
+
+func set_navigation_controller(controller) -> void:
+	_navigation_system = controller
+
+
+func set_navigation_destination(world_position: Vector3) -> void:
+	target_position = Vector3(world_position.x, global_position.y, world_position.z)
+
+
+func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
+	velocity = Vector3(horizontal_velocity.x, 0.0, horizontal_velocity.z)
+	if not velocity.is_zero_approx():
+		look_at(global_position + velocity, Vector3.UP)
+	_set_movement_animation(not velocity.is_zero_approx(), _movement_animation_speed_scale())
+	# Unit/unit collision has already been resolved centrally as swept discs.
+	# Applying the exact fixed navigation delta avoids depending on physics-frame
+	# frequency and keeps command replays stable.
+	global_position += velocity * delta
+	_snap_to_terrain()
+
+
+func navigation_blocked_by_enemy(enemies: Array[Node3D]) -> void:
+	if enemies.is_empty():
+		return
+	if has_method("attack_target"):
+		call("attack_target", enemies[0])
+	else:
+		navigation_enemy_encountered.emit(enemies)
 
 
 func _snap_to_terrain() -> void:
@@ -182,6 +225,8 @@ func take_damage(amount: float) -> void:
 
 
 func stop_at_current_position() -> void:
+	if _navigation_managed and _navigation_system != null:
+		_navigation_system.stop(self)
 	target_position = global_position
 	velocity = Vector3.ZERO
 	_set_movement_animation(false)

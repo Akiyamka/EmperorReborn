@@ -4,26 +4,33 @@ extends Node
 signal status_changed(status: String)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
+const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 
 var _camera: Camera3D
 var _terrain: MapLoader
 var _selection_rectangle = null
+var _navigation
 # Units and buildings are protocol-compatible group members in runtime and
 # tests, not one concrete class. Both expose ownership and selection methods.
 var _selected_entities: Array[Node] = []
 var _hovered_entity = null
 var _drag_start: Vector2 = Vector2.INF
+var _formation_modifier_down := false
 
 const DRAG_SELECTION_THRESHOLD := 8.0
 
 
-func setup(command_camera: Camera3D, command_terrain: MapLoader, selection_rectangle = null) -> void:
+func setup(command_camera: Camera3D, command_terrain: MapLoader, navigation = null, selection_rectangle = null) -> void:
 	_camera = command_camera
 	_terrain = command_terrain
+	_navigation = navigation
 	_selection_rectangle = selection_rectangle
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
+	if event is InputEventKey and _is_formation_modifier(event):
+		_formation_modifier_down = event.pressed
+		return false
 	if event is InputEventMouseMotion:
 		if _is_dragging():
 			_update_drag_selection(event.position)
@@ -133,8 +140,16 @@ func _command_move(screen_position: Vector2) -> void:
 		return
 
 	var target: Vector3 = hit["position"]
-	for entity in movable_entities:
-		entity.move_to(target)
+	var move_mode := (
+		UnitNavigationSystemScript.MoveMode.FORMATION
+		if _formation_modifier_down
+		else UnitNavigationSystemScript.MoveMode.FREE
+	)
+	if _navigation != null:
+		_navigation.command_move(movable_entities, target, move_mode)
+	else:
+		for entity in movable_entities:
+			entity.move_to(target)
 	var nav_status := ""
 	if _terrain != null and _terrain.navigation_grid != null and _terrain.navigation_grid.is_loaded():
 		var cell: Vector2i = _terrain.navigation_grid.world_to_grid(target)
@@ -147,7 +162,12 @@ func _command_move(screen_position: Vector2) -> void:
 	var movement_label := "Moving to %.1f, %.1f" % [target.x, target.z]
 	if movable_entities.size() > 1:
 		movement_label = "Moving %d units to %.1f, %.1f" % [movable_entities.size(), target.x, target.z]
-	status_changed.emit("%s%s" % [movement_label, nav_status])
+	var formation_status := " | formation" if move_mode == UnitNavigationSystemScript.MoveMode.FORMATION else ""
+	status_changed.emit("%s%s%s" % [movement_label, nav_status, formation_status])
+
+
+func _is_formation_modifier(event: InputEventKey) -> bool:
+	return event.keycode == KEY_J or event.physical_keycode == KEY_J
 
 
 func _clear_selection() -> void:

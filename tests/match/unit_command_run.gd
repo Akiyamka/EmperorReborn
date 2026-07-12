@@ -1,6 +1,7 @@
 extends SceneTree
 
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
+const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -53,6 +54,13 @@ class FakeUnitCommandController extends UnitCommandController:
 		return screen_positions.get(entity, null)
 
 
+class FakeNavigation extends RefCounted:
+	var commands: Array[Dictionary] = []
+
+	func command_move(units: Array, target: Vector3, mode: int) -> void:
+		commands.append({"units": units, "target": target, "mode": mode})
+
+
 func _initialize() -> void:
 	await process_frame
 	var players = root.get_node("Players")
@@ -64,6 +72,7 @@ func _initialize() -> void:
 
 	_run_case("selection ownership and movement", _test_selection_ownership_and_movement.bind(local_player, enemy_player))
 	_run_case("rectangle unit selection", _test_rectangle_unit_selection.bind(local_player, enemy_player))
+	_run_case("J modifies movement formation", _test_formation_modifier.bind(local_player))
 	_run_case("building selection", _test_building_selection.bind(local_player))
 	players.reset_for_match()
 	if _failures > 0:
@@ -192,6 +201,34 @@ func _test_rectangle_unit_selection(token: int, local_player, enemy_player) -> i
 	return token
 
 
+func _test_formation_modifier(token: int, local_player) -> int:
+	var navigation := FakeNavigation.new()
+	var commands := FakeUnitCommandController.new()
+	commands.setup(null, null, navigation)
+	root.add_child(commands)
+	var unit := _make_unit("FormationScout", local_player)
+	root.add_child(unit)
+	var collider := Node.new()
+	unit.add_child(collider)
+
+	commands.raycast_hits.append({"collider": collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+	_expect(not commands.handle_unhandled_input(_key_event(KEY_J, true)), "J press must not consume unrelated input")
+	commands.raycast_hits.append({"position": Vector3(12.0, 0.0, 14.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(navigation.commands.size() == 1, "J plus right click must issue one navigation command")
+	_expect(navigation.commands[0]["mode"] == UnitNavigationSystemScript.MoveMode.FORMATION, "held J must select formation movement")
+
+	commands.handle_unhandled_input(_key_event(KEY_J, false))
+	commands.raycast_hits.append({"position": Vector3(16.0, 0.0, 18.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(navigation.commands[1]["mode"] == UnitNavigationSystemScript.MoveMode.FREE, "releasing J must restore free movement")
+
+	commands.queue_free()
+	unit.queue_free()
+	return token
+
+
 func _make_unit(unit_name: String, player) -> FakeUnit:
 	var unit := FakeUnit.new()
 	unit.name = unit_name
@@ -205,6 +242,13 @@ func _mouse_event(button_index: int, pressed := true, position := Vector2(10.0, 
 	event.button_index = button_index
 	event.pressed = pressed
 	event.position = position
+	return event
+
+
+func _key_event(keycode: Key, pressed: bool) -> InputEventKey:
+	var event := InputEventKey.new()
+	event.keycode = keycode
+	event.pressed = pressed
 	return event
 
 

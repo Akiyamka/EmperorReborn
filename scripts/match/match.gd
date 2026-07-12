@@ -4,6 +4,7 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingControllerScript := preload("res://scripts/buildings/building_controller.gd")
 const BuildingUpgradeControllerScript := preload("res://scripts/buildings/building_upgrade_controller.gd")
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
+const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
 const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
@@ -23,6 +24,7 @@ var _fps_update_time := 0.0
 var _building_controller: BuildingController
 var _building_upgrade_controller: BuildingUpgradeController
 var _unit_command_controller: UnitCommandController
+var _unit_navigation_system
 ## Whole roster of the local player's house, gated by the technology tree
 ## rather than a hardcoded demo list -- see docs/mechanics/production.md.
 var _building_option_ids: Array[StringName] = []
@@ -47,6 +49,7 @@ func _ready() -> void:
 	_building_option_ids = _local_player_building_option_ids()
 	_wall_building_ids = _local_player_wall_building_ids()
 	_upgrade_option_ids = _local_player_upgrade_option_ids()
+	_setup_unit_navigation_system()
 	_setup_unit_command_controller()
 	_setup_building_controller()
 	_setup_building_upgrade_controller()
@@ -130,7 +133,15 @@ func _setup_unit_command_controller() -> void:
 	_unit_command_controller.name = "UnitCommandController"
 	add_child(_unit_command_controller)
 	_unit_command_controller.status_changed.connect(_update_selection_label)
-	_unit_command_controller.setup(camera, terrain, selection_rectangle)
+	_unit_command_controller.setup(camera, terrain, _unit_navigation_system, selection_rectangle)
+
+
+func _setup_unit_navigation_system() -> void:
+	_unit_navigation_system = UnitNavigationSystemScript.new()
+	_unit_navigation_system.name = "UnitNavigationSystem"
+	add_child(_unit_navigation_system)
+	if terrain.navigation_grid != null:
+		_unit_navigation_system.setup(terrain.navigation_grid)
 
 
 func _place_on_map() -> void:
