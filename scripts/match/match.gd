@@ -7,6 +7,7 @@ const UnitCommandControllerScript := preload("res://scripts/match/unit_command_c
 const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const NavigationGridDebugScript := preload("res://scripts/units/navigation/navigation_grid_debug.gd")
+const MatchSnapshotScript := preload("res://scripts/match/match_snapshot.gd")
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
 const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
@@ -41,6 +42,7 @@ var _upgrade_option_ids: Array[StringName] = []
 ## through UnitRosterController.
 var _unit_option_ids: Array[StringName] = []
 var _unit_roster_controller: UnitRosterController
+var _match_snapshot
 
 
 func _enter_tree() -> void:
@@ -54,6 +56,8 @@ func _enter_tree() -> void:
 
 
 func _ready() -> void:
+	_match_snapshot = MatchSnapshotScript.new()
+	_restore_saved_startup_state()
 	_building_option_ids = _local_player_building_option_ids()
 	_wall_building_ids = _local_player_wall_building_ids()
 	_upgrade_option_ids = _local_player_upgrade_option_ids()
@@ -219,6 +223,10 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _handle_snapshot_shortcut(event):
+		get_viewport().set_input_as_handled()
+		return
+
 	if _building_controller != null and _building_controller.handle_unhandled_input(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -229,6 +237,24 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if _unit_command_controller != null and _unit_command_controller.handle_unhandled_input(event):
 		get_viewport().set_input_as_handled()
+
+
+func _handle_snapshot_shortcut(event: InputEvent) -> bool:
+	if not (event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F7):
+		return false
+	if _match_snapshot == null:
+		return false
+	var result: Dictionary = _match_snapshot.erase() if event.shift_pressed else _match_snapshot.save($Buildings, $Units)
+	_update_selection_label(String(result.get("message", "")))
+	return true
+
+
+func _restore_saved_startup_state() -> void:
+	if _match_snapshot == null:
+		return
+	var result: Dictionary = _match_snapshot.restore($Buildings, $Units)
+	if bool(result.get("ok", false)):
+		print("Match: %s" % String(result.get("message", "")))
 
 
 func _update_selection_label(status := "") -> void:

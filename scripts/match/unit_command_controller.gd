@@ -124,15 +124,16 @@ func _command_move(screen_position: Vector2) -> void:
 		return
 
 	var movable_entities: Array[Node] = []
+	var rally_buildings: Array[Node] = []
 	for entity in _selected_entities:
 		if not _can_control(entity):
 			status_changed.emit("Cannot command this player")
 			return
-		# Buildings use the same selection flow as units, but are stationary until
-		# their own commands (such as a rally point) are implemented.
 		if entity.has_method("move_to"):
 			movable_entities.append(entity)
-	if movable_entities.is_empty():
+		elif entity.has_method("set_rally_point"):
+			rally_buildings.append(entity)
+	if movable_entities.is_empty() and rally_buildings.is_empty():
 		return
 
 	var hit := _raycast(screen_position, 1)
@@ -140,6 +141,15 @@ func _command_move(screen_position: Vector2) -> void:
 		return
 
 	var target: Vector3 = hit["position"]
+	if movable_entities.is_empty():
+		for building in rally_buildings:
+			building.call("set_rally_point", target)
+		var rally_label := "Rally point set to %.1f, %.1f" % [target.x, target.z]
+		if rally_buildings.size() > 1:
+			rally_label = "Rally point set for %d buildings" % rally_buildings.size()
+		status_changed.emit(rally_label)
+		return
+
 	var move_mode := (
 		UnitNavigationSystemScript.MoveMode.FORMATION
 		if _formation_modifier_down

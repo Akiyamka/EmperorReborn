@@ -30,6 +30,7 @@ class FakeUnit extends Node3D:
 class FakeBuilding extends Node3D:
 	var player = null
 	var selected := false
+	var rally_points: Array[Vector3] = []
 
 	func set_selected(active: bool) -> void:
 		selected = active
@@ -39,6 +40,9 @@ class FakeBuilding extends Node3D:
 
 	func owner_player():
 		return player
+
+	func set_rally_point(target: Vector3) -> void:
+		rally_points.append(target)
 
 
 class FakeUnitCommandController extends UnitCommandController:
@@ -161,9 +165,11 @@ func _test_building_selection(token: int, local_player) -> int:
 	_expect(building.selected, "owned building must use the shared selection flow")
 	_expect(commands.selection_text() == "Construction Yard selected | owner: Atreides Commander (Atreides/Fremen, ally)", "building selection must include ownership")
 
+	commands.raycast_hits.append({"position": Vector3(6.0, 0.0, 9.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(building.selected, "right click must not clear a stationary building selection")
-	_expect(commands.raycast_masks == [0xffffffff], "stationary building must not request a terrain move raycast")
+	_expect(building.rally_points == [Vector3(6.0, 0.0, 9.0)], "right click on a building must set its rally point")
+	_expect(commands.raycast_masks == [0xffffffff, 1], "building rally points must use the terrain raycast")
 
 	commands.queue_free()
 	building.queue_free()

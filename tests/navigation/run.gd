@@ -37,6 +37,7 @@ func _initialize() -> void:
 	var grid := _make_grid()
 	_test_synchronous_paths(grid)
 	_test_no_stop_cells(grid)
+	_test_interior_escape(grid)
 	_test_immediate_movement(grid)
 	_test_slots_and_collision(grid)
 	if _failures > 0:
@@ -141,6 +142,44 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 
 	navigation.queue_free()
 	clicker.queue_free()
+	produced.queue_free()
+
+
+## A building footprint: blocked interior at x/y 100..107 with a no-stop apron
+## strip in front of it (y 108..111). A unit produced inside gets the
+## building's exit point as a mandatory first waypoint and must walk straight
+## out through the apron, never through a side or back wall.
+func _test_interior_escape(grid: MapNavigationGrid) -> void:
+	var interior := {}
+	var apron := {}
+	for x in range(100, 108):
+		for y in range(100, 108):
+			interior[Vector2i(x, y)] = true
+		for y in range(108, 112):
+			apron[Vector2i(x, y)] = true
+
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+	navigation.runtime_map.replace_blocked_cells(interior, apron)
+	var produced := FakeUnit.new()
+	root.add_child(produced)
+	produced.global_position = Vector3(103.5, 0.0, 103.5)
+	var destination := Vector3(103.5, 0.0, 120.5)
+	var exit_point := Vector3(103.5, 0.0, 113.0)
+	navigation.command_move([produced], destination, NavigationSystemScript.MoveMode.FREE, exit_point)
+	_expect(bool(navigation.agent_debug(produced)["route_ready"]), "a unit inside the interior must still get a route immediately")
+	var first_open_cell := Vector2i(-1, -1)
+	for _iteration in 300:
+		navigation.call("_navigation_tick", 0.05)
+		var cell: Vector2i = grid.world_to_grid(produced.global_position)
+		if first_open_cell.x < 0 and not interior.has(cell) and not apron.has(cell):
+			first_open_cell = cell
+	_expect(first_open_cell.y >= 112, "the unit must emerge in front of the apron, not through a wall")
+	_expect(produced.global_position.distance_to(destination) < 2.0, "a unit produced inside the building must walk out and reach its destination")
+
+	navigation.queue_free()
 	produced.queue_free()
 
 

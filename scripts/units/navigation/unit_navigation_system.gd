@@ -86,6 +86,7 @@ func register_unit(unit: Node3D) -> int:
 		"yield_remaining": 0.0,
 		"was_displaced": false,
 		"direct_path": false,
+		"exit_point": Vector3.INF,
 	}
 	_agents[key] = agent
 	_next_agent_id += 1
@@ -112,10 +113,15 @@ func set_hold_position(unit: Node3D, active: bool) -> void:
 	if active:
 		agent["path"] = [] as Array[Vector2i]
 		agent["destination"] = unit.global_position
+		agent["exit_point"] = Vector3.INF
 	_agents[unit.get_instance_id()] = agent
 
 
-func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE) -> Array[Dictionary]:
+## `exit_point` is a mandatory first waypoint for every unit in the command: a
+## production building's front exit that the unit walks straight to before
+## regular routing takes over (local steering may cross the building's own
+## cells on the way).
+func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, exit_point := Vector3.INF) -> Array[Dictionary]:
 	var ordered: Array[Node3D] = []
 	for value in units:
 		var unit := value as Node3D
@@ -144,6 +150,7 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE) ->
 		agent["hold"] = false
 		agent["blocked_time"] = 0.0
 		agent["reported_enemy"] = false
+		agent["exit_point"] = exit_point
 		_route_agent(agent, unit.global_position, assignment["position"])
 		_agents[unit.get_instance_id()] = agent
 		if unit.has_method("set_navigation_destination"):
@@ -169,14 +176,20 @@ func stop(unit: Node3D) -> void:
 	agent["destination"] = unit.global_position
 	agent["original_destination"] = unit.global_position
 	agent["direct_path"] = false
+	agent["exit_point"] = Vector3.INF
 	_agents[unit.get_instance_id()] = agent
 
 
 ## Computes the whole route synchronously: either a clear straight line or a
 ## native A* grid path, so the unit can move on the very next navigation tick.
+## While an exit point is pending the unit is steered straight at it instead;
+## routing takes over from there once it is reached.
 func _route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void:
 	agent["path"] = [] as Array[Vector2i]
 	agent["path_index"] = 0
+	agent["direct_path"] = false
+	if (agent["exit_point"] as Vector3).is_finite():
+		return
 	agent["direct_path"] = _has_clear_line(from, destination, agent)
 	if not bool(agent["direct_path"]):
 		agent["path"] = planner.find_path(
@@ -199,7 +212,7 @@ func agent_debug(unit: Node3D) -> Dictionary:
 		"group_speed": agent["group_speed"],
 		"hold": agent["hold"],
 		"blocked_time": agent["blocked_time"],
-		"route_ready": bool(agent["direct_path"]) or not (agent["path"] as Array).is_empty(),
+		"route_ready": bool(agent["direct_path"]) or not (agent["path"] as Array).is_empty() or (agent["exit_point"] as Vector3).is_finite(),
 	}
 
 
@@ -266,6 +279,14 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 		return Vector3.ZERO
 	if float(agent["yield_remaining"]) > 0.0:
 		return (agent["yield_direction"] as Vector3) * _unit_speed(unit) * 0.7
+	var exit_point: Vector3 = agent["exit_point"]
+	if exit_point.is_finite():
+		var exit_offset := exit_point - unit.global_position
+		exit_offset.y = 0.0
+		if exit_offset.length() > maxf(_arrival_radius(unit), float(agent["radius"]) * 0.35):
+			return exit_offset.normalized() * _unit_speed(unit)
+		agent["exit_point"] = Vector3.INF
+		_route_agent(agent, unit.global_position, agent["destination"])
 	var destination: Vector3 = agent["destination"]
 	var offset := destination - unit.global_position
 	offset.y = 0.0
@@ -335,11 +356,21 @@ func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, bucket
 	var friends: Array[Node3D] = []
 	var best_velocity := Vector3.ZERO
 	var best_score := -INF
+	# A unit standing on building cells cannot satisfy the normal cell filter:
+	# inside the interior every neighbour is blocked too, and on the apron the
+	# clearance window still touches the building. Interior units steer with
+	# the filter suspended (the escape route leads them out); apron units keep
+	# the blocked-cell filter but drop the clearance window.
+	var origin_cell: Vector2i = runtime_map.grid.world_to_grid(unit.global_position)
+	var origin_open: bool = runtime_map.is_passable(origin_cell, int(agent["pass_mask"]), 0, 0)
+	var origin_clearance := int(agent["clearance"])
+	if origin_open and not runtime_map.is_stoppable(origin_cell, int(agent["pass_mask"]), 0, 0):
+		origin_clearance = 0
 	for angle in CANDIDATE_ANGLES:
 		var candidate := desired.rotated(Vector3.UP, angle)
 		var destination := unit.global_position + candidate * delta
 		var cell: Vector2i = runtime_map.grid.world_to_grid(destination)
-		if not runtime_map.is_passable(cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+		if origin_open and not runtime_map.is_passable(cell, int(agent["pass_mask"]), origin_clearance, int(agent["terrain_mask"])):
 			continue
 		var fraction := 1.0
 		for other in nearby:

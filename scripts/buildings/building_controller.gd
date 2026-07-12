@@ -288,22 +288,22 @@ func _designate_primary_building(building: Node3D, player_id: int) -> bool:
 	if config == null or not bool(config.field(&"can_be_primary", false)):
 		return false
 
-	# §1 "primary Construction Yard": designating a Construction Yard makes it
-	# the player's main base (docs/mechanics/production.md section 1).
-	# §3 "primary building" (unit production exit point) is a different task
-	# and is intentionally not wired up here yet -- when it lands, it should
-	# call players.designate_primary_building(building, player_id, <building
-	# type key>) the same way, just with a different group key than
-	# PlayerRoster.MAIN_BASE_GROUP_KEY.
-	if not bool(config.field(&"is_con_yard", false)):
-		return false
-
 	var players = _players()
 	if players == null:
 		return false
 
-	players.set_main_base(player_id, building)
-	status_changed.emit("%s designated as primary Construction Yard (main base)" % String(building.get("config_id")))
+	if bool(config.field(&"is_con_yard", false)):
+		players.set_main_base(player_id, building)
+		status_changed.emit("%s designated as primary Construction Yard (main base)" % String(building.get("config_id")))
+		return true
+
+	# Unit queues are shared by building type; the primary instance is the one
+	# that releases completed units and owns that queue's rally point.
+	var group_key := String(building.get("config_id"))
+	if group_key.is_empty():
+		return false
+	players.designate_primary_building(building, player_id, group_key)
+	status_changed.emit("%s designated as primary production building" % group_key)
 	return true
 
 

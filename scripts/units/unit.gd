@@ -57,6 +57,9 @@ var _selection_halo
 var _animation_players: Array[AnimationPlayer] = []
 var _navigation_managed := false
 var _navigation_system = null
+var _pending_navigation_order := Vector3.ZERO
+var _pending_navigation_exit := Vector3.INF
+var _has_pending_navigation_order := false
 
 
 func _ready() -> void:
@@ -110,10 +113,19 @@ func _physics_process(delta: float) -> void:
 	_snap_to_terrain()
 
 
-func move_to(world_position: Vector3) -> void:
+## `exit_point` is a mandatory first waypoint (a production building's front
+## exit): the unit walks straight to it before regular routing takes over.
+func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 	if _navigation_managed and _navigation_system != null:
-		_navigation_system.command_move([self], world_position)
+		_navigation_system.command_move([self], world_position, _navigation_system.MoveMode.FREE, exit_point)
 		return
+	# The navigation system registers freshly added units deferred, and the
+	# registration resets the agent's destination to the unit's position. An
+	# order issued in the spawn frame (the production rally point) is kept
+	# here so the registration handoff can re-issue it.
+	_pending_navigation_order = world_position
+	_pending_navigation_exit = exit_point
+	_has_pending_navigation_order = true
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
 	_set_movement_animation(global_position.distance_to(target_position) > arrival_radius)
 
@@ -126,6 +138,13 @@ func set_navigation_managed(active: bool) -> void:
 
 func set_navigation_controller(controller) -> void:
 	_navigation_system = controller
+	if _navigation_system == null or not _has_pending_navigation_order:
+		return
+	var order := _pending_navigation_order
+	var exit_point := _pending_navigation_exit
+	_has_pending_navigation_order = false
+	_pending_navigation_exit = Vector3.INF
+	move_to(order, exit_point)
 
 
 func set_navigation_destination(world_position: Vector3) -> void:
@@ -202,6 +221,21 @@ func setup(unit_id: StringName) -> void:
 	_apply_rules_config()
 	health = max_health
 	shields = max_shields
+
+
+## Used by runtime unit production and startup snapshots when a generic Unit
+## scene must display a different converted model.
+func replace_visual_scene(model_scene: PackedScene) -> void:
+	if model_scene == null or visual_root == null:
+		return
+	for child in visual_root.get_children():
+		visual_root.remove_child(child)
+		child.free()
+	visual_root.add_child(model_scene.instantiate())
+	_shield_meshes = _collect_shield_meshes()
+	_scroll_fx_meshes = _collect_scroll_fx_meshes()
+	_animation_players = _collect_animation_players()
+	_set_movement_animation(false)
 
 
 func set_invulnerable(value: bool) -> void:

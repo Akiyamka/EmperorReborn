@@ -23,6 +23,7 @@ func _initialize() -> void:
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
 	await _run_case("upgrade slot appears after its building is placed later", _test_upgrade_availability_polls)
 	await _run_case("unit slots follow prerequisite buildings and their upgrades", _test_unit_roster_availability)
+	await _run_case("completed units emerge from primary building toward rally point", _test_unit_production_rally_and_primary)
 	await _run_case("occupy matrices are Z-mirrored to match converted models", _test_occupy_rows_are_mirrored)
 
 	if _failures > 0:
@@ -407,6 +408,77 @@ func _test_unit_roster_availability() -> void:
 	_expect(
 		kindjal_slot != null and kindjal_slot.visible,
 		"ATKindjal must become visible once the Barracks is upgraded"
+	)
+
+	match_instance.queue_free()
+
+
+func _test_unit_production_rally_and_primary() -> void:
+	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
+	var match_instance := scene.instantiate()
+	get_root().add_child(match_instance)
+	await process_frame
+	await process_frame
+
+	var buildings := match_instance.get_node("Buildings") as Node3D
+	var barracks_scene := load("res://assets/converted/buildings/ATBarracks/ATBarracks.scn") as PackedScene
+	var first_barracks := barracks_scene.instantiate() as Building
+	var primary_barracks := barracks_scene.instantiate() as Building
+	buildings.add_child(first_barracks)
+	buildings.add_child(primary_barracks)
+	first_barracks.global_position = Vector3(80.0, 8.0, 40.0)
+	primary_barracks.global_position = Vector3(120.0, 8.0, 40.0)
+	first_barracks.setup(&"ATBarracks")
+	primary_barracks.setup(&"ATBarracks")
+	first_barracks.set_owner_player_id(1)
+	primary_barracks.set_owner_player_id(1)
+	await process_frame
+
+	_expect(
+		first_barracks.rally_point_position().z > first_barracks.global_position.z,
+		"a building's default rally point must be directly in front of it"
+	)
+	var rally_point := Vector3(120.0, 8.0, 28.0)
+	primary_barracks.set_rally_point(rally_point)
+	var players = get_root().get_node("Players")
+	players.designate_primary_building(primary_barracks, 1, "ATBarracks")
+
+	var roster = match_instance.get_node("UnitRosterController") as UnitRosterController
+	var units := match_instance.get_node("Units") as Node3D
+	var units_before := units.get_children().duplicate()
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_LEFT)
+	roster.process(2.0)
+
+	var produced: Unit
+	for candidate in units.get_children():
+		if not units_before.has(candidate) and candidate is Unit:
+			produced = candidate as Unit
+			break
+	_expect(produced != null, "a completed unit order must spawn a unit")
+	_expect(
+		produced != null and produced.global_position.is_equal_approx(primary_barracks.production_spawn_position()),
+		"a completed unit must emerge at the front edge of the designated primary production building"
+	)
+	_expect(
+		produced != null and produced.target_position.is_equal_approx(rally_point),
+		"a produced unit must immediately receive the primary building's rally point"
+	)
+
+	# The navigation system registers the fresh unit deferred; the rally order
+	# from the spawn frame must survive that handoff instead of being reset to
+	# the unit's own position.
+	await process_frame
+	var navigation = match_instance.get_node("UnitNavigationSystem")
+	var agent: Dictionary = navigation.agent_debug(produced)
+	var destination: Vector3 = agent.get("destination", Vector3.INF)
+	destination.y = rally_point.y
+	_expect(
+		not agent.is_empty() and destination.distance_to(rally_point) < 1.5,
+		"the rally order must survive the deferred navigation registration"
+	)
+	_expect(
+		not agent.is_empty() and bool(agent["route_ready"]),
+		"a produced unit must have its route toward the rally point ready"
 	)
 
 	match_instance.queue_free()

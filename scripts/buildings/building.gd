@@ -4,12 +4,15 @@ extends Node3D
 signal owner_changed(player_id: int)
 signal health_changed(health: float, max_health: float)
 signal primary_changed(is_primary: bool)
+signal rally_point_changed(position: Vector3)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 
 const COLLISION_OBJECT_NAME := "#~~0"
+const RALLY_POINT_CLEARANCE := 1.5
+const OCCUPY_CELL_WORLD_SPAN := 2.0
 
 ## docs/mechanics/production.md section 4: max 2 docks per refinery. Docks are
 ## plain Buildings placed by BuildingUpgradeController next to this one (not
@@ -48,6 +51,7 @@ var shields := 0.0:
 		shields = clampf(value, 0.0, max_shields)
 var is_selected := false
 var is_hovered := false
+var rally_point := Vector3.ZERO
 
 var current_state := &""
 var invulnerable := false
@@ -67,6 +71,7 @@ var _scroll_fx_time := 0.0
 var _generated_energy := 0
 var _docks: Array[Node3D] = []
 var _selection_halo
+var _has_rally_point := false
 
 
 func _ready() -> void:
@@ -83,6 +88,10 @@ func _ready() -> void:
 	play_state(default_state)
 	_add_selection_collision()
 	_add_selection_halo()
+	# Placement assigns a newly-built node's final position immediately after it
+	# enters the tree. Deferring this lets both pre-placed and newly-built
+	# production buildings receive a point in front of their final transform.
+	call_deferred("_set_default_rally_point_if_unset")
 
 
 func _exit_tree() -> void:
@@ -103,6 +112,131 @@ func _process(delta: float) -> void:
 	_scroll_fx_time += delta
 	for mesh_instance in _scroll_fx_meshes:
 		mesh_instance.set_instance_shader_parameter("fx_time", _scroll_fx_time)
+
+
+func set_rally_point(position: Vector3) -> void:
+	rally_point = position
+	_has_rally_point = true
+	rally_point_changed.emit(rally_point)
+
+
+func rally_point_position() -> Vector3:
+	_set_default_rally_point_if_unset()
+	return rally_point
+
+
+func production_spawn_position() -> Vector3:
+	# Source models pivot their SLCT selection volume at the building's unit
+	# exit (factory apron, hangar pad, barracks door), so when the authored
+	# node is present its origin is the exact spawn point.
+	var authored_exit := _authored_exit_node()
+	if authored_exit != null:
+		return authored_exit.global_position
+
+	# Fallback: a skirt (`S`) is the footprint's front apron. Spawn in its
+	# nearest-to-centre cell rather than at the outer edge, so units are born
+	# inside the correct footprint cell but already facing a clear exit to the
+	# rally point.
+	if building_config == null:
+		return global_position + _forward_direction()
+	var rows: Array[String] = []
+	rows.assign(building_config.list(&"occupy_rows"))
+	var spawn_cell := _nearest_skirt_cell(rows)
+	if spawn_cell.x < 0:
+		return global_position + _forward_direction()
+	var width := 0
+	for row in rows:
+		width = maxi(width, row.length())
+	var local_offset := Vector3(
+		(float(spawn_cell.x) + 0.5 - float(width) * 0.5) * OCCUPY_CELL_WORLD_SPAN,
+		0.0,
+		(float(spawn_cell.y) + 0.5 - float(rows.size()) * 0.5) * OCCUPY_CELL_WORLD_SPAN
+	)
+	return global_position + global_transform.basis.x.normalized() * local_offset.x + _forward_direction() * local_offset.z
+
+
+## Where a produced unit should first walk to: the spawn point pushed past the
+## footprint's front edge. The apron always faces local +Z (converter
+## convention), so "out" is the building's forward direction; keeping the
+## spawn's lateral offset makes the unit leave straight through the door.
+func production_exit_position() -> Vector3:
+	var spawn := production_spawn_position()
+	var forward := _forward_direction()
+	var front_edge := _front_footprint_extent()
+	var spawn_depth := (global_transform.affine_inverse() * spawn).z
+	return spawn + forward * maxf(front_edge - spawn_depth + RALLY_POINT_CLEARANCE, RALLY_POINT_CLEARANCE)
+
+
+func _front_footprint_extent() -> float:
+	if building_config != null:
+		var rows: Array = building_config.list(&"occupy_rows")
+		if not rows.is_empty():
+			return float(rows.size()) * OCCUPY_CELL_WORLD_SPAN * 0.5
+	return _front_collision_extent()
+
+
+func _authored_exit_node() -> Node3D:
+	# The Idle (H0) state carries the canonical SLCT volume; damage states
+	# duplicate it and the build/destroy states may reposition or drop it.
+	var idle_state := get_node_or_null("States/Idle")
+	if idle_state == null:
+		return null
+	return _find_slct_node(idle_state)
+
+
+func _find_slct_node(node: Node) -> Node3D:
+	if node is Node3D and String(node.get_meta("original_name", "")).to_lower().begins_with("slct"):
+		return node
+	for child in node.get_children():
+		var found := _find_slct_node(child)
+		if found != null:
+			return found
+	return null
+
+
+func _nearest_skirt_cell(rows: Array[String]) -> Vector2i:
+	if rows.is_empty():
+		return Vector2i(-1, -1)
+	var width := 0
+	for row in rows:
+		width = maxi(width, row.length())
+	var centre := Vector2(float(width) * 0.5 - 0.5, float(rows.size()) * 0.5 - 0.5)
+	var closest := Vector2i(-1, -1)
+	var closest_distance := INF
+	for row_index in rows.size():
+		var row := rows[row_index]
+		for column_index in row.length():
+			if row.substr(column_index, 1).to_lower() != "s":
+				continue
+			var distance := Vector2(column_index, row_index).distance_squared_to(centre)
+			if distance < closest_distance:
+				closest = Vector2i(column_index, row_index)
+				closest_distance = distance
+	return closest
+
+
+func _set_default_rally_point_if_unset() -> void:
+	if _has_rally_point:
+		return
+	var clearance := RALLY_POINT_CLEARANCE + _front_collision_extent()
+	set_rally_point(global_position + _forward_direction() * clearance)
+
+
+func _front_collision_extent() -> float:
+	var collision_body := get_node_or_null("SelectionCollision") as StaticBody3D
+	if collision_body != null and collision_body.has_meta("collision_bounds"):
+		var bounds: AABB = collision_body.get_meta("collision_bounds")
+		# Converted Emperor models are Z-mirrored, placing their exit/apron on
+		# local +Z. The positive-Z extent is therefore the front-edge distance.
+		return maxf(absf(bounds.position.z), absf(bounds.end.z))
+	return 0.0
+
+
+func _forward_direction() -> Vector3:
+	var forward := global_transform.basis.z
+	if forward.length_squared() <= 0.0001:
+		forward = Vector3.BACK
+	return forward.normalized()
 
 
 func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:

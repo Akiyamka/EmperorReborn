@@ -84,7 +84,7 @@ offset_left = 16.0
 offset_top = 16.0
 offset_right = 640.0
 offset_bottom = 44.0
-text = "WASD/Arrows: move camera | Q/E: rotate | Wheel: zoom | Drag: select units | F8: nav grid | Right click: move"
+text = "WASD/Arrows: move camera | Q/E: rotate | Wheel: zoom | Drag: select units | F7: save start | Shift+F7: reset start | F8: nav grid | Right click: move"
 
 [node name="SelectionRectangle" type="Control" parent="HUD" unique_id=437630124]
 layout_mode = 3
