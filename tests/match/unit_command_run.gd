@@ -43,10 +43,14 @@ class FakeBuilding extends Node3D:
 class FakeUnitCommandController extends UnitCommandController:
 	var raycast_hits: Array[Dictionary] = []
 	var raycast_masks: Array[int] = []
+	var screen_positions: Dictionary = {}
 
 	func _raycast(_screen_position: Vector2, collision_mask: int = 0xffffffff) -> Dictionary:
 		raycast_masks.append(collision_mask)
 		return raycast_hits.pop_front() if not raycast_hits.is_empty() else {}
+
+	func _screen_position_for_entity(entity):
+		return screen_positions.get(entity, null)
 
 
 func _initialize() -> void:
@@ -59,6 +63,7 @@ func _initialize() -> void:
 	players.set_relation(1, 2, PlayerData.Relation.ENEMY)
 
 	_run_case("selection ownership and movement", _test_selection_ownership_and_movement.bind(local_player, enemy_player))
+	_run_case("rectangle unit selection", _test_rectangle_unit_selection.bind(local_player, enemy_player))
 	_run_case("building selection", _test_building_selection.bind(local_player))
 	players.reset_for_match()
 	if _failures > 0:
@@ -156,6 +161,37 @@ func _test_building_selection(token: int, local_player) -> int:
 	return token
 
 
+func _test_rectangle_unit_selection(token: int, local_player, enemy_player) -> int:
+	var commands := FakeUnitCommandController.new()
+	root.add_child(commands)
+	var scout := _make_unit("Scout", local_player)
+	var tank := _make_unit("Tank", local_player)
+	var enemy := _make_unit("Raider", enemy_player)
+	root.add_child(scout)
+	root.add_child(tank)
+	root.add_child(enemy)
+	commands.screen_positions = {
+		scout: Vector2(20.0, 20.0),
+		tank: Vector2(70.0, 60.0),
+		enemy: Vector2(50.0, 50.0),
+	}
+
+	_expect(commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT, true, Vector2(10.0, 10.0))), "drag start must be handled")
+	_expect(commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT, false, Vector2(100.0, 100.0))), "drag release must be handled")
+	_expect(scout.selected and tank.selected and not enemy.selected, "rectangle selects only owned units inside it")
+	_expect(commands.selection_text() == "2 units selected", "rectangle selection must describe the group")
+
+	commands.raycast_hits.append({"position": Vector3(4.0, 5.0, 6.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(scout.move_targets == [Vector3(4.0, 5.0, 6.0)] and tank.move_targets == [Vector3(4.0, 5.0, 6.0)], "right click commands every selected unit")
+
+	commands.queue_free()
+	scout.queue_free()
+	tank.queue_free()
+	enemy.queue_free()
+	return token
+
+
 func _make_unit(unit_name: String, player) -> FakeUnit:
 	var unit := FakeUnit.new()
 	unit.name = unit_name
@@ -164,11 +200,11 @@ func _make_unit(unit_name: String, player) -> FakeUnit:
 	return unit
 
 
-func _mouse_event(button_index: int) -> InputEventMouseButton:
+func _mouse_event(button_index: int, pressed := true, position := Vector2(10.0, 10.0)) -> InputEventMouseButton:
 	var event := InputEventMouseButton.new()
 	event.button_index = button_index
-	event.pressed = true
-	event.position = Vector2(10.0, 10.0)
+	event.pressed = pressed
+	event.position = position
 	return event
 
 

@@ -15,6 +15,7 @@ const ENEMY_PLAYER_ID := 2
 @onready var camera_rig: Node3D = $CameraRig
 @onready var terrain: MapLoader = $Terrain
 @onready var selection_label: Label = $HUD/Selection
+@onready var selection_rectangle = $HUD/SelectionRectangle
 @onready var fps_label: Label = $HUD/FPS
 @onready var side_panel: SidePanel = $HUD/SidePanel
 
@@ -129,7 +130,7 @@ func _setup_unit_command_controller() -> void:
 	_unit_command_controller.name = "UnitCommandController"
 	add_child(_unit_command_controller)
 	_unit_command_controller.status_changed.connect(_update_selection_label)
-	_unit_command_controller.setup(camera, terrain)
+	_unit_command_controller.setup(camera, terrain, selection_rectangle)
 
 
 func _place_on_map() -> void:
