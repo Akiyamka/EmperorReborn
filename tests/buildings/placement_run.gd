@@ -42,6 +42,8 @@ func _initialize() -> void:
 	_run_case("begin validation and cancel", _test_begin_and_cancel)
 	_run_case("failed placement keeps active state", _test_failed_placement_keeps_active)
 	_run_case("footprint occupancy and single spawn handoff", _test_occupancy_and_single_spawn)
+	_run_case("unmaterialed preview mesh gets fallback material", _test_unmaterialed_preview_mesh_gets_fallback_material)
+	_run_case("legacy building without placement anchor", _test_legacy_building_without_placement_anchor)
 	_run_case("resolver fallback occupancy", _test_resolver_fallback_occupancy)
 	_run_case("out-of-radius cells preview as blocked", _test_out_of_radius_preview_is_blocked)
 	_run_case("enemy buildings do not extend build radius", _test_enemy_building_does_not_extend_radius)
@@ -174,6 +176,60 @@ func _test_occupancy_and_single_spawn(token: int) -> int:
 	return token
 
 
+func _test_unmaterialed_preview_mesh_gets_fallback_material(token: int) -> int:
+	var buildings_root := Node3D.new()
+	get_root().add_child(buildings_root)
+	var preview_template := Node3D.new()
+	var preview_mesh := MeshInstance3D.new()
+	preview_mesh.mesh = BoxMesh.new()
+	preview_template.add_child(preview_mesh)
+	preview_mesh.owner = preview_template
+	var preview_scene := PackedScene.new()
+	_expect(preview_scene.pack(preview_template) == OK, "an unmaterialed preview mesh scene must pack")
+	preview_template.free()
+
+	var placement = BuildingPlacementScript.new()
+	get_root().add_child(placement)
+	placement.setup(null, FakeGrid.new(), buildings_root, null, preview_scene, preview_scene, null, Callable())
+	placement.begin(&"Preview", "Preview", _rows(["X"]))
+	placement.try_place_at_hover_cell(Vector2i.ZERO, null)
+	var preview_root := placement.get_child(0) as Node3D
+	var configured_mesh := preview_root.get_child(0) as MeshInstance3D if preview_root != null else null
+	_expect(configured_mesh != null, "placement must instantiate the preview mesh")
+	_expect(
+		configured_mesh != null and configured_mesh.material_override != null,
+		"a preview mesh without a source material must receive a fallback material"
+	)
+
+	placement.cancel()
+	placement.queue_free()
+	buildings_root.queue_free()
+	return token
+
+
+func _test_legacy_building_without_placement_anchor(token: int) -> int:
+	var pair := _new_placement(Callable(self, "_direct_config_rows"))
+	var placement = pair[0]
+	var buildings_root = pair[1]
+	var existing = ExistingBuilding.new()
+	existing.building_config = FootprintConfig.new(_rows(["X"]))
+	# This is the centered world position for a one-cell footprint anchored at
+	# (-2, -2), as used by buildings created before anchor metadata existed.
+	existing.position = Vector3(-1.0, 0.0, -1.0)
+	existing.add_to_group("buildings")
+	buildings_root.add_child(existing)
+
+	placement.begin(&"Blocked", "Blocked", _rows(["X"]))
+	var blocked = placement.try_place_at_hover_cell(Vector2i(-2, -2), null)
+	_expect(
+		blocked == BuildingPlacementScript.PlaceResult.CANNOT_BUILD,
+		"a legacy building without anchor metadata must use its world-position footprint"
+	)
+	placement.cancel()
+	_free_pair(pair)
+	return token
+
+
 ## Regression test: the per-cell preview material must reflect the build
 ## radius check, not just the aggregate _can_build flag used by
 ## try_place_at_hover_cell() -- otherwise the grid stays green while
@@ -242,7 +298,6 @@ func _test_enemy_building_does_not_extend_radius(token: int) -> int:
 	var owned := ExistingBuilding.new()
 	owned.owner_player_id = 1
 	owned.building_config = FootprintConfig.new(_rows(["X"]))
-	owned.set_meta(&"placement_anchor_cell", Vector2i.ZERO)
 	owned.add_to_group("buildings")
 	buildings_root.add_child(owned)
 

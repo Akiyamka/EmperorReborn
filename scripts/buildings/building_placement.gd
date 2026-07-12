@@ -386,18 +386,19 @@ func _restore_arrow_fill_materials(mesh_instance: MeshInstance3D) -> void:
 	if mesh_instance.mesh == null:
 		return
 	for surface_index in mesh_instance.mesh.get_surface_count():
-		var material := mesh_instance.get_active_material(surface_index)
-		if not _is_fully_transparent_albedo_material(material):
-			continue
-		var fill_material := StandardMaterial3D.new()
-		fill_material.albedo_color = Color.WHITE
-		fill_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		fill_material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
-		fill_material.disable_receive_shadows = true
-		fill_material.emission_enabled = true
-		fill_material.emission = Color.WHITE
-		fill_material.emission_energy_multiplier = CELL_EMISSION_ENERGY
-		mesh_instance.set_surface_override_material(surface_index, fill_material)
+		var material := _surface_material(mesh_instance, surface_index)
+		if _is_fully_transparent_albedo_material(material):
+			var fill_material := StandardMaterial3D.new()
+			fill_material.albedo_color = Color.WHITE
+			fill_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			fill_material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+			fill_material.disable_receive_shadows = true
+			fill_material.emission_enabled = true
+			fill_material.emission = Color.WHITE
+			fill_material.emission_energy_multiplier = CELL_EMISSION_ENERGY
+			mesh_instance.set_surface_override_material(surface_index, fill_material)
+		elif material == null:
+			mesh_instance.set_surface_override_material(surface_index, _placement_fallback_material())
 
 
 func _is_fully_transparent_albedo_material(material: Material) -> bool:
@@ -426,13 +427,27 @@ func _configure_preview_visuals(node: Node) -> void:
 
 
 func _configure_preview_materials(mesh_instance: MeshInstance3D) -> void:
-	mesh_instance.material_override = null
 	if mesh_instance.mesh == null:
 		return
 	for surface_index in mesh_instance.mesh.get_surface_count():
-		var material := _placement_blend_material(mesh_instance.get_active_material(surface_index))
-		if material != null:
-			mesh_instance.set_surface_override_material(surface_index, material)
+		if _surface_material(mesh_instance, surface_index) == null:
+			# A per-surface override is still too late for GLES's shadow/material
+			# bookkeeping on a mesh whose source surface has no material. A mesh
+			# override is resolved before that query and covers every surface.
+			mesh_instance.material_override = _placement_fallback_material()
+			return
+
+	mesh_instance.material_override = null
+	for surface_index in mesh_instance.mesh.get_surface_count():
+		var material := _placement_blend_material(_surface_material(mesh_instance, surface_index))
+		mesh_instance.set_surface_override_material(surface_index, material)
+
+
+func _surface_material(mesh_instance: MeshInstance3D, surface_index: int) -> Material:
+	var override_material := mesh_instance.get_surface_override_material(surface_index)
+	if override_material != null:
+		return override_material
+	return mesh_instance.mesh.surface_get_material(surface_index)
 
 
 func _placement_blend_material(source_material: Material) -> Material:
@@ -450,6 +465,19 @@ func _placement_blend_material(source_material: Material) -> Material:
 		base_material.emission_energy_multiplier = CELL_EMISSION_ENERGY
 		if base_material.albedo_texture != null:
 			base_material.emission_texture = base_material.albedo_texture
+	return material
+
+
+func _placement_fallback_material() -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(1.0, 1.0, 1.0, 0.45)
+	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.disable_receive_shadows = true
+	material.emission_enabled = true
+	material.emission = Color.WHITE
+	material.emission_energy_multiplier = CELL_EMISSION_ENERGY
 	return material
 
 
@@ -558,11 +586,15 @@ func _occupied_building_nav_cells() -> Dictionary:
 
 
 func _building_anchor(building: Node3D, occupy_rows: Array[String]) -> Vector2i:
-	var saved_anchor = building.get_meta(&"placement_anchor_cell", null)
+	# Buildings placed before placement anchors were persisted have no metadata.
+	# get_meta(key, null) still reports an engine error for an absent key, so
+	# check for it explicitly before using the world-position fallback.
+	var saved_anchor = building.get_meta(&"placement_anchor_cell") if building.has_meta(&"placement_anchor_cell") else null
 	if saved_anchor is Vector2i:
 		return saved_anchor
 	var nav_size := _occupy_rows_nav_size(occupy_rows)
-	var center_cell: Vector2i = _navigation_grid.world_to_grid(building.global_position)
+	var building_position := building.global_position if building.is_inside_tree() else building.position
+	var center_cell: Vector2i = _navigation_grid.world_to_grid(building_position)
 	return center_cell - Vector2i(
 		int(floor(float(nav_size.x) * 0.5)), int(floor(float(nav_size.y) * 0.5))
 	)

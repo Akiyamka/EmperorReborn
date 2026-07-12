@@ -400,7 +400,7 @@ func _refund_and_fail(order: UpgradeOrder, message: String) -> void:
 
 
 func _dock_anchor_cell(refinery: Node3D, dock_occupy_rows: Array[String], existing_dock_count: int):
-	var refinery_anchor = refinery.get_meta(&"placement_anchor_cell", null)
+	var refinery_anchor = refinery.get_meta(&"placement_anchor_cell") if refinery.has_meta(&"placement_anchor_cell") else null
 	if not (refinery_anchor is Vector2i):
 		return null
 
