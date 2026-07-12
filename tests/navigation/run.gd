@@ -36,6 +36,7 @@ func _initialize() -> void:
 	await process_frame
 	var grid := _make_grid()
 	_test_synchronous_paths(grid)
+	_test_no_stop_cells(grid)
 	_test_immediate_movement(grid)
 	_test_slots_and_collision(grid)
 	if _failures > 0:
@@ -81,6 +82,66 @@ func _test_synchronous_paths(grid: MapNavigationGrid) -> void:
 		Vector2i(55, 128), Vector2i(70, 128), MapNavigationGrid.PASS_VEHICLE, 1, rock_mask
 	)
 	_expect(not wide.is_empty() and wide[wide.size() - 1].x < 60, "clearance one must stop before a single-cell gap and go as close as possible")
+
+
+func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
+	var apron := {}
+	for y in range(100, 108):
+		for x in range(100, 108):
+			apron[Vector2i(x, y)] = true
+
+	var runtime_map := NavigationMapScript.new()
+	runtime_map.setup(grid)
+	_expect(runtime_map.replace_blocked_cells({}, apron), "a no-stop overlay must increment the map revision")
+	_expect(runtime_map.is_passable(Vector2i(103, 103), MapNavigationGrid.PASS_VEHICLE), "no-stop cells must stay traversable")
+	_expect(not runtime_map.is_stoppable(Vector2i(103, 103), MapNavigationGrid.PASS_VEHICLE), "no-stop cells must not be valid stops")
+
+	var planner := NavigationPlannerScript.new()
+	planner.setup(runtime_map)
+	var rock_mask := 1 << MapNavigationGrid.TERRAIN_ROCK
+	var exit_path: Array[Vector2i] = planner.find_path(
+		Vector2i(103, 103), Vector2i(103, 120), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask
+	)
+	var exit_touches_apron := false
+	for path_cell in exit_path:
+		exit_touches_apron = exit_touches_apron or apron.has(path_cell)
+	_expect(not exit_path.is_empty() and not exit_touches_apron, "a unit spawned on the apron must get a route that starts outside it")
+	var through: Array[Vector2i] = planner.find_path(
+		Vector2i(103, 95), Vector2i(103, 112), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask
+	)
+	var crossed_apron := false
+	for path_cell in through:
+		crossed_apron = crossed_apron or apron.has(path_cell)
+	_expect(not through.is_empty() and through[through.size() - 1] == Vector2i(103, 112) and not crossed_apron, "routes must go around the apron, never through it")
+	var into_apron: Array[Vector2i] = planner.find_path(
+		Vector2i(103, 120), Vector2i(103, 103), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask
+	)
+	_expect(not into_apron.is_empty() and not apron.has(into_apron[into_apron.size() - 1]), "a destination on the apron must snap to the nearest stoppable cell")
+
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+	navigation.runtime_map.replace_blocked_cells({}, apron)
+	var clicker := FakeUnit.new()
+	root.add_child(clicker)
+	clicker.global_position = Vector3(103.5, 0.0, 120.5)
+	var assignments := navigation.command_move([clicker], Vector3(103.5, 0.0, 103.5), NavigationSystemScript.MoveMode.FREE)
+	var slot_cell: Vector2i = grid.world_to_grid(assignments[0]["position"])
+	_expect(not apron.has(slot_cell), "a movement slot must never land on a no-stop cell")
+
+	var produced := FakeUnit.new()
+	root.add_child(produced)
+	produced.global_position = Vector3(103.5, 0.0, 103.5)
+	navigation.command_move([produced], Vector3(103.5, 0.0, 120.5), NavigationSystemScript.MoveMode.FREE)
+	_expect(bool(navigation.agent_debug(produced)["route_ready"]), "a unit inside the apron must still get a route immediately")
+	for _iteration in 200:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(produced.global_position.distance_to(Vector3(103.5, 0.0, 120.5)) < 2.0, "a unit produced inside the apron must walk out and reach its destination")
+
+	navigation.queue_free()
+	clicker.queue_free()
+	produced.queue_free()
 
 
 func _test_immediate_movement(grid: MapNavigationGrid) -> void:

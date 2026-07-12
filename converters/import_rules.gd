@@ -522,6 +522,16 @@ func _child_lists(lookups: Dictionary, table: String, source_id: int) -> Diction
 		var occupy_rows := []
 		for row in _query("SELECT pattern FROM building_occupy_rows WHERE building_id = %d ORDER BY row_index" % source_id):
 			occupy_rows.append(String(row["pattern"]))
+		# The model converter negates Z to go from the source's left-handed
+		# space to Godot's (model_bake_builder.gd _to_godot_transform), which
+		# puts every building's low skirt/apron geometry on its +Z side. The
+		# runtime footprint code lays row 0 toward -Z, so the matrix must be
+		# Z-mirrored the same way the models were: rows are stored back-to-
+		# front relative to Rules.txt, putting the "s" skirt rows on +Z where
+		# the converted models' aprons are. building_deploy_points below are
+		# NOT mirrored and stay in Rules.txt row orientation -- mirror tile_y
+		# against the occupy matrix height when they get a consumer.
+		occupy_rows.reverse()
 		_set_if_any(lists, "occupy_rows", occupy_rows)
 		_set_if_any(lists, "terrain", _names("SELECT t.name FROM building_terrain bt JOIN terrain_types t ON t.id = bt.terrain_type_id WHERE bt.building_id = %d ORDER BY t.sort_order, t.id" % source_id))
 		_set_if_any(lists, "requires_primary", _names("SELECT b.name FROM building_requires_primary bp JOIN buildings b ON b.id = bp.required_building_id WHERE bp.building_id = %d ORDER BY b.id" % source_id))

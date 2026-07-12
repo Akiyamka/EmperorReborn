@@ -173,7 +173,7 @@ func _setup_navigation_grid_debug() -> void:
 	_navigation_grid_debug = NavigationGridDebugScript.new()
 	_navigation_grid_debug.name = "NavigationGridDebug"
 	add_child(_navigation_grid_debug)
-	_navigation_grid_debug.setup(terrain)
+	_navigation_grid_debug.setup(terrain, _unit_navigation_system)
 
 
 func _place_on_map() -> void:

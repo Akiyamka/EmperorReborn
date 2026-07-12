@@ -106,10 +106,14 @@ func _solid_map(pass_mask: int, clearance_cells: int, allowed_terrain_mask: int)
 	var static_pass: PackedInt32Array = _map.grid.pass_mask
 	var terrain: PackedInt32Array = _map.grid.terrain_type
 	var blocked: PackedByteArray = _map.blocked_cells()
+	# No-stop cells (building exit aprons) count as solid for routing: paths
+	# never lead into or through them. Only local steering crosses them, which
+	# lets a freshly produced unit walk out.
+	var no_stop: PackedByteArray = _map.no_stop_cells()
 	var solid := PackedByteArray()
 	solid.resize(total)
 	for index in total:
-		if (static_pass[index] & pass_mask) == 0 or blocked[index] != 0:
+		if (static_pass[index] & pass_mask) == 0 or blocked[index] != 0 or no_stop[index] != 0:
 			solid[index] = 1
 		elif allowed_terrain_mask != 0 and (allowed_terrain_mask & (1 << terrain[index])) == 0:
 			solid[index] = 1

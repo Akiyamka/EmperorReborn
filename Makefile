@@ -3,7 +3,7 @@ GODOT_CONTAINER := ./tools/godot-container
 .PHONY: rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-placement godot-export-web godot-watch-export godot-shell godot-version
 
 rules-export:
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/import_rules.gd -- --clean
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/import_rules.gd -- --db res://assets/converted/rules.db --clean
 
 godot-image:
 	$(GODOT_CONTAINER) build

@@ -23,6 +23,7 @@ func _initialize() -> void:
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
 	await _run_case("upgrade slot appears after its building is placed later", _test_upgrade_availability_polls)
 	await _run_case("unit slots follow prerequisite buildings and their upgrades", _test_unit_roster_availability)
+	await _run_case("occupy matrices are Z-mirrored to match converted models", _test_occupy_rows_are_mirrored)
 
 	if _failures > 0:
 		printerr("Match demo boot tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -409,3 +410,31 @@ func _test_unit_roster_availability() -> void:
 	)
 
 	match_instance.queue_free()
+
+
+## The model converter negates Z (left-handed source -> Godot), which puts
+## every building's low skirt/apron on its +Z side, while the footprint code
+## lays occupy row 0 toward -Z. import_rules.gd therefore Z-mirrors the
+## occupy matrix at import (rows stored back-to-front relative to Rules.txt).
+## This pins the mirror against the real converted data: a reimport that
+## drops it would silently turn every footprint 180 degrees away from its
+## model again.
+func _test_occupy_rows_are_mirrored() -> void:
+	var rules := get_root().get_node_or_null("/root/Rules")
+	_expect(rules != null, "the Rules autoload must be available")
+	if rules == null:
+		return
+
+	var con_yard: Resource = rules.call("building", &"ATConYard")
+	_expect(con_yard != null, "ATConYard rules config must exist")
+	if con_yard == null:
+		return
+
+	var occupy_rows: Array = con_yard.list(&"occupy_rows")
+	_expect(occupy_rows.size() == 10, "ATConYard must keep its 10-row occupy matrix")
+	if occupy_rows.size() != 10:
+		return
+	_expect(
+		String(occupy_rows[0]) != "sssss" and String(occupy_rows[9]) == "sssss",
+		"ATConYard's skirt rows must be mirrored to the matrix end (+Z, the converted model's apron side)"
+	)

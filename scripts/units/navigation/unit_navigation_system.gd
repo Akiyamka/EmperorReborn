@@ -18,7 +18,8 @@ const ENEMY_BLOCK_SECONDS := 0.4
 const FRIENDLY_YIELD_SECONDS := 0.8
 const FRIENDLY_YIELD_TRIGGER_SECONDS := 0.2
 const CELL_BUCKET_SIZE := 4.0
-const OCCUPY_CELL_SPAN := 4
+## Blocked cells must cover exactly the footprint the placement grid reserves.
+const OCCUPY_CELL_SPAN := BuildingPlacement.NAV_CELLS_PER_OCCUPY_CELL
 const SLOT_SEARCH_RADIUS := 32
 const CANDIDATE_ANGLES := [0.0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35, PI]
 
@@ -313,13 +314,13 @@ func _has_clear_line(from: Vector3, to: Vector3, agent: Dictionary) -> bool:
 			roundi(lerpf(float(start.x), float(finish.x), weight)),
 			roundi(lerpf(float(start.y), float(finish.y), weight))
 		)
-		if not runtime_map.is_passable(cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+		if not runtime_map.is_stoppable(cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
 			return false
 		var step: Vector2i = cell - previous
 		if step.x != 0 and step.y != 0:
-			if not runtime_map.is_passable(previous + Vector2i(step.x, 0), int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+			if not runtime_map.is_stoppable(previous + Vector2i(step.x, 0), int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
 				return false
-			if not runtime_map.is_passable(previous + Vector2i(0, step.y), int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+			if not runtime_map.is_stoppable(previous + Vector2i(0, step.y), int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
 				return false
 		previous = cell
 	return true
@@ -441,7 +442,7 @@ func _find_slot(preferred: Vector2i, agent: Dictionary, occupied: Array[Dictiona
 	for radius in range(0, SLOT_SEARCH_RADIUS + 1):
 		for offset in _ring_offsets(radius):
 			var cell := preferred + offset
-			if not runtime_map.is_passable(cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+			if not runtime_map.is_stoppable(cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
 				continue
 			var point: Vector3 = runtime_map.grid.grid_to_world(cell)
 			var free := true
@@ -571,6 +572,7 @@ func _refresh_building_blockers() -> void:
 	if not is_inside_tree() or runtime_map.grid == null:
 		return
 	var blocked := {}
+	var no_stop := {}
 	var rules := get_node_or_null("/root/Rules")
 	for node in get_tree().get_nodes_in_group("buildings"):
 		var building := node as Node3D
@@ -594,13 +596,18 @@ func _refresh_building_blockers() -> void:
 		for row_index in rows.size():
 			var row := String(rows[row_index])
 			for column_index in row.length():
-				if _empty_occupy_marker(row.substr(column_index, 1)):
+				var marker := row.substr(column_index, 1)
+				if _empty_occupy_marker(marker):
 					continue
+				# Skirt cells overlap the building model: routing treats them as
+				# solid so nothing drives through the mesh, but local steering
+				# may cross them, letting a freshly produced unit walk out.
+				var target := no_stop if marker.to_lower() == "s" else blocked
 				var origin: Vector2i = anchor + Vector2i(column_index, row_index) * OCCUPY_CELL_SPAN
 				for y in OCCUPY_CELL_SPAN:
 					for x in OCCUPY_CELL_SPAN:
-						blocked[origin + Vector2i(x, y)] = true
-	if runtime_map.replace_blocked_cells(blocked):
+						target[origin + Vector2i(x, y)] = true
+	if runtime_map.replace_blocked_cells(blocked, no_stop):
 		_replan_after_map_change()
 
 
@@ -612,9 +619,9 @@ func _replan_after_map_change() -> void:
 			continue
 		var destination: Vector3 = agent["destination"]
 		var destination_cell: Vector2i = runtime_map.grid.world_to_grid(destination)
-		if not runtime_map.is_passable(destination_cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+		if not runtime_map.is_stoppable(destination_cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
 			var replacement: Vector2i = runtime_map.nearest_passable(
-				destination_cell, int(agent["pass_mask"]), int(agent["clearance"]), SLOT_SEARCH_RADIUS, int(agent["terrain_mask"])
+				destination_cell, int(agent["pass_mask"]), int(agent["clearance"]), SLOT_SEARCH_RADIUS, int(agent["terrain_mask"]), true
 			)
 			if replacement.x >= 0:
 				destination = runtime_map.grid.grid_to_world(replacement)

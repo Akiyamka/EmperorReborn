@@ -1,19 +1,27 @@
 class_name NavigationGridDebug
 extends Node3D
-## Visual-only overlay for the immutable 256x256 baked navigation grid.
+## Visual-only overlay for the immutable 256x256 baked navigation grid plus the
+## dynamic obstacle overlay (building blockers) from the match runtime map.
 ## N toggles it without affecting navigation state or pathfinding costs.
 
 const GRID_SHADER := preload("res://scripts/units/navigation/navigation_grid_debug.gdshader")
+const DYNAMIC_BLOCKED_COLOR := Color(1.0, 0.0, 1.0, 0.8)
+const DYNAMIC_NO_STOP_COLOR := Color(1.0, 0.9, 0.1, 0.6)
 
 @export var visible_by_default := false
 var _configured := false
+var _material: ShaderMaterial
+var _runtime_map
+var _blocked_revision := -1
 
 
-func setup(map_loader: MapLoader) -> bool:
+func setup(map_loader: MapLoader, navigation_system = null) -> bool:
 	if map_loader == null or map_loader.navigation_grid == null or not map_loader.navigation_grid.is_loaded():
 		push_warning("NavigationGridDebug: navigation grid is unavailable")
 		return false
 	_clear_overlays()
+	_runtime_map = navigation_system.runtime_map if navigation_system != null else null
+	_blocked_revision = -1
 	var material := ShaderMaterial.new()
 	material.shader = GRID_SHADER
 	var grid := map_loader.navigation_grid
@@ -21,6 +29,7 @@ func setup(map_loader: MapLoader) -> bool:
 	material.set_shader_parameter("grid_world_size", Vector2(grid.world_bounds.size.x, grid.world_bounds.size.z))
 	material.set_shader_parameter("navigation_types", _navigation_type_texture(grid))
 	material.render_priority = 10
+	_material = material
 
 	for node in map_loader.find_children("*", "MeshInstance3D", true, false):
 		var source := node as MeshInstance3D
@@ -37,6 +46,27 @@ func setup(map_loader: MapLoader) -> bool:
 	_configured = get_child_count() > 0
 	visible = visible_by_default and _configured
 	return _configured
+
+
+func _process(_delta: float) -> void:
+	if not visible or not _configured or _runtime_map == null or _material == null:
+		return
+	if int(_runtime_map.revision) == _blocked_revision:
+		return
+	_blocked_revision = int(_runtime_map.revision)
+	_material.set_shader_parameter("dynamic_blocked", _dynamic_blocked_texture())
+
+
+func _dynamic_blocked_texture() -> ImageTexture:
+	var image := Image.create(MapNavigationGrid.NAV_SIZE, MapNavigationGrid.NAV_SIZE, false, Image.FORMAT_RGBA8)
+	var blocked: PackedByteArray = _runtime_map.blocked_cells()
+	var no_stop: PackedByteArray = _runtime_map.no_stop_cells()
+	for index in blocked.size():
+		if blocked[index] != 0:
+			image.set_pixel(index % MapNavigationGrid.NAV_SIZE, int(index / MapNavigationGrid.NAV_SIZE), DYNAMIC_BLOCKED_COLOR)
+		elif no_stop[index] != 0:
+			image.set_pixel(index % MapNavigationGrid.NAV_SIZE, int(index / MapNavigationGrid.NAV_SIZE), DYNAMIC_NO_STOP_COLOR)
+	return ImageTexture.create_from_image(image)
 
 
 func _navigation_type_texture(grid: MapNavigationGrid) -> ImageTexture:
