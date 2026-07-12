@@ -107,7 +107,16 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 	var node := Node3D.new()
 	var raw_name := String(object.name)
 	node.name = _safe_node_name(raw_name)
+	node.set_meta("original_name", raw_name)
 	node.transform = _to_godot_transform(object.transform)
+	# Selection volumes and halo anchors are authored as vertex-only XBF
+	# objects.  They have no triangles, so no MeshInstance3D is generated for
+	# them; retain the data as metadata for gameplay visuals instead.
+	if raw_name.to_lower().begins_with("slct"):
+		node.set_meta("selection_bounds", _object_bounds(object.positions))
+	elif raw_name == "#^^0":
+		node.set_meta("halo_anchor", true)
+		node.set_meta("halo_anchor_bounds", _object_bounds(object.positions))
 	var child_path: String = "%s/%s" % [node_path, node.name] if node_path != "." else node.name
 	_add_animation_track(anim, child_path, object)
 
@@ -142,6 +151,15 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		node.add_child(child)
 
 	return node
+
+
+func _object_bounds(positions: PackedVector3Array) -> AABB:
+	if positions.is_empty():
+		return AABB()
+	var bounds := AABB(positions[0], Vector3.ZERO)
+	for point in positions:
+		bounds = bounds.expand(point)
+	return bounds
 
 
 func _assign_scene_owner(node: Node, scene_root: Node) -> void:

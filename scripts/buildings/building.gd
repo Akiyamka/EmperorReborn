@@ -7,6 +7,7 @@ signal primary_changed(is_primary: bool)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
+const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 
 ## docs/mechanics/production.md section 4: max 2 docks per refinery. Docks are
 ## plain Buildings placed by BuildingUpgradeController next to this one (not
@@ -31,6 +32,7 @@ const MAX_REFINERY_DOCKS := 2
 		owner_changed.emit(owner_player_id)
 @export var default_state := &"idle"
 @export var max_health := 0.0
+@export var max_shields := 0.0
 @export var upgrade_level := 0
 
 var building_config: Resource
@@ -39,6 +41,11 @@ var health := 0.0:
 		health = clampf(value, 0.0, max_health)
 		health_changed.emit(health, max_health)
 		_refresh_generated_energy()
+var shields := 0.0:
+	set(value):
+		shields = clampf(value, 0.0, max_shields)
+var is_selected := false
+var is_hovered := false
 
 var current_state := &""
 var invulnerable := false
@@ -57,6 +64,7 @@ var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
 var _generated_energy := 0
 var _docks: Array[Node3D] = []
+var _selection_halo
 
 
 func _ready() -> void:
@@ -65,12 +73,14 @@ func _ready() -> void:
 		config_id = StringName(String(get_meta("building_id")))
 	_apply_rules_config()
 	health = max_health
+	shields = max_shields
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_refresh_owner_visuals()
 	_refresh_generated_energy()
 	_sync_purchased_upgrade()
 	play_state(default_state)
 	_add_selection_collision()
+	_add_selection_halo()
 
 
 func _exit_tree() -> void:
@@ -217,6 +227,22 @@ func set_primary(value: bool) -> void:
 	is_primary = value
 
 
+func set_selected(value: bool) -> void:
+	if is_selected == value:
+		return
+	is_selected = value
+	if _selection_halo != null:
+		_selection_halo.set_selected(value)
+
+
+func set_hovered(value: bool) -> void:
+	if is_hovered == value:
+		return
+	is_hovered = value
+	if _selection_halo != null:
+		_selection_halo.set_hovered(value)
+
+
 func take_damage(amount: float) -> void:
 	if invulnerable or amount <= 0.0 or health <= 0.0:
 		return
@@ -274,6 +300,7 @@ func _apply_rules_config() -> void:
 		return
 
 	max_health = float(building_config.field(&"health", max_health))
+	max_shields = float(building_config.field(&"shield_health", max_shields))
 
 
 func _refresh_generated_energy() -> void:
@@ -307,6 +334,89 @@ func _apply_team_color(node: Node, color: Color) -> void:
 		node.set_instance_shader_parameter("team_color", color)
 	for child in node.get_children():
 		_apply_team_color(child, color)
+
+
+func _add_selection_halo() -> void:
+	_selection_halo = SelectionHaloScript.new()
+	_selection_halo.name = "SelectionHalo"
+	add_child(_selection_halo)
+	_selection_halo.configure(self, _selection_radius(), _selection_elevation())
+
+
+func _selection_radius() -> float:
+	var anchor_bounds := _halo_anchor_bounds()
+	if anchor_bounds.size.x > 0.0 or anchor_bounds.size.z > 0.0:
+		return maxf(anchor_bounds.size.x, anchor_bounds.size.z) * 0.5
+
+	var bounds := _selection_bounds()
+	# A halo is circular: its diameter follows the authored selection volume's
+	# narrow horizontal axis, not its length.  This keeps long vehicles and
+	# buildings from receiving an oversized circle.
+	return minf(bounds.size.x, bounds.size.z) * 0.5
+
+
+func _selection_elevation() -> float:
+	var anchor: Node3D = _halo_anchor_node(self)
+	if anchor != null:
+		return to_local(anchor.to_global(Vector3.ZERO)).y
+
+	return _selection_bounds().end.y + 0.05
+
+
+func _halo_anchor_bounds() -> AABB:
+	var anchor: Node3D = _halo_anchor_node(self)
+	if anchor == null or not anchor.has_meta("halo_anchor_bounds"):
+		return AABB()
+	var source_bounds: AABB = anchor.get_meta("halo_anchor_bounds")
+	var bounds := AABB()
+	var has_bounds := false
+	for corner in _aabb_corners(source_bounds):
+		var point := to_local(anchor.to_global(corner))
+		if has_bounds:
+			bounds = bounds.expand(point)
+		else:
+			bounds = AABB(point, Vector3.ZERO)
+			has_bounds = true
+	return bounds
+
+
+func _selection_bounds() -> AABB:
+	var bounds := AABB()
+	var has_bounds := false
+	for marker in _selection_marker_nodes(self):
+		var marker_bounds: AABB = marker.get_meta("selection_bounds")
+		for corner in _aabb_corners(marker_bounds):
+			var point := to_local(marker.to_global(corner))
+			if has_bounds:
+				bounds = bounds.expand(point)
+			else:
+				bounds = AABB(point, Vector3.ZERO)
+				has_bounds = true
+	if has_bounds:
+		return bounds
+	return AABB(Vector3.ZERO, Vector3(1.0, 1.0, 1.0))
+
+func _selection_marker_nodes(node: Node) -> Array[Node3D]:
+	var result: Array[Node3D] = []
+	_collect_selection_marker_nodes(node, result)
+	return result
+
+
+func _collect_selection_marker_nodes(node: Node, result: Array[Node3D]) -> void:
+	if node is Node3D and node.has_meta("selection_bounds"):
+		result.append(node)
+	for child in node.get_children():
+		_collect_selection_marker_nodes(child, result)
+
+
+func _halo_anchor_node(node: Node) -> Node3D:
+	if node is Node3D and node.has_meta("halo_anchor"):
+		return node
+	for child in node.get_children():
+		var anchor: Node3D = _halo_anchor_node(child)
+		if anchor != null:
+			return anchor
+	return null
 
 
 func _players():

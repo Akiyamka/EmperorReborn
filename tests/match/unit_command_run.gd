@@ -91,9 +91,9 @@ func _test_selection_ownership_and_movement(token: int, local_player, enemy_play
 
 	commands.raycast_hits.append({"collider": enemy_collider})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
-	_expect(not local_unit.selected and enemy_unit.selected, "new selection clears the previous unit")
+	_expect(not local_unit.selected and not enemy_unit.selected, "enemy units must not become selected")
 	_expect(commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT)), "enemy move click must still be handled")
-	_expect(enemy_unit.move_targets.is_empty() and statuses.back() == "Cannot command this player", "enemy move is refused before terrain raycast")
+	_expect(enemy_unit.move_targets.is_empty() and commands.selection_text() == "No unit selected", "enemy click leaves no commandable selection")
 	_expect(commands.raycast_masks == [0xffffffff, 0xffffffff], "enemy move must not issue a terrain raycast")
 
 	commands.raycast_hits.append({"collider": local_collider})

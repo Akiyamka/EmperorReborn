@@ -4,6 +4,7 @@ class_name Unit
 signal owner_changed(player_id: int)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
+const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
@@ -16,16 +17,18 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 		owner_changed.emit(owner_player_id)
 @export var move_speed := 5.0
 @export var arrival_radius := 0.2
-@export var selection_color := Color(0.2, 0.85, 1.0)
 @export var visual_root_path := NodePath("VisualRoot")
 @export var max_health := 0.0
 @export var max_shields := 0.0
+@export var max_spice := 0.0
+@export var max_passengers := 0.0
 
 @onready var visual_root: Node3D = get_node_or_null(visual_root_path)
 
 var unit_config: Resource
 var target_position: Vector3
 var is_selected := false
+var is_hovered := false
 var invulnerable := false
 var health := 0.0:
 	set(value):
@@ -34,24 +37,23 @@ var shields := 0.0:
 	set(value):
 		shields = clampf(value, 0.0, max_shields)
 		_refresh_shield_visibility()
-var _base_materials := {}
-var _selection_material: StandardMaterial3D
+var spice := 0.0
+var passengers := 0.0
 var _shield_meshes: Array[MeshInstance3D] = []
 var _shield_time := 0.0
 var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
+var _selection_halo
 
 
 func _ready() -> void:
 	_apply_rules_config()
 	target_position = global_position
-	_capture_base_materials()
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	health = max_health
 	shields = max_shields
-	_selection_material = StandardMaterial3D.new()
-	_selection_material.roughness = 0.8
+	_add_selection_halo()
 	_refresh_owner_visuals()
 
 
@@ -126,7 +128,16 @@ func set_selected(value: bool) -> void:
 		return
 
 	is_selected = value
-	_refresh_selection()
+	if _selection_halo != null:
+		_selection_halo.set_selected(value)
+
+
+func set_hovered(value: bool) -> void:
+	if is_hovered == value:
+		return
+	is_hovered = value
+	if _selection_halo != null:
+		_selection_halo.set_hovered(value)
 
 
 func set_owner_player_id(player_id: int) -> void:
@@ -198,32 +209,16 @@ func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:
 	return result
 
 
-func _refresh_selection() -> void:
-	if visual_root == null:
-		return
-
-	for mesh_instance in _mesh_instances():
-		mesh_instance.material_override = _selection_material if is_selected else _base_materials.get(mesh_instance)
-
-
 func _refresh_owner_visuals() -> void:
 	var color := _owner_team_color()
-	if _selection_material != null:
-		_selection_material.albedo_color = color
-		_selection_material.emission_enabled = true
-		_selection_material.emission = color
-		_selection_material.emission_energy_multiplier = 0.4
-
 	for mesh_instance in _mesh_instances():
 		mesh_instance.set_instance_shader_parameter("team_color", color)
-
-	_refresh_selection()
 
 
 func _owner_team_color() -> Color:
 	var roster_player = owner_player()
 	if roster_player == null or roster_player.is_neutral:
-		return selection_color
+		return Color(0.2, 0.85, 1.0)
 	return roster_player.team_color
 
 
@@ -237,10 +232,98 @@ func _clear_invulnerability() -> void:
 	invulnerable = false
 
 
-func _capture_base_materials() -> void:
-	_base_materials.clear()
-	for mesh_instance in _mesh_instances():
-		_base_materials[mesh_instance] = mesh_instance.material_override
+func _add_selection_halo() -> void:
+	_selection_halo = SelectionHaloScript.new()
+	_selection_halo.name = "SelectionHalo"
+	add_child(_selection_halo)
+	_selection_halo.configure(self, _selection_radius(), _selection_elevation())
+
+
+func _selection_radius() -> float:
+	var anchor_bounds := _halo_anchor_bounds()
+	if anchor_bounds.size.x > 0.0 or anchor_bounds.size.z > 0.0:
+		return maxf(anchor_bounds.size.x, anchor_bounds.size.z) * 0.5
+
+	var bounds := _selection_bounds()
+	# A halo is circular: its diameter follows the authored selection volume's
+	# narrow horizontal axis, not its length.  This keeps long vehicles and
+	# buildings from receiving an oversized circle.
+	return minf(bounds.size.x, bounds.size.z) * 0.5
+
+
+func _selection_elevation() -> float:
+	var anchor: Node3D = _halo_anchor_node(visual_root)
+	if anchor != null:
+		return to_local(anchor.to_global(Vector3.ZERO)).y
+
+	return _selection_bounds().end.y + 0.05
+
+
+func _halo_anchor_bounds() -> AABB:
+	var anchor: Node3D = _halo_anchor_node(visual_root)
+	if anchor == null or not anchor.has_meta("halo_anchor_bounds"):
+		return AABB()
+	var source_bounds: AABB = anchor.get_meta("halo_anchor_bounds")
+	var bounds := AABB()
+	var has_bounds := false
+	for corner in _aabb_corners(source_bounds):
+		var point := to_local(anchor.to_global(corner))
+		if has_bounds:
+			bounds = bounds.expand(point)
+		else:
+			bounds = AABB(point, Vector3.ZERO)
+			has_bounds = true
+	return bounds
+
+
+func _selection_bounds() -> AABB:
+	var highest := 0.0
+	var bounds := AABB()
+	var has_bounds := false
+	for marker in _selection_marker_nodes(visual_root):
+		var marker_bounds: AABB = marker.get_meta("selection_bounds")
+		for corner in _aabb_corners(marker_bounds):
+			var point := to_local(marker.to_global(corner))
+			if has_bounds:
+				bounds = bounds.expand(point)
+			else:
+				bounds = AABB(point, Vector3.ZERO)
+				has_bounds = true
+	if has_bounds:
+		return bounds
+	return AABB(Vector3.ZERO, Vector3(1.0, 1.0, 1.0))
+
+
+func _selection_marker_nodes(node: Node) -> Array[Node3D]:
+	var result: Array[Node3D] = []
+	_collect_selection_marker_nodes(node, result)
+	return result
+
+
+func _collect_selection_marker_nodes(node: Node, result: Array[Node3D]) -> void:
+	if node is Node3D and node.has_meta("selection_bounds"):
+		result.append(node)
+	for child in node.get_children():
+		_collect_selection_marker_nodes(child, result)
+
+
+func _halo_anchor_node(node: Node) -> Node3D:
+	if node is Node3D and node.has_meta("halo_anchor"):
+		return node
+	for child in node.get_children():
+		var anchor: Node3D = _halo_anchor_node(child)
+		if anchor != null:
+			return anchor
+	return null
+
+
+func _aabb_corners(bounds: AABB) -> Array[Vector3]:
+	var corners: Array[Vector3] = []
+	for x in [bounds.position.x, bounds.end.x]:
+		for y in [bounds.position.y, bounds.end.y]:
+			for z in [bounds.position.z, bounds.end.z]:
+				corners.append(Vector3(x, y, z))
+	return corners
 
 
 func _mesh_instances() -> Array[MeshInstance3D]:

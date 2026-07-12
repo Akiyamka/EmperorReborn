@@ -9,6 +9,7 @@ var _camera: Camera3D
 var _terrain: MapLoader
 # Units are protocol-compatible group members in runtime and tests, not one concrete class.
 var _selected_unit = null
+var _hovered_entity = null
 
 
 func setup(command_camera: Camera3D, command_terrain: MapLoader) -> void:
@@ -17,6 +18,9 @@ func setup(command_camera: Camera3D, command_terrain: MapLoader) -> void:
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
+	if event is InputEventMouseMotion:
+		_update_hover(event.position)
+		return false
 	if not (event is InputEventMouseButton and event.pressed):
 		return false
 	match event.button_index:
@@ -45,7 +49,7 @@ func _select_at(screen_position: Vector2) -> void:
 	var hit := _raycast(screen_position)
 	if not hit.is_empty():
 		var unit = _find_unit(hit.get("collider") as Node)
-		if unit != null:
+		if unit != null and _can_control(unit):
 			_selected_unit = unit
 			_selected_unit.set_selected(true)
 	status_changed.emit("")
@@ -83,10 +87,33 @@ func _clear_selection() -> void:
 		_selected_unit = null
 
 
+func _update_hover(screen_position: Vector2) -> void:
+	var hovered = null
+	var hit := _raycast(screen_position)
+	if not hit.is_empty():
+		hovered = _find_selectable_entity(hit.get("collider") as Node)
+	if hovered == _hovered_entity:
+		return
+	if _hovered_entity != null and _hovered_entity.has_method("set_hovered"):
+		_hovered_entity.set_hovered(false)
+	_hovered_entity = hovered
+	if _hovered_entity != null and _hovered_entity.has_method("set_hovered"):
+		_hovered_entity.set_hovered(true)
+
+
 func _find_unit(node: Node):
 	var current := node
 	while current != null:
 		if current.is_in_group("units"):
+			return current
+		current = current.get_parent()
+	return null
+
+
+func _find_selectable_entity(node: Node):
+	var current := node
+	while current != null:
+		if current.is_in_group("units") or current.is_in_group("buildings"):
 			return current
 		current = current.get_parent()
 	return null
