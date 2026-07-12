@@ -4,6 +4,7 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingControllerScript := preload("res://scripts/buildings/building_controller.gd")
 const BuildingUpgradeControllerScript := preload("res://scripts/buildings/building_upgrade_controller.gd")
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
+const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const NavigationGridDebugScript := preload("res://scripts/units/navigation/navigation_grid_debug.gd")
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
@@ -35,6 +36,11 @@ var _building_option_ids: Array[StringName] = []
 ## docks. Both special building types still route through map-picking flows.
 var _wall_building_ids: Array[StringName] = []
 var _upgrade_option_ids: Array[StringName] = []
+## Units share the building grid's tabs (Infantry/Vehicles via art
+## sidebar_type); their availability is gated by the same technology tree
+## through UnitRosterController.
+var _unit_option_ids: Array[StringName] = []
+var _unit_roster_controller: UnitRosterController
 
 
 func _enter_tree() -> void:
@@ -51,11 +57,13 @@ func _ready() -> void:
 	_building_option_ids = _local_player_building_option_ids()
 	_wall_building_ids = _local_player_wall_building_ids()
 	_upgrade_option_ids = _local_player_upgrade_option_ids()
+	_unit_option_ids = _local_player_unit_option_ids()
 	_setup_unit_navigation_system()
 	_setup_navigation_grid_debug()
 	_setup_unit_command_controller()
 	_setup_building_controller()
 	_setup_building_upgrade_controller()
+	_setup_unit_roster_controller()
 	_update_selection_label()
 	_update_fps_label()
 	_place_on_map()
@@ -70,8 +78,10 @@ func _on_panel_command(command: StringName) -> void:
 
 
 func _on_panel_building_intent(building_id: StringName, button_index: int) -> void:
-	if _building_controller != null:
-		_building_controller.handle_building_intent(building_id, button_index)
+	if _building_controller != null and _building_controller.handle_building_intent(building_id, button_index):
+		return
+	if _unit_roster_controller != null:
+		_unit_roster_controller.handle_unit_intent(building_id, button_index)
 
 
 func _on_panel_upgrade_intent(upgrade_id: StringName, button_index: int) -> void:
@@ -86,7 +96,10 @@ func _on_building_resources_changed(credits: int, energy: int) -> void:
 
 func _setup_building_controller() -> void:
 	var building_grid_ids := _building_option_ids + _wall_building_ids
-	side_panel.configure_building_options(building_grid_ids)
+	# Units live in the same grid as buildings -- the panel sorts every id
+	# into its tab by art sidebar_type -- but only building ids go to
+	# BuildingController below; unit clicks route to UnitRosterController.
+	side_panel.configure_building_options(building_grid_ids + _unit_option_ids)
 	_building_controller = BuildingControllerScript.new()
 	_building_controller.name = "BuildingController"
 	add_child(_building_controller)
@@ -129,6 +142,15 @@ func _setup_building_upgrade_controller() -> void:
 	# the panel grid must be built from that filtered set, not the raw roster,
 	# or unfiltered slots default to QueueSlot's normal AVAILABLE look.
 	side_panel.configure_upgrade_options(_building_upgrade_controller.upgrade_option_ids())
+
+
+func _setup_unit_roster_controller() -> void:
+	_unit_roster_controller = UnitRosterControllerScript.new()
+	_unit_roster_controller.name = "UnitRosterController"
+	add_child(_unit_roster_controller)
+	_unit_roster_controller.status_changed.connect(_update_selection_label)
+	_unit_roster_controller.unit_option_state_changed.connect(side_panel.set_building_option_state)
+	_unit_roster_controller.setup(_unit_option_ids)
 
 
 func _setup_unit_command_controller() -> void:
@@ -187,6 +209,8 @@ func _process(delta: float) -> void:
 		_building_controller.process(delta)
 	if _building_upgrade_controller != null:
 		_building_upgrade_controller.process(delta)
+	if _unit_roster_controller != null:
+		_unit_roster_controller.process(delta)
 
 	_fps_update_time += delta
 	if _fps_update_time >= 0.25:
@@ -270,6 +294,19 @@ func _local_player_wall_building_ids() -> Array[StringName]:
 		return []
 
 	return rules.wall_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+
+
+func _local_player_unit_option_ids() -> Array[StringName]:
+	var players = _players()
+	var rules := get_node_or_null("/root/Rules")
+	if players == null or rules == null:
+		return []
+
+	var local_player = players.player(LOCAL_PLAYER_ID)
+	if local_player == null:
+		return []
+
+	return rules.producible_unit_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _local_player_upgrade_option_ids() -> Array[StringName]:

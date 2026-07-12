@@ -150,6 +150,34 @@ func upgrade_building_ids_for_house(
 	return result
 
 
+## Unit counterpart to buildable_building_ids_for_house(): everything a house
+## could potentially produce through the unit panel, regardless of whether the
+## technology tree currently unlocks it. A producible unit is one with a
+## production entry point (non-empty primary_buildings) and a real price --
+## cost 0 marks palace weapons (e.g. ATHawkWeapon) that list a primary
+## building but are fired, not bought. Shared units (Harvester, MCV, Carryall)
+## carry no house field and belong to every roster; the tech tree still gates
+## them per house through their factory/hangar prerequisites.
+func producible_unit_ids_for_house(
+		house_id: StringName, subhouse_ids: Array[StringName] = []
+) -> Array[StringName]:
+	var result: Array[StringName] = []
+	var bucket: Dictionary = _by_type.get("unit", {})
+	var keys := bucket.keys()
+	keys.sort()
+	for id_key in keys:
+		var config: Resource = bucket[id_key]
+		var config_house := String(config.field(&"house", ""))
+		if not config_house.is_empty() and not _matches_house(config, house_id, subhouse_ids):
+			continue
+		if config.list(&"primary_buildings").is_empty():
+			continue
+		if int(config.field(&"cost", 0)) <= 0:
+			continue
+		result.append(StringName(id_key))
+	return result
+
+
 func _building_ids_for_group(
 		house_id: StringName, subhouse_ids: Array[StringName], building_group: StringName
 ) -> Array[StringName]:

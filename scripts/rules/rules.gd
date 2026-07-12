@@ -58,6 +58,12 @@ func buildable_building_ids_for_house(
 	return catalog.buildable_building_ids_for_house(house_id, subhouse_ids)
 
 
+func producible_unit_ids_for_house(
+		house_id: StringName, subhouse_ids: Array[StringName] = []
+) -> Array[StringName]:
+	return catalog.producible_unit_ids_for_house(house_id, subhouse_ids)
+
+
 func wall_building_ids_for_house(
 		house_id: StringName, subhouse_ids: Array[StringName] = []
 ) -> Array[StringName]:

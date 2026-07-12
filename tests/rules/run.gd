@@ -22,6 +22,7 @@ func _initialize() -> void:
 		_test_wall_and_dock_ids
 	)
 	_run_case("upgrade roster includes an upgradeable Construction Yard", _test_upgrade_roster)
+	_run_case("unit roster keeps producible units and shared house-less units", _test_unit_roster)
 
 	if _failures > 0:
 		printerr("Rules tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -162,6 +163,30 @@ func _test_upgrade_roster() -> bool:
 	return true
 
 
+func _test_unit_roster() -> bool:
+	var catalog = _catalog_with([
+		_unit(&"ATInfantry", &"Atreides", 60, [&"ATBarracks"]),
+		_unit(&"ATMilitia", &"Atreides", 40, []),
+		_unit(&"ATHawkWeapon", &"Atreides", 0, [&"ATPalace"]),
+		_unit(&"FRFremen", &"Fremen", 150, [&"FRCamp"]),
+		_unit(&"ORLaserTank", &"Ordos", 900, [&"ORFactory"]),
+		_unit(&"Harvester", &"", 1000, [&"HKFactory", &"ATFactory", &"ORFactory"]),
+	])
+
+	var roster: Array[StringName] = catalog.producible_unit_ids_for_house(&"Atreides")
+	_expect(roster.has(&"ATInfantry"), "a producible unit of the primary house must be included")
+	_expect(roster.has(&"Harvester"), "a shared house-less unit must be included for every house")
+	_expect(not roster.has(&"ATMilitia"), "a unit with no primary_buildings (survivors/crates only) must be excluded")
+	_expect(not roster.has(&"ATHawkWeapon"), "a cost-0 palace weapon must be excluded")
+	_expect(not roster.has(&"FRFremen"), "an unlisted subhouse's unit must not match")
+	_expect(not roster.has(&"ORLaserTank"), "an unrelated house's unit must not match")
+
+	var fremen_subhouse: Array[StringName] = [&"Fremen"]
+	var with_subhouse: Array[StringName] = catalog.producible_unit_ids_for_house(&"Atreides", fremen_subhouse)
+	_expect(with_subhouse.has(&"FRFremen"), "a listed subhouse's unit must match")
+	return true
+
+
 func _catalog_with(configs: Array):
 	var catalog = RulesCatalogScript.new()
 	for config in configs:
@@ -188,5 +213,24 @@ func _building(
 	config.lists = {
 		"requires_primary": requires_primary,
 		"roles": roles,
+	}
+	return config
+
+
+func _unit(
+		id: StringName,
+		house: StringName,
+		cost: int,
+		primary_buildings: Array
+):
+	var config = RuleEntityConfigScript.new()
+	config.id = id
+	config.entity_type = &"unit"
+	var fields := {"cost": cost}
+	if not String(house).is_empty():
+		fields["house"] = String(house)
+	config.fields = fields
+	config.lists = {
+		"primary_buildings": primary_buildings,
 	}
 	return config

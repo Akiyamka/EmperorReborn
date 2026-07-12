@@ -22,6 +22,7 @@ func _initialize() -> void:
 	await _run_case("rules sidebar type selects the panel tab", _test_rules_sidebar_tabs)
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
 	await _run_case("upgrade slot appears after its building is placed later", _test_upgrade_availability_polls)
+	await _run_case("unit slots follow prerequisite buildings and their upgrades", _test_unit_roster_availability)
 
 	if _failures > 0:
 		printerr("Match demo boot tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -334,6 +335,77 @@ func _test_upgrade_availability_polls() -> void:
 	_expect(
 		slot_purchased != null and not slot_purchased.visible,
 		"a purchased upgrade's slot must be hidden, not left visible with an OWNED label"
+	)
+
+	match_instance.queue_free()
+
+
+## Units share the building grid (docs/mechanics/production.md sections 3 and
+## 5): a unit's slot must appear only once its primary production building is
+## owned, and units flagged upgraded_primary_required must additionally wait
+## for that building's upgrade.
+func _test_unit_roster_availability() -> void:
+	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
+	var match_instance := scene.instantiate()
+	get_root().add_child(match_instance)
+	await process_frame
+	await process_frame
+
+	var side_panel = match_instance.get_node("HUD/SidePanel")
+	_expect(
+		match_instance._unit_option_ids.has(&"ATInfantry"),
+		"the local player's unit roster must include ATInfantry"
+	)
+	_expect(
+		match_instance._unit_option_ids.has(&"Harvester"),
+		"the shared house-less Harvester must be in the unit roster"
+	)
+	_expect(
+		side_panel._building_option_ids.has(&"ATInfantry"),
+		"the unit roster must reach the side panel grid"
+	)
+
+	# Tab.INFANTRY is the panel's boot default, so both slots are live.
+	var infantry_slot = side_panel._building_slot(&"ATInfantry")
+	var kindjal_slot = side_panel._building_slot(&"ATKindjal")
+	_expect(
+		infantry_slot != null and not infantry_slot.visible,
+		"ATInfantry must start hidden -- the demo scene has no Barracks yet"
+	)
+	_expect(
+		kindjal_slot != null and not kindjal_slot.visible,
+		"ATKindjal must start hidden without a Barracks"
+	)
+
+	var barracks_scene := load("res://assets/converted/buildings/ATBarracks/ATBarracks.scn") as PackedScene
+	var barracks := barracks_scene.instantiate()
+	match_instance.get_node("Buildings").add_child(barracks)
+	barracks.call("setup", &"ATBarracks")
+	barracks.call("set_owner_player_id", 1)
+
+	for i in 5:
+		await process_frame
+
+	infantry_slot = side_panel._building_slot(&"ATInfantry")
+	kindjal_slot = side_panel._building_slot(&"ATKindjal")
+	_expect(
+		infantry_slot != null and infantry_slot.visible,
+		"ATInfantry must become visible once a Barracks is owned"
+	)
+	_expect(
+		kindjal_slot != null and not kindjal_slot.visible,
+		"ATKindjal has upgraded_primary_required and must stay hidden behind an unupgraded Barracks"
+	)
+
+	barracks.call("set_upgrade_level", 1)
+
+	for i in 5:
+		await process_frame
+
+	kindjal_slot = side_panel._building_slot(&"ATKindjal")
+	_expect(
+		kindjal_slot != null and kindjal_slot.visible,
+		"ATKindjal must become visible once the Barracks is upgraded"
 	)
 
 	match_instance.queue_free()
