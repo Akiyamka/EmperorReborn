@@ -4,10 +4,9 @@ extends Resource
 const DEFAULT_RULES_ROOT := "res://assets/converted/rules"
 const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
 
-## Non-roster building_group/roles values: Wall and RefineryDock are built
-## through their own interactive map-picking flows (a line pick for walls, a
-## refinery pick for docks) instead of the plain "queue then place" flow the
-## rest of the roster uses, so they are surfaced through their own methods
+## Non-roster building_group/roles values: Wall uses an interactive line pick;
+## RefineryDock is an in-place refinery state upgrade. Neither follows the
+## plain "queue then place" flow, so they are surfaced through their own methods
 ## below (wall_building_ids_for_house/refinery_dock_building_ids_for_house)
 ## rather than mixed into the general roster.
 const _EXCLUDED_BUILDING_GROUPS: Array[StringName] = [&"Wall", &"RefineryDock"]
@@ -88,7 +87,8 @@ func general_rules() -> Resource:
 ## Roster of player-buildable buildings for a house: everything a house could
 ## potentially construct through the building panel, regardless of whether the
 ## technology tree currently unlocks it. Excludes the Construction Yard
-## (built only via MCV deploy), Wall/RefineryDock (their own placement modes),
+## (built only via MCV deploy), Wall (its own placement mode), RefineryDock
+## (an in-place refinery upgrade),
 ## and decorative Incidental scenery (no requires_primary, so they never gate
 ## behind the tech tree).
 func buildable_building_ids_for_house(
@@ -120,8 +120,8 @@ func wall_building_ids_for_house(
 ## RefineryDock counterpart to buildable_building_ids_for_house(): the id(s)
 ## of the house's RefineryDock building_group entries, so
 ## BuildingUpgradeController can list the dock as a normal upgrade grid slot
-## while still routing its click through the refinery-picking flow instead
-## of the plain global-purchase flow.
+## while still routing its click through the automatic refinery-upgrade flow
+## instead of the plain global-purchase flow.
 func refinery_dock_building_ids_for_house(
 		house_id: StringName, subhouse_ids: Array[StringName] = []
 ) -> Array[StringName]:

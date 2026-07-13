@@ -26,7 +26,7 @@ script = ExtResource("1_main")
 environment = SubResource("Environment_main")
 
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=2142863009]
-transform = Transform3D(0.81915206, 0.4698463, -0.32898995, 0, 0.57357645, 0.81915206, 0.57357645, -0.6710101, 0.46984634, 126.627304, 7.460141, 22.207596)
+transform = Transform3D(-0.81912595, -0.46525958, 0.33550858, -0.006529077, -0.57730323, -0.81650376, 0.57357645, -0.6710101, 0.46984637, 126.61876, 9.604663, 22.207596)
 light_energy = 0.2
 shadow_enabled = true
 directional_shadow_max_distance = 500.0
@@ -58,15 +58,15 @@ owner_player_id = 1
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
 
 [node name="ScoutA" parent="Units" unique_id=1502406383 instance=ExtResource("3_unit")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 123.627304, 10.932426, 22.207596)
+transform = Transform3D(-0.99996823, 0.007970574, 0, -0.007970574, -0.99996823, 0, 0, 0, 1, 129.64633, 6.1563997, 22.207596)
 owner_player_id = 1
 
 [node name="ScoutB" parent="Units" unique_id=1281454651 instance=ExtResource("3_unit")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 126.627304, 7.8839464, 20.207596)
+transform = Transform3D(-0.99996823, 0.007970574, 0, -0.007970574, -0.99996823, 0, 0, 0, 1, 126.62214, 9.180871, 20.207596)
 owner_player_id = 1
 
 [node name="ScoutC" parent="Units" unique_id=325326372 instance=ExtResource("3_unit")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 129.6273, 7.8531647, 23.207596)
+transform = Transform3D(-0.99996823, 0.007970574, 0, -0.007970574, -0.99996823, 0, 0, 0, 1, 123.62199, 9.18774, 23.207596)
 owner_player_id = 1
 
 [node name="OrdosAPC" parent="Units" unique_id=1929728337 instance=ExtResource("7_or_apc")]

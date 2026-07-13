@@ -6,8 +6,8 @@ extends RefCounted
 ## the building type this upgrade affects -- for a GLOBAL_TYPE order that is
 ## the building whose next tech level gets unlocked player-wide; for a
 ## REFINERY_DOCK order it is the dock's own building id (e.g.
-## "ATRefineryDock"), and target_refinery names which specific Refinery
-## instance the finished dock gets attached to.
+## "ATRefineryDock"), and target_refinery is the automatically selected
+## Refinery instance whose internal dock state advances on completion.
 
 enum Kind { GLOBAL_TYPE, REFINERY_DOCK }
 

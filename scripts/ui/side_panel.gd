@@ -119,9 +119,8 @@ func set_building_option_state(option_state: BuildingOptionState) -> void:
 ## Global per-type upgrades (docs/mechanics/production.md section 4). Mirrors
 ## configure_building_options()/set_building_option_state() one tab over.
 ## Refinery docks are instance-bound rather than global, but still appear as
-## an ordinary slot here -- clicking one starts BuildingUpgradeController's
-## refinery-picking mode instead of a plain purchase (see building_upgrade_
-## controller.gd _on_dock_slot_left_pressed()).
+## an ordinary slot here. BuildingUpgradeController automatically targets any
+## owned refinery that has a remaining dock state; with none, the slot hides.
 func configure_upgrade_options(upgrade_ids: Array[StringName]) -> void:
 	_upgrade_option_ids = upgrade_ids.duplicate()
 	if is_node_ready():

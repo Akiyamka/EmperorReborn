@@ -2,6 +2,7 @@ extends SceneTree
 
 const MatchSnapshotScript := preload("res://scripts/match/match_snapshot.gd")
 const DemoMatchScene := preload("res://scenes/match/demo_match.tscn")
+const ATRefineryScene := preload("res://assets/converted/buildings/ATRefinery/ATRefinery.scn")
 const TEST_SNAPSHOT_PATH := "user://match_snapshot_test.json"
 
 var _failures := 0
@@ -17,6 +18,11 @@ func _initialize() -> void:
 
 	var source_building := source.get_node("Buildings/ATSmWindtrap") as Node3D
 	var source_unit := source.get_node("Units/OrdosAPC") as Node3D
+	var source_refinery := ATRefineryScene.instantiate() as Building
+	source_refinery.name = "SnapshotRefinery"
+	source_refinery.owner_player_id = 1
+	source.get_node("Buildings").add_child(source_refinery)
+	source_refinery.set_refinery_upgrade_state(2)
 	var building_transform := Transform3D(Basis(Vector3.UP, 0.4), Vector3(84.0, 0.0, 96.0))
 	var unit_transform := Transform3D(Basis(Vector3.UP, -0.7), Vector3(145.0, 0.0, 72.0))
 	source_building.global_transform = building_transform
@@ -35,9 +41,14 @@ func _initialize() -> void:
 	await physics_frame
 
 	var restored_building := restored.get_node_or_null("Buildings/ATSmWindtrap") as Node3D
+	var restored_refinery := restored.get_node_or_null("Buildings/SnapshotRefinery") as Building
 	var restored_unit := restored.get_node_or_null("Units/OrdosAPC") as Unit
 	_expect(restored_building != null, "saved building should exist after restore")
 	_expect(restored_unit != null, "saved unit should exist after restore")
+	_expect(
+		restored_refinery != null and restored_refinery.refinery_upgrade_state == 2,
+		"refinery dock state should be restored without separate dock buildings"
+	)
 	_expect(restored_building != null and restored_building.global_position.is_equal_approx(building_transform.origin), "building position should be restored")
 	_expect(restored_unit != null and restored_unit.global_position.is_equal_approx(unit_transform.origin), "unit position should be restored")
 	_expect(restored_building != null and restored_building.global_transform.basis.is_equal_approx(building_transform.basis), "building rotation should be restored")

@@ -84,6 +84,8 @@ func _capture_entity(entity: Node3D) -> Dictionary:
 		"config_id": String(entity.get("config_id")),
 		"owner_player_id": int(entity.get("owner_player_id")),
 	}
+	if entity is Building:
+		record["refinery_upgrade_state"] = int(entity.get("refinery_upgrade_state"))
 	if entity is Unit:
 		var visual_root := entity.get_node_or_null("VisualRoot") as Node3D
 		if visual_root != null and visual_root.get_child_count() > 0:
@@ -121,6 +123,8 @@ func _restore_entities(records: Array, root: Node3D, expected_type) -> int:
 
 
 func _restore_entity_details(entity: Node3D, record: Dictionary) -> void:
+	if entity is Building:
+		entity.call("set_refinery_upgrade_state", int(record.get("refinery_upgrade_state", 0)))
 	if entity is Unit:
 		_restore_unit_visual(entity as Unit, String(record.get("visual_scene_path", "")))
 		entity.call("stop_at_current_position")

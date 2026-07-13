@@ -132,15 +132,7 @@ func _setup_building_upgrade_controller() -> void:
 	side_panel.upgrade_intent_pressed.connect(_on_panel_upgrade_intent)
 	_building_upgrade_controller.status_changed.connect(_update_selection_label)
 	_building_upgrade_controller.upgrade_option_state_changed.connect(side_panel.set_upgrade_option_state)
-	_building_upgrade_controller.setup(
-		terrain,
-		camera,
-		$Buildings,
-		_upgrade_option_ids,
-		PLACEMENT_BUILDING_SCENE,
-		PLACEMENT_CANT_BUILD_SCENE,
-		PLACEMENT_SKIRT_SCENE
-	)
+	_building_upgrade_controller.setup(_upgrade_option_ids)
 	# setup() filters upgrade_grid_ids down to buildings that actually have
 	# an upgrade defined (see BuildingUpgradeController.upgrade_option_ids());
 	# the panel grid must be built from that filtered set, not the raw roster,

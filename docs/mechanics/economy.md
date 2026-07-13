@@ -85,8 +85,9 @@ Consequences:
 - construction includes a carryall plus harvester (§2.3)—the refinery is the basic unit for
   scaling the economy;
 - the **“additional dock” upgrade** (ordered from the upgrades panel `[→ 6]`, maximum **two**
-  per refinery) permits several harvesters to unload **simultaneously**; each dock, when built,
-  grants an additional harvester (without a carryall and without replacement if lost);
+  per refinery) changes the automatically selected refinery's own state rather than creating a
+  separate building. It permits several harvesters to unload **simultaneously**; each dock, when
+  opened, grants an additional harvester (without a carryall and without replacement if lost);
 - multiple refineries diversify risk and, unlike docks, participate in the harvester-replacement
   mechanism.
 

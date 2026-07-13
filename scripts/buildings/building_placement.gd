@@ -38,7 +38,6 @@ var _has_anchor := false
 var _can_build := false
 var _is_wall_candidate := false
 var _skip_build_radius_check := false
-var _last_placed_building: Node3D
 
 
 func setup(
@@ -144,17 +143,8 @@ func try_place_at_hover_cell(
 		building.call("set_owner_player_id", owner_player_id)
 	_push_units_out_of_footprint(_anchor_cell)
 	_play_placed_building_animation(building)
-	_last_placed_building = building
 	_clear()
 	return PlaceResult.PLACED
-
-
-## Callers that need the Node3D just placed (e.g. BuildingUpgradeController
-## registering a freshly built refinery dock on its refinery) can read it
-## here right after a PLACED result -- try_place()/try_place_at_hover_cell()
-## only return a PlaceResult enum.
-func last_placed_building() -> Node3D:
-	return _last_placed_building
 
 
 func cancel() -> String:

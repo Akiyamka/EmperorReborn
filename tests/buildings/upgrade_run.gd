@@ -8,9 +8,9 @@ extends SceneTree
 const UpgradeQueueScript := preload("res://scripts/buildings/upgrade_queue.gd")
 const UpgradeOrderScript := preload("res://scripts/buildings/upgrade_order.gd")
 const UpgradeEffectsScript := preload("res://scripts/buildings/upgrade_effects.gd")
-const RefineryDockLayoutScript := preload("res://scripts/buildings/refinery_dock_layout.gd")
 const BuildingScript := preload("res://scripts/buildings/building.gd")
 const BuildingUpgradeControllerScript := preload("res://scripts/buildings/building_upgrade_controller.gd")
+const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 
@@ -51,9 +51,11 @@ func _initialize() -> void:
 		_test_upgrade_effects_filters.bind(local_player)
 	)
 
-	_run_case("dock layout lays out docks in a column beside the refinery", _test_dock_layout_column)
-	_run_case("hover_cell_for_anchor inverts BuildingPlacement's footprint centering", _test_hover_cell_round_trip)
-	_run_case("destroyed docks are removed and refinery destruction removes its docks", _test_dock_lifecycle)
+	_run_case("refinery dock upgrades use three persistent animated states", _test_refinery_dock_states)
+	_run_case(
+		"dock orders auto-select an eligible refinery and never create a building",
+		_test_automatic_refinery_upgrade.bind(local_player)
+	)
 	_run_case("missing survivor count means no survivors", _test_missing_survivor_count)
 	_run_case("refinery docks use UpgradeBuildTime", _test_dock_upgrade_build_time)
 	_run_case("Construction Yard upgrade uses its linked MCV build time", _test_con_yard_upgrade_build_time.bind(local_player))
@@ -249,49 +251,97 @@ func _test_upgrade_effects_filters(token: int, _local_player: PlayerData) -> int
 	return token
 
 
-func _test_dock_layout_column(token: int) -> int:
-	var refinery_rows: Array = ["XXXX", "XXXX"]
-	var dock_rows: Array = ["XX", "XX"]
-	var refinery_anchor := Vector2i(10, 10)
-
-	var first := RefineryDockLayoutScript.dock_anchor_nav_cell(refinery_anchor, refinery_rows, dock_rows, 0)
-	var second := RefineryDockLayoutScript.dock_anchor_nav_cell(refinery_anchor, refinery_rows, dock_rows, 1)
-
-	_expect(first.x == second.x, "successive docks must line up on the same side of the refinery")
-	_expect(first.y != second.y, "the second dock must not overlap the first dock's row")
-	_expect(first.x > refinery_anchor.x, "docks must sit outside the refinery's own footprint")
-	return token
-
-
-func _test_hover_cell_round_trip(token: int) -> int:
-	var dock_rows: Array = ["XX", "XX"]
-	var anchor := Vector2i(20, 6)
-	var hover := RefineryDockLayoutScript.hover_cell_for_anchor(anchor, dock_rows)
-	# BuildingPlacement re-centers a hover cell by footprint size before using
-	# it as an anchor (see BuildingPlacement._anchor_for_hover_cell()); redo
-	# that same centering here and expect to land back on the anchor.
-	var footprint := RefineryDockLayoutScript.occupy_size(dock_rows) * RefineryDockLayoutScript.NAV_CELLS_PER_OCCUPY_CELL
-	var recentered := hover - Vector2i(footprint.x / 2, footprint.y / 2)
-	_expect(recentered == anchor, "hover_cell_for_anchor must invert BuildingPlacement's centering")
-	return token
-
-
-func _test_dock_lifecycle(token: int) -> int:
-	var refinery := BuildingScript.new()
+func _test_refinery_dock_states(token: int) -> int:
+	var scene := load("res://assets/converted/buildings/ATRefinery/ATRefinery.scn") as PackedScene
+	var refinery := scene.instantiate() as Building
 	root.add_child(refinery)
-	var first_dock := Node3D.new()
-	root.add_child(first_dock)
-	refinery.register_dock(first_dock)
-	_expect(refinery.dock_count() == 1, "registering a dock must consume one refinery dock slot")
-	first_dock.free()
-	_expect(refinery.dock_count() == 0, "destroying a dock must release its refinery dock slot")
 
-	var second_dock := Node3D.new()
-	root.add_child(second_dock)
-	refinery.register_dock(second_dock)
+	var player := refinery.get_node_or_null("States/Idle/AnimationPlayer") as AnimationPlayer
+	var first_pad := refinery.find_child("_3SmallPad01", true, false) as Node3D
+	var second_pad := refinery.find_child("_4SmallPad02", true, false) as Node3D
+	_expect(player != null, "the refinery idle model must expose its dock AnimationPlayer")
+	_expect(first_pad != null and second_pad != null, "both built-in refinery pads must exist")
+	if player == null or first_pad == null or second_pad == null:
+		refinery.free()
+		return token
+
+	var first_initial := first_pad.transform
+	var second_initial := second_pad.transform
+	_expect(refinery.dock_count() == 0 and refinery.can_add_dock(), "a refinery must begin in the no-upgrades state")
+	_expect(refinery.add_refinery_dock_upgrade(), "the first dock state transition must succeed")
+	_expect(player.current_animation == &"Refinery_Pad_1", "the first upgrade must animate _3SmallPad01")
+	player.advance(player.get_animation(&"Refinery_Pad_1").length + 0.1)
+	var first_final := first_pad.transform
+	_expect(not first_final.is_equal_approx(first_initial), "the first pad must finish in its unfolded pose")
+	_expect(second_pad.transform.is_equal_approx(second_initial), "the first upgrade must not move _4SmallPad02")
+
+	_expect(refinery.add_refinery_dock_upgrade(), "the second dock state transition must succeed")
+	_expect(player.current_animation == &"Refinery_Pad_2", "the second upgrade must animate _4SmallPad02")
+	player.advance(player.get_animation(&"Refinery_Pad_2").length + 0.1)
+	var second_final := second_pad.transform
+	_expect(not second_final.is_equal_approx(second_initial), "the second pad must finish in its unfolded pose")
+	_expect(first_pad.transform.is_equal_approx(first_final), "opening the second pad must preserve the first pad's final pose")
+	player.advance(1.0)
+	_expect(
+		first_pad.transform.is_equal_approx(first_final) and second_pad.transform.is_equal_approx(second_final),
+		"both dock animations must remain at their final transforms"
+	)
+	_expect(refinery.dock_count() == 2 and not refinery.can_add_dock(), "state 2 must be the refinery's maximum")
+	_expect(not refinery.add_refinery_dock_upgrade(), "a third dock state must be rejected")
+
 	refinery.free()
-	_expect(second_dock.is_queued_for_deletion(), "destroying a refinery must also remove its instance-bound docks")
-	second_dock.free()
+	return token
+
+
+func _test_automatic_refinery_upgrade(token: int, local_player: PlayerData) -> int:
+	var full_refinery := BuildingScript.new()
+	full_refinery.config_id = &"ATRefinery"
+	full_refinery.owner_player_id = local_player.player_id
+	root.add_child(full_refinery)
+	full_refinery.set_refinery_upgrade_state(2)
+
+	var eligible_refinery := BuildingScript.new()
+	eligible_refinery.config_id = &"ATRefinery"
+	eligible_refinery.owner_player_id = local_player.player_id
+	root.add_child(eligible_refinery)
+
+	var controller := BuildingUpgradeControllerScript.new()
+	root.add_child(controller)
+	var option_states: Array[BuildingOptionState] = []
+	controller.upgrade_option_state_changed.connect(func(state: BuildingOptionState) -> void:
+		if state.building_id == &"ATRefineryDock":
+			option_states.append(state)
+	)
+	var upgrade_ids: Array[StringName] = [&"ATRefineryDock"]
+	controller.setup(upgrade_ids)
+	_expect(
+		not option_states.is_empty() and option_states.back().state == BuildingOptionStateScript.State.AVAILABLE,
+		"the dock option must be visible while any compatible refinery can upgrade"
+	)
+
+	var building_count_before := get_nodes_in_group("buildings").size()
+	controller.handle_upgrade_intent(&"ATRefineryDock", MOUSE_BUTTON_LEFT)
+	var order: UpgradeOrder = controller._upgrade_queue.current_order()
+	_expect(order != null, "clicking the dock option must start an order immediately")
+	_expect(order != null and order.target_refinery == eligible_refinery, "automatic selection must skip a full refinery")
+
+	local_player.add_money(2400)
+	controller.process(20.0)
+	_expect(eligible_refinery.refinery_upgrade_state == 1, "completion must advance the selected refinery to state 1")
+	_expect(get_nodes_in_group("buildings").size() == building_count_before, "completion must not add a RefineryDock building")
+
+	controller.handle_upgrade_intent(&"ATRefineryDock", MOUSE_BUTTON_LEFT)
+	controller.process(20.0)
+	_expect(eligible_refinery.refinery_upgrade_state == 2, "the next order must advance the refinery to state 2")
+	_expect(get_nodes_in_group("buildings").size() == building_count_before, "the second completion must not add a building either")
+	_expect(
+		not option_states.is_empty() and option_states.back().state == BuildingOptionStateScript.State.DISABLED,
+		"the dock option must disappear when no compatible refinery can upgrade"
+	)
+
+	controller.free()
+	eligible_refinery.free()
+	full_refinery.free()
 	return token
 
 
@@ -311,7 +361,7 @@ func _test_dock_upgrade_build_time(token: int) -> int:
 	var controller := BuildingUpgradeControllerScript.new()
 	root.add_child(controller)
 	var no_ids: Array[StringName] = []
-	controller.setup(null, null, null, no_ids, null, null, null)
+	controller.setup(no_ids)
 	var dock_config: Resource = rules.building(&"ATRefineryDock")
 	_expect(
 		is_equal_approx(controller._upgrade_build_time_ticks(dock_config, true), 720.0),
@@ -325,7 +375,7 @@ func _test_con_yard_upgrade_build_time(token: int, local_player: PlayerData) -> 
 	var controller := BuildingUpgradeControllerScript.new()
 	root.add_child(controller)
 	var upgrade_ids: Array[StringName] = [&"ATConYard"]
-	controller.setup(null, null, null, upgrade_ids, null, null, null)
+	controller.setup(upgrade_ids)
 
 	var con_yard := BuildingScript.new()
 	con_yard.config_id = &"ATConYard"

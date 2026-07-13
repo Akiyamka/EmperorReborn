@@ -14,14 +14,13 @@ const COLLISION_OBJECT_NAME := "#~~0"
 const RALLY_POINT_CLEARANCE := 1.5
 const OCCUPY_CELL_WORLD_SPAN := 2.0
 
-## docs/mechanics/production.md section 4: max 2 docks per refinery. Docks are
-## plain Buildings placed by BuildingUpgradeController next to this one (not
-## children of it) and are tracked here purely so a second "Upgrade Dock"
-## click knows the current count and where to lay out the next one. Rules
-## gives each RefineryDock its own health/storm_damage, so a dock can be
-## destroyed independently. The instance-bound upgrade still belongs to its
-## refinery: losing the refinery removes every registered dock with it.
+## Refinery dock upgrades are visual states of the refinery itself, not
+## separate Building nodes. The first/right upgrade unfolds ~~3SmallPad01 and
+## the second/left unfolds ~~4SmallPad02; both retain their final pose.
+enum RefineryUpgradeState { NONE, RIGHT_DOCK, BOTH_DOCKS }
+
 const MAX_REFINERY_DOCKS := 2
+const REFINERY_DOCK_ANIMATIONS: Array[StringName] = [&"Refinery_Pad_1", &"Refinery_Pad_2"]
 
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
@@ -39,6 +38,7 @@ const MAX_REFINERY_DOCKS := 2
 @export var max_health := 0.0
 @export var max_shields := 0.0
 @export var upgrade_level := 0
+@export_enum("No upgrades", "Right dock", "Both docks") var refinery_upgrade_state: int = RefineryUpgradeState.NONE
 
 var building_config: Resource
 var health := 0.0:
@@ -69,7 +69,6 @@ var is_primary := false:
 var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
 var _generated_energy := 0
-var _docks: Array[Node3D] = []
 var _selection_halo
 var _has_rally_point := false
 
@@ -86,6 +85,7 @@ func _ready() -> void:
 	_refresh_generated_energy()
 	_sync_purchased_upgrade()
 	play_state(default_state)
+	_apply_refinery_upgrade_pose()
 	_add_selection_collision()
 	_add_selection_halo()
 	# Placement assigns a newly-built node's final position immediately after it
@@ -96,10 +96,6 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	_set_generated_energy(0)
-	for dock in _docks.duplicate():
-		if is_instance_valid(dock) and not dock.is_queued_for_deletion():
-			dock.queue_free()
-	_docks.clear()
 
 
 func _process(delta: float) -> void:
@@ -392,21 +388,55 @@ func set_upgrade_level(level: int) -> void:
 
 
 func dock_count() -> int:
-	return _docks.size()
+	return refinery_upgrade_state
 
 
 func can_add_dock() -> bool:
-	return _docks.size() < MAX_REFINERY_DOCKS
+	return refinery_upgrade_state < MAX_REFINERY_DOCKS
 
 
-func register_dock(dock: Node3D) -> void:
-	if is_instance_valid(dock) and not _docks.has(dock):
-		_docks.append(dock)
-		dock.tree_exiting.connect(_on_registered_dock_exiting.bind(dock), CONNECT_ONE_SHOT)
+func add_refinery_dock_upgrade() -> bool:
+	if not can_add_dock():
+		return false
+	refinery_upgrade_state += 1
+	_play_refinery_dock_animation(refinery_upgrade_state - 1)
+	return true
 
 
-func _on_registered_dock_exiting(dock: Node3D) -> void:
-	_docks.erase(dock)
+func set_refinery_upgrade_state(state: int) -> void:
+	refinery_upgrade_state = clampi(state, 0, MAX_REFINERY_DOCKS)
+	if is_inside_tree():
+		_apply_refinery_upgrade_pose()
+
+
+func _play_refinery_dock_animation(animation_index: int) -> void:
+	var player := _refinery_animation_player()
+	if player == null or animation_index < 0 or animation_index >= REFINERY_DOCK_ANIMATIONS.size():
+		return
+	var animation_name := REFINERY_DOCK_ANIMATIONS[animation_index]
+	if player.has_animation(animation_name):
+		player.play(animation_name)
+
+
+## Restored/preconfigured refineries do not replay their opening sequence.
+## Seeking each completed clip applies the same final transforms immediately;
+## later clips target a different pad, so the earlier pose stays untouched.
+func _apply_refinery_upgrade_pose() -> void:
+	var player := _refinery_animation_player()
+	if player == null:
+		return
+	for animation_index in refinery_upgrade_state:
+		var animation_name := REFINERY_DOCK_ANIMATIONS[animation_index]
+		if not player.has_animation(animation_name):
+			continue
+		var animation := player.get_animation(animation_name)
+		player.play(animation_name)
+		player.seek(animation.length, true)
+		player.pause()
+
+
+func _refinery_animation_player() -> AnimationPlayer:
+	return get_node_or_null("States/Idle/AnimationPlayer") as AnimationPlayer
 
 
 func setup(building_id: StringName) -> void:

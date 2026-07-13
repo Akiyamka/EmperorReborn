@@ -133,9 +133,11 @@ Rules for placing a ready building on the map:
 
 - An upgrade is a credit purchase through the **upgrade panel** (encountered
   earlier: refinery docks, section 3 §3);
-- **binding** (verified): refinery docks are an upgrade of a **specific instance**;
-  all other upgrades are **global per type** (purchased once, effective for all
-  buildings of that type);
+- **binding** (verified): refinery docks advance one refinery instance through
+  three states (no upgrades → right dock → right and left docks). The target is
+  selected automatically from owned refineries that can still upgrade; no map
+  selection is required. All other upgrades are **global per type** (purchased
+  once, effective for all buildings of that type);
 - **roster expansion** (verified): every production building **and the
   Construction Yard** has an upgrade that unlocks next-tech-level entries; the
   “upgrade → unlocks” links are described in `Rules.txt` `[Rules]`;
