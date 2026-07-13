@@ -40,6 +40,7 @@ func _initialize() -> void:
 	_test_no_stop_cells(grid)
 	_test_interior_escape(grid)
 	_test_immediate_movement(grid)
+	_test_navigation_catch_up_budget(grid)
 	_test_slots_and_collision(grid)
 	_test_slide_around_stopped_friend(grid)
 	_test_group_convergence(grid)
@@ -209,6 +210,10 @@ func _test_immediate_movement(grid: MapNavigationGrid) -> void:
 	unit.global_position = Vector3(20.5, 0.0, 128.5)
 	navigation.command_move([unit], Vector3(40.5, 0.0, 100.5), NavigationSystemScript.MoveMode.FREE)
 	_expect(bool(navigation.agent_debug(unit)["route_ready"]), "an obstructed order must have its route ready in the same frame")
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	var compact_path: Array = agent["path"]
+	_expect(compact_path.size() <= 6,
+		"an A* cell route must be simplified to stable corner waypoints (got %d)" % compact_path.size())
 	var start_position := unit.global_position
 	for _iteration in 10:
 		navigation.call("_navigation_tick", 0.05)
@@ -216,6 +221,18 @@ func _test_immediate_movement(grid: MapNavigationGrid) -> void:
 
 	navigation.queue_free()
 	unit.queue_free()
+
+
+func _test_navigation_catch_up_budget(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+	var before: int = navigation._navigation_tick_index
+	navigation.call("_physics_process", 1.0)
+	_expect(navigation._navigation_tick_index - before == NavigationSystemScript.MAX_CATCH_UP_TICKS,
+		"a delayed physics frame must execute only the bounded navigation catch-up budget")
+	navigation.queue_free()
 
 
 func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
@@ -443,10 +460,9 @@ func _test_yield_behaviour(grid: MapNavigationGrid) -> void:
 
 
 ## A packed group routed around a sharp wall tip: every unit's A* path runs
-## through the same corridor, so waypoints land inside the moving crowd. If a
-## waypoint can only be advanced by physical proximity, a friend parked on it
-## pins the follower forever and the clump interlocks; line-of-sight waypoint
-## skipping must keep the whole group flowing around the corner.
+## through the same corridor, so raw cell-by-cell waypoints land inside the
+## moving crowd. Pre-simplifying those paths to stable corner waypoints must
+## keep the whole group flowing without runtime line-of-sight skipping.
 func _test_group_rounds_sharp_corner(grid: MapNavigationGrid) -> void:
 	var navigation := NavigationSystemScript.new()
 	root.add_child(navigation)

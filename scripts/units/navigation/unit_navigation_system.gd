@@ -25,8 +25,6 @@ const CANDIDATE_ANGLES := [0.0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35, PI / 2.0, -
 ## Units closer than this beyond touching distance count as in contact: they may
 ## slide tangentially or separate at full speed, just not push deeper in.
 const CONTACT_BUFFER := 0.05
-## How many path cells ahead the per-tick line-of-sight waypoint skip may reach.
-const PATH_LOOKAHEAD_CELLS := 8
 ## Ticks a unit sits out of assignment trading after a swap (anti flip-flop).
 const SWAP_COOLDOWN_TICKS := 10
 ## Free cells kept between parked footprints, so a standing formation stays
@@ -42,6 +40,11 @@ const SQUEEZE_SPEED_FACTOR := 0.5
 ## equilibrium, while idle overlaps are still expelled as soon as room opens.
 const SEPARATION_STIFFNESS := 2.5
 const SEPARATION_MAX_SPEED_FACTOR := 0.35
+## Never let a slow navigation tick create an unbounded catch-up loop. Dropping
+## excess simulation time makes units briefly slow down under overload, but the
+## render thread can recover instead of spending every following frame on old
+## navigation work.
+const MAX_CATCH_UP_TICKS := 2
 
 var runtime_map = UnitNavigationMapScript.new()
 var planner = UnitNavigationPlannerScript.new()
@@ -232,11 +235,45 @@ func _route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> voi
 		return
 	agent["direct_path"] = _has_clear_line(from, destination, agent)
 	if not bool(agent["direct_path"]):
-		agent["path"] = planner.find_path(
+		var raw_path: Array[Vector2i] = planner.find_path(
 			runtime_map.grid.world_to_grid(from),
 			runtime_map.grid.world_to_grid(destination),
 			int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])
 		)
+		agent["path"] = _simplify_path(raw_path, agent)
+
+
+## AStarGrid2D returns every crossed cell. Keeping that raw list made every
+## moving agent rediscover the same visible corner on every navigation tick.
+## First retain only direction changes, then greedily join mutually visible
+## turns. Runtime steering consequently follows a handful of stable waypoints.
+func _simplify_path(raw_path: Array[Vector2i], agent: Dictionary) -> Array[Vector2i]:
+	if raw_path.size() <= 2:
+		return raw_path
+	var turns: Array[Vector2i] = [raw_path[0]]
+	var previous_direction := (raw_path[1] - raw_path[0]).sign()
+	for index in range(2, raw_path.size()):
+		var direction := (raw_path[index] - raw_path[index - 1]).sign()
+		if direction != previous_direction:
+			turns.append(raw_path[index - 1])
+			previous_direction = direction
+	turns.append(raw_path.back())
+	if turns.size() <= 2:
+		return turns
+
+	var result: Array[Vector2i] = [turns[0]]
+	var anchor_index := 0
+	while anchor_index < turns.size() - 1:
+		var furthest_visible := anchor_index + 1
+		var from: Vector3 = runtime_map.grid.grid_to_world(turns[anchor_index])
+		for probe_index in range(anchor_index + 2, turns.size()):
+			var to: Vector3 = runtime_map.grid.grid_to_world(turns[probe_index])
+			if not _has_clear_line(from, to, agent):
+				break
+			furthest_visible = probe_index
+		result.append(turns[furthest_visible])
+		anchor_index = furthest_visible
+	return result
 
 
 func agent_debug(unit: Node3D) -> Dictionary:
@@ -265,9 +302,13 @@ func _physics_process(delta: float) -> void:
 		return
 	_navigation_accumulator += delta
 	var tick_delta := 1.0 / NAVIGATION_TICK_RATE
-	while _navigation_accumulator >= tick_delta:
+	var ticks := 0
+	while _navigation_accumulator >= tick_delta and ticks < MAX_CATCH_UP_TICKS:
 		_navigation_accumulator -= tick_delta
 		_navigation_tick(tick_delta)
+		ticks += 1
+	if _navigation_accumulator >= tick_delta:
+		_navigation_accumulator = fmod(_navigation_accumulator, tick_delta)
 	_blocker_refresh_remaining -= delta
 	if _blocker_refresh_remaining <= 0.0:
 		_blocker_refresh_remaining = BLOCKER_REFRESH_SECONDS
@@ -392,17 +433,6 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 			if unit.global_position.distance_to(probe) > maxf(0.35, float(agent["radius"]) * 0.4):
 				break
 			path_index += 1
-		# Also advance to the furthest waypoint in direct line of sight.
-		# Proximity alone cannot advance past a waypoint a friend is parked on
-		# (the required 0.35 approach is inside the friend's radius), and a
-		# converging group interlocks that way: everyone pushes toward a cell
-		# inside the crowd and the whole clump freezes.
-		var lookahead := mini(path_index + PATH_LOOKAHEAD_CELLS, path.size() - 1)
-		for probe_index in range(lookahead, path_index, -1):
-			var visible: Vector3 = runtime_map.grid.grid_to_world(path[probe_index])
-			if _has_clear_line(unit.global_position, visible, agent):
-				path_index = probe_index
-				break
 		agent["path_index"] = path_index
 		var waypoint: Vector3 = runtime_map.grid.grid_to_world(path[path_index])
 		waypoint.y = unit.global_position.y
