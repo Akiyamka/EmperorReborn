@@ -40,6 +40,7 @@ var _model_texture_shaders := {}
 var _scrolling_texture_shaders := {}
 var _shield_shader: Shader
 var _has_shield_fx_marker := false
+var _muzzle_flash_mesh_paths := PackedStringArray()
 
 
 func build(xbf_path: String) -> PackedScene:
@@ -53,6 +54,7 @@ func build(xbf_path: String) -> PackedScene:
 	_model_texture_shaders.clear()
 	_scrolling_texture_shaders.clear()
 	_has_shield_fx_marker = false
+	_muzzle_flash_mesh_paths = PackedStringArray()
 
 	var xbf = ModelXbfScript.load_file(xbf_path)
 	if xbf == null:
@@ -82,11 +84,12 @@ func build(xbf_path: String) -> PackedScene:
 		anim.length = maxf(max_frame / fps, 1.0 / fps)
 		_add_shader_fx_tracks(anim)
 		var library := AnimationLibrary.new()
-		library.add_animation("timeline", anim)
 		for entry: Dictionary in xbf.animation_entries:
 			var clip := _slice_animation(anim, entry)
 			if clip != null:
 				library.add_animation(_clip_name(String(entry["name"])), clip)
+		_add_timeline_muzzle_flash_visibility(anim, xbf.animation_entries)
+		library.add_animation("timeline", anim)
 		var player := AnimationPlayer.new()
 		player.name = "AnimationPlayer"
 		player.add_animation_library("", library)
@@ -137,10 +140,13 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		# #~~0 is an authored collision volume, not visible model geometry.
 		# Keep its mesh in the converted scene so Unit and Building can make
 		# the matching physics shape at runtime.
-		mesh_instance.visible = not (_is_effect_object(raw_name) or raw_name == COLLISION_OBJECT_NAME)
+		var is_muzzle_flash := _is_muzzle_flash_object(raw_name)
+		mesh_instance.visible = not (_is_effect_object(raw_name) or is_muzzle_flash or raw_name == COLLISION_OBJECT_NAME)
 		if raw_name == COLLISION_OBJECT_NAME:
 			mesh_instance.set_meta("collision_mesh", true)
 		node.add_child(mesh_instance)
+		if is_muzzle_flash:
+			_muzzle_flash_mesh_paths.append("%s/Mesh" % child_path)
 		_add_vertex_animation_track(anim, "%s/Mesh" % child_path, object, texture_names)
 		var atlas_frames := _mesh_animated_frame_count(mesh)
 		if atlas_frames > 1:
@@ -838,6 +844,10 @@ func _is_effect_object(object_name: String) -> bool:
 	return false
 
 
+func _is_muzzle_flash_object(object_name: String) -> bool:
+	return object_name.to_lower().contains("bigflash")
+
+
 func _is_animated_shield_texture(texture_name: String) -> bool:
 	return _is_animated_texture(texture_name) and _has_shield_fx_marker and texture_name.get_file().to_lower().contains("shield")
 
@@ -998,6 +1008,24 @@ func _add_shader_fx_tracks(anim: Animation) -> void:
 			anim.track_insert_key(track, i / TEXTURE_FX_FPS, float(i % frame_count))
 
 
+func _add_timeline_muzzle_flash_visibility(anim: Animation, animation_entries: Array[Dictionary]) -> void:
+	for mesh_path in _muzzle_flash_mesh_paths:
+		var track := anim.add_track(Animation.TYPE_VALUE)
+		anim.track_set_path(track, NodePath("%s:visible" % mesh_path))
+		anim.track_set_interpolation_type(track, Animation.INTERPOLATION_NEAREST)
+		anim.value_track_set_update_mode(track, Animation.UPDATE_DISCRETE)
+		anim.track_insert_key(track, 0.0, false)
+		for entry: Dictionary in animation_entries:
+			if not _clip_shows_muzzle_flash(String(entry.get("name", ""))):
+				continue
+			var start_time := int(entry.get("start_frame", 0)) / fps
+			var end_time := (int(entry.get("end_frame", 0)) + 1) / fps
+			if not _muzzle_flash_active_in_range(anim, mesh_path, start_time, end_time):
+				continue
+			anim.track_insert_key(track, start_time, true)
+			anim.track_insert_key(track, minf(end_time, anim.length), false)
+
+
 func _slice_animation(source: Animation, entry: Dictionary) -> Animation:
 	var start_frame := int(entry.get("start_frame", 0))
 	var end_frame := int(entry.get("end_frame", 0))
@@ -1028,7 +1056,52 @@ func _slice_animation(source: Animation, entry: Dictionary) -> Animation:
 				source.track_get_key_value(source_track, key_index),
 				source.track_get_key_transition(source_track, key_index)
 			)
+	_add_clip_muzzle_flash_visibility(clip, String(entry.get("name", "")), source, start_time, end_time)
 	return clip
+
+
+func _add_clip_muzzle_flash_visibility(clip: Animation, clip_name: String, source: Animation, start_time: float, end_time: float) -> void:
+	for mesh_path in _muzzle_flash_mesh_paths:
+		var visible := _clip_shows_muzzle_flash(clip_name) and _muzzle_flash_active_in_range(source, mesh_path, start_time, end_time)
+		var track := clip.add_track(Animation.TYPE_VALUE)
+		clip.track_set_path(track, NodePath("%s:visible" % mesh_path))
+		clip.track_set_interpolation_type(track, Animation.INTERPOLATION_NEAREST)
+		clip.value_track_set_update_mode(track, Animation.UPDATE_DISCRETE)
+		clip.track_insert_key(track, 0.0, visible)
+
+
+func _clip_shows_muzzle_flash(clip_name: String) -> bool:
+	return clip_name.to_lower().contains("fire")
+
+
+func _muzzle_flash_active_in_range(source: Animation, mesh_path: String, start_time: float, end_time: float) -> bool:
+	# A single muzzle flash (for example AT Sniper) is event-driven and can
+	# keep the same tiny authored transform through the whole timeline. Models
+	# with several guns (AT Kindjal) scale only the firing gun's flash up, so use
+	# that relative change to avoid enabling both flashes in every Fire clip.
+	if _muzzle_flash_mesh_paths.size() <= 1:
+		return true
+
+	var transform_path := NodePath("%s:transform" % String(mesh_path).get_base_dir())
+	var transform_track := source.find_track(transform_path, Animation.TYPE_VALUE)
+	if transform_track < 0:
+		return true
+
+	var minimum_scale := INF
+	var range_maximum_scale := 0.0
+	for key_index in source.track_get_key_count(transform_track):
+		var value: Variant = source.track_get_key_value(transform_track, key_index)
+		if typeof(value) != TYPE_TRANSFORM3D:
+			continue
+		var transform := value as Transform3D
+		var scale_length := transform.basis.get_scale().length()
+		minimum_scale = minf(minimum_scale, scale_length)
+		var key_time := source.track_get_key_time(transform_track, key_index)
+		if key_time >= start_time and key_time <= end_time:
+			range_maximum_scale = maxf(range_maximum_scale, scale_length)
+	if not is_finite(minimum_scale) or minimum_scale <= 0.0 or range_maximum_scale <= 0.0:
+		return true
+	return range_maximum_scale > minimum_scale * 2.0
 
 
 func _clip_name(value: String) -> String:
@@ -1036,7 +1109,10 @@ func _clip_name(value: String) -> String:
 
 
 func _is_looping_clip(value: String) -> bool:
-	return value in ["Stationary", "Idle_0", "Idle_1", "Move", "Crawl", "Crouch"]
+	# Idle variants are deliberately one-shot: Unit chooses another random
+	# variant when one finishes. Stationary remains the fallback for models
+	# without authored Idle* clips.
+	return value in ["Stationary", "Move", "Crawl", "Crouch"]
 
 
 func _object_animation_length(object: Dictionary) -> int:

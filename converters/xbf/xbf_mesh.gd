@@ -152,14 +152,19 @@ func _parse_vertex_animation(buffer: StreamPeerBuffer) -> Dictionary:
 	var flags := buffer.get_u16()
 	var entries := buffer.get_32()
 	var animated_vertex_count := int(entries / float(used_frames))
+	# XBF stores animated coordinates as signed fixed-point values. `kind` is
+	# the number of fractional bits: most infantry use 9 (1 / 512), while
+	# Scout and Sniper use 6 (1 / 64). A fixed 512 divisor shrinks the latter
+	# models to one eighth of their authored size as soon as animation starts.
+	var coordinate_divisor := float(1 << kind)
 	var used_positions: Array[PackedVector3Array] = []
 	for frame_index in used_frames:
 		var positions := PackedVector3Array()
 		positions.resize(animated_vertex_count)
 		for vertex_index in animated_vertex_count:
-			var x := float(buffer.get_16()) / 512.0
-			var y := float(buffer.get_16()) / 512.0
-			var z := float(buffer.get_16()) / 512.0
+			var x := float(buffer.get_16()) / coordinate_divisor
+			var y := float(buffer.get_16()) / coordinate_divisor
+			var z := float(buffer.get_16()) / coordinate_divisor
 			buffer.get_16()
 			positions[vertex_index] = Vector3(x, y, z)
 		used_positions.append(positions)

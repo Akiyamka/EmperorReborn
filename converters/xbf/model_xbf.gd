@@ -99,7 +99,7 @@ func _parse_animation_entries(bytes: PackedByteArray) -> Array[Dictionary]:
 			"name": name,
 			"flag1": _i32_le(bytes, offset + 32),
 			"flag2": _i32_le(bytes, offset + 36),
-			"zero1": _i32_le(bytes, offset + 40),
+			"unknown1": _i32_le(bytes, offset + 40),
 			"zero2": _i32_le(bytes, offset + 44),
 			"flag3": bytes[offset + 48],
 			"pad": bytes.slice(offset + 49, offset + 52),
@@ -148,9 +148,12 @@ func _looks_like_animation_entry(bytes: PackedByteArray, offset: int) -> bool:
 	var name := _read_c_string(bytes, offset, 32)
 	if name.is_empty():
 		return false
+	# Offset +40 is per-entry metadata, not a structural zero: AT_Sniper stores
+	# the table count there and Harvester stores 4 on its "Harv Eat Hold"
+	# entry. The surrounding flags and valid frame range are the reliable table
+	# signature, so this field must not reject an otherwise valid entry.
 	return _i32_le(bytes, offset + 32) == 1 \
 		and _i32_le(bytes, offset + 36) == 1 \
-		and _i32_le(bytes, offset + 40) == 0 \
 		and _i32_le(bytes, offset + 44) >= 0 \
 		and _i32_le(bytes, offset + 44) <= 8 \
 		and bytes[offset + 48] <= 1 \

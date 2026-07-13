@@ -134,7 +134,22 @@ func _test_unit_movement_animations() -> void:
 		var unit := match_instance.get_node("Units/%s" % unit_name) as Unit
 		var player := _unit_animation_player(unit)
 		_expect(player != null, "%s must expose a model AnimationPlayer" % unit_name)
-		_expect(player != null and player.current_animation == &"Stationary", "%s must start stationary" % unit_name)
+		_expect(player != null and _is_unit_idle(player), "%s must start with an idle animation" % unit_name)
+		if player != null and _idle_animation_count(player) > 0:
+			_expect(player.current_animation == &"Stationary", "%s idle sequence must start with Stationary" % unit_name)
+			if player.has_animation(&"Idle_0") and player.has_animation(&"Idle_1"):
+				_expect(
+					unit.call("_idle_animation_weight", &"Idle_0") > unit.call("_idle_animation_weight", &"Idle_1"),
+					"%s higher-numbered Idle* clips must have lower selection weight" % unit_name
+				)
+			var stationary_plays := 0
+			while player.current_animation == &"Stationary" and stationary_plays < 16:
+				stationary_plays += 1
+				player.animation_finished.emit(&"Stationary")
+			_expect(stationary_plays >= 5 and stationary_plays <= 15, "%s must play Stationary 5-15 times" % unit_name)
+			_expect(String(player.current_animation).begins_with("Idle"), "%s must play a random Idle* after Stationary" % unit_name)
+			player.animation_finished.emit(player.current_animation)
+			_expect(player.current_animation == &"Stationary", "%s must restart with Stationary after Idle*" % unit_name)
 		unit.move_to(unit.global_position + Vector3(3.0, 0.0, 0.0))
 		for _frame in 20:
 			await physics_frame
@@ -146,7 +161,7 @@ func _test_unit_movement_animations() -> void:
 			"%s Move animation speed must match its physical velocity" % unit_name
 		)
 		unit.stop_at_current_position()
-		_expect(player != null and player.current_animation == &"Stationary", "%s must return to Stationary when stopped" % unit_name)
+		_expect(player != null and _is_unit_idle(player), "%s must return to an idle animation when stopped" % unit_name)
 		_expect(player != null and is_equal_approx(player.speed_scale, 1.0), "%s must reset its animation speed when stopped" % unit_name)
 
 	match_instance.queue_free()
@@ -161,6 +176,22 @@ func _unit_animation_player(unit: Unit) -> AnimationPlayer:
 		if player.has_animation(&"Move") and player.has_animation(&"Stationary"):
 			return player
 	return null
+
+
+func _is_unit_idle(player: AnimationPlayer) -> bool:
+	if player == null:
+		return false
+	if _idle_animation_count(player) > 0:
+		return player.current_animation == &"Stationary" or String(player.current_animation).begins_with("Idle")
+	return player.current_animation == &"Stationary"
+
+
+func _idle_animation_count(player: AnimationPlayer) -> int:
+	var idle_variants := 0
+	for animation_name in player.get_animation_list():
+		if String(animation_name).begins_with("Idle"):
+			idle_variants += 1
+	return idle_variants
 
 
 func _authored_collision_shapes(node: Node) -> Array[CollisionShape3D]:

@@ -15,6 +15,7 @@ const MAX_SLOPE_SPEED_MULTIPLIER := 1.50
 const SLOPE_PROBE_DISTANCE := 0.5
 const MOVING_ANIMATION := &"Move"
 const IDLE_ANIMATION := &"Stationary"
+const IDLE_ANIMATION_PREFIX := "Idle"
 
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
@@ -55,6 +56,8 @@ var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
 var _selection_halo
 var _animation_players: Array[AnimationPlayer] = []
+var _movement_animation_active := false
+var _stationary_repeats_remaining: Dictionary = {}
 var _navigation_managed := false
 var _navigation_system = null
 var _pending_navigation_order := Vector3.ZERO
@@ -74,6 +77,7 @@ func _ready() -> void:
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_animation_players = _collect_animation_players()
+	_prepare_idle_animations()
 	_set_movement_animation(false)
 	health = max_health
 	shields = max_shields
@@ -235,6 +239,7 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_animation_players = _collect_animation_players()
+	_prepare_idle_animations()
 	_set_movement_animation(false)
 
 
@@ -361,14 +366,110 @@ func _collect_animation_players() -> Array[AnimationPlayer]:
 	return result
 
 
-func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
+func _prepare_idle_animations() -> void:
+	_stationary_repeats_remaining.clear()
 	for player in _animation_players:
-		var animation := MOVING_ANIMATION if is_moving else IDLE_ANIMATION
-		if not player.has_animation(animation):
-			continue
-		if player.current_animation != animation:
-			player.play(animation)
-		player.speed_scale = speed_scale if is_moving else 1.0
+		var idle_animations := _idle_animations(player)
+		for animation_name in idle_animations:
+			var animation := player.get_animation(animation_name)
+			if animation != null:
+				animation.loop_mode = Animation.LOOP_NONE
+		if not idle_animations.is_empty() and player.has_animation(IDLE_ANIMATION):
+			var stationary := player.get_animation(IDLE_ANIMATION)
+			if stationary != null:
+				stationary.loop_mode = Animation.LOOP_NONE
+		if not player.animation_finished.is_connected(_on_animation_finished.bind(player)):
+			player.animation_finished.connect(_on_animation_finished.bind(player))
+
+
+func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
+	_movement_animation_active = is_moving
+	for player in _animation_players:
+		if is_moving:
+			if player.has_animation(MOVING_ANIMATION):
+				if player.current_animation != MOVING_ANIMATION:
+					player.play(MOVING_ANIMATION)
+				player.speed_scale = speed_scale
+				continue
+		player.speed_scale = 1.0
+		_play_idle_sequence(player)
+
+
+func _play_idle_sequence(player: AnimationPlayer) -> void:
+	var idle_animations := _idle_animations(player)
+	if idle_animations.is_empty():
+		if player.has_animation(IDLE_ANIMATION) and player.current_animation != IDLE_ANIMATION:
+			player.play(IDLE_ANIMATION)
+		return
+
+	var player_id := player.get_instance_id()
+	var is_sequence_animation := player.current_animation == IDLE_ANIMATION \
+		or player.current_animation in idle_animations
+	if is_sequence_animation and player.is_playing() and _stationary_repeats_remaining.has(player_id):
+		return
+	_start_stationary_batch(player, idle_animations)
+
+
+func _start_stationary_batch(player: AnimationPlayer, idle_animations: Array[StringName]) -> void:
+	var player_id := player.get_instance_id()
+	if player.has_animation(IDLE_ANIMATION):
+		_stationary_repeats_remaining[player_id] = randi_range(5, 15)
+		_play_animation_from_start(player, IDLE_ANIMATION)
+		return
+	_stationary_repeats_remaining[player_id] = 0
+	_play_random_idle(player, idle_animations)
+
+
+func _play_random_idle(player: AnimationPlayer, idle_animations: Array[StringName]) -> void:
+	var total_weight := 0.0
+	for animation_name in idle_animations:
+		total_weight += _idle_animation_weight(animation_name)
+
+	var roll := randf() * total_weight
+	for animation_name in idle_animations:
+		roll -= _idle_animation_weight(animation_name)
+		if roll <= 0.0:
+			_play_animation_from_start(player, animation_name)
+			return
+	_play_animation_from_start(player, idle_animations.back())
+
+
+func _idle_animation_weight(animation_name: StringName) -> float:
+	var suffix := String(animation_name).trim_prefix(IDLE_ANIMATION_PREFIX).trim_prefix("_")
+	if not suffix.is_valid_int():
+		return 1.0
+	return 1.0 / float(maxi(int(suffix), 0) + 1)
+
+
+func _play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
+	player.stop()
+	player.play(animation_name)
+
+
+func _idle_animations(player: AnimationPlayer) -> Array[StringName]:
+	var result: Array[StringName] = []
+	for animation_name in player.get_animation_list():
+		if String(animation_name).begins_with(IDLE_ANIMATION_PREFIX):
+			result.append(animation_name)
+	return result
+
+
+func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:
+	if _movement_animation_active:
+		return
+	var idle_animations := _idle_animations(player)
+	if idle_animations.is_empty():
+		return
+	var player_id := player.get_instance_id()
+	if animation_name == IDLE_ANIMATION:
+		var repeats_left := int(_stationary_repeats_remaining.get(player_id, 1)) - 1
+		_stationary_repeats_remaining[player_id] = repeats_left
+		if repeats_left > 0:
+			_play_animation_from_start(player, IDLE_ANIMATION)
+		else:
+			_play_random_idle(player, idle_animations)
+	elif animation_name in idle_animations:
+		_start_stationary_batch(player, idle_animations)
 
 
 func _movement_animation_speed_scale() -> float:

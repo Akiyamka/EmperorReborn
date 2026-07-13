@@ -5,6 +5,8 @@ const PlayerRosterScript := preload("res://scripts/players/player_roster.gd")
 const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
+const ModelXbfScript := preload("res://converters/xbf/model_xbf.gd")
+const ModelBakeBuilderScript := preload("res://converters/model_bake_builder.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -31,6 +33,9 @@ func _initialize() -> void:
 	_run_case("TechnologyTree house and subhouse", _test_technology_tree_houses)
 	_run_case("TechnologyTree building requirements", _test_technology_tree_building_requirements)
 	_run_case("TechnologyTree unit requirements", _test_technology_tree_unit_requirements)
+	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
+	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case("Muzzle flash clip visibility", _test_muzzle_flash_clip_visibility)
 
 	if _failures > 0:
 		printerr("Characterization tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -303,6 +308,115 @@ func _test_technology_tree_unit_requirements() -> bool:
 	barracks.free()
 	windtrap.free()
 	return true
+
+
+func _test_xbf_vertex_animation_scale() -> bool:
+	var cases := [
+		["res://assets/raw_original_content/3DDATA/Units/AT_Scout_H0.XBF", "scout", 6, 19],
+		["res://assets/raw_original_content/3DDATA/Units/AT_Sniper_H0.XBF", "sniper", 6, 20],
+		["res://assets/raw_original_content/3DDATA/Units/AT_inf_H0.xbf", "LtINF", 9, 25],
+	]
+	for model_case: Array in cases:
+		var xbf = ModelXbfScript.load_file(String(model_case[0]))
+		_expect(xbf != null, "%s must parse" % String(model_case[0]).get_file())
+		if xbf == null:
+			continue
+		_expect(xbf.animation_entries.size() == int(model_case[3]), "%s must expose all named animation clips" % String(model_case[0]).get_file())
+		var object := _find_xbf_object(xbf.objects, String(model_case[1]))
+		_expect(not object.is_empty(), "%s must contain its animated body" % String(model_case[0]).get_file())
+		if object.is_empty():
+			continue
+		var animation: Dictionary = object.vertex_animation
+		_expect(int(animation.get("kind", -1)) == int(model_case[2]), "%s must retain its fixed-point kind" % String(model_case[0]).get_file())
+		var frames: Dictionary = animation.get("frames", {})
+		var frame_ids := frames.keys()
+		frame_ids.sort()
+		_expect(not frame_ids.is_empty(), "%s must contain decoded vertex frames" % String(model_case[0]).get_file())
+		if frame_ids.is_empty():
+			continue
+		var static_bounds := _points_bounds(object.positions as PackedVector3Array)
+		var animated_bounds := _points_bounds(frames[frame_ids[0]] as PackedVector3Array)
+		var relative_error := animated_bounds.size.distance_to(static_bounds.size) / maxf(static_bounds.size.length(), 0.0001)
+		_expect(relative_error < 0.02, "%s animated body must preserve the authored scale" % String(model_case[0]).get_file())
+	return true
+
+
+func _find_xbf_object(objects: Array[Dictionary], expected_name: String) -> Dictionary:
+	for object: Dictionary in objects:
+		if String(object.name) == expected_name:
+			return object
+		var child := _find_xbf_object(object.children, expected_name)
+		if not child.is_empty():
+			return child
+	return {}
+
+
+func _points_bounds(points: PackedVector3Array) -> AABB:
+	if points.is_empty():
+		return AABB()
+	var bounds := AABB(points[0], Vector3.ZERO)
+	for point: Vector3 in points:
+		bounds = bounds.expand(point)
+	return bounds
+
+
+func _test_xbf_animation_table_variants() -> bool:
+	var cases := [
+		["AT_Sniper_H0.XBF", 20],
+		["G_harvester_h0.XbF", 13],
+		["AT_General_H0.XBF", 22],
+		["GU_Maker_H0.xbf", 5],
+		["HK_ltinf_H0.xbf", 22],
+		["IN_SurfaceWorm_H0.xbf", 13],
+	]
+	for model_case: Array in cases:
+		var file_name := String(model_case[0])
+		var path := "res://assets/raw_original_content/3DDATA/Units".path_join(file_name)
+		var xbf = ModelXbfScript.load_file(path)
+		_expect(xbf != null, "%s must parse" % file_name)
+		if xbf == null:
+			continue
+		_expect(xbf.animation_entries.size() == int(model_case[1]), "%s must expose its complete animation table" % file_name)
+		var names: Array[String] = []
+		for entry: Dictionary in xbf.animation_entries:
+			names.append(String(entry.get("name", "")))
+		_expect(names.has("Stationary"), "%s must expose Stationary" % file_name)
+	return true
+
+
+func _test_muzzle_flash_clip_visibility() -> bool:
+	var cases := [
+		["res://assets/raw_original_content/3DDATA/Units/AT_Kindjal_H0.xbf", 2],
+		["res://assets/raw_original_content/3DDATA/Units/AT_Sniper_H0.XBF", 1],
+	]
+	for model_case: Array in cases:
+		var builder = ModelBakeBuilderScript.new()
+		var scene: PackedScene = builder.build(String(model_case[0]))
+		_expect(scene != null, "%s must build" % String(model_case[0]).get_file())
+		if scene == null:
+			continue
+		var root: Node = scene.instantiate()
+		var player := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+		_expect(player != null, "%s must contain an AnimationPlayer" % String(model_case[0]).get_file())
+		if player != null:
+			var stationary_values := _muzzle_flash_visibility_values(player.get_animation(&"Stationary"))
+			var fire_values := _muzzle_flash_visibility_values(player.get_animation(&"Fire_0"))
+			_expect(stationary_values.size() == int(model_case[1]), "%s must track every muzzle flash in Stationary" % String(model_case[0]).get_file())
+			_expect(stationary_values.all(func(value: bool) -> bool: return not value), "%s must hide muzzle flashes in Stationary" % String(model_case[0]).get_file())
+			_expect(fire_values.count(true) == 1, "%s Fire_0 must show only its active muzzle flash" % String(model_case[0]).get_file())
+		root.free()
+	return true
+
+
+func _muzzle_flash_visibility_values(animation: Animation) -> Array[bool]:
+	var result: Array[bool] = []
+	if animation == null:
+		return result
+	for track_index in animation.get_track_count():
+		var track_path := String(animation.track_get_path(track_index))
+		if track_path.to_lower().contains("bigflash") and track_path.ends_with(":visible"):
+			result.append(bool(animation.track_get_key_value(track_index, 0)))
+	return result
 
 
 func _config(
