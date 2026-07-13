@@ -15,7 +15,7 @@ enum MoveMode { FREE, FORMATION }
 const NAVIGATION_TICK_RATE := 20.0
 const BLOCKER_REFRESH_SECONDS := 0.5
 const ENEMY_BLOCK_SECONDS := 0.4
-const FRIENDLY_YIELD_SECONDS := 0.8
+const FRIENDLY_YIELD_SECONDS := 0.4
 const FRIENDLY_YIELD_TRIGGER_SECONDS := 0.2
 const CELL_BUCKET_SIZE := 4.0
 ## Blocked cells must cover exactly the footprint the placement grid reserves.
@@ -27,6 +27,11 @@ const CANDIDATE_ANGLES := [0.0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35, PI / 2.0, -
 const CONTACT_BUFFER := 0.05
 ## How many path cells ahead the per-tick line-of-sight waypoint skip may reach.
 const PATH_LOOKAHEAD_CELLS := 8
+## Ticks a unit sits out of assignment trading after a swap (anti flip-flop).
+const SWAP_COOLDOWN_TICKS := 10
+## Free cells kept between parked footprints, so a standing formation stays
+## permeable: small units can thread the lanes between the parking blocks.
+const PARKING_GAP_CELLS := 1
 
 var runtime_map = UnitNavigationMapScript.new()
 var planner = UnitNavigationPlannerScript.new()
@@ -91,6 +96,11 @@ func register_unit(unit: Node3D) -> int:
 		"yield_remaining": 0.0,
 		"direct_path": false,
 		"exit_point": Vector3.INF,
+		"reserved": true,
+		"claim_radius": 0.0,
+		"claim_center": unit.global_position,
+		"swap_tick": -1000,
+		"last_desired": Vector3.ZERO,
 	}
 	_agents[key] = agent
 	_next_agent_id += 1
@@ -120,6 +130,7 @@ func set_hold_position(unit: Node3D, active: bool) -> void:
 		agent["exit_point"] = Vector3.INF
 		agent["yield_remaining"] = 0.0
 		agent["yield_direction"] = Vector3.ZERO
+		agent["reserved"] = true
 	_agents[unit.get_instance_id()] = agent
 
 
@@ -144,11 +155,19 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 	var command_id := _next_command_id
 	_next_command_id += 1
 	var group_speed := _slowest_speed(ordered) if mode == MoveMode.FORMATION else INF
-	var assignments := _assign_slots(ordered, world_target, mode)
+	var assignments := _assign_slots(ordered, world_target, mode) \
+		if mode == MoveMode.FORMATION else _shared_target_assignments(ordered, world_target)
+	var claim_radius := _claim_radius_for(ordered)
 	for assignment in assignments:
 		var unit: Node3D = assignment["unit"]
 		var agent: Dictionary = _agents[unit.get_instance_id()]
 		agent["destination"] = assignment["position"]
+		# Formation slots are planned upfront; a FREE move flies each unit to
+		# its shape-preserving aim point and lets it claim a parking block on
+		# approach, searching center-out from the shared target.
+		agent["reserved"] = mode == MoveMode.FORMATION
+		agent["claim_radius"] = claim_radius
+		agent["claim_center"] = assignment.get("claim_center", world_target)
 		agent["command_id"] = command_id
 		agent["mode"] = mode
 		agent["group_speed"] = group_speed
@@ -188,6 +207,7 @@ func stop(unit: Node3D) -> void:
 	agent["exit_point"] = Vector3.INF
 	agent["yield_remaining"] = 0.0
 	agent["yield_direction"] = Vector3.ZERO
+	agent["reserved"] = true
 	_agents[unit.get_instance_id()] = agent
 
 
@@ -249,11 +269,28 @@ func _navigation_tick(delta: float) -> void:
 	_navigation_tick_index += 1
 	_prune_agents()
 	var ordered := _ordered_agents()
+	var claimants: Array[Dictionary] = []
+	for agent in ordered:
+		if not bool(agent["reserved"]):
+			claimants.append(agent)
+	# Closest to the target claims first: the unit already standing next to a
+	# central block takes it, instead of a far unit crossing the whole pack.
+	claimants.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var a_offset: float = ((a["destination"] as Vector3) - (a["unit"] as Node3D).global_position).length()
+		var b_offset: float = ((b["destination"] as Vector3) - (b["unit"] as Node3D).global_position).length()
+		if is_equal_approx(a_offset, b_offset):
+			return int(a["id"]) < int(b["id"])
+		return a_offset < b_offset
+	)
+	for agent in claimants:
+		_try_claim_slot(agent)
+	_uncross_assignments(ordered)
 	var buckets := _build_spatial_hash(ordered)
 	var resolved_positions: Dictionary = {}
 	for agent in ordered:
 		var unit: Node3D = agent["unit"]
 		var desired := _desired_velocity(agent)
+		agent["last_desired"] = desired
 		var result := _resolve_velocity(agent, desired, delta, buckets, resolved_positions)
 		var velocity: Vector3 = result["velocity"]
 		if desired.length_squared() > 0.01 and velocity.length_squared() < 0.01:
@@ -270,16 +307,21 @@ func _navigation_tick(delta: float) -> void:
 					unit.call("navigation_blocked_by_enemy", enemies)
 		if float(agent["blocked_time"]) >= FRIENDLY_YIELD_TRIGGER_SECONDS:
 			for friend in result["friends"]:
-				_request_yield(friend, desired.normalized())
+				_request_yield(friend, _yield_direction(unit, friend, desired))
 		if float(agent["yield_remaining"]) > 0.0:
 			agent["yield_remaining"] = maxf(0.0, float(agent["yield_remaining"]) - delta)
 			if is_zero_approx(float(agent["yield_remaining"])):
-				# Yielding is intentionally one-way for now. Returning an idle unit
-				# to its former point makes units sharing a waypoint displace one
-				# another forever. The unit still parks on the navigation grid: it
-				# settles on the nearest free block for its footprint.
-				agent["destination"] = _snapped_parking(agent, unit.global_position + velocity * delta)
-				_route_agent(agent, unit.global_position, agent["destination"])
+				if int(agent["command_id"]) > 0:
+					# A commanded unit owns a unique reserved block nobody else
+					# will claim: walk back to it once the passer is through.
+					_route_agent(agent, unit.global_position, agent["destination"])
+				else:
+					# An idle unit displaced off a choke point must not return
+					# (it would displace the passer forever); it parks on the
+					# nearest free grid block instead.
+					agent["destination"] = _snapped_parking(agent, unit.global_position + velocity * delta)
+					agent["reserved"] = true
+					_route_agent(agent, unit.global_position, agent["destination"])
 		_agents[unit.get_instance_id()] = agent
 		resolved_positions[unit.get_instance_id()] = unit.global_position + velocity * delta
 		if unit.has_method("navigation_step"):
@@ -375,13 +417,25 @@ func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, bucket
 	if desired.is_zero_approx():
 		return {"velocity": Vector3.ZERO, "enemies": [] as Array[Node3D], "friends": [] as Array[Node3D]}
 	var unit: Node3D = agent["unit"]
-	var nearby := _nearby_agents(unit.global_position, buckets)
-	var enemies: Array[Node3D] = []
-	var friends: Array[Node3D] = []
 	var desired_direction := desired.normalized()
 	var desired_speed := desired.length()
+	var enemies: Array[Node3D] = []
+	var friends: Array[Node3D] = []
 	var best_velocity := Vector3.ZERO
 	var best_score := -INF
+	# Friendly units moving head-on against each other phase through instead of
+	# shoving: mutual sidestepping of counter-movers reads as jitter. Standing
+	# units (zero desire) and enemies always stay solid.
+	var blockers := []
+	for other in _nearby_agents(unit.global_position, buckets):
+		if other["unit"] == unit:
+			continue
+		var other_desired: Vector3 = other["last_desired"]
+		if not other_desired.is_zero_approx() \
+			and desired_direction.dot(other_desired.normalized()) < -0.2 \
+			and not _are_enemies(unit, other["unit"]):
+			continue
+		blockers.append(other)
 	# A unit standing on building cells cannot satisfy the normal cell filter:
 	# inside the interior every neighbour is blocked too, and on the apron the
 	# clearance window still touches the building. Interior units steer with
@@ -399,9 +453,7 @@ func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, bucket
 		if origin_open and not runtime_map.is_passable(cell, int(agent["pass_mask"]), origin_clearance, int(agent["terrain_mask"])):
 			continue
 		var fraction := 1.0
-		for other in nearby:
-			if other["unit"] == unit:
-				continue
+		for other in blockers:
 			var other_unit: Node3D = other["unit"]
 			var other_position: Vector3 = resolved.get(other_unit.get_instance_id(), other_unit.global_position)
 			var safe := _sweep_fraction(
@@ -427,6 +479,18 @@ func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, bucket
 			best_score = score
 			best_velocity = velocity
 	return {"velocity": best_velocity, "enemies": enemies, "friends": friends}
+
+
+## A yielding friend steps sideways out of the requester's lane (toward the
+## side it is already offset to), not along it — walking the lane keeps it in
+## front of the requester and drags it deep into the crowd.
+func _yield_direction(requester: Node3D, friend: Node3D, desired: Vector3) -> Vector3:
+	var lateral := desired.normalized().cross(Vector3.UP)
+	var side := friend.global_position - requester.global_position
+	side.y = 0.0
+	if lateral.dot(side) < 0.0:
+		lateral = -lateral
+	return lateral.normalized()
 
 
 func _request_yield(unit: Node3D, direction: Vector3) -> void:
@@ -478,7 +542,7 @@ func _sweep_fraction(start: Vector3, displacement: Vector3, obstacle: Vector3, c
 func _assign_slots(units: Array[Node3D], world_target: Vector3, mode: int) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var occupied: Array[Dictionary] = []
-	var spacing := _largest_footprint(units)
+	var spacing := _largest_footprint(units) + PARKING_GAP_CELLS
 	for index in units.size():
 		var unit := units[index]
 		var agent: Dictionary = _agents[unit.get_instance_id()]
@@ -504,23 +568,182 @@ func _assign_slots(units: Array[Node3D], world_target: Vector3, mode: int) -> Ar
 	return result
 
 
-## Ring search for a free grid-aligned footprint block: every cell of the
-## span x span block must be stoppable and the block may not overlap a block
-## already reserved in `occupied` ({anchor, span} entries).
+## FREE moves do not pre-plan parking slots: a pre-assigned interior slot
+## belongs to whoever happens to arrive last, and the crowd has to fight itself
+## to deliver that unit. Each unit aims at the target translated by its own
+## offset inside the pack (clamped to the resting pack radius), so the group
+## moves as a shape instead of funnelling through one point, then claims the
+## best free block on approach (_try_claim_slot), packing in arrival order.
+func _shared_target_assignments(units: Array[Node3D], world_target: Vector3) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var centroid := Vector3.ZERO
+	for unit in units:
+		centroid += unit.global_position
+	centroid /= float(units.size())
+	var cell: Vector2 = runtime_map.grid.cell_size()
+	var pack_radius := ceilf(sqrt(float(units.size()))) * 0.5 \
+		* float(_largest_footprint(units) + PARKING_GAP_CELLS) * maxf(cell.x, cell.y)
+	var spread := 0.0
+	for unit in units:
+		spread = maxf(spread, Vector2(unit.global_position.x - centroid.x, unit.global_position.z - centroid.z).length())
+	# A compact pack is being MOVED: keep its shape, claims stay at each aim
+	# point. A group scattered wider than its resting size is being GATHERED:
+	# claims run center-out from the target so the pack fills up tight.
+	var gather := spread > pack_radius * 1.5
+	for index in units.size():
+		var unit := units[index]
+		var agent: Dictionary = _agents[unit.get_instance_id()]
+		var span := int(agent["footprint"])
+		var offset := unit.global_position - centroid
+		offset.y = 0.0
+		var aim := world_target + offset.limit_length(pack_radius)
+		var anchor := _find_slot(_parking_anchor(aim, span), agent, [])
+		var position := _block_center(anchor, span) if anchor.x >= 0 else aim
+		position.y = world_target.y
+		result.append({
+			"unit": unit,
+			"agent_id": agent["id"],
+			"slot_id": index,
+			"position": position,
+			"available": true,
+			"claim_center": world_target if gather else position,
+		})
+	return result
+
+
+## The moment a FREE-move unit gets near the shared target it claims a parking
+## block: the most central free one, tie-broken toward its own approach side so
+## claims do not cross the crowd.
+func _try_claim_slot(agent: Dictionary) -> void:
+	var unit: Node3D = agent["unit"]
+	if bool(agent["hold"]) or (agent["exit_point"] as Vector3).is_finite():
+		return
+	var destination: Vector3 = agent["destination"]
+	var offset := destination - unit.global_position
+	offset.y = 0.0
+	if offset.length() > float(agent["claim_radius"]):
+		return
+	var span := int(agent["footprint"])
+	# The search is centered on the shared command target, not the unit's own
+	# aim point: the pack packs center-out and does not settle into a ring.
+	var anchor := _claim_anchor(_parking_anchor(agent["claim_center"], span), agent, _reserved_blocks(agent), unit.global_position)
+	if anchor.x < 0:
+		return
+	agent["reserved"] = true
+	var parked := _block_center(anchor, span)
+	parked.y = destination.y
+	agent["destination"] = parked
+	_route_agent(agent, unit.global_position, parked)
+	if unit.has_method("set_navigation_destination"):
+		unit.call("set_navigation_destination", parked)
+
+
+## Uncrosses parking assignments within a command: when two units would each
+## travel further to their own blocks than to each other's, they trade blocks
+## instead of trying to push their bodies past one another. Crossed pairs are
+## what makes a nudged pack fight itself indefinitely.
+func _uncross_assignments(agents: Array[Dictionary]) -> void:
+	var groups := {}
+	for agent in agents:
+		if int(agent["command_id"]) <= 0 or not bool(agent["reserved"]) or bool(agent["hold"]):
+			continue
+		if (agent["exit_point"] as Vector3).is_finite():
+			continue
+		# Only units still moving inside the arrival zone take part: crossings
+		# out in the open resolve themselves by steering, and a unit already
+		# parked on its block must not be dragged out by a trade.
+		var unit: Node3D = agent["unit"]
+		var offset: Vector3 = (agent["destination"] as Vector3) - unit.global_position
+		offset.y = 0.0
+		if offset.length() > float(agent["claim_radius"]):
+			continue
+		if offset.length() <= maxf(_arrival_radius(unit), float(agent["radius"]) * 0.35):
+			continue
+		# A cooldown after each trade stops marginal swaps from flip-flopping
+		# every tick while two units move in near-symmetry.
+		if _navigation_tick_index - int(agent["swap_tick"]) < SWAP_COOLDOWN_TICKS:
+			continue
+		var key := "%d:%d" % [int(agent["command_id"]), int(agent["footprint"])]
+		if not groups.has(key):
+			groups[key] = []
+		groups[key].append(agent)
+	for key in groups:
+		var group: Array = groups[key]
+		for a_index in group.size():
+			for b_index in range(a_index + 1, group.size()):
+				var a: Dictionary = group[a_index]
+				var b: Dictionary = group[b_index]
+				var a_unit: Node3D = a["unit"]
+				var b_unit: Node3D = b["unit"]
+				var a_destination: Vector3 = a["destination"]
+				var b_destination: Vector3 = b["destination"]
+				var current := a_unit.global_position.distance_to(a_destination) \
+					+ b_unit.global_position.distance_to(b_destination)
+				var swapped := a_unit.global_position.distance_to(b_destination) \
+					+ b_unit.global_position.distance_to(a_destination)
+				if swapped + 0.05 < current:
+					a["destination"] = b_destination
+					b["destination"] = a_destination
+					a["swap_tick"] = _navigation_tick_index
+					b["swap_tick"] = _navigation_tick_index
+					_route_agent(a, a_unit.global_position, b_destination)
+					_route_agent(b, b_unit.global_position, a_destination)
+					if a_unit.has_method("set_navigation_destination"):
+						a_unit.call("set_navigation_destination", b_destination)
+					if b_unit.has_method("set_navigation_destination"):
+						b_unit.call("set_navigation_destination", a_destination)
+
+
+## Parking blocks already promised to other agents: reserved destinations only,
+## so shared aim points of units that have not claimed yet do not count.
+func _reserved_blocks(agent: Dictionary) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for key in _agents:
+		var other: Dictionary = _agents[key]
+		if int(other["id"]) == int(agent["id"]) or not bool(other["reserved"]):
+			continue
+		var other_span := int(other["footprint"])
+		result.append({"anchor": _parking_anchor(other["destination"], other_span), "span": other_span})
+	return result
+
+
+func _claim_radius_for(units: Array[Node3D]) -> float:
+	var cell: Vector2 = runtime_map.grid.cell_size()
+	var pitch := float(_largest_footprint(units) + PARKING_GAP_CELLS)
+	var crowd := ceilf(sqrt(float(units.size()))) * 0.5 * pitch
+	return (crowd + 2.0) * maxf(cell.x, cell.y)
+
+
 func _find_slot(preferred: Vector2i, agent: Dictionary, occupied: Array[Dictionary]) -> Vector2i:
+	return _claim_anchor(preferred, agent, occupied, _block_center(preferred, int(agent["footprint"])))
+
+
+## Ring search for a free grid-aligned footprint block: every cell of the
+## span x span block must be stoppable and the block may not overlap a block in
+## `occupied` ({anchor, span} entries). Inner rings keep priority; ties within
+## a ring resolve toward `from`.
+func _claim_anchor(preferred: Vector2i, agent: Dictionary, occupied: Array[Dictionary], from: Vector3) -> Vector2i:
 	var span := int(agent["footprint"])
 	for radius in range(0, SLOT_SEARCH_RADIUS + 1):
+		var best := Vector2i(-1, -1)
+		var best_distance := INF
 		for offset in _ring_offsets(radius):
 			var anchor := preferred + offset
 			if not _block_stoppable(anchor, span, agent):
 				continue
-			var free := true
+			var blocked := false
 			for other in occupied:
-				if _blocks_overlap(anchor, span, other["anchor"], int(other["span"])):
-					free = false
+				if _blocks_conflict(anchor, span, other["anchor"], int(other["span"])):
+					blocked = true
 					break
-			if free:
-				return anchor
+			if blocked:
+				continue
+			var distance := from.distance_to(_block_center(anchor, span))
+			if distance < best_distance:
+				best_distance = distance
+				best = anchor
+		if best.x >= 0:
+			return best
 	return Vector2i(-1, -1)
 
 
@@ -532,8 +755,11 @@ func _block_stoppable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
 	return true
 
 
-func _blocks_overlap(a: Vector2i, a_span: int, b: Vector2i, b_span: int) -> bool:
-	return a.x < b.x + b_span and b.x < a.x + a_span and a.y < b.y + b_span and b.y < a.y + a_span
+## Two parking blocks conflict when fewer than PARKING_GAP_CELLS free cells
+## separate them (in either axis), not only on actual overlap.
+func _blocks_conflict(a: Vector2i, a_span: int, b: Vector2i, b_span: int) -> bool:
+	return a.x < b.x + b_span + PARKING_GAP_CELLS and b.x < a.x + a_span + PARKING_GAP_CELLS \
+		and a.y < b.y + b_span + PARKING_GAP_CELLS and b.y < a.y + a_span + PARKING_GAP_CELLS
 
 
 ## World center of a span x span cell block anchored at its lowest cell. For
@@ -556,17 +782,7 @@ func _parking_anchor(point: Vector3, span: int) -> Vector2i:
 ## agent's reserved parking block. Falls back to `point` when nothing is free.
 func _snapped_parking(agent: Dictionary, point: Vector3) -> Vector3:
 	var span := int(agent["footprint"])
-	var occupied: Array[Dictionary] = []
-	for key in _agents:
-		var other: Dictionary = _agents[key]
-		if int(other["id"]) == int(agent["id"]):
-			continue
-		var other_span := int(other["footprint"])
-		occupied.append({
-			"anchor": _parking_anchor(other["destination"], other_span),
-			"span": other_span,
-		})
-	var anchor := _find_slot(_parking_anchor(point, span), agent, occupied)
+	var anchor := _claim_anchor(_parking_anchor(point, span), agent, _reserved_blocks(agent), point)
 	if anchor.x < 0:
 		return point
 	var parked := _block_center(anchor, span)
@@ -742,7 +958,7 @@ func _replan_after_map_change() -> void:
 		var destination: Vector3 = agent["destination"]
 		var span := int(agent["footprint"])
 		if not _block_stoppable(_parking_anchor(destination, span), span, agent):
-			var replacement := _find_slot(_parking_anchor(destination, span), agent, [])
+			var replacement := _find_slot(_parking_anchor(destination, span), agent, _reserved_blocks(agent))
 			if replacement.x >= 0:
 				var height := destination.y
 				destination = _block_center(replacement, span)

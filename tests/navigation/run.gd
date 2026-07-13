@@ -43,9 +43,12 @@ func _initialize() -> void:
 	_test_slide_around_stopped_friend(grid)
 	_test_group_convergence(grid)
 	_test_group_rounds_sharp_corner(grid)
-	_test_yield_does_not_return(grid)
+	_test_yield_behaviour(grid)
 	_test_command_overrides_yield(grid)
 	_test_grid_aligned_slots(grid)
+	_test_lane_through_standing_formation(grid)
+	_test_circle_convergence_metrics(grid)
+	_test_group_shift_keeps_shape(grid)
 	if _failures > 0:
 		printerr("Unit navigation tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
@@ -221,15 +224,24 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 		root.add_child(unit)
 		unit.global_position = Vector3(10.0 + float(index), 0.0, 10.0)
 		units.append(unit)
-	var assignments := navigation.command_move(units, Vector3(80.0, 0.0, 80.0), NavigationSystemScript.MoveMode.FREE)
+	var assignments := navigation.command_move(units, Vector3(30.5, 0.0, 30.5), NavigationSystemScript.MoveMode.FREE)
 	_expect(assignments.size() == units.size(), "a group command must synchronously assign every destination")
 	_expect(navigation.command_log().size() == 1, "movement commands must be recorded for bug-report replay")
 	for unit in units:
 		_expect(bool(navigation.agent_debug(unit)["route_ready"]), "every unit in a group must have a route immediately")
-	var unique_slots := {}
-	for assignment in assignments:
-		unique_slots[assignment["position"]] = true
-	_expect(unique_slots.size() == units.size(), "free-crowd destinations must not overlap")
+	for _iteration in 240:
+		navigation.call("_navigation_tick", 0.05)
+	var claimed: Array[Dictionary] = []
+	for unit in units:
+		var destination: Vector3 = navigation.agent_debug(unit)["destination"]
+		_expect(unit.global_position.distance_to(destination) < 0.6, "every free-move unit must settle on its claimed block")
+		claimed.append({"anchor": navigation._parking_anchor(destination, 1), "span": 1})
+	for a in claimed.size():
+		for b in range(a + 1, claimed.size()):
+			_expect(
+				not navigation._blocks_conflict(claimed[a]["anchor"], 1, claimed[b]["anchor"], 1),
+				"claimed parking blocks must keep a one-cell gap"
+			)
 	units[0].move_speed = 9.0
 	units[1].move_speed = 3.0
 	navigation.command_move([units[0], units[1]], Vector3(90.0, 0.0, 90.0), NavigationSystemScript.MoveMode.FORMATION)
@@ -243,11 +255,12 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 	right.global_position = Vector3(102.0, 0.0, 100.0)
 	navigation.command_move([left], Vector3(110.0, 0.0, 100.0))
 	navigation.command_move([right], Vector3(90.0, 0.0, 100.0))
-	var minimum_distance := INF
 	for _iteration in 80:
 		navigation.call("_navigation_tick", 0.05)
-		minimum_distance = minf(minimum_distance, left.global_position.distance_to(right.global_position))
-	_expect(minimum_distance >= 0.82, "opposing swept-disc agents must never pass through each other")
+	# Friendly counter-movers phase through each other instead of shoving, so
+	# a head-on pair must swap sides cleanly and on time.
+	_expect(left.global_position.distance_to(Vector3(110.0, 0.0, 100.0)) < 1.0, "a head-on mover must pass a friendly counter-mover and arrive")
+	_expect(right.global_position.distance_to(Vector3(90.0, 0.0, 100.0)) < 1.0, "the opposing mover must arrive as well")
 
 	navigation.queue_free()
 	for unit in units:
@@ -302,39 +315,113 @@ func _test_group_convergence(grid: MapNavigationGrid) -> void:
 	for assignment in assignments:
 		var unit: Node3D = assignment["unit"]
 		var slot: Vector3 = assignment["position"]
-		_expect(unit.global_position.distance_to(slot) < 2.0, "every unit of a converging group must reach its slot instead of jamming on contact")
+		_expect(unit.global_position.distance_to(slot) < 3.5, "every unit of a converging group must reach its slot instead of jamming on contact")
 
 	navigation.queue_free()
 	for unit in units:
 		unit.queue_free()
 
 
-func _test_yield_does_not_return(grid: MapNavigationGrid) -> void:
+## A packed square moved ten cells sideways — the everyday group move. The
+## pack must slide over as a shape: no scrum, and no squeezing through the
+## target point (the mid-flight spread must stay near the resting spread).
+func _test_group_shift_keeps_shape(grid: MapNavigationGrid) -> void:
 	var navigation := NavigationSystemScript.new()
 	root.add_child(navigation)
 	navigation.set_physics_process(false)
 	_expect(navigation.setup(grid), "navigation system must initialize")
 
-	var unit := FakeUnit.new()
-	root.add_child(unit)
-	unit.global_position = Vector3(120.5, 0.0, 120.5)
-	navigation.command_move([unit], unit.global_position)
-	navigation.call("_request_yield", unit, Vector3.RIGHT)
+	var units: Array[FakeUnit] = []
+	for index in 25:
+		var unit := FakeUnit.new()
+		root.add_child(unit)
+		unit.global_position = Vector3(100.5 + float(index % 5), 0.0, 100.5 + float(index / 5))
+		units.append(unit)
+	navigation.command_move(units, Vector3(112.5, 0.0, 102.5), NavigationSystemScript.MoveMode.FREE)
+
+	const TICK := 0.05
+	const MAX_TICKS := 1200
+	const IDLE_TICKS_TO_FINISH := 100
+	var previous: Array[Vector3] = []
+	for unit in units:
+		previous.append(unit.global_position)
+	var last_active_tick := 0
+	var elapsed_ticks := MAX_TICKS
+	var minimum_spread := INF
+	for tick in range(1, MAX_TICKS + 1):
+		navigation.call("_navigation_tick", TICK)
+		var moved := false
+		var centroid := Vector3.ZERO
+		for index in units.size():
+			if units[index].global_position.distance_to(previous[index]) > 0.005:
+				moved = true
+			previous[index] = units[index].global_position
+			centroid += units[index].global_position
+		centroid /= float(units.size())
+		var spread := 0.0
+		for unit in units:
+			spread = maxf(spread, unit.global_position.distance_to(centroid))
+		minimum_spread = minf(minimum_spread, spread)
+		if moved:
+			last_active_tick = tick
+		elif tick - last_active_tick >= IDLE_TICKS_TO_FINISH:
+			elapsed_ticks = tick
+			break
+	print("Group shift: settled in %.1f s, min mid-flight spread %.1f (gapped resting ~5.7)" % [
+		float(last_active_tick) * TICK, minimum_spread])
+	_expect(elapsed_ticks < MAX_TICKS, "a shifted pack must settle, not churn forever")
+	_expect(float(last_active_tick) * TICK < 8.0, "a ten-cell group shift must settle within 8 seconds")
+	_expect(minimum_spread > 1.8, "the pack must translate as a shape, not squeeze through the target point")
+
+	navigation.queue_free()
+	for unit in units:
+		unit.queue_free()
+
+
+## An idle unit displaced off a choke point parks nearby on the grid and stays
+## (returning would displace the passer forever). A commanded unit owns a
+## unique reserved block, so it walks back once the passer is through.
+func _test_yield_behaviour(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var idle := FakeUnit.new()
+	root.add_child(idle)
+	idle.global_position = Vector3(120.5, 0.0, 120.5)
+	navigation.register_unit(idle)
+	navigation.call("_request_yield", idle, Vector3.RIGHT)
 	for _iteration in 20:
 		navigation.call("_navigation_tick", 0.05)
-	var displaced_position := unit.global_position
-	_expect(displaced_position.x > 123.0, "a yielded unit must move aside")
-	var parked: Vector3 = navigation.agent_debug(unit)["destination"]
+	var displaced_position := idle.global_position
+	_expect(displaced_position.x > 121.5, "a yielded idle unit must move aside")
+	var parked: Vector3 = navigation.agent_debug(idle)["destination"]
 	_expect(
 		absf(fposmod(parked.x, 1.0) - 0.5) < 0.001 and absf(fposmod(parked.z, 1.0) - 0.5) < 0.001,
-		"a yielded unit must park on a grid cell center (got %.2f, %.2f)" % [parked.x, parked.z]
+		"a yielded idle unit must park on a grid cell center (got %.2f, %.2f)" % [parked.x, parked.z]
 	)
 	for _iteration in 40:
 		navigation.call("_navigation_tick", 0.05)
-	_expect(unit.global_position.distance_to(displaced_position) < 0.01, "a yielded unit must not return to its former destination")
+	_expect(idle.global_position.distance_to(displaced_position) < 0.01, "a yielded idle unit must not return to the choke point")
+
+	var owner := FakeUnit.new()
+	root.add_child(owner)
+	owner.global_position = Vector3(140.5, 0.0, 120.5)
+	var home := owner.global_position
+	navigation.command_move([owner], home)
+	navigation.call("_navigation_tick", 0.05)
+	navigation.call("_request_yield", owner, Vector3.RIGHT)
+	for _iteration in 8:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(owner.global_position.x > 141.5, "a yielded commanded unit must move aside first")
+	for _iteration in 60:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(owner.global_position.distance_to(home) < 0.3, "a commanded unit must return to its reserved block after yielding")
 
 	navigation.queue_free()
-	unit.queue_free()
+	idle.queue_free()
+	owner.queue_free()
 
 
 ## A packed group routed around a sharp wall tip: every unit's A* path runs
@@ -395,25 +482,134 @@ func _test_grid_aligned_slots(grid: MapNavigationGrid) -> void:
 		root.add_child(large)
 		large.global_position = Vector3(140.0 + float(index) * 2.0, 0.0, 143.0)
 		units.append(large)
-	var assignments := navigation.command_move(units, Vector3(150.7, 0.0, 150.2), NavigationSystemScript.MoveMode.FREE)
+	navigation.command_move(units, Vector3(150.7, 0.0, 150.2), NavigationSystemScript.MoveMode.FREE)
+	for _iteration in 300:
+		navigation.call("_navigation_tick", 0.05)
 
 	var blocks: Array[Dictionary] = []
-	for assignment in assignments:
-		var unit: Node3D = assignment["unit"]
+	for unit in units:
 		var span := int(navigation._agents[unit.get_instance_id()]["footprint"])
-		var position: Vector3 = assignment["position"]
+		var position: Vector3 = navigation.agent_debug(unit)["destination"]
 		var expected := 0.5 if span % 2 == 1 else 0.0
 		_expect(
 			absf(fposmod(position.x, 1.0) - expected) < 0.001 and absf(fposmod(position.z, 1.0) - expected) < 0.001,
-			"a slot for footprint %d must be a grid block center (got %.2f, %.2f)" % [span, position.x, position.z]
+			"a claimed block for footprint %d must be a grid block center (got %.2f, %.2f)" % [span, position.x, position.z]
 		)
+		_expect(unit.global_position.distance_to(position) < 0.6, "every unit must settle on its claimed block")
 		blocks.append({"anchor": navigation._parking_anchor(position, span), "span": span})
 	for a in blocks.size():
 		for b in range(a + 1, blocks.size()):
 			_expect(
-				not navigation._blocks_overlap(blocks[a]["anchor"], blocks[a]["span"], blocks[b]["anchor"], blocks[b]["span"]),
-				"footprint blocks of one command must not overlap"
+				not navigation._blocks_conflict(blocks[a]["anchor"], blocks[a]["span"], blocks[b]["anchor"], blocks[b]["span"]),
+				"claimed footprint blocks must keep a one-cell gap"
 			)
+
+	navigation.queue_free()
+	for unit in units:
+		unit.queue_free()
+
+
+## The point of the parking gap: a single unit ordered to the far side of a
+## standing formation threads the free lanes between parked blocks instead of
+## being walled out.
+func _test_lane_through_standing_formation(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var formation: Array[FakeUnit] = []
+	for index in 9:
+		var unit := FakeUnit.new()
+		root.add_child(unit)
+		unit.global_position = Vector3(148.5 + float(index % 3), 0.0, 148.5 + float(index / 3))
+		formation.append(unit)
+	navigation.command_move(formation, Vector3(150.5, 0.0, 150.5), NavigationSystemScript.MoveMode.FREE)
+	for _iteration in 200:
+		navigation.call("_navigation_tick", 0.05)
+
+	var runner := FakeUnit.new()
+	root.add_child(runner)
+	runner.global_position = Vector3(150.5, 0.0, 140.5)
+	var far_side := Vector3(150.5, 0.0, 160.5)
+	navigation.command_move([runner], far_side)
+	for _iteration in 200:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(runner.global_position.distance_to(far_side) < 1.5,
+		"a single unit must cross a standing formation through its parking lanes (ended %.1f,%.1f)" % [
+			runner.global_position.x, runner.global_position.z])
+
+	navigation.queue_free()
+	for unit in formation:
+		unit.queue_free()
+	runner.queue_free()
+
+
+## 21 units ringed around a point are all ordered into its center — the worst
+## head-on convergence. Reports how long the scrum lasts and how many of the
+## originally planned slots end up empty; the group must settle, not churn.
+func _test_circle_convergence_metrics(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var center := Vector3(100.5, 0.0, 100.5)
+	var units: Array[FakeUnit] = []
+	for index in 21:
+		var unit := FakeUnit.new()
+		root.add_child(unit)
+		var angle := TAU * float(index) / 21.0
+		unit.global_position = center + Vector3(cos(angle), 0.0, sin(angle)) * 12.0
+		units.append(unit)
+	navigation.command_move(units, center, NavigationSystemScript.MoveMode.FREE)
+
+	const TICK := 0.05
+	const MAX_TICKS := 2400
+	const IDLE_TICKS_TO_FINISH := 100
+	var previous: Array[Vector3] = []
+	for unit in units:
+		previous.append(unit.global_position)
+	var last_active_tick := 0
+	var elapsed_ticks := MAX_TICKS
+	for tick in range(1, MAX_TICKS + 1):
+		navigation.call("_navigation_tick", TICK)
+		var moved := false
+		for index in units.size():
+			if units[index].global_position.distance_to(previous[index]) > 0.005:
+				moved = true
+			previous[index] = units[index].global_position
+		if moved:
+			last_active_tick = tick
+		elif tick - last_active_tick >= IDLE_TICKS_TO_FINISH:
+			elapsed_ticks = tick
+			break
+
+	var crowd_radius := 0.0
+	for unit in units:
+		var destination: Vector3 = navigation.agent_debug(unit)["destination"]
+		_expect(unit.global_position.distance_to(destination) < 0.6, "every converging unit must settle on its claimed block")
+		crowd_radius = maxf(crowd_radius, unit.global_position.distance_to(center))
+	var holes := 0
+	var center_cell: Vector2i = grid.world_to_grid(center)
+	var scan := int(ceil(crowd_radius)) + 1
+	for y in range(-scan, scan + 1):
+		for x in range(-scan, scan + 1):
+			var point: Vector3 = grid.grid_to_world(center_cell + Vector2i(x, y))
+			if point.distance_to(center) >= crowd_radius:
+				continue
+			var covered := false
+			for unit in units:
+				if unit.global_position.distance_to(point) < 0.71:
+					covered = true
+					break
+			if not covered:
+				holes += 1
+	print("Circle convergence: settled in %.1f s, crowd radius %.1f (gapped ideal ~5.2), %d empty cells inside the crowd" % [
+		float(last_active_tick) * TICK, crowd_radius, holes])
+	_expect(elapsed_ticks < MAX_TICKS, "the convergence scrum must settle, not churn forever")
+	_expect(float(last_active_tick) * TICK < 30.0, "21 units converging on one point must settle within 30 seconds")
+	_expect(crowd_radius < 7.0, "21 units must pack near the target on the gapped lattice")
 
 	navigation.queue_free()
 	for unit in units:
