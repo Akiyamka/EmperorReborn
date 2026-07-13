@@ -241,6 +241,11 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 	_animation_players = _collect_animation_players()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
+	# Packed model scenes keep gameplay-controlled effect meshes hidden and
+	# carry no per-instance owner color. Reapply the unit's current runtime
+	# state after swapping the visual (for example during F7 snapshot restore).
+	_refresh_shield_visibility()
+	_refresh_owner_visuals()
 
 
 func set_invulnerable(value: bool) -> void:

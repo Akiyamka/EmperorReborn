@@ -35,13 +35,21 @@ func _initialize() -> void:
 	await physics_frame
 
 	var restored_building := restored.get_node_or_null("Buildings/ATSmWindtrap") as Node3D
-	var restored_unit := restored.get_node_or_null("Units/OrdosAPC") as Node3D
+	var restored_unit := restored.get_node_or_null("Units/OrdosAPC") as Unit
 	_expect(restored_building != null, "saved building should exist after restore")
 	_expect(restored_unit != null, "saved unit should exist after restore")
 	_expect(restored_building != null and restored_building.global_position.is_equal_approx(building_transform.origin), "building position should be restored")
 	_expect(restored_unit != null and restored_unit.global_position.is_equal_approx(unit_transform.origin), "unit position should be restored")
 	_expect(restored_building != null and restored_building.global_transform.basis.is_equal_approx(building_transform.basis), "building rotation should be restored")
 	_expect(restored_unit != null and restored_unit.global_transform.basis.is_equal_approx(unit_transform.basis), "unit rotation should be restored")
+	var shield_meshes := _shield_meshes(restored_unit)
+	_expect(shield_meshes.size() == 1, "restored OrdosAPC should retain its shield mesh")
+	_expect(not shield_meshes.is_empty() and shield_meshes[0].visible, "restored OrdosAPC should show its charged shield")
+	_expect(
+		not shield_meshes.is_empty()
+			and _mesh_team_color(shield_meshes[0]).is_equal_approx(restored_unit.owner_player().team_color),
+		"restored OrdosAPC visual should retain its owner's team color"
+	)
 
 	snapshot.erase()
 	restored.queue_free()
@@ -58,3 +66,19 @@ func _expect(condition: bool, message: String) -> void:
 		return
 	_failures += 1
 	printerr("FAIL: %s" % message)
+
+
+func _shield_meshes(unit: Unit) -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	if unit == null:
+		return result
+	for node in unit.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		if String(mesh.get_parent().name).to_lower().contains("shield"):
+			result.append(mesh)
+	return result
+
+
+func _mesh_team_color(mesh: MeshInstance3D) -> Color:
+	var value: Variant = mesh.get_instance_shader_parameter("team_color")
+	return value as Color if value is Color else Color.TRANSPARENT
