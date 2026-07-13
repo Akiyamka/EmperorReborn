@@ -21,7 +21,12 @@ const CELL_BUCKET_SIZE := 4.0
 ## Blocked cells must cover exactly the footprint the placement grid reserves.
 const OCCUPY_CELL_SPAN := BuildingPlacement.NAV_CELLS_PER_OCCUPY_CELL
 const SLOT_SEARCH_RADIUS := 32
-const CANDIDATE_ANGLES := [0.0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35, PI]
+const CANDIDATE_ANGLES := [0.0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35, PI / 2.0, -PI / 2.0, PI]
+## Units closer than this beyond touching distance count as in contact: they may
+## slide tangentially or separate at full speed, just not push deeper in.
+const CONTACT_BUFFER := 0.05
+## How many path cells ahead the per-tick line-of-sight waypoint skip may reach.
+const PATH_LOOKAHEAD_CELLS := 8
 
 var runtime_map = UnitNavigationMapScript.new()
 var planner = UnitNavigationPlannerScript.new()
@@ -72,6 +77,7 @@ func register_unit(unit: Node3D) -> int:
 		"pass_mask": profile["pass_mask"],
 		"terrain_mask": profile["terrain_mask"],
 		"clearance": profile["clearance"],
+		"footprint": profile["footprint"],
 		"path": [] as Array[Vector2i],
 		"path_index": 0,
 		"destination": unit.global_position,
@@ -112,6 +118,8 @@ func set_hold_position(unit: Node3D, active: bool) -> void:
 		agent["path"] = [] as Array[Vector2i]
 		agent["destination"] = unit.global_position
 		agent["exit_point"] = Vector3.INF
+		agent["yield_remaining"] = 0.0
+		agent["yield_direction"] = Vector3.ZERO
 	_agents[unit.get_instance_id()] = agent
 
 
@@ -148,6 +156,11 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		agent["blocked_time"] = 0.0
 		agent["reported_enemy"] = false
 		agent["exit_point"] = exit_point
+		# A fresh order overrides an in-progress yield; a stale yield would keep
+		# steering the unit aside and, on expiry, replace this destination with
+		# wherever the unit happens to stand.
+		agent["yield_remaining"] = 0.0
+		agent["yield_direction"] = Vector3.ZERO
 		_route_agent(agent, unit.global_position, assignment["position"])
 		_agents[unit.get_instance_id()] = agent
 		if unit.has_method("set_navigation_destination"):
@@ -173,6 +186,8 @@ func stop(unit: Node3D) -> void:
 	agent["destination"] = unit.global_position
 	agent["direct_path"] = false
 	agent["exit_point"] = Vector3.INF
+	agent["yield_remaining"] = 0.0
+	agent["yield_direction"] = Vector3.ZERO
 	_agents[unit.get_instance_id()] = agent
 
 
@@ -261,11 +276,10 @@ func _navigation_tick(delta: float) -> void:
 			if is_zero_approx(float(agent["yield_remaining"])):
 				# Yielding is intentionally one-way for now. Returning an idle unit
 				# to its former point makes units sharing a waypoint displace one
-				# another forever.
-				agent["destination"] = unit.global_position + velocity * delta
-				agent["path"] = [] as Array[Vector2i]
-				agent["path_index"] = 0
-				agent["direct_path"] = false
+				# another forever. The unit still parks on the navigation grid: it
+				# settles on the nearest free block for its footprint.
+				agent["destination"] = _snapped_parking(agent, unit.global_position + velocity * delta)
+				_route_agent(agent, unit.global_position, agent["destination"])
 		_agents[unit.get_instance_id()] = agent
 		resolved_positions[unit.get_instance_id()] = unit.global_position + velocity * delta
 		if unit.has_method("navigation_step"):
@@ -306,6 +320,17 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 			if unit.global_position.distance_to(probe) > maxf(0.35, float(agent["radius"]) * 0.4):
 				break
 			path_index += 1
+		# Also advance to the furthest waypoint in direct line of sight.
+		# Proximity alone cannot advance past a waypoint a friend is parked on
+		# (the required 0.35 approach is inside the friend's radius), and a
+		# converging group interlocks that way: everyone pushes toward a cell
+		# inside the crowd and the whole clump freezes.
+		var lookahead := mini(path_index + PATH_LOOKAHEAD_CELLS, path.size() - 1)
+		for probe_index in range(lookahead, path_index, -1):
+			var visible: Vector3 = runtime_map.grid.grid_to_world(path[probe_index])
+			if _has_clear_line(unit.global_position, visible, agent):
+				path_index = probe_index
+				break
 		agent["path_index"] = path_index
 		var waypoint: Vector3 = runtime_map.grid.grid_to_world(path[path_index])
 		waypoint.y = unit.global_position.y
@@ -353,6 +378,8 @@ func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, bucket
 	var nearby := _nearby_agents(unit.global_position, buckets)
 	var enemies: Array[Node3D] = []
 	var friends: Array[Node3D] = []
+	var desired_direction := desired.normalized()
+	var desired_speed := desired.length()
 	var best_velocity := Vector3.ZERO
 	var best_score := -INF
 	# A unit standing on building cells cannot satisfy the normal cell filter:
@@ -390,7 +417,12 @@ func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, bucket
 				elif not friends.has(other_unit):
 					friends.append(other_unit)
 		var velocity := candidate * fraction
-		var score := velocity.dot(desired.normalized()) - absf(angle) * 0.05
+		var score := velocity.dot(desired_direction) - absf(angle) * 0.05 * desired_speed
+		# A near-frozen candidate must lose to any real motion, sideways
+		# included, or a unit meeting a stopped friend halts for good instead
+		# of sliding around. Backing off still scores below standing still.
+		if fraction < 0.1:
+			score -= desired_speed
 		if score > best_score:
 			best_score = score
 			best_velocity = velocity
@@ -424,9 +456,14 @@ func _sweep_fraction(start: Vector3, displacement: Vector3, obstacle: Vector3, c
 	relative.y = 0.0
 	var motion := displacement
 	motion.y = 0.0
-	var c := relative.length_squared() - combined_radius * combined_radius
-	if c <= 0.0:
+	# The swept stop leaves a hair's gap, so a contact test on the exact radius
+	# never fires and every later step quantizes to zero, freezing groups at
+	# their first touch. Within the buffer tangential and separating motion pass
+	# at full speed; only digging deeper is forbidden.
+	var contact := combined_radius + CONTACT_BUFFER
+	if relative.length_squared() <= contact * contact:
 		return 1.0 if relative.dot(motion) >= 0.0 else 0.0
+	var c := relative.length_squared() - combined_radius * combined_radius
 	var a := motion.length_squared()
 	if a <= 0.000001:
 		return 0.0
@@ -441,47 +478,100 @@ func _sweep_fraction(start: Vector3, displacement: Vector3, obstacle: Vector3, c
 func _assign_slots(units: Array[Node3D], world_target: Vector3, mode: int) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var occupied: Array[Dictionary] = []
-	var target_cell: Vector2i = runtime_map.grid.world_to_grid(world_target)
-	var formation_spacing := _largest_diameter(units) + 0.25
+	var spacing := _largest_footprint(units)
 	for index in units.size():
 		var unit := units[index]
 		var agent: Dictionary = _agents[unit.get_instance_id()]
-		var preferred: Vector2i = target_cell
+		var span := int(agent["footprint"])
+		var preferred := _parking_anchor(world_target, span)
 		if mode == MoveMode.FORMATION:
-			preferred += _formation_offset(index, units.size(), formation_spacing)
+			preferred += _formation_offset(index, units.size(), float(spacing))
 		else:
-			preferred += _crowd_offset(index)
-		var slot_cell := _find_slot(preferred, agent, occupied)
-		var position: Vector3 = runtime_map.grid.grid_to_world(slot_cell) if slot_cell.x >= 0 else unit.global_position
+			preferred += _crowd_offset(index) * spacing
+		var anchor := _find_slot(preferred, agent, occupied)
+		var position: Vector3 = _block_center(anchor, span) if anchor.x >= 0 else unit.global_position
 		position.y = world_target.y
 		var assignment := {
 			"unit": unit,
 			"agent_id": agent["id"],
 			"slot_id": index,
 			"position": position,
-			"available": slot_cell.x >= 0,
+			"available": anchor.x >= 0,
 		}
 		result.append(assignment)
-		if slot_cell.x >= 0:
-			occupied.append({"position": position, "radius": agent["radius"]})
+		if anchor.x >= 0:
+			occupied.append({"anchor": anchor, "span": span})
 	return result
 
 
+## Ring search for a free grid-aligned footprint block: every cell of the
+## span x span block must be stoppable and the block may not overlap a block
+## already reserved in `occupied` ({anchor, span} entries).
 func _find_slot(preferred: Vector2i, agent: Dictionary, occupied: Array[Dictionary]) -> Vector2i:
+	var span := int(agent["footprint"])
 	for radius in range(0, SLOT_SEARCH_RADIUS + 1):
 		for offset in _ring_offsets(radius):
-			var cell := preferred + offset
-			if not runtime_map.is_stoppable(cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+			var anchor := preferred + offset
+			if not _block_stoppable(anchor, span, agent):
 				continue
-			var point: Vector3 = runtime_map.grid.grid_to_world(cell)
 			var free := true
 			for other in occupied:
-				if point.distance_to(other["position"]) < float(agent["radius"]) + float(other["radius"]):
+				if _blocks_overlap(anchor, span, other["anchor"], int(other["span"])):
 					free = false
 					break
 			if free:
-				return cell
+				return anchor
 	return Vector2i(-1, -1)
+
+
+func _block_stoppable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
+	for y in span:
+		for x in span:
+			if not runtime_map.is_stoppable(anchor + Vector2i(x, y), int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+				return false
+	return true
+
+
+func _blocks_overlap(a: Vector2i, a_span: int, b: Vector2i, b_span: int) -> bool:
+	return a.x < b.x + b_span and b.x < a.x + a_span and a.y < b.y + b_span and b.y < a.y + a_span
+
+
+## World center of a span x span cell block anchored at its lowest cell. For
+## even spans the center sits on the shared cell corner.
+func _block_center(anchor: Vector2i, span: int) -> Vector3:
+	var center: Vector3 = runtime_map.grid.grid_to_world(anchor)
+	var cell: Vector2 = runtime_map.grid.cell_size()
+	var shift := float(span - 1) * 0.5
+	return center + Vector3(cell.x * shift, 0.0, cell.y * shift)
+
+
+## Anchor cell of the block whose center lies nearest to `point`.
+func _parking_anchor(point: Vector3, span: int) -> Vector2i:
+	var cell: Vector2 = runtime_map.grid.cell_size()
+	var shift := float(span - 1) * 0.5
+	return runtime_map.grid.world_to_grid(point - Vector3(cell.x * shift, 0.0, cell.y * shift))
+
+
+## Nearest free grid-aligned block center for the agent, avoiding every other
+## agent's reserved parking block. Falls back to `point` when nothing is free.
+func _snapped_parking(agent: Dictionary, point: Vector3) -> Vector3:
+	var span := int(agent["footprint"])
+	var occupied: Array[Dictionary] = []
+	for key in _agents:
+		var other: Dictionary = _agents[key]
+		if int(other["id"]) == int(agent["id"]):
+			continue
+		var other_span := int(other["footprint"])
+		occupied.append({
+			"anchor": _parking_anchor(other["destination"], other_span),
+			"span": other_span,
+		})
+	var anchor := _find_slot(_parking_anchor(point, span), agent, occupied)
+	if anchor.x < 0:
+		return point
+	var parked := _block_center(anchor, span)
+	parked.y = point.y
+	return parked
 
 
 func _ring_offsets(radius: int) -> Array[Vector2i]:
@@ -580,7 +670,10 @@ func _profile_for(unit: Node3D) -> Dictionary:
 	var clearance := maxi(0, int(ceil(radius / maxf(minf(cell_size.x, cell_size.y), 0.001))) - 1)
 	var pass_mask := MapNavigationGrid.PASS_AIR if can_fly else (MapNavigationGrid.PASS_INFANTRY if infantry else MapNavigationGrid.PASS_VEHICLE)
 	var terrain_mask := _terrain_mask(config.list(&"terrain") if config != null else [])
-	return {"radius": radius, "clearance": clearance, "pass_mask": pass_mask, "terrain_mask": terrain_mask}
+	# `size` is the side of the unit's square footprint in navigation cells;
+	# destinations are always the center of a free size x size cell block.
+	var footprint := maxi(1, roundi(size))
+	return {"radius": radius, "clearance": clearance, "pass_mask": pass_mask, "terrain_mask": terrain_mask, "footprint": footprint}
 
 
 func _terrain_mask(names: Array) -> int:
@@ -647,13 +740,13 @@ func _replan_after_map_change() -> void:
 		if int(agent["command_id"]) <= 0:
 			continue
 		var destination: Vector3 = agent["destination"]
-		var destination_cell: Vector2i = runtime_map.grid.world_to_grid(destination)
-		if not runtime_map.is_stoppable(destination_cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
-			var replacement: Vector2i = runtime_map.nearest_passable(
-				destination_cell, int(agent["pass_mask"]), int(agent["clearance"]), SLOT_SEARCH_RADIUS, int(agent["terrain_mask"]), true
-			)
+		var span := int(agent["footprint"])
+		if not _block_stoppable(_parking_anchor(destination, span), span, agent):
+			var replacement := _find_slot(_parking_anchor(destination, span), agent, [])
 			if replacement.x >= 0:
-				destination = runtime_map.grid.grid_to_world(replacement)
+				var height := destination.y
+				destination = _block_center(replacement, span)
+				destination.y = height
 				agent["destination"] = destination
 				agent["original_destination"] = destination
 				var command_id := int(agent["command_id"])
@@ -697,12 +790,12 @@ func _slowest_speed(units: Array[Node3D]) -> float:
 	return speed
 
 
-func _largest_diameter(units: Array[Node3D]) -> float:
-	var diameter := 1.0
+func _largest_footprint(units: Array[Node3D]) -> int:
+	var span := 1
 	for unit in units:
 		var agent: Dictionary = _agents[unit.get_instance_id()]
-		diameter = maxf(diameter, float(agent["radius"]) * 2.0)
-	return diameter
+		span = maxi(span, int(agent["footprint"]))
+	return span
 
 
 func _on_tree_node_added(node: Node) -> void:

@@ -40,7 +40,12 @@ func _initialize() -> void:
 	_test_interior_escape(grid)
 	_test_immediate_movement(grid)
 	_test_slots_and_collision(grid)
+	_test_slide_around_stopped_friend(grid)
+	_test_group_convergence(grid)
+	_test_group_rounds_sharp_corner(grid)
 	_test_yield_does_not_return(grid)
+	_test_command_overrides_yield(grid)
+	_test_grid_aligned_slots(grid)
 	if _failures > 0:
 		printerr("Unit navigation tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
@@ -251,6 +256,59 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 	right.queue_free()
 
 
+## A stationary friend sitting exactly on the route must be flowed around, not
+## treated as a dead end: contact quantizing every candidate to zero used to
+## freeze both units at their first touch.
+func _test_slide_around_stopped_friend(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var blocker := FakeUnit.new()
+	var runner := FakeUnit.new()
+	root.add_child(blocker)
+	root.add_child(runner)
+	blocker.global_position = Vector3(105.0, 0.0, 100.0)
+	runner.global_position = Vector3(100.0, 0.0, 100.0)
+	navigation.register_unit(blocker)
+	var destination := Vector3(110.0, 0.0, 100.0)
+	navigation.command_move([runner], destination)
+	for _iteration in 100:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(runner.global_position.distance_to(destination) < 1.0, "a unit must slide around a stopped friend on its route")
+
+	navigation.queue_free()
+	blocker.queue_free()
+	runner.queue_free()
+
+
+## The reported field failure: a group ordered to one point jams at its first
+## internal contact. Every unit must keep flowing and settle on its own slot.
+func _test_group_convergence(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+	var units: Array[FakeUnit] = []
+	for index in 6:
+		var unit := FakeUnit.new()
+		root.add_child(unit)
+		unit.global_position = Vector3(40.0 + float(index % 3), 0.0, 40.0 + float(index / 3))
+		units.append(unit)
+	var assignments := navigation.command_move(units, Vector3(60.0, 0.0, 60.0), NavigationSystemScript.MoveMode.FREE)
+	for _iteration in 400:
+		navigation.call("_navigation_tick", 0.05)
+	for assignment in assignments:
+		var unit: Node3D = assignment["unit"]
+		var slot: Vector3 = assignment["position"]
+		_expect(unit.global_position.distance_to(slot) < 2.0, "every unit of a converging group must reach its slot instead of jamming on contact")
+
+	navigation.queue_free()
+	for unit in units:
+		unit.queue_free()
+
+
 func _test_yield_does_not_return(grid: MapNavigationGrid) -> void:
 	var navigation := NavigationSystemScript.new()
 	root.add_child(navigation)
@@ -265,10 +323,124 @@ func _test_yield_does_not_return(grid: MapNavigationGrid) -> void:
 	for _iteration in 20:
 		navigation.call("_navigation_tick", 0.05)
 	var displaced_position := unit.global_position
-	_expect(displaced_position.x > 123.5, "a yielded unit must move aside")
+	_expect(displaced_position.x > 123.0, "a yielded unit must move aside")
+	var parked: Vector3 = navigation.agent_debug(unit)["destination"]
+	_expect(
+		absf(fposmod(parked.x, 1.0) - 0.5) < 0.001 and absf(fposmod(parked.z, 1.0) - 0.5) < 0.001,
+		"a yielded unit must park on a grid cell center (got %.2f, %.2f)" % [parked.x, parked.z]
+	)
 	for _iteration in 40:
 		navigation.call("_navigation_tick", 0.05)
 	_expect(unit.global_position.distance_to(displaced_position) < 0.01, "a yielded unit must not return to its former destination")
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## A packed group routed around a sharp wall tip: every unit's A* path runs
+## through the same corridor, so waypoints land inside the moving crowd. If a
+## waypoint can only be advanced by physical proximity, a friend parked on it
+## pins the follower forever and the clump interlocks; line-of-sight waypoint
+## skipping must keep the whole group flowing around the corner.
+func _test_group_rounds_sharp_corner(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+	var walls := {}
+	for x in range(40, 121):
+		walls[Vector2i(x, 100)] = true
+	navigation.runtime_map.replace_blocked_cells(walls)
+
+	var units: Array[FakeUnit] = []
+	for index in 20:
+		var unit := FakeUnit.new()
+		root.add_child(unit)
+		unit.global_position = Vector3(60.0 + float(index % 5), 0.0, 90.0 + float(index / 5))
+		units.append(unit)
+	var assignments := navigation.command_move(units, Vector3(60.5, 0.0, 140.5), NavigationSystemScript.MoveMode.FREE)
+	for _iteration in 1200:
+		navigation.call("_navigation_tick", 0.05)
+	for assignment in assignments:
+		var unit: Node3D = assignment["unit"]
+		var slot: Vector3 = assignment["position"]
+		# One-way yields may nudge an arrived unit a few cells off its exact
+		# slot; the guarded failure mode leaves units ~40+ cells behind.
+		_expect(unit.global_position.distance_to(slot) < 10.0,
+			"no unit of a group rounding a sharp corner may be left behind in a jam (dist %.1f, pos %.1f,%.1f slot %.1f,%.1f)" % [
+				unit.global_position.distance_to(slot), unit.global_position.x, unit.global_position.z, slot.x, slot.z])
+
+	navigation.queue_free()
+	for unit in units:
+		unit.queue_free()
+
+
+## Destinations are always the center of a free `size x size` cell block: odd
+## footprints center on a cell, even footprints on a shared cell corner, and
+## the blocks of one command never overlap.
+func _test_grid_aligned_slots(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var units: Array[Node3D] = []
+	for index in 3:
+		var small := FakeUnit.new(1.0)
+		root.add_child(small)
+		small.global_position = Vector3(140.0 + float(index), 0.0, 140.0)
+		units.append(small)
+	for index in 2:
+		var large := FakeUnit.new(2.0)
+		root.add_child(large)
+		large.global_position = Vector3(140.0 + float(index) * 2.0, 0.0, 143.0)
+		units.append(large)
+	var assignments := navigation.command_move(units, Vector3(150.7, 0.0, 150.2), NavigationSystemScript.MoveMode.FREE)
+
+	var blocks: Array[Dictionary] = []
+	for assignment in assignments:
+		var unit: Node3D = assignment["unit"]
+		var span := int(navigation._agents[unit.get_instance_id()]["footprint"])
+		var position: Vector3 = assignment["position"]
+		var expected := 0.5 if span % 2 == 1 else 0.0
+		_expect(
+			absf(fposmod(position.x, 1.0) - expected) < 0.001 and absf(fposmod(position.z, 1.0) - expected) < 0.001,
+			"a slot for footprint %d must be a grid block center (got %.2f, %.2f)" % [span, position.x, position.z]
+		)
+		blocks.append({"anchor": navigation._parking_anchor(position, span), "span": span})
+	for a in blocks.size():
+		for b in range(a + 1, blocks.size()):
+			_expect(
+				not navigation._blocks_overlap(blocks[a]["anchor"], blocks[a]["span"], blocks[b]["anchor"], blocks[b]["span"]),
+				"footprint blocks of one command must not overlap"
+			)
+
+	navigation.queue_free()
+	for unit in units:
+		unit.queue_free()
+
+
+## Jostling units carry a constantly refreshed yield. A fresh move order must
+## cancel it: a stale yield steers the unit aside and, on expiry, replaces the
+## ordered destination with wherever the unit stands — the order is ignored.
+func _test_command_overrides_yield(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var unit := FakeUnit.new()
+	root.add_child(unit)
+	unit.global_position = Vector3(120.5, 0.0, 120.5)
+	navigation.command_move([unit], unit.global_position)
+	navigation.call("_request_yield", unit, Vector3.RIGHT)
+	for _iteration in 4:
+		navigation.call("_navigation_tick", 0.05)
+	var destination := Vector3(130.5, 0.0, 130.5)
+	navigation.command_move([unit], destination)
+	for _iteration in 100:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(unit.global_position.distance_to(destination) < 1.0, "an order issued mid-yield must still be executed")
 
 	navigation.queue_free()
 	unit.queue_free()

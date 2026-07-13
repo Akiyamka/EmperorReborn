@@ -110,7 +110,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		var direction := offset.normalized()
 		velocity = direction * move_speed * _slope_speed_multiplier(direction, delta)
-		look_at(global_position + velocity, Vector3.UP)
+		look_at(global_position + direction, Vector3.UP)
 
 	_set_movement_animation(not velocity.is_zero_approx(), _movement_animation_speed_scale())
 	move_and_slide()
@@ -157,8 +157,11 @@ func set_navigation_destination(world_position: Vector3) -> void:
 
 func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 	velocity = Vector3(horizontal_velocity.x, 0.0, horizontal_velocity.z)
-	if not velocity.is_zero_approx():
-		look_at(global_position + velocity, Vector3.UP)
+	# Crowded units receive tiny non-zero velocities from collision resolution;
+	# look_at needs a target clearly distinct from the origin, so aim one meter
+	# along the normalized direction and skip negligible motion entirely.
+	if velocity.length_squared() > 0.000001:
+		look_at(global_position + velocity.normalized(), Vector3.UP)
 	_set_movement_animation(not velocity.is_zero_approx(), _movement_animation_speed_scale())
 	# Unit/unit collision has already been resolved centrally as swept discs.
 	# Applying the exact fixed navigation delta avoids depending on physics-frame
