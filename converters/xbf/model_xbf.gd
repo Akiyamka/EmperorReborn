@@ -100,6 +100,10 @@ func _parse_animation_entries(bytes: PackedByteArray) -> Array[Dictionary]:
 			"flag1": _i32_le(bytes, offset + 32),
 			"flag2": _i32_le(bytes, offset + 36),
 			"unknown1": _i32_le(bytes, offset + 40),
+			# Non-zero values select an independently animated top-level object.
+			# AT Refinery uses 3/4 for ~~3SmallPad01/~~4SmallPad02, so its two
+			# pad clips must not inherit each other's transform tracks.
+			"target_object_id": _i32_le(bytes, offset + 44),
 			"zero2": _i32_le(bytes, offset + 44),
 			"flag3": bytes[offset + 48],
 			"pad": bytes.slice(offset + 49, offset + 52),

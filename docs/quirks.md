@@ -65,6 +65,24 @@ referenced effects rather than placeholder meshes.
 
 ## Building models
 
+### Atreides Refinery H0 contains two broken geometry components
+
+**Observed data:** The shipped `at_refinery_h0.xbf` contains two disconnected
+geometry components inside the merged `at_refinery` object that are not part
+of the intended refinery model. After the converter deterministically splits
+that object by triangle connectivity, these components are `Mesh_03` and
+`Mesh_10`.
+
+**Original-engine quirk:** The erroneous components are present in the
+original model asset. They are an asset defect rather than geometry from a
+valid refinery state.
+
+**EmperorReborn compatibility decision:** Preserve both components in the
+converted scene for source fidelity, but mark them with the
+`source_asset_quirk = "broken_geometry"` metadata and keep them hidden. The
+remaining idle geometry and the independently controlled left and right
+SmallPad animations are unaffected.
+
 ### Two building art names differ from their H0 filenames
 
 **Observed data:** The `INGUCyclopseHouse` art entry names its model

@@ -204,6 +204,11 @@ func _state_source_animation(state_node: Node3D) -> Animation:
 	var player := state_node.get_node_or_null("AnimationPlayer") as AnimationPlayer
 	if player == null:
 		return null
+	# H0 can also contain action clips for independently controlled building
+	# parts. The idle state must use the authored Stationary clip, never a
+	# longer pad/door/action clip selected merely by duration.
+	if String(state_node.get_meta("state", "")) == "idle" and player.has_animation("Stationary"):
+		return player.get_animation("Stationary")
 	# "timeline" is the raw, unsliced union track ModelBakeBuilder always
 	# produces as a slicing source; every other clip name comes straight from
 	# the source xbf's own FX animation table (e.g. "Stationary", "Explode",

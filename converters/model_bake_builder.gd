@@ -26,6 +26,11 @@ const TEXTURE_PREFIX_MARKERS := "=@!%&"
 const SUPPRESSED_MISSING_TEXTURES := {
 	"at_wt_front64.tga": true,
 }
+const HIDDEN_SOURCE_MESH_COMPONENTS := {
+	"at_refinery_h0.xbf": {
+		"at_refinery": {3: true, 10: true},
+	},
+}
 
 var missing_textures: PackedStringArray = []
 var copied_textures: PackedStringArray = []
@@ -41,9 +46,11 @@ var _scrolling_texture_shaders := {}
 var _shield_shader: Shader
 var _has_shield_fx_marker := false
 var _muzzle_flash_mesh_paths := PackedStringArray()
+var _source_file_name := ""
 
 
 func build(xbf_path: String) -> PackedScene:
+	_source_file_name = xbf_path.get_file().to_lower()
 	missing_textures = PackedStringArray()
 	copied_textures = PackedStringArray()
 	_material_cache.clear()
@@ -69,6 +76,7 @@ func build(xbf_path: String) -> PackedScene:
 	anim.resource_name = "idle"
 	anim.loop_mode = Animation.LOOP_LINEAR
 	var max_frame := 1
+	var clip_target_paths := _clip_target_paths(xbf.objects, xbf.animation_entries)
 
 	for object in xbf.objects:
 		var child := _build_object_node(object, xbf.textures, ".", anim)
@@ -85,7 +93,7 @@ func build(xbf_path: String) -> PackedScene:
 		_add_shader_fx_tracks(anim)
 		var library := AnimationLibrary.new()
 		for entry: Dictionary in xbf.animation_entries:
-			var clip := _slice_animation(anim, entry)
+			var clip := _slice_animation(anim, entry, clip_target_paths)
 			if clip != null:
 				library.add_animation(_clip_name(String(entry["name"])), clip)
 		_add_timeline_muzzle_flash_visibility(anim, xbf.animation_entries)
@@ -132,25 +140,39 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 	var child_path: String = "%s/%s" % [node_path, node.name] if node_path != "." else node.name
 	_add_animation_track(anim, child_path, object)
 
-	var mesh := _build_object_mesh(object, texture_names)
-	if mesh.get_surface_count() > 0:
+	var meshes := _build_object_mesh_components(object, texture_names)
+	for mesh_index in meshes.size():
+		var mesh: ArrayMesh = meshes[mesh_index]
+		if mesh.get_surface_count() == 0:
+			continue
 		var mesh_instance := MeshInstance3D.new()
-		mesh_instance.name = "Mesh"
+		mesh_instance.name = "Mesh" if meshes.size() == 1 else "Mesh_%02d" % mesh_index
 		mesh_instance.mesh = mesh
 		# #~~0 is an authored collision volume, not visible model geometry.
 		# Keep its mesh in the converted scene so Unit and Building can make
 		# the matching physics shape at runtime.
 		var is_muzzle_flash := _is_muzzle_flash_object(raw_name)
-		mesh_instance.visible = not (_is_effect_object(raw_name) or is_muzzle_flash or raw_name == COLLISION_OBJECT_NAME)
+		var hidden_source_component := _is_hidden_source_mesh_component(raw_name, mesh_index)
+		mesh_instance.visible = not (
+			_is_effect_object(raw_name)
+			or is_muzzle_flash
+			or raw_name == COLLISION_OBJECT_NAME
+			or hidden_source_component
+		)
+		if hidden_source_component:
+			mesh_instance.set_meta("source_asset_quirk", "broken_geometry")
 		if raw_name == COLLISION_OBJECT_NAME:
 			mesh_instance.set_meta("collision_mesh", true)
 		node.add_child(mesh_instance)
+		var mesh_path := "%s/%s" % [child_path, mesh_instance.name]
 		if is_muzzle_flash:
-			_muzzle_flash_mesh_paths.append("%s/Mesh" % child_path)
-		_add_vertex_animation_track(anim, "%s/Mesh" % child_path, object, texture_names)
+			_muzzle_flash_mesh_paths.append(mesh_path)
+		# Vertex-animated objects deliberately remain a single component, so
+		# each animation frame can still replace one complete ArrayMesh.
+		_add_vertex_animation_track(anim, mesh_path, object, texture_names)
 		var atlas_frames := _mesh_animated_frame_count(mesh)
 		if atlas_frames > 1:
-			_pending_frame_tracks.append({"path": "%s/Mesh" % child_path, "frames": atlas_frames})
+			_pending_frame_tracks.append({"path": mesh_path, "frames": atlas_frames})
 		if _mesh_has_scrolling_texture(mesh):
 			# A scrolling UV phase has to keep advancing continuously while the
 			# model is on screen; a baked animation track would snap back to 0
@@ -171,6 +193,77 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		node.add_child(child)
 
 	return node
+
+
+func _is_hidden_source_mesh_component(object_name: String, mesh_index: int) -> bool:
+	var source_quirks: Dictionary = HIDDEN_SOURCE_MESH_COMPONENTS.get(_source_file_name, {})
+	var hidden_components: Dictionary = source_quirks.get(object_name.to_lower(), {})
+	return bool(hidden_components.get(mesh_index, false))
+
+
+func _build_object_mesh_components(object: Dictionary, texture_names: PackedStringArray) -> Array[ArrayMesh]:
+	# A number of building H0 files collapse otherwise independent authored
+	# parts into one XBF object. AT Refinery's shell is the prominent case: 25
+	# disconnected pieces became one 16-surface MeshInstance. Keep animated
+	# vertex layouts intact, but restore static disconnected parts as separate
+	# meshes while retaining every material surface within its own part.
+	var unsplit: Array[ArrayMesh] = [_build_object_mesh(object, texture_names)]
+	var raw_name := String(object.name)
+	if (
+		not (object.vertex_animation as Dictionary).is_empty()
+		or raw_name.begins_with("#")
+		or _is_muzzle_flash_object(raw_name)
+		or _is_effect_object(raw_name)
+	):
+		return unsplit
+
+	var components: Array[PackedInt32Array] = _triangle_components(object.triangle_indices)
+	if components.size() <= 1:
+		return unsplit
+
+	var meshes: Array[ArrayMesh] = []
+	for triangle_ids: PackedInt32Array in components:
+		meshes.append(_build_object_mesh(object, texture_names, PackedVector3Array(), triangle_ids))
+	return meshes
+
+
+func _triangle_components(indices: PackedInt32Array) -> Array[PackedInt32Array]:
+	var triangle_count := indices.size() / 3
+	if triangle_count <= 1:
+		var trivial: Array[PackedInt32Array] = []
+		if triangle_count == 1:
+			trivial.append(PackedInt32Array([0]))
+		return trivial
+
+	var triangles_by_vertex := {}
+	for triangle_index in triangle_count:
+		for corner in 3:
+			var vertex_index := indices[triangle_index * 3 + corner]
+			var adjacent: PackedInt32Array = triangles_by_vertex.get(vertex_index, PackedInt32Array())
+			adjacent.append(triangle_index)
+			triangles_by_vertex[vertex_index] = adjacent
+
+	var visited := PackedByteArray()
+	visited.resize(triangle_count)
+	var components: Array[PackedInt32Array] = []
+	for seed in triangle_count:
+		if visited[seed] != 0:
+			continue
+		var component := PackedInt32Array()
+		var pending := PackedInt32Array([seed])
+		visited[seed] = 1
+		while not pending.is_empty():
+			var triangle_index := pending[pending.size() - 1]
+			pending.resize(pending.size() - 1)
+			component.append(triangle_index)
+			for corner in 3:
+				var vertex_index := indices[triangle_index * 3 + corner]
+				for neighbor: int in triangles_by_vertex[vertex_index]:
+					if visited[neighbor] == 0:
+						visited[neighbor] = 1
+						pending.append(neighbor)
+		components.append(component)
+	return components
 
 
 func _object_bounds(positions: PackedVector3Array) -> AABB:
@@ -211,7 +304,12 @@ func _assign_scene_owner(node: Node, scene_root: Node) -> void:
 		_assign_scene_owner(child, scene_root)
 
 
-func _build_object_mesh(object: Dictionary, texture_names: PackedStringArray, animated_positions := PackedVector3Array()) -> ArrayMesh:
+func _build_object_mesh(
+		object: Dictionary,
+		texture_names: PackedStringArray,
+		animated_positions := PackedVector3Array(),
+		triangle_ids := PackedInt32Array()
+	) -> ArrayMesh:
 	var surfaces := {}
 	var positions: PackedVector3Array = animated_positions if not animated_positions.is_empty() else object.positions
 	var normals: PackedVector3Array = object.normals
@@ -219,7 +317,12 @@ func _build_object_mesh(object: Dictionary, texture_names: PackedStringArray, an
 	var triangle_textures: PackedInt32Array = object.triangle_textures
 	var uvs: PackedVector2Array = object.triangle_uvs
 
-	for i in triangle_textures.size():
+	var selected_triangles := triangle_ids
+	if selected_triangles.is_empty():
+		selected_triangles.resize(triangle_textures.size())
+		for triangle_index in triangle_textures.size():
+			selected_triangles[triangle_index] = triangle_index
+	for i in selected_triangles:
 		var texture_index := triangle_textures[i]
 		if texture_index == -1:
 			continue
@@ -1026,7 +1129,7 @@ func _add_timeline_muzzle_flash_visibility(anim: Animation, animation_entries: A
 			anim.track_insert_key(track, minf(end_time, anim.length), false)
 
 
-func _slice_animation(source: Animation, entry: Dictionary) -> Animation:
+func _slice_animation(source: Animation, entry: Dictionary, target_paths := {}) -> Animation:
 	var start_frame := int(entry.get("start_frame", 0))
 	var end_frame := int(entry.get("end_frame", 0))
 	if end_frame < start_frame:
@@ -1038,8 +1141,11 @@ func _slice_animation(source: Animation, entry: Dictionary) -> Animation:
 	clip.resource_name = _clip_name(String(entry["name"]))
 	clip.length = maxf((end_frame - start_frame + 1) / fps, 1.0 / fps)
 	clip.loop_mode = Animation.LOOP_LINEAR if _is_looping_clip(clip.resource_name) else Animation.LOOP_NONE
+	var target_object_id := int(entry.get("target_object_id", entry.get("zero2", 0)))
 
 	for source_track in source.get_track_count():
+		if not _clip_uses_track(source.track_get_path(source_track), target_object_id, target_paths):
+			continue
 		var track := clip.add_track(source.track_get_type(source_track))
 		clip.track_set_path(track, source.track_get_path(source_track))
 		clip.track_set_interpolation_type(track, source.track_get_interpolation_type(source_track))
@@ -1058,6 +1164,50 @@ func _slice_animation(source: Animation, entry: Dictionary) -> Animation:
 			)
 	_add_clip_muzzle_flash_visibility(clip, String(entry.get("name", "")), source, start_time, end_time)
 	return clip
+
+
+func _clip_target_paths(objects: Array[Dictionary], animation_entries: Array[Dictionary]) -> Dictionary:
+	var referenced_ids := {}
+	for entry: Dictionary in animation_entries:
+		var target_id := int(entry.get("target_object_id", entry.get("zero2", 0)))
+		if target_id > 0:
+			referenced_ids[target_id] = true
+
+	var paths := {}
+	for object: Dictionary in objects:
+		var target_id := _top_level_target_id(String(object.name))
+		if target_id > 0 and referenced_ids.has(target_id):
+			paths[target_id] = _safe_node_name(String(object.name))
+	return paths
+
+
+func _top_level_target_id(object_name: String) -> int:
+	if not object_name.begins_with("~~"):
+		return 0
+	var end := 2
+	while end < object_name.length():
+		var code := object_name.unicode_at(end)
+		if code < 48 or code > 57:
+			break
+		end += 1
+	return int(object_name.substr(2, end - 2)) if end > 2 else 0
+
+
+func _clip_uses_track(track_path: NodePath, target_object_id: int, target_paths: Dictionary) -> bool:
+	if target_paths.is_empty():
+		return true
+	var node_path := String(track_path).get_slice(":", 0)
+	if target_object_id > 0 and target_paths.has(target_object_id):
+		return _path_is_within(node_path, String(target_paths[target_object_id]))
+	if target_object_id == 0:
+		for target_path: String in target_paths.values():
+			if _path_is_within(node_path, target_path):
+				return false
+	return true
+
+
+func _path_is_within(node_path: String, root_path: String) -> bool:
+	return node_path == root_path or node_path.begins_with(root_path + "/")
 
 
 func _add_clip_muzzle_flash_visibility(clip: Animation, clip_name: String, source: Animation, start_time: float, end_time: float) -> void:

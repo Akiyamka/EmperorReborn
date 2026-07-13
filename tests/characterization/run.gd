@@ -35,6 +35,7 @@ func _initialize() -> void:
 	_run_case("TechnologyTree unit requirements", _test_technology_tree_unit_requirements)
 	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case("AT Refinery independent pads and mesh components", _test_at_refinery_partitioning)
 	_run_case("Muzzle flash clip visibility", _test_muzzle_flash_clip_visibility)
 
 	if _failures > 0:
@@ -382,6 +383,78 @@ func _test_xbf_animation_table_variants() -> bool:
 			names.append(String(entry.get("name", "")))
 		_expect(names.has("Stationary"), "%s must expose Stationary" % file_name)
 	return true
+
+
+func _test_at_refinery_partitioning() -> bool:
+	var path := "res://assets/raw_original_content/3DDATA/Buildings/at_refinery_h0.xbf"
+	var xbf = ModelXbfScript.load_file(path)
+	_expect(xbf != null, "AT Refinery H0 must parse")
+	if xbf == null:
+		return true
+	var target_ids: Array[int] = []
+	for entry: Dictionary in xbf.animation_entries:
+		target_ids.append(int(entry.get("target_object_id", 0)))
+	_expect(target_ids == [0, 3, 4], "AT Refinery clips must retain their Stationary/left-pad/right-pad targets")
+
+	var builder = ModelBakeBuilderScript.new()
+	var scene: PackedScene = builder.build(path)
+	_expect(scene != null, "AT Refinery H0 must build")
+	if scene == null:
+		return true
+	var root: Node = scene.instantiate()
+	var player := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	_expect(player != null, "AT Refinery must contain an AnimationPlayer")
+	if player != null:
+		var stationary_paths := _transform_track_paths(player.get_animation(&"Stationary"))
+		var left_pad_paths := _transform_track_paths(player.get_animation(&"Refinery_Pad_1"))
+		var right_pad_paths := _transform_track_paths(player.get_animation(&"Refinery_Pad_2"))
+		_expect(stationary_paths.all(func(value: String) -> bool: return not value.contains("SmallPad")), "Stationary must not move either SmallPad")
+		_expect(left_pad_paths.size() == 1 and left_pad_paths[0].contains("_3SmallPad01"), "Refinery Pad 1 must move only the left SmallPad")
+		_expect(right_pad_paths.size() == 1 and right_pad_paths[0].contains("_4SmallPad02"), "Refinery Pad 2 must move only the right SmallPad")
+
+	var shell := root.find_child("at_refinery", true, false)
+	var shell_meshes: Array[MeshInstance3D] = []
+	if shell != null:
+		for child in shell.get_children():
+			if child is MeshInstance3D:
+				shell_meshes.append(child as MeshInstance3D)
+	_expect(shell_meshes.size() > 1, "the disconnected idle shell must not remain one giant MeshInstance")
+	var triangle_count := 0
+	var maximum_surfaces := 0
+	for mesh_instance in shell_meshes:
+		maximum_surfaces = maxi(maximum_surfaces, mesh_instance.mesh.get_surface_count())
+		for surface_index in mesh_instance.mesh.get_surface_count():
+			var arrays := mesh_instance.mesh.surface_get_arrays(surface_index)
+			triangle_count += (arrays[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
+	_expect(triangle_count == 373, "splitting the idle shell must preserve all 373 authored triangles")
+	_expect(maximum_surfaces < 16, "build/material groups must no longer collapse into one 16-surface idle mesh")
+	var broken_mesh_03 := shell.get_node_or_null("Mesh_03") as MeshInstance3D if shell != null else null
+	var broken_mesh_10 := shell.get_node_or_null("Mesh_10") as MeshInstance3D if shell != null else null
+	_expect(broken_mesh_03 != null and not broken_mesh_03.visible, "the shipped broken AT Refinery Mesh_03 must stay hidden")
+	_expect(broken_mesh_10 != null and not broken_mesh_10.visible, "the shipped broken AT Refinery Mesh_10 must stay hidden")
+	_expect(
+		broken_mesh_03 != null and broken_mesh_03.get_meta("source_asset_quirk", "") == "broken_geometry",
+		"hidden Mesh_03 must document why it is suppressed in the converted scene"
+	)
+	_expect(
+		broken_mesh_10 != null and broken_mesh_10.get_meta("source_asset_quirk", "") == "broken_geometry",
+		"hidden Mesh_10 must document why it is suppressed in the converted scene"
+	)
+	root.free()
+	return true
+
+
+func _transform_track_paths(animation: Animation) -> Array[String]:
+	var paths: Array[String] = []
+	if animation == null:
+		return paths
+	for track_index in animation.get_track_count():
+		if animation.track_get_type(track_index) != Animation.TYPE_VALUE:
+			continue
+		var path := String(animation.track_get_path(track_index))
+		if path.ends_with(":transform"):
+			paths.append(path)
+	return paths
 
 
 func _test_muzzle_flash_clip_visibility() -> bool:
