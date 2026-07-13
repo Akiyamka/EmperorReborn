@@ -32,6 +32,16 @@ const SWAP_COOLDOWN_TICKS := 10
 ## Free cells kept between parked footprints, so a standing formation stays
 ## permeable: small units can thread the lanes between the parking blocks.
 const PARKING_GAP_CELLS := 1
+## How far ahead local steering checks candidate lanes. A one-tick sweep starts
+## turning only at contact, which makes a legitimate detour look like phasing.
+const STEERING_LOOKAHEAD_SECONDS := 0.4
+## Speed factor for squeezing through friends when steering is walled in.
+const SQUEEZE_SPEED_FACTOR := 0.5
+## Push speed per unit of overlap depth. Its cap stays below squeeze speed so a
+## determined unit can force its way through instead of reaching an overlap
+## equilibrium, while idle overlaps are still expelled as soon as room opens.
+const SEPARATION_STIFFNESS := 2.5
+const SEPARATION_MAX_SPEED_FACTOR := 0.35
 
 var runtime_map = UnitNavigationMapScript.new()
 var planner = UnitNavigationPlannerScript.new()
@@ -100,7 +110,6 @@ func register_unit(unit: Node3D) -> int:
 		"claim_radius": 0.0,
 		"claim_center": unit.global_position,
 		"swap_tick": -1000,
-		"last_desired": Vector3.ZERO,
 	}
 	_agents[key] = agent
 	_next_agent_id += 1
@@ -286,12 +295,19 @@ func _navigation_tick(delta: float) -> void:
 		_try_claim_slot(agent)
 	_uncross_assignments(ordered)
 	var buckets := _build_spatial_hash(ordered)
+	var largest_radius := 0.0
+	for value in ordered:
+		largest_radius = maxf(largest_radius, float(value["radius"]))
 	var resolved_positions: Dictionary = {}
 	for agent in ordered:
 		var unit: Node3D = agent["unit"]
 		var desired := _desired_velocity(agent)
-		agent["last_desired"] = desired
-		var result := _resolve_velocity(agent, desired, delta, buckets, resolved_positions)
+		var nearby := _nearby_agents(
+			unit.global_position,
+			buckets,
+			float(agent["radius"]) + largest_radius
+		)
+		var result := _resolve_velocity(agent, desired, delta, nearby, resolved_positions)
 		var velocity: Vector3 = result["velocity"]
 		if desired.length_squared() > 0.01 and velocity.length_squared() < 0.01:
 			agent["blocked_time"] = float(agent["blocked_time"]) + delta
@@ -322,6 +338,20 @@ func _navigation_tick(delta: float) -> void:
 					agent["destination"] = _snapped_parking(agent, unit.global_position + velocity * delta)
 					agent["reserved"] = true
 					_route_agent(agent, unit.global_position, agent["destination"])
+		# Elastic overlap resolution: overlapping units keep pushing on each
+		# other and pop apart the moment free room appears.
+		var separation := _separation_velocity(agent, nearby)
+		if not separation.is_zero_approx():
+			var total := (velocity + separation).limit_length(_unit_speed(unit))
+			# Separation may cross friends, but it must not turn the already-safe
+			# steering result into motion through an enemy or forbidden terrain.
+			if _motion_is_passable(agent, total * delta) \
+			and _enemy_sweep_fraction(agent, total * delta, nearby, resolved_positions) >= 0.999:
+				velocity = total
+				# An idle unit has no spot to defend; it goes where it is pushed
+				# instead of fighting its way back into the overlap.
+				if int(agent["command_id"]) <= 0 and not bool(agent["hold"]):
+					agent["destination"] = unit.global_position + velocity * delta
 		_agents[unit.get_instance_id()] = agent
 		resolved_positions[unit.get_instance_id()] = unit.global_position + velocity * delta
 		if unit.has_method("navigation_step"):
@@ -413,29 +443,44 @@ func _has_clear_line(from: Vector3, to: Vector3, agent: Dictionary) -> bool:
 	return true
 
 
-func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, buckets: Dictionary, resolved: Dictionary) -> Dictionary:
+## Collision is elastic: units steer around each other while there is room
+## (full-speed candidate evaluation against every neighbour), but a unit walled
+## in by friends squeezes through them at reduced speed — enemies and terrain
+## stay solid — while the per-tick separation push works the overlap back out.
+func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, nearby: Array, resolved: Dictionary) -> Dictionary:
 	if desired.is_zero_approx():
 		return {"velocity": Vector3.ZERO, "enemies": [] as Array[Node3D], "friends": [] as Array[Node3D]}
 	var unit: Node3D = agent["unit"]
+	var blockers := []
+	for other in nearby:
+		if other["unit"] != unit:
+			blockers.append(other)
+	var full: Dictionary = _evaluate_candidates(agent, desired, delta, blockers, resolved, 1.0)
+	var velocity: Vector3 = full["velocity"]
+	# Squeezing is not a fallback for any slow result. It is allowed only when
+	# friends remove every non-reversing steering lane that would otherwise be
+	# open; in ordinary space the full-speed side lane wins and units go around.
+	if not bool(full["has_escape"]):
+		var solid := []
+		for other in blockers:
+			if _are_enemies(unit, other["unit"]):
+				solid.append(other)
+		var squeeze: Dictionary = _evaluate_candidates(agent, desired, delta, solid, resolved, SQUEEZE_SPEED_FACTOR)
+		if bool(squeeze["has_escape"]):
+			velocity = squeeze["velocity"]
+	return {"velocity": velocity, "enemies": full["enemies"], "friends": full["friends"]}
+
+
+func _evaluate_candidates(agent: Dictionary, desired: Vector3, delta: float, blockers: Array, resolved: Dictionary, speed_scale: float) -> Dictionary:
+	var unit: Node3D = agent["unit"]
+	var scaled := desired * speed_scale
 	var desired_direction := desired.normalized()
-	var desired_speed := desired.length()
+	var desired_speed := scaled.length()
 	var enemies: Array[Node3D] = []
 	var friends: Array[Node3D] = []
 	var best_velocity := Vector3.ZERO
 	var best_score := -INF
-	# Friendly units moving head-on against each other phase through instead of
-	# shoving: mutual sidestepping of counter-movers reads as jitter. Standing
-	# units (zero desire) and enemies always stay solid.
-	var blockers := []
-	for other in _nearby_agents(unit.global_position, buckets):
-		if other["unit"] == unit:
-			continue
-		var other_desired: Vector3 = other["last_desired"]
-		if not other_desired.is_zero_approx() \
-			and desired_direction.dot(other_desired.normalized()) < -0.2 \
-			and not _are_enemies(unit, other["unit"]):
-			continue
-		blockers.append(other)
+	var has_escape := false
 	# A unit standing on building cells cannot satisfy the normal cell filter:
 	# inside the interior every neighbour is blocked too, and on the apron the
 	# clearance window still touches the building. Interior units steer with
@@ -447,12 +492,17 @@ func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, bucket
 	if origin_open and not runtime_map.is_stoppable(origin_cell, int(agent["pass_mask"]), 0, 0):
 		origin_clearance = 0
 	for angle in CANDIDATE_ANGLES:
-		var candidate := desired.rotated(Vector3.UP, angle)
+		var candidate := scaled.rotated(Vector3.UP, angle)
 		var destination := unit.global_position + candidate * delta
 		var cell: Vector2i = runtime_map.grid.world_to_grid(destination)
 		if origin_open and not runtime_map.is_passable(cell, int(agent["pass_mask"]), origin_clearance, int(agent["terrain_mask"])):
 			continue
+		# Prediction uses unscaled speed, otherwise a slow squeeze probe could
+		# mistake a nearby wall for a valid lane merely because it looks less far.
+		var prediction := desired.rotated(Vector3.UP, angle) * STEERING_LOOKAHEAD_SECONDS
+		var terrain_clear := _motion_is_passable(agent, prediction)
 		var fraction := 1.0
+		var predicted_fraction := 1.0
 		for other in blockers:
 			var other_unit: Node3D = other["unit"]
 			var other_position: Vector3 = resolved.get(other_unit.get_instance_id(), other_unit.global_position)
@@ -462,23 +512,113 @@ func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, bucket
 				other_position,
 				float(agent["radius"]) + float(other["radius"])
 			)
+			var predicted_safe := _sweep_fraction(
+				unit.global_position,
+				prediction,
+				other_position,
+				float(agent["radius"]) + float(other["radius"])
+			)
 			if safe < fraction:
 				fraction = safe
-				if _are_enemies(unit, other_unit) and not enemies.has(other_unit):
-					enemies.append(other_unit)
+			predicted_fraction = minf(predicted_fraction, predicted_safe)
+			if predicted_safe < 0.999 or safe < 0.999:
+				if _are_enemies(unit, other_unit):
+					if not enemies.has(other_unit):
+						enemies.append(other_unit)
 				elif not friends.has(other_unit):
 					friends.append(other_unit)
 		var velocity := candidate * fraction
-		var score := velocity.dot(desired_direction) - absf(angle) * 0.05 * desired_speed
+		var projected := candidate * predicted_fraction
+		var score := projected.dot(desired_direction) - absf(angle) * 0.05 * desired_speed
+		if not terrain_clear:
+			score -= desired_speed * 2.0
 		# A near-frozen candidate must lose to any real motion, sideways
 		# included, or a unit meeting a stopped friend halts for good instead
 		# of sliding around. Backing off still scores below standing still.
-		if fraction < 0.1:
+		if fraction < 0.15:
 			score -= desired_speed
+		if terrain_clear and predicted_fraction >= 0.999 \
+		and candidate.dot(desired_direction) >= -0.001:
+			has_escape = true
 		if score > best_score:
 			best_score = score
 			best_velocity = velocity
-	return {"velocity": best_velocity, "enemies": enemies, "friends": friends}
+	return {"velocity": best_velocity, "enemies": enemies, "friends": friends, "has_escape": has_escape}
+
+
+## Candidate motion against the map using the agent's real clearance and
+## terrain profile. Units spawned inside a building retain the existing escape
+## exception until their origin reaches a passable cell.
+func _motion_is_passable(agent: Dictionary, displacement: Vector3) -> bool:
+	var unit: Node3D = agent["unit"]
+	var start: Vector2i = runtime_map.grid.world_to_grid(unit.global_position)
+	if not runtime_map.is_passable(start, int(agent["pass_mask"]), 0, 0):
+		return true
+	var clearance := int(agent["clearance"])
+	if not runtime_map.is_stoppable(start, int(agent["pass_mask"]), 0, 0):
+		clearance = 0
+	var finish: Vector2i = runtime_map.grid.world_to_grid(unit.global_position + displacement)
+	var cell_delta := finish - start
+	var steps := maxi(absi(cell_delta.x), absi(cell_delta.y))
+	var previous := start
+	for index in range(1, steps + 1):
+		var weight := float(index) / float(steps)
+		var cell := Vector2i(
+			roundi(lerpf(float(start.x), float(finish.x), weight)),
+			roundi(lerpf(float(start.y), float(finish.y), weight))
+		)
+		if not runtime_map.is_passable(cell, int(agent["pass_mask"]), clearance, int(agent["terrain_mask"])):
+			return false
+		var step := cell - previous
+		if step.x != 0 and step.y != 0:
+			if not runtime_map.is_passable(previous + Vector2i(step.x, 0), int(agent["pass_mask"]), clearance, int(agent["terrain_mask"])):
+				return false
+			if not runtime_map.is_passable(previous + Vector2i(0, step.y), int(agent["pass_mask"]), clearance, int(agent["terrain_mask"])):
+				return false
+		previous = cell
+	return true
+
+
+func _enemy_sweep_fraction(agent: Dictionary, displacement: Vector3, nearby: Array, resolved: Dictionary) -> float:
+	var unit: Node3D = agent["unit"]
+	var fraction := 1.0
+	for other in nearby:
+		var other_unit: Node3D = other["unit"]
+		if other_unit == unit or not _are_enemies(unit, other_unit):
+			continue
+		var other_position: Vector3 = resolved.get(other_unit.get_instance_id(), other_unit.global_position)
+		fraction = minf(fraction, _sweep_fraction(
+			unit.global_position,
+			displacement,
+			other_position,
+			float(agent["radius"]) + float(other["radius"])
+		))
+	return fraction
+
+
+## The elastic push between overlapping units: proportional to penetration
+## depth, capped below squeeze speed, and always pointing apart. Fully stacked
+## pairs split along a deterministic axis.
+func _separation_velocity(agent: Dictionary, nearby: Array) -> Vector3:
+	var unit: Node3D = agent["unit"]
+	var push := Vector3.ZERO
+	for other in nearby:
+		if other["unit"] == unit:
+			continue
+		var other_unit: Node3D = other["unit"]
+		var away := unit.global_position - other_unit.global_position
+		away.y = 0.0
+		var combined := float(agent["radius"]) + float(other["radius"])
+		var distance := away.length()
+		if distance >= combined:
+			continue
+		if distance <= 0.001:
+			push += (Vector3.RIGHT if int(agent["id"]) < int(other["id"]) else Vector3.LEFT) * combined
+		else:
+			push += away / distance * (combined - distance)
+	if push.is_zero_approx():
+		return Vector3.ZERO
+	return (push * SEPARATION_STIFFNESS).limit_length(_unit_speed(unit) * SEPARATION_MAX_SPEED_FACTOR)
 
 
 ## A yielding friend steps sideways out of the requester's lane (toward the
@@ -842,11 +982,12 @@ func _build_spatial_hash(agents: Array[Dictionary]) -> Dictionary:
 	return buckets
 
 
-func _nearby_agents(position: Vector3, buckets: Dictionary) -> Array:
+func _nearby_agents(position: Vector3, buckets: Dictionary, search_radius := CELL_BUCKET_SIZE) -> Array:
 	var center := _bucket_key(position)
 	var result := []
-	for y in range(-1, 2):
-		for x in range(-1, 2):
+	var bucket_radius := maxi(1, ceili(search_radius / CELL_BUCKET_SIZE))
+	for y in range(-bucket_radius, bucket_radius + 1):
+		for x in range(-bucket_radius, bucket_radius + 1):
 			result.append_array(buckets.get(center + Vector2i(x, y), []))
 	return result
 
@@ -882,6 +1023,8 @@ func _profile_for(unit: Node3D) -> Dictionary:
 	var can_fly := bool(config.field(&"can_fly", false)) if config != null else false
 	var size := float(config.field(&"size", 1.0)) if config != null else 1.0
 	var radius := maxf(0.35, size * 0.42)
+	if unit.has_method("navigation_collision_radius"):
+		radius = float(unit.call("navigation_collision_radius", radius))
 	var cell_size: Vector2 = runtime_map.grid.cell_size()
 	var clearance := maxi(0, int(ceil(radius / maxf(minf(cell_size.x, cell_size.y), 0.001))) - 1)
 	var pass_mask := MapNavigationGrid.PASS_AIR if can_fly else (MapNavigationGrid.PASS_INFANTRY if infantry else MapNavigationGrid.PASS_VEHICLE)

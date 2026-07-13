@@ -14,6 +14,7 @@ class FakeUnit extends Node3D:
 	var unit_config := RuleEntityConfig.new()
 	var managed := false
 	var destination := Vector3.ZERO
+	var owner_player_id := 1
 
 	func _init(size := 1.0, infantry := false) -> void:
 		unit_config.fields = {"size": size, "infantry": infantry, "can_fly": false}
@@ -28,8 +29,8 @@ class FakeUnit extends Node3D:
 	func navigation_step(value: Vector3, delta: float) -> void:
 		global_position += value * delta
 
-	func is_enemy_of(_player_id: int) -> bool:
-		return false
+	func is_enemy_of(player_id: int) -> bool:
+		return owner_player_id != player_id
 
 
 func _initialize() -> void:
@@ -47,6 +48,10 @@ func _initialize() -> void:
 	_test_command_overrides_yield(grid)
 	_test_grid_aligned_slots(grid)
 	_test_lane_through_standing_formation(grid)
+	_test_overlap_is_squeezed_out(grid)
+	_test_large_overlap_spans_spatial_buckets(grid)
+	_test_enemy_stays_solid_under_separation(grid)
+	_test_elastic_corridor_pass(grid)
 	_test_circle_convergence_metrics(grid)
 	_test_group_shift_keeps_shape(grid)
 	if _failures > 0:
@@ -255,12 +260,25 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 	right.global_position = Vector3(102.0, 0.0, 100.0)
 	navigation.command_move([left], Vector3(110.0, 0.0, 100.0))
 	navigation.command_move([right], Vector3(90.0, 0.0, 100.0))
+	var closest_approach := INF
+	var largest_detour := 0.0
 	for _iteration in 80:
 		navigation.call("_navigation_tick", 0.05)
-	# Friendly counter-movers phase through each other instead of shoving, so
-	# a head-on pair must swap sides cleanly and on time.
+		closest_approach = minf(closest_approach, left.global_position.distance_to(right.global_position))
+		largest_detour = maxf(largest_detour, maxf(
+			absf(left.global_position.z - 100.0),
+			absf(right.global_position.z - 100.0)
+		))
+	# In the open, counter-movers steer around each other; either way a head-on
+	# pair must swap sides cleanly and on time.
 	_expect(left.global_position.distance_to(Vector3(110.0, 0.0, 100.0)) < 1.0, "a head-on mover must pass a friendly counter-mover and arrive")
 	_expect(right.global_position.distance_to(Vector3(90.0, 0.0, 100.0)) < 1.0, "the opposing mover must arrive as well")
+	var open_contact := float(navigation._agents[left.get_instance_id()]["radius"]) \
+		+ float(navigation._agents[right.get_instance_id()]["radius"])
+	_expect(closest_approach >= open_contact - 0.02,
+		"counter-movers in open space must steer instead of squeezing (closest %.2f, contact %.2f)" % [closest_approach, open_contact])
+	_expect(largest_detour > open_contact * 0.4,
+		"an open-space pass must contain a visible lateral detour (only %.2f)" % largest_detour)
 
 	navigation.queue_free()
 	for unit in units:
@@ -507,6 +525,155 @@ func _test_grid_aligned_slots(grid: MapNavigationGrid) -> void:
 	navigation.queue_free()
 	for unit in units:
 		unit.queue_free()
+
+
+## Collision is elastic: two units dropped on top of each other must be pushed
+## apart by the separation force until they no longer overlap.
+func _test_overlap_is_squeezed_out(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var first := FakeUnit.new()
+	var second := FakeUnit.new()
+	root.add_child(first)
+	root.add_child(second)
+	first.global_position = Vector3(200.5, 0.0, 200.5)
+	second.global_position = Vector3(200.6, 0.0, 200.5)
+	navigation.register_unit(first)
+	navigation.register_unit(second)
+	for _iteration in 60:
+		navigation.call("_navigation_tick", 0.05)
+	var contact := float(navigation._agents[first.get_instance_id()]["radius"]) \
+		+ float(navigation._agents[second.get_instance_id()]["radius"])
+	_expect(first.global_position.distance_to(second.global_position) >= contact - 0.01,
+		"overlapping units must be squeezed apart (ended %.2f apart)" % first.global_position.distance_to(second.global_position))
+
+	navigation.queue_free()
+	first.queue_free()
+	second.queue_free()
+
+
+## Large unit discs can overlap while their centres are more than one spatial
+## bucket apart; neighbour lookup must expand with their collision radii.
+func _test_large_overlap_spans_spatial_buckets(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var first := FakeUnit.new(5.0)
+	var second := FakeUnit.new(5.0)
+	root.add_child(first)
+	root.add_child(second)
+	first.global_position = Vector3(39.9, 0.0, 220.5)
+	second.global_position = Vector3(44.0, 0.0, 220.5)
+	navigation.register_unit(first)
+	navigation.register_unit(second)
+	var contact := float(navigation._agents[first.get_instance_id()]["radius"]) \
+		+ float(navigation._agents[second.get_instance_id()]["radius"])
+	_expect(first.global_position.distance_to(second.global_position) < contact,
+		"large-unit fixture must begin overlapped across non-adjacent buckets")
+	for _iteration in 80:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(first.global_position.distance_to(second.global_position) >= contact - 0.01,
+		"large overlapping units in distant buckets must still separate")
+
+	navigation.queue_free()
+	first.queue_free()
+	second.queue_free()
+
+
+## A third unit may push a friend toward an enemy, but the post-steering
+## separation velocity must still respect the enemy's solid swept disc.
+func _test_enemy_stays_solid_under_separation(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var pusher := FakeUnit.new()
+	var squeezed := FakeUnit.new()
+	var enemy := FakeUnit.new()
+	enemy.owner_player_id = 2
+	root.add_child(pusher)
+	root.add_child(squeezed)
+	root.add_child(enemy)
+	pusher.global_position = Vector3(179.5, 0.0, 180.5)
+	squeezed.global_position = Vector3(180.0, 0.0, 180.5)
+	enemy.global_position = Vector3(180.9, 0.0, 180.5)
+	navigation.register_unit(pusher)
+	navigation.register_unit(squeezed)
+	navigation.register_unit(enemy)
+	var contact := float(navigation._agents[squeezed.get_instance_id()]["radius"]) \
+		+ float(navigation._agents[enemy.get_instance_id()]["radius"])
+	var closest_approach := squeezed.global_position.distance_to(enemy.global_position)
+	for _iteration in 80:
+		navigation.call("_navigation_tick", 0.05)
+		closest_approach = minf(closest_approach, squeezed.global_position.distance_to(enemy.global_position))
+	_expect(closest_approach >= contact - 0.01,
+		"friendly separation must not push a unit through an enemy (closest %.2f, contact %.2f)" % [closest_approach, contact])
+	_expect(squeezed.global_position.x < enemy.global_position.x,
+		"a friend pushed toward an enemy must remain on its original side")
+
+	navigation.queue_free()
+	pusher.queue_free()
+	squeezed.queue_free()
+	enemy.queue_free()
+
+
+## Elastic crowding in a corridor one cell wide: two units meeting head-on
+## cannot steer around each other, so they compress, slide through, and get
+## expelled on the far side — a hard-collision model deadlocks here.
+func _test_elastic_corridor_pass(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+	var walls := {}
+	for x in range(60, 71):
+		walls[Vector2i(x, 199)] = true
+		walls[Vector2i(x, 201)] = true
+	navigation.runtime_map.replace_blocked_cells(walls)
+
+	var east_bound := FakeUnit.new()
+	var west_bound := FakeUnit.new()
+	root.add_child(east_bound)
+	root.add_child(west_bound)
+	east_bound.global_position = Vector3(58.5, 0.0, 200.5)
+	west_bound.global_position = Vector3(72.5, 0.0, 200.5)
+	var east_target := Vector3(72.5, 0.0, 200.5)
+	var west_target := Vector3(58.5, 0.0, 200.5)
+	navigation.command_move([east_bound], east_target)
+	navigation.command_move([west_bound], west_target)
+	var closest_approach := INF
+	var fastest_step := 0.0
+	var previous_east := east_bound.global_position
+	var previous_west := west_bound.global_position
+	for _iteration in 240:
+		navigation.call("_navigation_tick", 0.05)
+		closest_approach = minf(closest_approach, east_bound.global_position.distance_to(west_bound.global_position))
+		fastest_step = maxf(fastest_step, maxf(
+			previous_east.distance_to(east_bound.global_position) / 0.05,
+			previous_west.distance_to(west_bound.global_position) / 0.05
+		))
+		previous_east = east_bound.global_position
+		previous_west = west_bound.global_position
+	_expect(east_bound.global_position.distance_to(east_target) < 1.5,
+		"the east-bound unit must squeeze past in the corridor (ended %.1f,%.1f)" % [east_bound.global_position.x, east_bound.global_position.z])
+	_expect(west_bound.global_position.distance_to(west_target) < 1.5,
+		"the west-bound unit must squeeze past in the corridor (ended %.1f,%.1f)" % [west_bound.global_position.x, west_bound.global_position.z])
+	var corridor_contact := float(navigation._agents[east_bound.get_instance_id()]["radius"]) \
+		+ float(navigation._agents[west_bound.get_instance_id()]["radius"])
+	_expect(closest_approach < corridor_contact * 0.75,
+		"corridor pass must use soft overlap, not an accidental detour (closest %.2f)" % closest_approach)
+	_expect(fastest_step <= east_bound.move_speed + 0.01,
+		"steering plus separation must not exceed unit speed (observed %.2f)" % fastest_step)
+
+	navigation.queue_free()
+	east_bound.queue_free()
+	west_bound.queue_free()
 
 
 ## The point of the parking gap: a single unit ordered to the far side of a

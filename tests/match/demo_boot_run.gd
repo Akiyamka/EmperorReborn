@@ -55,10 +55,23 @@ func _test_authored_collision_meshes() -> void:
 	var match_instance := scene.instantiate()
 	get_root().add_child(match_instance)
 	await physics_frame
+	var navigation := match_instance.get_node_or_null("UnitNavigationSystem")
 
 	for unit_name in [&"ScoutA", &"OrdosAPC", &"NIABTank"]:
 		var unit := match_instance.get_node("Units/%s" % unit_name)
 		_expect(unit._collision_sources().size() > 0, "%s must expose an authored collision volume" % unit_name)
+		var rule_size := float(unit.unit_config.field(&"size", 1.0))
+		var rule_radius := maxf(0.35, rule_size * 0.42)
+		var navigation_radius := float(unit.navigation_collision_radius(rule_radius))
+		_expect(
+			navigation_radius > rule_radius * 1.2,
+			"%s navigation radius must reflect its authored body width (%.2f, rules-only %.2f)" % [unit_name, navigation_radius, rule_radius]
+		)
+		var registered_radius := float(navigation.agent_debug(unit).get("radius", 0.0)) if navigation != null else 0.0
+		_expect(
+			is_equal_approx(registered_radius, navigation_radius),
+			"%s navigation agent must use authored radius %.2f (got %.2f)" % [unit_name, navigation_radius, registered_radius]
+		)
 		_expect(
 			_authored_collision_shapes(unit).size() > 0,
 			"%s must create a collision shape from its authored volume" % unit_name

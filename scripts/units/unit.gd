@@ -155,6 +155,25 @@ func set_navigation_destination(world_position: Vector3) -> void:
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
 
 
+## Local avoidance uses discs, while authored unit volumes may be long boxes.
+## The smaller horizontal half-extent is the stable body width: using the long
+## axis would leave vehicle-sized gaps beside every tank, while the rules-only
+## radius is small enough for infantry to run visibly through their hulls.
+func navigation_collision_radius(fallback: float) -> float:
+	var maximum_x := 0.0
+	var maximum_z := 0.0
+	var to_unit := global_transform.affine_inverse()
+	for source in _collision_sources():
+		var points: PackedVector3Array = source.get_meta("collision_points", PackedVector3Array())
+		var source_to_unit: Transform3D = to_unit * source.global_transform
+		for point in points:
+			var local_point: Vector3 = source_to_unit * point
+			maximum_x = maxf(maximum_x, absf(local_point.x))
+			maximum_z = maxf(maximum_z, absf(local_point.z))
+	var authored_width_radius := minf(maximum_x, maximum_z)
+	return maxf(fallback, authored_width_radius)
+
+
 func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 	velocity = Vector3(horizontal_velocity.x, 0.0, horizontal_velocity.z)
 	# Crowded units receive tiny non-zero velocities from collision resolution;
