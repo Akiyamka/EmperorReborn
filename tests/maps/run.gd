@@ -4,6 +4,7 @@ const BakedMapDataScript := preload("res://scripts/world/map/baked_map_data.gd")
 const MapLoaderScript := preload("res://scripts/world/map/map_loader.gd")
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 const MapSpiceLayerScript := preload("res://scripts/world/map/map_spice_layer.gd")
+const TextureImageUtilsScript := preload("res://converters/texture_image_utils.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -13,6 +14,7 @@ var _temporary_paths: Array[String] = []
 
 
 func _initialize() -> void:
+	_run_case("magenta texture key becomes alpha cutout", _test_magenta_texture_key)
 	_run_case("baked grid load and coordinate contract", _test_baked_grid_load_and_coordinates)
 	_run_case("cell debug contract", _test_cell_debug_contract)
 	_run_case("dynamic spice harvesting and replenishment", _test_dynamic_spice_harvesting_and_replenishment)
@@ -30,6 +32,23 @@ func _initialize() -> void:
 		return
 	print("Map runtime tests: %d assertions passed" % _assertions)
 	quit(0)
+
+
+func _test_magenta_texture_key(token: int) -> int:
+	var image := Image.create(3, 1, false, Image.FORMAT_RGB8)
+	image.set_pixel(0, 0, Color(0.8, 0.2, 0.1))
+	image.set_pixel(1, 0, Color(1.0, 0.0, 1.0))
+	image.set_pixel(2, 0, Color(0.9, 0.0, 1.0))
+	_expect(TextureImageUtilsScript.apply_magenta_to_alpha(image), "a magenta key pixel must be detected")
+	_expect(image.get_format() == Image.FORMAT_RGBA8, "key conversion must produce an alpha-capable image")
+	_expect(is_zero_approx(image.get_pixel(1, 0).a), "the magenta key pixel must become transparent")
+	_expect(image.get_pixel(1, 0).r < 0.9, "transparent RGB must bleed from an opaque neighbor instead of retaining magenta")
+	_expect(is_equal_approx(image.get_pixel(2, 0).a, 1.0), "colors outside the key threshold must remain opaque")
+
+	var opaque := Image.create(1, 1, false, Image.FORMAT_RGB8)
+	opaque.set_pixel(0, 0, Color(0.2, 0.3, 0.4))
+	_expect(not TextureImageUtilsScript.apply_magenta_to_alpha(opaque), "an ordinary opaque texture must not request alpha cutout")
+	return token
 
 
 func _run_case(case_name: String, test: Callable) -> void:

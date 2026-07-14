@@ -2,6 +2,7 @@ class_name ModelBakeBuilder
 extends RefCounted
 
 const ModelXbfScript := preload("res://converters/xbf/model_xbf.gd")
+const TextureImageUtilsScript := preload("res://converters/texture_image_utils.gd")
 
 # Effect submeshes the original game toggles from gameplay code rather than
 # from the baked animation: the leech parasite overlay and the energy shield
@@ -811,53 +812,10 @@ func _load_png_texture(path: String) -> Texture2D:
 
 
 func _load_png_image(path: String) -> Image:
-	var absolute_path := ProjectSettings.globalize_path(path)
-	if not FileAccess.file_exists(absolute_path):
-		return null
-	var image := Image.new()
-	var err := image.load(absolute_path)
-	if err != OK:
-		push_warning("ModelBakeBuilder: could not load texture image %s (%s)" % [path, error_string(err)])
-		return null
-	_apply_magenta_to_alpha(image)
+	var image: Image = TextureImageUtilsScript.load_image_with_magenta_alpha(path)
+	if image == null:
+		push_warning("ModelBakeBuilder: could not load texture image %s" % path)
 	return image
-
-
-func _apply_magenta_to_alpha(image: Image) -> void:
-	image.convert(Image.FORMAT_RGBA8)
-	var keyed := []
-	keyed.resize(image.get_width() * image.get_height())
-	for y in image.get_height():
-		for x in image.get_width():
-			var color := image.get_pixel(x, y)
-			if color.r > 0.92 and color.g < 0.12 and color.b > 0.92:
-				color.a = 0.0
-				image.set_pixel(x, y, color)
-				keyed[y * image.get_width() + x] = true
-
-	for y in image.get_height():
-		for x in image.get_width():
-			if not keyed[y * image.get_width() + x]:
-				continue
-			var fill := _nearest_opaque_color(image, keyed, Vector2i(x, y), 4)
-			fill.a = 0.0
-			image.set_pixel(x, y, fill)
-
-
-func _nearest_opaque_color(image: Image, keyed: Array, pixel: Vector2i, radius: int) -> Color:
-	var width := image.get_width()
-	var height := image.get_height()
-	for distance in range(1, radius + 1):
-		for y in range(maxi(0, pixel.y - distance), mini(height, pixel.y + distance + 1)):
-			for x in range(maxi(0, pixel.x - distance), mini(width, pixel.x + distance + 1)):
-				if abs(pixel.x - x) != distance and abs(pixel.y - y) != distance:
-					continue
-				if keyed[y * width + x]:
-					continue
-				var color := image.get_pixel(x, y)
-				if color.a > 0.5:
-					return Color(color.r, color.g, color.b, 0.0)
-	return Color(0.0, 0.0, 0.0, 0.0)
 
 
 func _is_additive_texture(texture_name: String) -> bool:

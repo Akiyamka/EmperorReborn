@@ -3,13 +3,10 @@
 [ext_resource type="Script" uid="uid://3psqgxv6e2ys" path="res://scripts/match/match.gd" id="1_main"]
 [ext_resource type="Script" uid="uid://xoynnrvxuq2p" path="res://scripts/world/camera/rts_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="3_unit"]
-[ext_resource type="PackedScene" path="res://assets/converted/maps/#M70 Claw Rock/terrain.tscn" id="4_map"]
+[ext_resource type="PackedScene" path="res://assets/converted/maps/#M25 GM Aprit Chard S 2/terrain.tscn" id="4_map"]
 [ext_resource type="Resource" uid="uid://nj40xd0p0abq" path="res://configs/camera/rts_camera_config.tres" id="6_camera_config"]
-[ext_resource type="PackedScene" path="res://scenes/units/or_apc.tscn" id="7_or_apc"]
-[ext_resource type="PackedScene" path="res://scenes/units/niab_tank.tscn" id="8_niab"]
 [ext_resource type="PackedScene" path="res://assets/converted/buildings/ATConYard/ATConYard.scn" id="9_at_con_yard"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="10_side_panel"]
-[ext_resource type="PackedScene" path="res://assets/converted/buildings/ATSmWindtrap/ATSmWindtrap.scn" id="11_at_windtrap"]
 [ext_resource type="Script" uid="uid://c3sursjoim88" path="res://scripts/ui/selection_rectangle.gd" id="12_selection_rectangle"]
 
 [sub_resource type="Environment" id="Environment_main"]
@@ -48,11 +45,7 @@ metadata/_edit_lock_ = true
 [node name="Buildings" type="Node3D" parent="." unique_id=251147608]
 
 [node name="ATConYard" parent="Buildings" unique_id=226675699 instance=ExtResource("9_at_con_yard")]
-transform = Transform3D(0.99999994, 0, 0, 0, 1, 0, 0, 0, 0.99999994, 101.25833, 8, 9.457741)
-owner_player_id = 1
-
-[node name="ATSmWindtrap" parent="Buildings" unique_id=597995214 instance=ExtResource("11_at_windtrap")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 113.31198, 8, 11.045158)
+transform = Transform3D(0.99999994, 0, 0, 0, 1, 0, 0, 0, 0.99999994, 12.411575, 7.893318, 9.457741)
 owner_player_id = 1
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
@@ -68,14 +61,6 @@ owner_player_id = 1
 [node name="ScoutC" parent="Units" unique_id=325326372 instance=ExtResource("3_unit")]
 transform = Transform3D(-0.99996823, 0.007970574, 0, -0.007970574, -0.99996823, 0, 0, 0, 1, 123.62199, 9.18774, 23.207596)
 owner_player_id = 1
-
-[node name="OrdosAPC" parent="Units" unique_id=1929728337 instance=ExtResource("7_or_apc")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 143.6279, 8.399508, 142.2648)
-owner_player_id = 2
-
-[node name="NIABTank" parent="Units" unique_id=1211664053 instance=ExtResource("8_niab")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 136.21701, 8.11331, 152.11343)
-owner_player_id = 2
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
 

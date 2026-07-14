@@ -4,6 +4,10 @@ shader_type spatial;
 // ground-tone layer (texture.dat, 2048x2048 = 8192x8192 XBF units projected
 // on world XZ). tone_neutral is the byte value that means "unmodified".
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
+// Some map meshes contain decorative cutouts whose original 24-bit TGA uses
+// magenta as a 1-bit transparency key. MapBakeBuilder enables this only for
+// textures where that key was found.
+uniform bool use_alpha_cutout = false;
 // test.CPT decoded: the map's baked ground color (mottling, detail patches
 // and shading composited at bake time), 4 XBF units per texel, projected on
 // world XZ. Combined with the tiled detail texture as D3D MODULATE2X
@@ -58,7 +62,11 @@ void fragment() {
 	if (clamp_v) {
 		uv.y = clamp(uv.y, inset.y, 1.0 - inset.y);
 	}
-	vec3 base = texture(albedo_tex, uv).rgb;
+	vec4 base_sample = texture(albedo_tex, uv);
+	if (use_alpha_cutout && base_sample.a < 0.5) {
+		discard;
+	}
+	vec3 base = base_sample.rgb;
 	// Map geometry is Z-mirrored from D3D space, so world Z maps directly to V.
 	vec2 ground_uv = vec2(world_xz.x, world_xz.y) / ground_world_size;
 	// min() mimics the D3D-era framebuffer clamp of MODULATE2X.

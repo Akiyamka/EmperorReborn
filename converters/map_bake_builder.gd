@@ -6,6 +6,7 @@ const BakedMapDataScript := preload("res://scripts/world/map/baked_map_data.gd")
 const MapLoaderScript := preload("res://scripts/world/map/map_loader.gd")
 const MapNavigationGridBuilderScript := preload("res://converters/map_navigation_grid_builder.gd")
 const MapXbfScript := preload("res://converters/xbf/map_xbf.gd")
+const TextureImageUtilsScript := preload("res://converters/texture_image_utils.gd")
 
 const GROUND_TONE_WORLD_UNITS := 8192.0
 const TERRAIN_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
@@ -21,11 +22,13 @@ var _lit_colors: Array[Color] = []
 var _mottle: Texture2D
 var _mottle_mean := Color.WHITE
 var _terrain_aabb := AABB()
+var _terrain_texture_cache := {}
 var terrain_scene: PackedScene
 
 
 func build(dir: String) -> Resource:
 	terrain_scene = null
+	_terrain_texture_cache.clear()
 	var xbf_path := _first_existing_map_path(dir, ["test.xbf", "debug.xbf"])
 	if xbf_path.is_empty():
 		push_error("MapBakeBuilder: no XBF file found in %s" % dir)
@@ -197,17 +200,30 @@ func _terrain_material(texture_name: String) -> Material:
 		fallback.roughness = 1.0
 		fallback.albedo_color = Color.from_hsv(float(texture_name.hash() % 360) / 360.0, 0.3, 0.75)
 		return fallback
+	var loaded_texture := _load_terrain_texture(texture_path)
+	var texture: Texture2D = loaded_texture.get("texture")
+	var use_alpha_cutout := bool(loaded_texture.get("use_alpha_cutout", false))
+	if texture == null:
+		push_warning("MapBakeBuilder: could not load texture %s, using placeholder color" % texture_path)
+		var fallback := StandardMaterial3D.new()
+		fallback.roughness = 1.0
+		fallback.albedo_color = Color.from_hsv(float(texture_name.hash() % 360) / 360.0, 0.3, 0.75)
+		return fallback
 
 	if _ground_color == null:
 		var plain := StandardMaterial3D.new()
 		plain.roughness = 1.0
 		plain.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-		plain.albedo_texture = load(texture_path)
+		plain.albedo_texture = texture
+		if use_alpha_cutout:
+			plain.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+			plain.alpha_scissor_threshold = 0.5
 		return plain
 
 	var material := ShaderMaterial.new()
 	material.shader = TERRAIN_SHADER
-	material.set_shader_parameter("albedo_tex", load(texture_path))
+	material.set_shader_parameter("albedo_tex", texture)
+	material.set_shader_parameter("use_alpha_cutout", use_alpha_cutout)
 	material.set_shader_parameter("ground_color", _ground_color)
 	material.set_shader_parameter("ground_world_size", GROUND_TONE_WORLD_UNITS * world_scale)
 	if _mottle != null:
@@ -222,6 +238,28 @@ func _terrain_material(texture_name: String) -> Material:
 			material.set_shader_parameter("mottle_strength", mottle_strength)
 			material.set_shader_parameter("mottle_world_size", mottle_world_size)
 	return material
+
+
+func _load_terrain_texture(path: String) -> Dictionary:
+	if _terrain_texture_cache.has(path):
+		return _terrain_texture_cache[path]
+
+	var image: Image = TextureImageUtilsScript.load_image(path)
+	if image == null:
+		var failed := {"texture": null, "use_alpha_cutout": false}
+		_terrain_texture_cache[path] = failed
+		return failed
+
+	var use_alpha_cutout := TextureImageUtilsScript.apply_magenta_to_alpha(image)
+	var texture: Texture2D
+	if use_alpha_cutout:
+		image.generate_mipmaps()
+		texture = ImageTexture.create_from_image(image)
+	else:
+		texture = load(path)
+	var loaded := {"texture": texture, "use_alpha_cutout": use_alpha_cutout}
+	_terrain_texture_cache[path] = loaded
+	return loaded
 
 
 func _find_terrain_texture_path(file_name: String) -> String:
