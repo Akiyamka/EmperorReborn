@@ -12,8 +12,9 @@ class FakeGrid extends RefCounted:
 	func is_loaded() -> bool:
 		return true
 
-	func grid_to_world(cell: Vector2i, _center: bool) -> Vector3:
-		return Vector3(cell.x, 0.0, cell.y)
+	func grid_to_world(cell: Vector2i, centered: bool) -> Vector3:
+		var offset := 0.5 if centered else 0.0
+		return Vector3(float(cell.x) + offset, 0.0, float(cell.y) + offset)
 
 	func world_to_grid(position: Vector3) -> Vector2i:
 		return Vector2i(floori(position.x), floori(position.z))
@@ -44,6 +45,7 @@ func _initialize() -> void:
 	_run_case("footprint occupancy and single spawn handoff", _test_occupancy_and_single_spawn)
 	_run_case("unmaterialed preview mesh gets fallback material", _test_unmaterialed_preview_mesh_gets_fallback_material)
 	_run_case("legacy building without placement anchor", _test_legacy_building_without_placement_anchor)
+	_run_case("rotated existing footprint follows building transform", _test_rotated_existing_footprint)
 	_run_case("resolver fallback occupancy", _test_resolver_fallback_occupancy)
 	_run_case("out-of-radius cells preview as blocked", _test_out_of_radius_preview_is_blocked)
 	_run_case("enemy buildings do not extend build radius", _test_enemy_building_does_not_extend_radius)
@@ -226,6 +228,26 @@ func _test_legacy_building_without_placement_anchor(token: int) -> int:
 		"a legacy building without anchor metadata must use its world-position footprint"
 	)
 	placement.cancel()
+	_free_pair(pair)
+	return token
+
+
+func _test_rotated_existing_footprint(token: int) -> int:
+	var pair := _new_placement(Callable(self, "_direct_config_rows"))
+	var placement = pair[0]
+	var buildings_root = pair[1]
+	var existing = ExistingBuilding.new()
+	existing.building_config = FootprintConfig.new(_rows(["X.", "XX"]))
+	existing.position = Vector3(10.0, 0.0, 10.0)
+	existing.rotation.y = PI / 2.0
+	existing.add_to_group("buildings")
+	buildings_root.add_child(existing)
+
+	var occupied: Dictionary = placement._occupied_building_nav_cells()
+	_expect(occupied.has(Vector2i(8, 10)), "the back-left footprint cell must rotate from -Z to -X")
+	_expect(occupied.has(Vector2i(10, 8)), "the front-right footprint cell must rotate from +X to -Z")
+	_expect(not occupied.has(Vector2i(8, 8)), "the unrotated footprint location must remain free")
+
 	_free_pair(pair)
 	return token
 

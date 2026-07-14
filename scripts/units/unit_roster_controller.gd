@@ -17,6 +17,7 @@ const BuildingOptionStateScript := preload("res://scripts/buildings/building_opt
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const HarvesterScene := preload("res://scenes/units/harvester.tscn")
+const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 
 const UNIT_MODEL_ROOT := "res://assets/converted/models"
 const UNIT_POPULATION_LIMIT := 1000
@@ -167,6 +168,7 @@ func _spawn_completed_unit(unit_id: StringName, production_building_id: StringNa
 	# toward that building's own rally point.
 	var spawn_position = building.call("production_spawn_position") if building.has_method("production_spawn_position") else building.global_position
 	unit.global_position = spawn_position
+	unit.face_direction(_production_exit_direction(building))
 	unit.set_owner_player_id(player.player_id)
 	var rally_point = building.call("rally_point_position") if building.has_method("rally_point_position") else _default_rally_point(building)
 	# The exit point walks the unit straight out through the building's front
@@ -366,8 +368,15 @@ func _unit_model_scene_path(model_name: String) -> String:
 
 
 func _default_rally_point(building: Node3D) -> Vector3:
-	var forward := building.global_transform.basis.z
-	return building.global_position + forward.normalized() * 2.0
+	return building.global_position + _production_exit_direction(building) * 2.0
+
+
+func _production_exit_direction(building: Node3D) -> Vector3:
+	if building != null and building.has_method("exit_direction"):
+		return building.call("exit_direction") as Vector3
+	# Production buildings are converted Emperor assets whose authored exit is
+	# local +Z. The fallback keeps that legacy scene contract explicit.
+	return SpatialOrientationScript.world_horizontal_axis(building, Vector3.BACK)
 
 
 func _load_unit_configs() -> void:

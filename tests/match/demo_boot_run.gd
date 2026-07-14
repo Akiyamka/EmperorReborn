@@ -1,5 +1,7 @@
 extends SceneTree
 
+const MatchFixtureScene := preload("res://tests/fixtures/match_fixture.tscn")
+
 ## Regression test for a startup-ordering bug: Match._enter_tree() used to
 ## compute the building-panel roster via Rules.buildable_building_ids_for_house(),
 ## but the Rules autoload only loads its catalog in its own _ready() --
@@ -17,9 +19,10 @@ func _initialize() -> void:
 	await _run_case("units and buildings use authored collision meshes", _test_authored_collision_meshes)
 	await _run_case("units follow terrain elevation", _test_units_follow_terrain)
 	await _run_case("units turn at their rules rates", _test_unit_turn_rates)
+	await _run_case("entity forward directions share one world-space contract", _test_entity_orientation_contract)
 	await _run_case("units switch between stationary and movement animations", _test_unit_movement_animations)
-	await _run_case("demo scene roster is non-empty after boot", _test_demo_roster_populated)
-	await _run_case("rules art configs resolve every demo panel icon", _test_demo_panel_icons)
+	await _run_case("test match roster is non-empty after boot", _test_match_roster_populated)
+	await _run_case("rules art configs resolve every test panel icon", _test_match_panel_icons)
 	await _run_case("rules sidebar type selects the panel tab", _test_rules_sidebar_tabs)
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
 	await _run_case("upgrade slot appears after its building is placed later", _test_upgrade_availability_polls)
@@ -28,10 +31,10 @@ func _initialize() -> void:
 	await _run_case("occupy matrices are Z-mirrored to match converted models", _test_occupy_rows_are_mirrored)
 
 	if _failures > 0:
-		printerr("Match demo boot tests: %d failures after %d assertions" % [_failures, _assertions])
+		printerr("Match integration tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
 		return
-	print("Match demo boot tests: %d assertions passed" % _assertions)
+	print("Match integration tests: %d assertions passed" % _assertions)
 	quit(0)
 
 
@@ -52,8 +55,7 @@ func _expect(condition: bool, message: String) -> void:
 
 
 func _test_authored_collision_meshes() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await physics_frame
 	var navigation := match_instance.get_node_or_null("UnitNavigationSystem")
@@ -101,8 +103,7 @@ func _test_authored_collision_meshes() -> void:
 
 
 func _test_units_follow_terrain() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await physics_frame
 	await physics_frame
@@ -137,8 +138,7 @@ func _terrain_hit_below(unit: CharacterBody3D) -> Dictionary:
 
 
 func _test_unit_turn_rates() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await physics_frame
 
@@ -198,9 +198,22 @@ func _test_unit_turn_rates() -> void:
 	match_instance.queue_free()
 
 
+func _test_entity_orientation_contract() -> void:
+	var building := Building.new()
+	var unit := Unit.new()
+	for yaw in [0.0, PI / 2.0, PI, -PI / 2.0]:
+		building.rotation = Vector3(0.0, yaw, 0.0)
+		unit.face_direction(building.exit_direction())
+		_expect(
+			unit.facing_direction().dot(building.exit_direction()) > 0.999,
+			"a unit must face a building's exit at yaw %.3f without knowing either asset's local axis" % yaw
+		)
+	building.free()
+	unit.free()
+
+
 func _test_unit_movement_animations() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await physics_frame
 	await physics_frame
@@ -280,9 +293,8 @@ func _authored_collision_shapes(node: Node) -> Array[CollisionShape3D]:
 	return result
 
 
-func _test_demo_roster_populated() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+func _test_match_roster_populated() -> void:
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await process_frame
 	await process_frame
@@ -293,7 +305,7 @@ func _test_demo_roster_populated() -> void:
 	)
 	_expect(
 		match_instance._building_option_ids.has(&"ATBarracks"),
-		"ATBarracks must be available given the demo scene's starting ATConYard + ATSmWindtrap"
+		"ATBarracks must be available given the fixture's starting ATConYard + ATSmWindtrap"
 	)
 
 	var side_panel = match_instance.get_node("HUD/SidePanel")
@@ -305,9 +317,8 @@ func _test_demo_roster_populated() -> void:
 	match_instance.queue_free()
 
 
-func _test_demo_panel_icons() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+func _test_match_panel_icons() -> void:
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await process_frame
 	await process_frame
@@ -328,8 +339,7 @@ func _test_demo_panel_icons() -> void:
 
 
 func _test_rules_sidebar_tabs() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await process_frame
 	await process_frame
@@ -359,8 +369,7 @@ func _test_rules_sidebar_tabs() -> void:
 ## normal AVAILABLE look, so every building without a real upgrade still
 ## rendered as one.
 func _test_upgrade_panel_matches_controller() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await process_frame
 	await process_frame
@@ -399,8 +408,7 @@ func _test_upgrade_panel_matches_controller() -> void:
 ## placed. _poll_upgrade_availability() fixes this the same way
 ## BuildingController already does it.
 func _test_upgrade_availability_polls() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await process_frame
 	await process_frame
@@ -412,7 +420,7 @@ func _test_upgrade_availability_polls() -> void:
 	var slot_before = side_panel._upgrade_slot(&"ATBarracks")
 	_expect(
 		slot_before != null and not slot_before.visible,
-		"ATBarracks upgrade must start hidden -- the demo scene has no Barracks yet"
+		"ATBarracks upgrade must start hidden -- the fixture has no Barracks yet"
 	)
 
 	var barracks_scene := load("res://assets/converted/buildings/ATBarracks/ATBarracks.scn") as PackedScene
@@ -454,8 +462,7 @@ func _test_upgrade_availability_polls() -> void:
 ## owned, and units flagged upgraded_primary_required must additionally wait
 ## for that building's upgrade.
 func _test_unit_roster_availability() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await process_frame
 	await process_frame
@@ -479,7 +486,7 @@ func _test_unit_roster_availability() -> void:
 	var kindjal_slot = side_panel._building_slot(&"ATKindjal")
 	_expect(
 		infantry_slot != null and not infantry_slot.visible,
-		"ATInfantry must start hidden -- the demo scene has no Barracks yet"
+		"ATInfantry must start hidden -- the fixture has no Barracks yet"
 	)
 	_expect(
 		kindjal_slot != null and not kindjal_slot.visible,
@@ -521,8 +528,7 @@ func _test_unit_roster_availability() -> void:
 
 
 func _test_unit_production_rally_and_primary() -> void:
-	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
-	var match_instance := scene.instantiate()
+	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await process_frame
 	await process_frame
@@ -535,6 +541,7 @@ func _test_unit_production_rally_and_primary() -> void:
 	buildings.add_child(primary_barracks)
 	first_barracks.global_position = Vector3(80.0, 8.0, 40.0)
 	primary_barracks.global_position = Vector3(120.0, 8.0, 40.0)
+	primary_barracks.global_rotation.y = PI / 2.0
 	first_barracks.setup(&"ATBarracks")
 	primary_barracks.setup(&"ATBarracks")
 	first_barracks.set_owner_player_id(1)
@@ -597,6 +604,16 @@ func _test_unit_production_rally_and_primary() -> void:
 	_expect(
 		produced != null and produced.global_position.is_equal_approx(primary_barracks.production_spawn_position()),
 		"a completed unit must emerge at the front edge of the designated primary production building"
+	)
+	var produced_forward := -produced.global_transform.basis.z if produced != null else Vector3.ZERO
+	produced_forward.y = 0.0
+	produced_forward = produced_forward.normalized()
+	var building_forward := primary_barracks.global_transform.basis.z
+	building_forward.y = 0.0
+	building_forward = building_forward.normalized()
+	_expect(
+		produced != null and produced_forward.dot(building_forward) > 0.999,
+		"a completed unit's front must face out through its production building's front"
 	)
 	_expect(
 		produced != null and produced.target_position.is_equal_approx(rally_point),

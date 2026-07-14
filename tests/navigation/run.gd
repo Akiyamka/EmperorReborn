@@ -33,11 +33,19 @@ class FakeUnit extends Node3D:
 		return owner_player_id != player_id
 
 
+class FakeBuilding extends Node3D:
+	var building_config := RuleEntityConfig.new()
+
+	func _init(rows: Array[String]) -> void:
+		building_config.lists = {&"occupy_rows": rows}
+
+
 func _initialize() -> void:
 	await process_frame
 	var grid := _make_grid()
 	_test_synchronous_paths(grid)
 	_test_no_stop_cells(grid)
+	_test_rotated_building_blockers(grid)
 	_test_interior_escape(grid)
 	_test_immediate_movement(grid)
 	_test_navigation_catch_up_budget(grid)
@@ -134,6 +142,7 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	)
 	_expect(not into_apron.is_empty() and not apron.has(into_apron[into_apron.size() - 1]), "a destination on the apron must snap to the nearest stoppable cell")
 
+
 	var navigation := NavigationSystemScript.new()
 	root.add_child(navigation)
 	navigation.set_physics_process(false)
@@ -158,6 +167,28 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	navigation.queue_free()
 	clicker.queue_free()
 	produced.queue_free()
+
+
+func _test_rotated_building_blockers(grid: MapNavigationGrid) -> void:
+	var match_root := Node3D.new()
+	root.add_child(match_root)
+	var building := FakeBuilding.new(["X.", "XS"])
+	building.position = Vector3(10.0, 0.0, 10.0)
+	building.rotation.y = PI / 2.0
+	building.add_to_group("buildings")
+	match_root.add_child(building)
+	var navigation := NavigationSystemScript.new()
+	match_root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize with a rotated building")
+	_expect(navigation.runtime_map.is_blocked(Vector2i(8, 10)), "rotated solid occupy cells must block their transformed location")
+	_expect(
+		navigation.runtime_map.is_passable(Vector2i(10, 8), MapNavigationGrid.PASS_VEHICLE)
+			and not navigation.runtime_map.is_stoppable(Vector2i(10, 8), MapNavigationGrid.PASS_VEHICLE),
+		"the rotated skirt must remain a passable no-stop exit"
+	)
+	_expect(not navigation.runtime_map.is_blocked(Vector2i(8, 8)), "the stale unrotated blocker location must remain free")
+	match_root.queue_free()
 
 
 ## A building footprint: blocked interior at x/y 100..107 with a no-stop apron

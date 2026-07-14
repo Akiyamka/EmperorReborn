@@ -1,6 +1,8 @@
 class_name RTSCamera
 extends Node3D
 
+const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+
 const RTSCameraConfigScript := preload("res://scripts/world/camera/rts_camera_config.gd")
 
 @export var config: RTSCameraConfig
@@ -33,13 +35,8 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_SHIFT):
 		speed *= config.fast_multiplier
 
-	var forward := -global_transform.basis.z
-	forward.y = 0.0
-	forward = forward.normalized()
-
-	var right := global_transform.basis.x
-	right.y = 0.0
-	right = right.normalized()
+	var forward := SpatialOrientationScript.world_forward(self)
+	var right := SpatialOrientationScript.world_right(self)
 
 	global_position += (right * input_direction.x + forward * input_direction.y) * speed * delta
 	_clamp_view_to_bounds()
@@ -132,7 +129,7 @@ func _clamp_view_to_bounds() -> void:
 	if not target_bounds.has_area():
 		return
 	var camera_position := camera.global_position
-	var view_direction := -camera.global_transform.basis.z
+	var view_direction := SpatialOrientationScript.world_forward(camera)
 	if view_direction.y >= -0.01:
 		return
 	var distance := camera_position.y / -view_direction.y

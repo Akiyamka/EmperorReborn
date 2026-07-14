@@ -17,6 +17,7 @@ const INVALID_ANCHOR := Vector2i(-999999, -999999)
 
 const UnitPushAsideScript := preload("res://scripts/buildings/unit_push_aside.gd")
 const BuildRadiusScript := preload("res://scripts/buildings/build_radius.gd")
+const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 
 var _camera: Camera3D
 var _navigation_grid
@@ -300,12 +301,13 @@ func _existing_building_footprints() -> Array:
 			occupy_rows.assign(_existing_building_occupy_rows.call(building))
 		if occupy_rows.is_empty():
 			continue
-		var anchor_cell := _building_anchor(building, occupy_rows)
 		var is_wall := false
 		if not _existing_building_is_wall.is_null():
 			is_wall = bool(_existing_building_is_wall.call(building))
 		footprints.append({
-			"cells": _occupy_rows_nav_cells(anchor_cell, occupy_rows),
+			"cells": BuildingFootprintScript.nav_cells_by_marker(
+				building, occupy_rows, _navigation_grid, NAV_CELLS_PER_OCCUPY_CELL
+			).keys(),
 			"is_wall": is_wall,
 		})
 	return footprints
@@ -562,39 +564,11 @@ func _occupied_building_nav_cells() -> Dictionary:
 			occupy_rows.assign(_existing_building_occupy_rows.call(building))
 		if occupy_rows.is_empty():
 			continue
-		var anchor_cell := _building_anchor(building, occupy_rows)
-		for row_index in occupy_rows.size():
-			var row := occupy_rows[row_index]
-			for column_index in row.length():
-				if _is_empty_occupy_marker(row.substr(column_index, 1)):
-					continue
-				var occupy_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
-				for y in NAV_CELLS_PER_OCCUPY_CELL:
-					for x in NAV_CELLS_PER_OCCUPY_CELL:
-						cells[occupy_cell + Vector2i(x, y)] = true
+		for cell in BuildingFootprintScript.nav_cells_by_marker(
+			building, occupy_rows, _navigation_grid, NAV_CELLS_PER_OCCUPY_CELL
+		):
+			cells[cell] = true
 	return cells
-
-
-func _building_anchor(building: Node3D, occupy_rows: Array[String]) -> Vector2i:
-	# Buildings placed before placement anchors were persisted have no metadata.
-	# get_meta(key, null) still reports an engine error for an absent key, so
-	# check for it explicitly before using the world-position fallback.
-	var saved_anchor = building.get_meta(&"placement_anchor_cell") if building.has_meta(&"placement_anchor_cell") else null
-	if saved_anchor is Vector2i:
-		return saved_anchor
-	var nav_size := _occupy_rows_nav_size(occupy_rows)
-	var building_position := building.global_position if building.is_inside_tree() else building.position
-	var center_cell: Vector2i = _navigation_grid.world_to_grid(building_position)
-	return center_cell - Vector2i(
-		int(floor(float(nav_size.x) * 0.5)), int(floor(float(nav_size.y) * 0.5))
-	)
-
-
-func _occupy_rows_nav_size(occupy_rows: Array[String]) -> Vector2i:
-	var width := 0
-	for row in occupy_rows:
-		width = maxi(width, row.length())
-	return Vector2i(width * NAV_CELLS_PER_OCCUPY_CELL, occupy_rows.size() * NAV_CELLS_PER_OCCUPY_CELL)
 
 
 func _is_nav_cell_buildable(grid_cell: Vector2i) -> bool:

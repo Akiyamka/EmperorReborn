@@ -1,6 +1,8 @@
 extends CharacterBody3D
 class_name Unit
 
+const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+
 signal owner_changed(player_id: int)
 signal navigation_enemy_encountered(enemies: Array[Node3D])
 
@@ -240,16 +242,28 @@ func _turn_toward(direction: Vector3, delta: float) -> bool:
 	if horizontal_direction.length_squared() <= 0.000001:
 		return true
 	horizontal_direction = horizontal_direction.normalized()
-	# Node3D faces along local -Z. This is the yaw that look_at() used to set
-	# instantly; rotate_toward limits the change to the unit's Rules.txt rate.
-	var target_yaw := atan2(-horizontal_direction.x, -horizontal_direction.z)
-	if is_zero_approx(angle_difference(rotation.y, target_yaw)):
+	var current_yaw := global_rotation.y
+	var target_yaw := SpatialOrientationScript.yaw_facing(horizontal_direction, current_yaw)
+	if is_zero_approx(angle_difference(current_yaw, target_yaw)):
 		return true
 	if turn_rate <= 0.0 or delta <= 0.0:
 		return false
 	var maximum_step := turn_rate * RULE_MOVEMENT_UPDATES_PER_SECOND * delta
-	rotation.y = rotate_toward(rotation.y, target_yaw, maximum_step)
-	return is_zero_approx(angle_difference(rotation.y, target_yaw))
+	global_rotation.y = rotate_toward(current_yaw, target_yaw, maximum_step)
+	return is_zero_approx(angle_difference(global_rotation.y, target_yaw))
+
+
+func facing_direction() -> Vector3:
+	return SpatialOrientationScript.world_forward(self)
+
+
+func face_direction(direction: Vector3) -> void:
+	var current_yaw := global_rotation.y if is_inside_tree() else rotation.y
+	var target_yaw := SpatialOrientationScript.yaw_facing(direction, current_yaw)
+	if is_inside_tree():
+		global_rotation.y = target_yaw
+	else:
+		rotation.y = target_yaw
 
 
 func _terrain_hit_at(position: Vector3) -> Dictionary:

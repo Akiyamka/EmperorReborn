@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://assets/converted/buildings/ATSmWindtrap/ATSmWindtrap.scn" id="1_windtrap"]
+[ext_resource type="PackedScene" path="res://scenes/units/or_apc.tscn" id="2_or_apc"]
+
+[node name="SnapshotFixture" type="Node3D"]
+
+[node name="Buildings" type="Node3D" parent="."]
+
+[node name="ATSmWindtrap" parent="Buildings" instance=ExtResource("1_windtrap")]
+owner_player_id = 1
+
+[node name="Units" type="Node3D" parent="."]
+
+[node name="OrdosAPC" parent="Units" instance=ExtResource("2_or_apc")]
+owner_player_id = 2

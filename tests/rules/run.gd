@@ -2,7 +2,7 @@ extends SceneTree
 ## Covers RulesCatalog.buildable_building_ids_for_house(): the panel-grid
 ## roster filter documented in docs/mechanics/production.md. Real fixtures
 ## (assets/converted/rules/buildings/*.tres) already exercise this indirectly
-## via demo_match, but this pins the filter rules directly against synthetic
+## via the match integration fixture, but this pins the filter rules directly against synthetic
 ## configs so a future rules-conversion change that breaks them fails loudly
 ## here instead of only showing up as a wrong panel roster in-game.
 

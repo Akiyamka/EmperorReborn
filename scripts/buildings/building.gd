@@ -1,6 +1,10 @@
 class_name Building
 extends Node3D
 
+const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+## Converted Emperor buildings expose their apron/door on authored local +Z.
+const LOCAL_EXIT_DIRECTION := Vector3.BACK
+
 signal owner_changed(player_id: int)
 signal health_changed(health: float, max_health: float)
 signal primary_changed(is_primary: bool)
@@ -134,12 +138,12 @@ func production_spawn_position() -> Vector3:
 	# inside the correct footprint cell but already facing a clear exit to the
 	# rally point.
 	if building_config == null:
-		return global_position + _forward_direction()
+		return global_position + exit_direction()
 	var rows: Array[String] = []
 	rows.assign(building_config.list(&"occupy_rows"))
 	var spawn_cell := _nearest_skirt_cell(rows)
 	if spawn_cell.x < 0:
-		return global_position + _forward_direction()
+		return global_position + exit_direction()
 	var width := 0
 	for row in rows:
 		width = maxi(width, row.length())
@@ -148,7 +152,7 @@ func production_spawn_position() -> Vector3:
 		0.0,
 		(float(spawn_cell.y) + 0.5 - float(rows.size()) * 0.5) * OCCUPY_CELL_WORLD_SPAN
 	)
-	return global_position + global_transform.basis.x.normalized() * local_offset.x + _forward_direction() * local_offset.z
+	return global_position + SpatialOrientationScript.world_right(self) * local_offset.x + exit_direction() * local_offset.z
 
 
 ## Where a produced unit should first walk to: the spawn point pushed past the
@@ -157,7 +161,7 @@ func production_spawn_position() -> Vector3:
 ## spawn's lateral offset makes the unit leave straight through the door.
 func production_exit_position() -> Vector3:
 	var spawn := production_spawn_position()
-	var forward := _forward_direction()
+	var forward := exit_direction()
 	var front_edge := _front_footprint_extent()
 	var spawn_depth := (global_transform.affine_inverse() * spawn).z
 	return spawn + forward * maxf(front_edge - spawn_depth + RALLY_POINT_CLEARANCE, RALLY_POINT_CLEARANCE)
@@ -215,7 +219,7 @@ func _set_default_rally_point_if_unset() -> void:
 	if _has_rally_point:
 		return
 	var clearance := RALLY_POINT_CLEARANCE + _front_collision_extent()
-	set_rally_point(global_position + _forward_direction() * clearance)
+	set_rally_point(global_position + exit_direction() * clearance)
 
 
 func _front_collision_extent() -> float:
@@ -228,11 +232,9 @@ func _front_collision_extent() -> float:
 	return 0.0
 
 
-func _forward_direction() -> Vector3:
-	var forward := global_transform.basis.z
-	if forward.length_squared() <= 0.0001:
-		forward = Vector3.BACK
-	return forward.normalized()
+func exit_direction() -> Vector3:
+	var direction := SpatialOrientationScript.world_horizontal_axis(self, LOCAL_EXIT_DIRECTION)
+	return direction if not direction.is_zero_approx() else Vector3.BACK
 
 
 func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:

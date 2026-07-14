@@ -6,6 +6,7 @@ extends Node
 
 const UnitNavigationMapScript := preload("res://scripts/units/navigation/unit_navigation_map.gd")
 const UnitNavigationPlannerScript := preload("res://scripts/units/navigation/unit_navigation_planner.gd")
+const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 
 signal destination_slots_assigned(command_id: int, assignments: Array[Dictionary])
 signal enemy_blocked(unit: Node3D, blockers: Array[Node3D])
@@ -1100,27 +1101,15 @@ func _refresh_building_blockers() -> void:
 		if config == null:
 			continue
 		var rows: Array = config.list(&"occupy_rows")
-		var width := 0
-		for row in rows:
-			width = maxi(width, String(row).length())
-		var nav_size := Vector2i(width, rows.size()) * OCCUPY_CELL_SPAN
-		var anchor = building.get_meta(&"placement_anchor_cell") if building.has_meta(&"placement_anchor_cell") else null
-		if not anchor is Vector2i:
-			anchor = runtime_map.grid.world_to_grid(building.global_position) - nav_size / 2
-		for row_index in rows.size():
-			var row := String(rows[row_index])
-			for column_index in row.length():
-				var marker := row.substr(column_index, 1)
-				if _empty_occupy_marker(marker):
-					continue
-				# Skirt cells overlap the building model: routing treats them as
-				# solid so nothing drives through the mesh, but local steering
-				# may cross them, letting a freshly produced unit walk out.
-				var target := no_stop if marker.to_lower() == "s" else blocked
-				var origin: Vector2i = anchor + Vector2i(column_index, row_index) * OCCUPY_CELL_SPAN
-				for y in OCCUPY_CELL_SPAN:
-					for x in OCCUPY_CELL_SPAN:
-						target[origin + Vector2i(x, y)] = true
+		var footprint: Dictionary = BuildingFootprintScript.nav_cells_by_marker(
+			building, rows, runtime_map.grid, OCCUPY_CELL_SPAN
+		)
+		for cell in footprint:
+			# Skirt cells overlap the building model: routing treats them as
+			# solid so nothing drives through the mesh, but local steering may
+			# cross them, letting a freshly produced unit walk out.
+			var target := no_stop if String(footprint[cell]).to_lower() == "s" else blocked
+			target[cell] = true
 	if runtime_map.replace_blocked_cells(blocked, no_stop):
 		_replan_after_map_change()
 

@@ -1,7 +1,7 @@
 extends SceneTree
 
 const MatchSnapshotScript := preload("res://scripts/match/match_snapshot.gd")
-const DemoMatchScene := preload("res://scenes/match/demo_match.tscn")
+const SnapshotFixtureScene := preload("res://tests/fixtures/snapshot_fixture.tscn")
 const ATRefineryScene := preload("res://assets/converted/buildings/ATRefinery/ATRefinery.scn")
 const TEST_SNAPSHOT_PATH := "user://match_snapshot_test.json"
 
@@ -9,9 +9,11 @@ var _failures := 0
 
 
 func _initialize() -> void:
+	await process_frame
+	_configure_players()
 	var snapshot = MatchSnapshotScript.new(TEST_SNAPSHOT_PATH)
 	snapshot.erase()
-	var source = DemoMatchScene.instantiate()
+	var source = SnapshotFixtureScene.instantiate()
 	get_root().add_child(source)
 	await physics_frame
 	await physics_frame
@@ -32,7 +34,7 @@ func _initialize() -> void:
 	source.queue_free()
 	await process_frame
 
-	var restored = DemoMatchScene.instantiate()
+	var restored = SnapshotFixtureScene.instantiate()
 	get_root().add_child(restored)
 	await physics_frame
 	await physics_frame
@@ -70,6 +72,14 @@ func _initialize() -> void:
 		return
 	print("Match snapshot tests passed")
 	quit(0)
+
+
+func _configure_players() -> void:
+	var players = get_root().get_node("Players")
+	players.reset_for_match()
+	players.create_player(1, "Snapshot Atreides", Color(0.12, 0.44, 1.0), &"Atreides", [], 1)
+	players.create_player(2, "Snapshot Ordos", Color(0.16, 0.75, 0.34), &"Ordos", [], 2)
+	players.local_player_id = 1
 
 
 func _expect(condition: bool, message: String) -> void:

@@ -97,7 +97,7 @@ static func _survivors_parent(building: Building) -> Node:
 	if tree == null:
 		return building.get_parent()
 
-	# Mirrors the scene convention (see scenes/match/demo_match.tscn): every
+	# Mirrors the match scene convention: every
 	# Unit self-registers in group "units" under a sibling "Units" container.
 	# Falling back to the building's own parent keeps this robust when no
 	# other unit exists yet to anchor that lookup.
