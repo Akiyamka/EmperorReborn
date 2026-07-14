@@ -6,7 +6,7 @@ of *Emperor: Battle for Dune*.
 This repository does not include original game assets. Shipping those files
 would violate the original game's license. Instead, the project provides tools
 for converting resources from a legally owned copy of the original game into
-Godot-native formats that can be loaded by the browser build.
+Godot-native formats that can be loaded by the game.
 
 ## Development prerequisites
 
