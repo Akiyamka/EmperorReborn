@@ -27,6 +27,21 @@ class FakeUnit extends Node3D:
 		return player
 
 
+class FakeHarvester extends FakeUnit:
+	var harvest_commands: Array[Dictionary] = []
+	var cancelled_harvest_orders := 0
+
+	func can_harvest_spice() -> bool:
+		return true
+
+	func command_harvest(spice_layer, navigation_grid, cell: Vector2i) -> bool:
+		harvest_commands.append({"spice_layer": spice_layer, "grid": navigation_grid, "cell": cell})
+		return true
+
+	func cancel_harvest_order() -> void:
+		cancelled_harvest_orders += 1
+
+
 class FakeBuilding extends Node3D:
 	var player = null
 	var selected := false
@@ -65,6 +80,24 @@ class FakeNavigation extends RefCounted:
 		commands.append({"units": units, "target": target, "mode": mode})
 
 
+class FakeNavigationGrid extends MapNavigationGrid:
+	func is_loaded() -> bool:
+		return true
+
+	func world_to_grid(world_position: Vector3) -> Vector2i:
+		return Vector2i(floori(world_position.x), floori(world_position.z))
+
+	func cell_debug(grid_position: Vector2i) -> Dictionary:
+		return {"source_tile": grid_position, "terrain_name": "sand"}
+
+
+class FakeSpiceLayer extends RefCounted:
+	var spice_cells: Dictionary = {}
+
+	func has_spice(cell: Vector2i) -> bool:
+		return int(spice_cells.get(cell, 0)) > 0
+
+
 func _initialize() -> void:
 	await process_frame
 	var players = root.get_node("Players")
@@ -77,6 +110,7 @@ func _initialize() -> void:
 	_run_case("selection ownership and movement", _test_selection_ownership_and_movement.bind(local_player, enemy_player))
 	_run_case("rectangle unit selection", _test_rectangle_unit_selection.bind(local_player, enemy_player))
 	_run_case("J modifies movement formation", _test_formation_modifier.bind(local_player))
+	_run_case("spice click issues harvester order", _test_harvester_order.bind(local_player))
 	_run_case("building selection", _test_building_selection.bind(local_player))
 	players.reset_for_match()
 	if _failures > 0:
@@ -232,6 +266,46 @@ func _test_formation_modifier(token: int, local_player) -> int:
 
 	commands.queue_free()
 	unit.queue_free()
+	return token
+
+
+func _test_harvester_order(token: int, local_player) -> int:
+	var navigation := FakeNavigation.new()
+	var terrain := MapLoader.new()
+	terrain.navigation_grid = FakeNavigationGrid.new()
+	terrain.spice_layer = FakeSpiceLayer.new()
+	terrain.spice_layer.spice_cells[Vector2i(12, 14)] = 200
+	var commands := FakeUnitCommandController.new()
+	commands.setup(null, terrain, navigation)
+	var statuses: Array[String] = []
+	commands.status_changed.connect(func(status: String) -> void: statuses.append(status))
+	root.add_child(commands)
+
+	var harvester := FakeHarvester.new()
+	harvester.name = "Harvester"
+	harvester.player = local_player
+	harvester.add_to_group("units")
+	root.add_child(harvester)
+	var collider := Node.new()
+	harvester.add_child(collider)
+	commands.raycast_hits.append({"collider": collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+
+	commands.raycast_hits.append({"position": Vector3(12.4, 0.0, 14.8)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(harvester.harvest_commands.size() == 1, "a spice-cell click must issue the dedicated harvesting order")
+	_expect(harvester.harvest_commands[0]["cell"] == Vector2i(12, 14), "the harvesting order must retain the clicked navigation cell")
+	_expect(navigation.commands.is_empty() and harvester.move_targets.is_empty(), "a harvester spice order must not also become a generic move")
+	_expect(statuses.back().begins_with("Harvesting spice at 12.4, 14.8"), "the command status must identify resource collection")
+
+	commands.raycast_hits.append({"position": Vector3(20.0, 0.0, 21.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(harvester.cancelled_harvest_orders == 1, "a later ordinary move must cancel the harvesting order")
+	_expect(navigation.commands.size() == 1 and navigation.commands[0]["units"] == [harvester], "an empty-cell click must retain ordinary movement")
+
+	commands.queue_free()
+	harvester.queue_free()
+	terrain.free()
 	return token
 
 

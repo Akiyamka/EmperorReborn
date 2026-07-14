@@ -34,9 +34,8 @@ func configure(entity: Node3D, radius: float, elevation: float) -> void:
 	_layers[&"health"] = _add_layer(&"Health", HEALTH_TEXTURES[5], diameter, 0.002, true)
 	_layers[&"empty_shield"] = _add_layer(&"EmptyShield", EMPTY_SHIELD_TEXTURE, diameter, 0.004, false, ADDITIVE_SHADER)
 	_layers[&"shield"] = _add_layer(&"Shield", SHIELD_TEXTURE, diameter, 0.006, true)
-	# These are deliberately created now even though harvesting and transport
-	# mechanics do not yet publish capacity values.  The component can start
-	# showing them as soon as those fields are populated on the entity.
+	# Spice and carryall/harvester status use separate authored rings. This
+	# gameplay HUD uses @!Harv for the harvester's bunker fill.
 	_layers[&"empty_spice"] = _add_layer(&"EmptySpice", EMPTY_SPICE_TEXTURE, diameter, 0.008, false, ADDITIVE_SHADER)
 	_layers[&"spice"] = _add_layer(&"Spice", SPICE_TEXTURE, diameter, 0.010, true)
 	_layers[&"empty_transport"] = _add_layer(&"EmptyTransport", EMPTY_HARVESTER_TEXTURE, diameter, 0.012, false, ADDITIVE_SHADER)
@@ -79,14 +78,18 @@ func _refresh() -> void:
 	_set_layer(&"shield", SHIELD_TEXTURE, _fraction(&"shields", &"max_shields"), true)
 
 	var has_spice_capacity := _number(&"max_spice") > 0.0
-	_layers[&"empty_spice"].visible = has_spice_capacity
-	_layers[&"spice"].visible = has_spice_capacity
-	_set_layer(&"spice", SPICE_TEXTURE, _fraction(&"spice", &"max_spice"), true)
+	# The unit bunker is the @!Harv ring requested by the gameplay UI, so do not
+	# draw a second @!Spice cargo ring over it.
+	_layers[&"empty_spice"].visible = false
+	_layers[&"spice"].visible = false
 
 	var has_transport_capacity := _number(&"max_passengers") > 0.0
-	_layers[&"empty_transport"].visible = has_transport_capacity
-	_layers[&"transport"].visible = has_transport_capacity
-	_set_layer(&"transport", HARVESTER_TEXTURE, _fraction(&"passengers", &"max_passengers"), true)
+	var shows_harvester_ring := has_spice_capacity or has_transport_capacity
+	_layers[&"empty_transport"].visible = shows_harvester_ring
+	_layers[&"transport"].visible = shows_harvester_ring
+	var harvester_fill := _fraction(&"spice", &"max_spice") \
+		if has_spice_capacity else _fraction(&"passengers", &"max_passengers")
+	_set_layer(&"transport", HARVESTER_TEXTURE, harvester_fill, true)
 	_refresh_visibility()
 
 

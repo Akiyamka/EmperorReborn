@@ -76,16 +76,28 @@ func has_spice(cell: Vector2i) -> bool:
 	return spice_at(cell) > 0
 
 
-func nearest_spice_cell(origin: Vector2i, minimum_amount := 1) -> Vector2i:
+func nearest_spice_cell(origin: Vector2i, minimum_amount := 1, maximum_distance := -1) -> Vector2i:
 	var best := Vector2i(-1, -1)
 	var best_distance_squared := 0x7fffffff
+	var maximum_distance_squared := maximum_distance * maximum_distance
 	var size := MapNavigationGridScript.NAV_SIZE
-	for y in size:
-		for x in size:
+	var minimum_x := 0
+	var minimum_y := 0
+	var maximum_x := size - 1
+	var maximum_y := size - 1
+	if maximum_distance >= 0:
+		minimum_x = maxi(origin.x - maximum_distance, 0)
+		minimum_y = maxi(origin.y - maximum_distance, 0)
+		maximum_x = mini(origin.x + maximum_distance, size - 1)
+		maximum_y = mini(origin.y + maximum_distance, size - 1)
+	for y in range(minimum_y, maximum_y + 1):
+		for x in range(minimum_x, maximum_x + 1):
 			var cell := Vector2i(x, y)
 			if _spice_values[y * size + x] < maxi(minimum_amount, 1):
 				continue
 			var distance_squared := origin.distance_squared_to(cell)
+			if maximum_distance >= 0 and distance_squared > maximum_distance_squared:
+				continue
 			if distance_squared < best_distance_squared:
 				best = cell
 				best_distance_squared = distance_squared

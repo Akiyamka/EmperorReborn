@@ -87,6 +87,8 @@ func _capture_entity(entity: Node3D) -> Dictionary:
 	if entity is Building:
 		record["refinery_upgrade_state"] = int(entity.get("refinery_upgrade_state"))
 	if entity is Unit:
+		if "spice" in entity:
+			record["spice"] = float(entity.get("spice"))
 		var visual_root := entity.get_node_or_null("VisualRoot") as Node3D
 		if visual_root != null and visual_root.get_child_count() > 0:
 			var visual := visual_root.get_child(0)
@@ -127,6 +129,8 @@ func _restore_entity_details(entity: Node3D, record: Dictionary) -> void:
 		entity.call("set_refinery_upgrade_state", int(record.get("refinery_upgrade_state", 0)))
 	if entity is Unit:
 		_restore_unit_visual(entity as Unit, String(record.get("visual_scene_path", "")))
+		if "spice" in entity:
+			entity.set("spice", float(record.get("spice", 0.0)))
 		entity.call("stop_at_current_position")
 
 

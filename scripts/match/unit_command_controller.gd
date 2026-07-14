@@ -155,24 +155,53 @@ func _command_move(screen_position: Vector2) -> void:
 		if _formation_modifier_down
 		else UnitNavigationSystemScript.MoveMode.FREE
 	)
-	if _navigation != null:
-		_navigation.command_move(movable_entities, target, move_mode)
-	else:
-		for entity in movable_entities:
-			entity.move_to(target)
-	var nav_status := ""
+	var target_cell := Vector2i(-1, -1)
+	var spice_target := false
 	if _terrain != null and _terrain.navigation_grid != null and _terrain.navigation_grid.is_loaded():
-		var cell: Vector2i = _terrain.navigation_grid.world_to_grid(target)
-		var debug: Dictionary = _terrain.navigation_grid.cell_debug(cell)
+		target_cell = _terrain.navigation_grid.world_to_grid(target)
+		spice_target = _terrain.spice_layer != null and bool(_terrain.spice_layer.call("has_spice", target_cell))
+
+	var harvesting_entities: Array[Node] = []
+	var moving_entities: Array[Node] = []
+	for entity in movable_entities:
+		var can_harvest := entity.has_method("can_harvest_spice") \
+			and bool(entity.call("can_harvest_spice")) \
+			and entity.has_method("command_harvest")
+		if spice_target and can_harvest \
+		and bool(entity.call("command_harvest", _terrain.spice_layer, _terrain.navigation_grid, target_cell)):
+			harvesting_entities.append(entity)
+			continue
+		if entity.has_method("cancel_harvest_order"):
+			entity.call("cancel_harvest_order")
+		moving_entities.append(entity)
+
+	if not moving_entities.is_empty():
+		if _navigation != null:
+			_navigation.command_move(moving_entities, target, move_mode)
+		else:
+			for entity in moving_entities:
+				entity.move_to(target)
+	var nav_status := ""
+	if target_cell.x >= 0:
+		var debug: Dictionary = _terrain.navigation_grid.cell_debug(target_cell)
 		nav_status = " | nav %s tile %s terrain %s" % [
-			str(cell),
+			str(target_cell),
 			str(debug.get("source_tile", "?")),
 			str(debug.get("terrain_name", "?")),
 		]
-	var movement_label := "Moving to %.1f, %.1f" % [target.x, target.z]
-	if movable_entities.size() > 1:
-		movement_label = "Moving %d units to %.1f, %.1f" % [movable_entities.size(), target.x, target.z]
-	var formation_status := " | formation" if move_mode == UnitNavigationSystemScript.MoveMode.FORMATION else ""
+	var movement_label := ""
+	if not harvesting_entities.is_empty():
+		movement_label = "Harvesting spice at %.1f, %.1f" % [target.x, target.z]
+		if harvesting_entities.size() > 1:
+			movement_label = "Harvesting spice with %d units at %.1f, %.1f" % [harvesting_entities.size(), target.x, target.z]
+		if not moving_entities.is_empty():
+			movement_label += " | moving %d other units" % moving_entities.size()
+	else:
+		movement_label = "Moving to %.1f, %.1f" % [target.x, target.z]
+		if moving_entities.size() > 1:
+			movement_label = "Moving %d units to %.1f, %.1f" % [moving_entities.size(), target.x, target.z]
+	var formation_status := " | formation" \
+		if not moving_entities.is_empty() and move_mode == UnitNavigationSystemScript.MoveMode.FORMATION else ""
 	status_changed.emit("%s%s%s" % [movement_label, nav_status, formation_status])
 
 

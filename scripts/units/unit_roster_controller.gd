@@ -16,6 +16,7 @@ const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.g
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
+const HarvesterScene := preload("res://scenes/units/harvester.tscn")
 
 const UNIT_MODEL_ROOT := "res://assets/converted/models"
 const UNIT_POPULATION_LIMIT := 1000
@@ -154,7 +155,8 @@ func _spawn_completed_unit(unit_id: StringName, production_building_id: StringNa
 	if parent == null or _owned_unit_count(player.player_id) >= UNIT_POPULATION_LIMIT:
 		return false
 
-	var unit := UnitScene.instantiate() as Unit
+	var scene := _scene_for_unit(unit_id)
+	var unit := scene.instantiate() as Unit
 	if unit == null:
 		return false
 	unit.name = String(unit_id)
@@ -172,6 +174,12 @@ func _spawn_completed_unit(unit_id: StringName, production_building_id: StringNa
 	var exit_point: Vector3 = building.call("production_exit_position") if building.has_method("production_exit_position") else Vector3.INF
 	unit.move_to(rally_point, exit_point)
 	return true
+
+
+## Specialized units keep their own script/scene lifecycle while remaining
+## compatible with the Unit production and navigation contracts.
+func _scene_for_unit(unit_id: StringName) -> PackedScene:
+	return HarvesterScene if unit_id == &"Harvester" else UnitScene
 
 
 func _production_building_id(config: Resource) -> StringName:

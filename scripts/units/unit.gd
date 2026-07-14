@@ -37,7 +37,6 @@ const IDLE_ANIMATION_PREFIX := "Idle"
 @export var visual_root_path := NodePath("VisualRoot")
 @export var max_health := 0.0
 @export var max_shields := 0.0
-@export var max_spice := 0.0
 @export var max_passengers := 0.0
 
 @onready var visual_root: Node3D = get_node_or_null(visual_root_path)
@@ -54,7 +53,6 @@ var shields := 0.0:
 	set(value):
 		shields = clampf(value, 0.0, max_shields)
 		_refresh_shield_visibility()
-var spice := 0.0
 var passengers := 0.0
 var _shield_meshes: Array[MeshInstance3D] = []
 var _shield_time := 0.0
@@ -141,8 +139,6 @@ func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 	_has_pending_navigation_order = true
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
 	_set_movement_animation(global_position.distance_to(target_position) > arrival_radius)
-
-
 func set_navigation_managed(active: bool) -> void:
 	_navigation_managed = active
 	if active:

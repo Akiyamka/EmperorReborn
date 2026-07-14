@@ -118,6 +118,8 @@ func _test_dynamic_spice_harvesting_and_replenishment(token: int) -> int:
 	_expect(layer.load_baked(data, grid), "dynamic spice layer must load from baked initial state")
 	_expect(layer.spice_at(cell) == 200, "the runtime layer must preserve initial baked spice density")
 	_expect(layer.nearest_spice_cell(Vector2i.ZERO) == cell, "the runtime layer must locate the nearest available spice cell")
+	_expect(layer.nearest_spice_cell(Vector2i.ZERO, 1, 8) == Vector2i(-1, -1), "bounded spice lookup must reject fields outside its radius")
+	_expect(layer.nearest_spice_cell(cell + Vector2i(3, 0), 1, 3) == cell, "bounded spice lookup must include a field on its radius edge")
 	_expect(layer.take_spice(cell, 75) == 75 and layer.spice_at(cell) == 125, "harvesting must return and remove the requested available spice")
 	_expect(data.nav_spice_value[cell.y * MapNavigationGridScript.NAV_SIZE + cell.x] == 200, "runtime harvesting must not mutate baked initial state")
 	_expect(grid.cell_debug(cell).get("spice") == 125, "harvesting must keep navigation spice lookup synchronized")
