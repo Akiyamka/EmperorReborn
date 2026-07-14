@@ -9,14 +9,21 @@ const MapXbfScript := preload("res://converters/xbf/map_xbf.gd")
 const TextureImageUtilsScript := preload("res://converters/texture_image_utils.gd")
 
 const GROUND_TONE_WORLD_UNITS := 8192.0
+const GROUND_LIGHT_SIZE := 2048
 const TERRAIN_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
 
 var world_scale := 0.0625
+var ground_strength := 0.70
+var tone_alpha_gain := 1.40
+var ground_light_strength := 0.80
+var ground_light_scale := 0.60
+var terrain_direct_light_strength := 0.50
 var mottle_strength := 0.7
 var mottle_world_size := 48.0
 var mottle_full_map := false
 
 var _ground_color: ImageTexture
+var _ground_light: ImageTexture
 var _lit_direction := Vector3.ZERO
 var _lit_colors: Array[Color] = []
 var _mottle: Texture2D
@@ -40,6 +47,7 @@ func build(dir: String) -> Resource:
 
 	_parse_lit(dir.path_join("test.lit"))
 	_load_ground_color(dir.path_join("test.CPT"))
+	_load_ground_light(dir.path_join("texture.dat"))
 	if mottle_full_map:
 		_load_mottle(xbf.textures)
 	else:
@@ -109,6 +117,10 @@ func _build_terrain_scene(mesh: ArrayMesh, collision_shape: Shape3D, map_data_pa
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "TerrainMesh"
 	mesh_instance.mesh = mesh
+	# texture.dat already contains the authored terrain relief shadows. Prevent
+	# the terrain from casting a second, slightly offset copy of those shadows;
+	# it still receives runtime shadows cast by units and buildings.
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	body.add_child(mesh_instance)
 	mesh_instance.owner = body
 
@@ -176,6 +188,22 @@ func _load_ground_color(cpt_path: String) -> void:
 	_ground_color = ImageTexture.create_from_image(image)
 
 
+func _load_ground_light(path: String) -> void:
+	_ground_light = null
+	var bytes := FileAccess.get_file_as_bytes(path)
+	if bytes.size() != GROUND_LIGHT_SIZE * GROUND_LIGHT_SIZE:
+		push_warning("MapBakeBuilder: no usable 2048x2048 texture.dat at %s" % path)
+		return
+	var image := Image.create_from_data(
+		GROUND_LIGHT_SIZE,
+		GROUND_LIGHT_SIZE,
+		false,
+		Image.FORMAT_L8,
+		bytes
+	)
+	_ground_light = ImageTexture.create_from_image(image)
+
+
 func _load_mottle(texture_names: PackedStringArray) -> void:
 	_mottle = null
 	for name in texture_names:
@@ -210,7 +238,7 @@ func _terrain_material(texture_name: String) -> Material:
 		fallback.albedo_color = Color.from_hsv(float(texture_name.hash() % 360) / 360.0, 0.3, 0.75)
 		return fallback
 
-	if _ground_color == null:
+	if _ground_color == null and _ground_light == null:
 		var plain := StandardMaterial3D.new()
 		plain.roughness = 1.0
 		plain.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
@@ -224,7 +252,15 @@ func _terrain_material(texture_name: String) -> Material:
 	material.shader = TERRAIN_SHADER
 	material.set_shader_parameter("albedo_tex", texture)
 	material.set_shader_parameter("use_alpha_cutout", use_alpha_cutout)
-	material.set_shader_parameter("ground_color", _ground_color)
+	if _ground_color != null:
+		material.set_shader_parameter("ground_color", _ground_color)
+		material.set_shader_parameter("ground_strength", ground_strength)
+		material.set_shader_parameter("tone_alpha_gain", tone_alpha_gain)
+	if _ground_light != null:
+		material.set_shader_parameter("ground_light", _ground_light)
+		material.set_shader_parameter("ground_light_strength", ground_light_strength)
+		material.set_shader_parameter("ground_light_scale", ground_light_scale)
+	material.set_shader_parameter("terrain_direct_light_strength", terrain_direct_light_strength)
 	material.set_shader_parameter("ground_world_size", GROUND_TONE_WORLD_UNITS * world_scale)
 	if _mottle != null:
 		material.set_shader_parameter("mottle_tex", _mottle)
