@@ -1,0 +1,36 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/world/map/spice_mound.gd" id="1_script"]
+[ext_resource type="Shader" path="res://scripts/world/map/spice_mound.gdshader" id="2_shader"]
+[ext_resource type="Texture2D" path="res://assets/raw_original_content/3DDATA/Textures/@Spicemound.tga" id="3_texture"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_mound"]
+resource_local_to_scene = true
+render_priority = 1
+shader = ExtResource("2_shader")
+shader_parameter/spice_mound_tex = ExtResource("3_texture")
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_mound"]
+resource_local_to_scene = true
+material = SubResource("ShaderMaterial_mound")
+size = Vector2(1, 1)
+
+[sub_resource type="BoxShape3D" id="BoxShape_mound"]
+resource_local_to_scene = true
+size = Vector3(1, 1, 1)
+
+[node name="SpiceMound" type="Area3D"]
+collision_layer = 0
+collision_mask = 2
+script = ExtResource("1_script")
+
+[node name="Visual" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.03, 0)
+mesh = SubResource("PlaneMesh_mound")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+position = Vector3(0, 0.5, 0)
+shape = SubResource("BoxShape_mound")
+
+[node name="MaturityTimer" type="Timer" parent="."]
+one_shot = true

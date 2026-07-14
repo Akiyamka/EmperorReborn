@@ -5,11 +5,12 @@ extends RefCounted
 
 signal spice_changed(cell: Vector2i, previous: int, current: int)
 signal spice_mound_changed(cell: Vector2i, present: bool)
+signal spice_mound_activated(source_cell: Vector2i, early_activation: bool, world_position: Vector3)
 
 const TERRAIN_SHADER := preload("res://scripts/world/map/terrain.gdshader")
 const SPICE_COMPOSITE_SHADER := preload("res://scripts/world/map/spice_composite.gdshader")
 const SPICE_TEXTURE := preload("res://assets/raw_original_content/3DDATA/Textures/spicetga_32.tga")
-const SPICE_MOUND_TEXTURE := preload("res://assets/raw_original_content/3DDATA/Textures/@Spicemound.tga")
+const SPICE_MOUND_SCENE := preload("res://scenes/world/spice_mound.tscn")
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 const COMPOSITE_TEXTURE_SIZE := 1024
 
@@ -24,6 +25,9 @@ var _spice_texture: ImageTexture
 var _spice_mound_texture: ImageTexture
 var _source_grid_size := Vector2i.ZERO
 var _composite_viewport: SubViewport
+var _terrain_mesh: MeshInstance3D
+var _spice_mounds_root: Node3D
+var _spice_mound_nodes: Dictionary = {}
 
 
 func load_baked(data: BakedMapData, navigation_grid: MapNavigationGrid, terrain_mesh: MeshInstance3D = null) -> bool:
@@ -47,7 +51,9 @@ func load_baked(data: BakedMapData, navigation_grid: MapNavigationGrid, terrain_
 		_source_grid_size = data.nav_report.get("source_grid_size", Vector2i.ZERO)
 	_load_spice_mounds(data.spice_mound_cells)
 	_build_textures()
+	_terrain_mesh = terrain_mesh
 	_bind_terrain_materials(terrain_mesh)
+	_spawn_spice_mounds(data.spice_mound_cells)
 	return true
 
 
@@ -121,8 +127,14 @@ func has_spice_mound(cell: Vector2i) -> bool:
 func set_spice_mound(cell: Vector2i, present: bool) -> bool:
 	if _cell_index(cell) < 0:
 		return false
+	return _set_source_spice_mound(_nav_to_source_cell(cell), present)
+
+
+func _set_source_spice_mound(source_cell: Vector2i, present: bool) -> bool:
+	if not _source_cell_is_valid(source_cell):
+		return false
 	var value := 255 if present else 0
-	var rect := _mound_nav_rect(cell)
+	var rect := _source_cell_nav_rect(source_cell)
 	var changed := false
 	for y in range(rect.position.y, rect.end.y):
 		for x in range(rect.position.x, rect.end.x):
@@ -135,6 +147,10 @@ func set_spice_mound(cell: Vector2i, present: bool) -> bool:
 	if not changed:
 		return true
 	_spice_mound_texture.update(_spice_mound_image)
+	if present:
+		_spawn_spice_mound(source_cell)
+	else:
+		_remove_spice_mound(source_cell)
 	spice_mound_changed.emit(rect.position, present)
 	return true
 
@@ -151,6 +167,10 @@ func detach_visuals() -> void:
 	if is_instance_valid(_composite_viewport):
 		_composite_viewport.free()
 	_composite_viewport = null
+	if is_instance_valid(_spice_mounds_root):
+		_spice_mounds_root.free()
+	_spice_mounds_root = null
+	_spice_mound_nodes.clear()
 
 
 func _load_spice_mounds(source_cells: Array[Vector2i]) -> void:
@@ -160,11 +180,7 @@ func _load_spice_mounds(source_cells: Array[Vector2i]) -> void:
 		if source_cell.x < 0 or source_cell.y < 0 or source_cell.x >= _source_grid_size.x or source_cell.y >= _source_grid_size.y:
 			push_warning("MapSpiceLayer: spice mound cell %s is outside source grid %s" % [source_cell, _source_grid_size])
 			continue
-		var nav_cell := Vector2i(
-			int(float(source_cell.x) / float(_source_grid_size.x) * MapNavigationGridScript.NAV_SIZE),
-			int(float(source_cell.y) / float(_source_grid_size.y) * MapNavigationGridScript.NAV_SIZE)
-		)
-		var rect := _mound_nav_rect(nav_cell)
+		var rect := _source_cell_nav_rect(source_cell)
 		for y in range(rect.position.y, rect.end.y):
 			for x in range(rect.position.x, rect.end.x):
 				_spice_mounds[y * MapNavigationGridScript.NAV_SIZE + x] = 255
@@ -182,26 +198,89 @@ func _bind_terrain_materials(terrain_mesh: MeshInstance3D) -> void:
 	if terrain_mesh == null or terrain_mesh.mesh == null:
 		return
 	_build_composite_viewport(terrain_mesh)
-	var pattern_size := Vector2(
-		world_bounds.size.x / float(_source_grid_size.x),
-		world_bounds.size.z / float(_source_grid_size.y)
-	) if _source_grid_size.x > 0 and _source_grid_size.y > 0 else Vector2.ONE
 	for surface_index in terrain_mesh.mesh.get_surface_count():
 		var source_material := terrain_mesh.mesh.surface_get_material(surface_index) as ShaderMaterial
 		if source_material == null or source_material.shader != TERRAIN_SHADER:
 			continue
 		var material := source_material.duplicate() as ShaderMaterial
-		material.set_shader_parameter(&"spice_mound_mask", _spice_mound_texture)
 		material.set_shader_parameter(&"spice_field_overlay", _composite_viewport.get_texture())
-		material.set_shader_parameter(&"spice_mound_tex", SPICE_MOUND_TEXTURE)
 		material.set_shader_parameter(&"spice_world_rect", Vector4(
 			world_bounds.position.x,
 			world_bounds.position.z,
 			world_bounds.size.x,
 			world_bounds.size.z
 		))
-		material.set_shader_parameter(&"spice_pattern_world_size", pattern_size)
 		terrain_mesh.set_surface_override_material(surface_index, material)
+
+
+func _spawn_spice_mounds(source_cells: Array[Vector2i]) -> void:
+	if _terrain_mesh == null or source_cells.is_empty():
+		return
+	_ensure_spice_mounds_root()
+	for source_cell in source_cells:
+		_spawn_spice_mound(source_cell)
+
+
+func _spawn_spice_mound(source_cell: Vector2i) -> void:
+	if _terrain_mesh == null or not _source_cell_is_valid(source_cell) or _spice_mound_nodes.has(source_cell):
+		return
+	_ensure_spice_mounds_root()
+	var world_rect := _source_cell_world_rect(source_cell)
+	var center := world_rect.get_center()
+	var mound: Variant = SPICE_MOUND_SCENE.instantiate()
+	mound.name = "SpiceMound_%d_%d" % [source_cell.x, source_cell.y]
+	mound.configure(source_cell, world_rect.size)
+	mound.activated.connect(_on_spice_mound_activated.bind(source_cell))
+	_spice_mounds_root.add_child(mound)
+	mound.global_position = Vector3(center.x, _terrain_height_at(center), center.y)
+	_spice_mound_nodes[source_cell] = mound
+
+
+func _remove_spice_mound(source_cell: Vector2i) -> void:
+	var mound: Variant = _spice_mound_nodes.get(source_cell)
+	_spice_mound_nodes.erase(source_cell)
+	if is_instance_valid(mound):
+		mound.queue_free()
+
+
+func _ensure_spice_mounds_root() -> void:
+	if is_instance_valid(_spice_mounds_root) or _terrain_mesh == null:
+		return
+	_spice_mounds_root = Node3D.new()
+	_spice_mounds_root.name = "SpiceMounds"
+	_spice_mounds_root.set_as_top_level(true)
+	_terrain_mesh.add_child(_spice_mounds_root)
+	_spice_mounds_root.global_transform = Transform3D.IDENTITY
+
+
+func _on_spice_mound_activated(mound: Variant, early_activation: bool, source_cell: Vector2i) -> void:
+	if _spice_mound_nodes.get(source_cell) != mound:
+		return
+	spice_mound_activated.emit(source_cell, early_activation, mound.global_position)
+
+
+func _source_cell_world_rect(source_cell: Vector2i) -> Rect2:
+	var start := Vector2(
+		world_bounds.position.x + float(source_cell.x) / float(_source_grid_size.x) * world_bounds.size.x,
+		world_bounds.position.z + float(source_cell.y) / float(_source_grid_size.y) * world_bounds.size.z
+	)
+	var end := Vector2(
+		world_bounds.position.x + float(source_cell.x + 1) / float(_source_grid_size.x) * world_bounds.size.x,
+		world_bounds.position.z + float(source_cell.y + 1) / float(_source_grid_size.y) * world_bounds.size.z
+	)
+	return Rect2(start, end - start)
+
+
+func _terrain_height_at(world_xz: Vector2) -> float:
+	if _terrain_mesh == null or not _terrain_mesh.is_inside_tree():
+		return world_bounds.position.y
+	var top := world_bounds.end.y + 200.0
+	var bottom := world_bounds.position.y - 200.0
+	var query := PhysicsRayQueryParameters3D.create(
+		Vector3(world_xz.x, top, world_xz.y), Vector3(world_xz.x, bottom, world_xz.y), 1
+	)
+	var hit := _terrain_mesh.get_world_3d().direct_space_state.intersect_ray(query)
+	return (hit.get("position", Vector3(0.0, world_bounds.position.y, 0.0)) as Vector3).y
 
 
 func _build_composite_viewport(terrain_mesh: MeshInstance3D) -> void:
@@ -234,11 +313,19 @@ func _request_composite_update() -> void:
 func _mound_nav_rect(cell: Vector2i) -> Rect2i:
 	if _source_grid_size.x <= 0 or _source_grid_size.y <= 0:
 		return Rect2i(cell, Vector2i.ONE)
+	return _source_cell_nav_rect(_nav_to_source_cell(cell))
+
+
+func _nav_to_source_cell(cell: Vector2i) -> Vector2i:
 	var nav_size := MapNavigationGridScript.NAV_SIZE
-	var source_cell := Vector2i(
+	return Vector2i(
 		clampi(int(float(cell.x) / nav_size * _source_grid_size.x), 0, _source_grid_size.x - 1),
 		clampi(int(float(cell.y) / nav_size * _source_grid_size.y), 0, _source_grid_size.y - 1)
 	)
+
+
+func _source_cell_nav_rect(source_cell: Vector2i) -> Rect2i:
+	var nav_size := MapNavigationGridScript.NAV_SIZE
 	var start := Vector2i(
 		int(floor(float(source_cell.x) / float(_source_grid_size.x) * nav_size)),
 		int(floor(float(source_cell.y) / float(_source_grid_size.y) * nav_size))
@@ -248,6 +335,11 @@ func _mound_nav_rect(cell: Vector2i) -> Rect2i:
 		int(ceil(float(source_cell.y + 1) / float(_source_grid_size.y) * nav_size))
 	)
 	return Rect2i(start, end - start)
+
+
+func _source_cell_is_valid(source_cell: Vector2i) -> bool:
+	return source_cell.x >= 0 and source_cell.y >= 0 \
+		and source_cell.x < _source_grid_size.x and source_cell.y < _source_grid_size.y
 
 
 func _cell_index(cell: Vector2i) -> int:

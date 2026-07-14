@@ -4,6 +4,8 @@ const BakedMapDataScript := preload("res://scripts/world/map/baked_map_data.gd")
 const MapLoaderScript := preload("res://scripts/world/map/map_loader.gd")
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 const MapSpiceLayerScript := preload("res://scripts/world/map/map_spice_layer.gd")
+const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
+const SpiceMoundScene := preload("res://scenes/world/spice_mound.tscn")
 const TextureImageUtilsScript := preload("res://converters/texture_image_utils.gd")
 
 var _assertions := 0
@@ -19,6 +21,7 @@ func _initialize() -> void:
 	_run_case("cell debug contract", _test_cell_debug_contract)
 	_run_case("dynamic spice harvesting and replenishment", _test_dynamic_spice_harvesting_and_replenishment)
 	_run_case("spice mound source-grid mapping", _test_spice_mound_source_grid_mapping)
+	_run_case("spice mound runtime entity contract", _test_spice_mound_runtime_entity_contract)
 	_run_case("malformed baked data is atomic", _test_malformed_baked_data_is_atomic)
 	_run_case("grid reload semantics", _test_grid_reload_semantics)
 	_run_case("map loader failed replacement is atomic", _test_map_loader_failed_replacement_is_atomic)
@@ -136,6 +139,50 @@ func _test_spice_mound_source_grid_mapping(token: int) -> int:
 	_expect(layer.has_spice_mound(Vector2i(8, 10)) and layer.has_spice_mound(Vector2i(9, 11)), "one 128-grid mound cell must cover its corresponding 2x2 navigation cells")
 	_expect(not layer.has_spice_mound(Vector2i(10, 10)), "a mound mask must not leak into its neighboring source cell")
 	_expect(layer.set_spice_mound(Vector2i(8, 10), false) and not layer.has_spice_mound(Vector2i(8, 10)) and not layer.has_spice_mound(Vector2i(9, 11)), "a consumed bloom must remove its complete source-grid footprint")
+
+	var uneven_data = _valid_data("uneven-spice-mounds")
+	uneven_data.nav_report["source_spice_grid_size"] = Vector2i(144, 144)
+	uneven_data.spice_mound_cells.append(Vector2i(69, 58))
+	var uneven_grid = MapNavigationGridScript.new()
+	_expect(uneven_grid.load_baked(uneven_data), "an uneven source-grid fixture must load")
+	var uneven_layer = MapSpiceLayerScript.new()
+	_expect(uneven_layer.load_baked(uneven_data, uneven_grid), "an uneven source-grid mound must load")
+	_expect(uneven_layer.has_spice_mound(Vector2i(122, 103)), "source-grid placement must preserve the authored cell when grid sizes do not divide evenly")
+	_expect(not uneven_layer.has_spice_mound(Vector2i(120, 101)), "source-grid placement must not round-trip into the preceding cell")
+	return token
+
+
+func _test_spice_mound_runtime_entity_contract(token: int) -> int:
+	var config = RuleEntityConfigScript.new()
+	config.fields = {"size": 1000, "cost": 500}
+	var mound = SpiceMoundScene.instantiate()
+	mound.configure(Vector2i(4, 5), Vector2(2.0, 3.0), config, 0.5)
+
+	var plane := mound.get_node("Visual").mesh as PlaneMesh
+	var box := mound.get_node("CollisionShape3D").shape as BoxShape3D
+	var timer := mound.get_node("MaturityTimer") as Timer
+	var shader := (plane.material as ShaderMaterial).shader
+	_expect(plane.size == Vector2(2.0, 3.0), "a mound mesh must match its source-cell world footprint")
+	_expect(box.size.x == 2.0 and box.size.z == 3.0, "a mound Area3D must own a collision region matching its mesh")
+	_expect(mound.collision_layer == 0 and mound.collision_mask == 2, "a mound must detect unit bodies without becoming a solid navigation obstacle")
+	_expect(is_equal_approx(timer.wait_time, 2500.0 / 60.0) and timer.one_shot, "the maturity timer must run at half speed over the Size plus randomized Cost lifespan")
+	_expect("texture(spice_mound_tex, UV)" in shader.code and "repeat_disable" in shader.code, "the mound texture must use one clamped local-UV sample instead of world-space tiling")
+	_expect(is_equal_approx(mound.growth_scale(), 0.1), "a new maturity cycle must start with the mound at 0.1 scale")
+	mound.call("_set_maturity_progress", 0.5)
+	_expect(is_equal_approx(mound.growth_scale(), 0.55), "mound growth must follow maturity progress from 0.1 to 1.0")
+
+	var activation_count := [0]
+	var early_activations: Array[bool] = []
+	mound.activated.connect(func(_entity, early: bool) -> void:
+		activation_count[0] += 1
+		early_activations.append(early)
+	)
+	_expect(mound.activate(true) and activation_count[0] == 1 and early_activations[0], "contact activation must fire the current cycle early")
+	_expect(is_equal_approx(mound.growth_scale(), 0.1), "early activation must immediately restart growth from 0.1 scale")
+	mound.call("_on_maturity_timeout")
+	_expect(activation_count[0] == 2 and not early_activations[1], "timer activation must fire and begin the next recurring cycle")
+	_expect(is_equal_approx(mound.growth_scale(), 0.1), "timer activation must restart the recurring cycle at 0.1 scale")
+	mound.free()
 	return token
 
 
