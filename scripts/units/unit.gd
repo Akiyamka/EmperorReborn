@@ -13,6 +13,10 @@ const TERRAIN_RAY_HEIGHT := 200.0
 const MIN_SLOPE_SPEED_MULTIPLIER := 0.65
 const MAX_SLOPE_SPEED_MULTIPLIER := 1.50
 const SLOPE_PROBE_DISTANCE := 0.5
+## Rules.txt stores TurnRate in radians per movement update. Navigation runs at
+## 20 fixed updates per second, so use the same cadence for the unmanaged
+## fallback to keep turning independent of the caller's frame rate.
+const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
 const MOVING_ANIMATION := &"Move"
 const IDLE_ANIMATION := &"Stationary"
 const IDLE_ANIMATION_PREFIX := "Idle"
@@ -27,6 +31,8 @@ const IDLE_ANIMATION_PREFIX := "Idle"
 			_refresh_owner_visuals()
 		owner_changed.emit(owner_player_id)
 @export var move_speed := 5.0
+@export var turn_rate := 0.0
+@export var can_move_any_direction := false
 @export var arrival_radius := 0.2
 @export var visual_root_path := NodePath("VisualRoot")
 @export var max_health := 0.0
@@ -109,8 +115,11 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector3.ZERO
 	else:
 		var direction := offset.normalized()
-		velocity = direction * move_speed * _slope_speed_multiplier(direction, delta)
-		look_at(global_position + direction, Vector3.UP)
+		var heading_reached := _turn_toward(direction, delta)
+		if can_move_any_direction or heading_reached:
+			velocity = direction * move_speed * _slope_speed_multiplier(direction, delta)
+		else:
+			velocity = Vector3.ZERO
 
 	_set_movement_animation(not velocity.is_zero_approx(), _movement_animation_speed_scale())
 	move_and_slide()
@@ -177,10 +186,11 @@ func navigation_collision_radius(fallback: float) -> float:
 func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 	velocity = Vector3(horizontal_velocity.x, 0.0, horizontal_velocity.z)
 	# Crowded units receive tiny non-zero velocities from collision resolution;
-	# look_at needs a target clearly distinct from the origin, so aim one meter
-	# along the normalized direction and skip negligible motion entirely.
+	# skip negligible motion so it cannot jitter the unit's heading.
 	if velocity.length_squared() > 0.000001:
-		look_at(global_position + velocity.normalized(), Vector3.UP)
+		var heading_reached := _turn_toward(velocity.normalized(), delta)
+		if not can_move_any_direction and not heading_reached:
+			velocity = Vector3.ZERO
 	_set_movement_animation(not velocity.is_zero_approx(), _movement_animation_speed_scale())
 	# Unit/unit collision has already been resolved centrally as swept discs.
 	# Applying the exact fixed navigation delta avoids depending on physics-frame
@@ -227,6 +237,23 @@ func _slope_speed_multiplier(direction: Vector3, delta: float) -> float:
 	if slope > 0.0:
 		return maxf(1.0 - slope * 0.65, MIN_SLOPE_SPEED_MULTIPLIER)
 	return minf(1.0 - slope * 0.75, MAX_SLOPE_SPEED_MULTIPLIER)
+
+
+func _turn_toward(direction: Vector3, delta: float) -> bool:
+	var horizontal_direction := Vector3(direction.x, 0.0, direction.z)
+	if horizontal_direction.length_squared() <= 0.000001:
+		return true
+	horizontal_direction = horizontal_direction.normalized()
+	# Node3D faces along local -Z. This is the yaw that look_at() used to set
+	# instantly; rotate_toward limits the change to the unit's Rules.txt rate.
+	var target_yaw := atan2(-horizontal_direction.x, -horizontal_direction.z)
+	if is_zero_approx(angle_difference(rotation.y, target_yaw)):
+		return true
+	if turn_rate <= 0.0 or delta <= 0.0:
+		return false
+	var maximum_step := turn_rate * RULE_MOVEMENT_UPDATES_PER_SECOND * delta
+	rotation.y = rotate_toward(rotation.y, target_yaw, maximum_step)
+	return is_zero_approx(angle_difference(rotation.y, target_yaw))
 
 
 func _terrain_hit_at(position: Vector3) -> Dictionary:
@@ -364,6 +391,8 @@ func _apply_rules_config() -> void:
 		return
 
 	move_speed = float(unit_config.field(&"speed", move_speed))
+	turn_rate = maxf(float(unit_config.field(&"turn_rate", 0.0)), 0.0)
+	can_move_any_direction = bool(unit_config.field(&"can_move_any_direction", false))
 	max_health = float(unit_config.field(&"health", max_health))
 	max_shields = float(unit_config.field(&"shield_health", 0.0))
 

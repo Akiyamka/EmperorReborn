@@ -16,6 +16,7 @@ var _current_case := ""
 func _initialize() -> void:
 	await _run_case("units and buildings use authored collision meshes", _test_authored_collision_meshes)
 	await _run_case("units follow terrain elevation", _test_units_follow_terrain)
+	await _run_case("units turn at their rules rates", _test_unit_turn_rates)
 	await _run_case("units switch between stationary and movement animations", _test_unit_movement_animations)
 	await _run_case("demo scene roster is non-empty after boot", _test_demo_roster_populated)
 	await _run_case("rules art configs resolve every demo panel icon", _test_demo_panel_icons)
@@ -133,6 +134,68 @@ func _terrain_hit_below(unit: CharacterBody3D) -> Dictionary:
 	)
 	query.exclude = [unit.get_rid()]
 	return get_root().get_world_3d().direct_space_state.intersect_ray(query)
+
+
+func _test_unit_turn_rates() -> void:
+	var scene := load("res://scenes/match/demo_match.tscn") as PackedScene
+	var match_instance := scene.instantiate()
+	get_root().add_child(match_instance)
+	await physics_frame
+
+	var expected_rates := {
+		&"ScoutA": 0.2,
+		&"OrdosAPC": 0.05,
+		&"NIABTank": 0.3,
+	}
+	for unit_name in expected_rates:
+		var unit := match_instance.get_node("Units/%s" % unit_name) as Unit
+		var expected_rate: float = expected_rates[unit_name]
+		_expect(
+			is_equal_approx(unit.turn_rate, expected_rate),
+			"%s must load turn_rate %.3f from its unit rules (got %.3f)" % [unit_name, expected_rate, unit.turn_rate]
+		)
+		unit.rotation = Vector3.ZERO
+		unit.call("_turn_toward", Vector3.RIGHT, 1.0 / Unit.RULE_MOVEMENT_UPDATES_PER_SECOND)
+		_expect(
+			is_equal_approx(absf(unit.rotation.y), expected_rate),
+			"%s must turn by %.3f radians in one rules movement update (got %.3f)" % [unit_name, expected_rate, absf(unit.rotation.y)]
+		)
+
+	var omnidirectional := match_instance.get_node("Units/OrdosAPC") as Unit
+	_expect(omnidirectional.can_move_any_direction, "ORAPC must load CanMoveAnyDirection=true from its rules")
+	omnidirectional.rotation = Vector3.ZERO
+	var omnidirectional_start := omnidirectional.global_position
+	omnidirectional.navigation_step(Vector3.RIGHT * omnidirectional.move_speed, 1.0 / Unit.RULE_MOVEMENT_UPDATES_PER_SECOND)
+	_expect(
+		omnidirectional.global_position.x > omnidirectional_start.x,
+		"an omnidirectional unit must translate while it is still turning"
+	)
+	_expect(
+		not is_equal_approx(omnidirectional.rotation.y, -PI / 2.0),
+		"the omnidirectional unit must still obey its turn-rate limit while translating"
+	)
+
+	var sequential := match_instance.get_node("Units/ScoutA") as Unit
+	sequential.setup(&"IMTANK")
+	_expect(not sequential.can_move_any_direction, "a null CanMoveAnyDirection rule must load as false")
+	sequential.rotation = Vector3.ZERO
+	var sequential_start := sequential.global_position
+	var tick_delta := 1.0 / Unit.RULE_MOVEMENT_UPDATES_PER_SECOND
+	sequential.navigation_step(Vector3.RIGHT * sequential.move_speed, tick_delta)
+	_expect(
+		is_equal_approx(sequential.global_position.x, sequential_start.x)
+			and is_equal_approx(sequential.global_position.z, sequential_start.z),
+		"a sequential unit must stay in place while turning toward its movement direction"
+	)
+	_expect(sequential.velocity.is_zero_approx(), "a sequential unit must expose zero velocity while turning in place")
+	for _update in 9:
+		sequential.navigation_step(Vector3.RIGHT * sequential.move_speed, tick_delta)
+	_expect(
+		sequential.global_position.x > sequential_start.x,
+		"a sequential unit must begin translating after it finishes turning"
+	)
+
+	match_instance.queue_free()
 
 
 func _test_unit_movement_animations() -> void:

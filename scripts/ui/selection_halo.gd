@@ -17,6 +17,8 @@ const SPICE_TEXTURE := preload("res://assets/raw_original_content/3DDATA/Texture
 const EMPTY_HARVESTER_TEXTURE := preload("res://assets/raw_original_content/3DDATA/Textures/@!EmptyHarv.tga")
 const HARVESTER_TEXTURE := preload("res://assets/raw_original_content/3DDATA/Textures/@!Harv.tga")
 const HALO_SHADER := preload("res://scripts/ui/selection_halo.gdshader")
+const ADDITIVE_SHADER := preload("res://scripts/ui/selection_halo_outline.gdshader")
+const OUTLINE_ROTATION_SPEED := 0.5
 
 var _entity: Node3D
 var _is_selected := false
@@ -28,16 +30,16 @@ func configure(entity: Node3D, radius: float, elevation: float) -> void:
 	_entity = entity
 	position.y = elevation
 	var diameter := maxf(radius * 2.0, 0.1)
-	_layers[&"outline"] = _add_layer(&"Outline", HALO_TEXTURE, diameter, 0.000)
+	_layers[&"outline"] = _add_layer(&"Outline", HALO_TEXTURE, diameter, 0.000, false, ADDITIVE_SHADER)
 	_layers[&"health"] = _add_layer(&"Health", HEALTH_TEXTURES[5], diameter, 0.002, true)
-	_layers[&"empty_shield"] = _add_layer(&"EmptyShield", EMPTY_SHIELD_TEXTURE, diameter, 0.004)
+	_layers[&"empty_shield"] = _add_layer(&"EmptyShield", EMPTY_SHIELD_TEXTURE, diameter, 0.004, false, ADDITIVE_SHADER)
 	_layers[&"shield"] = _add_layer(&"Shield", SHIELD_TEXTURE, diameter, 0.006, true)
 	# These are deliberately created now even though harvesting and transport
 	# mechanics do not yet publish capacity values.  The component can start
 	# showing them as soon as those fields are populated on the entity.
-	_layers[&"empty_spice"] = _add_layer(&"EmptySpice", EMPTY_SPICE_TEXTURE, diameter, 0.008)
+	_layers[&"empty_spice"] = _add_layer(&"EmptySpice", EMPTY_SPICE_TEXTURE, diameter, 0.008, false, ADDITIVE_SHADER)
 	_layers[&"spice"] = _add_layer(&"Spice", SPICE_TEXTURE, diameter, 0.010, true)
-	_layers[&"empty_transport"] = _add_layer(&"EmptyTransport", EMPTY_HARVESTER_TEXTURE, diameter, 0.012)
+	_layers[&"empty_transport"] = _add_layer(&"EmptyTransport", EMPTY_HARVESTER_TEXTURE, diameter, 0.012, false, ADDITIVE_SHADER)
 	_layers[&"transport"] = _add_layer(&"Transport", HARVESTER_TEXTURE, diameter, 0.014, true)
 	_refresh()
 
@@ -52,12 +54,15 @@ func set_hovered(value: bool) -> void:
 	_refresh_visibility()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _entity == null:
 		return
 	# Units rotate while moving, but the original indicators retain their north
 	# orientation.  The parent only rotates around Y, so cancel just that axis.
 	rotation.y = -_entity.rotation.y
+	# Only the decorative outline spins; the status indicators remain readable.
+	var outline: MeshInstance3D = _layers[&"outline"]
+	outline.rotation.y = fposmod(outline.rotation.y + OUTLINE_ROTATION_SPEED * delta, TAU)
 	_refresh()
 
 
@@ -100,11 +105,18 @@ func _number(property: StringName) -> float:
 	return float(_entity.get(property))
 
 
-func _add_layer(layer_name: StringName, texture: Texture2D, diameter: float, height: float, masked := false) -> MeshInstance3D:
+func _add_layer(
+	layer_name: StringName,
+	texture: Texture2D,
+	diameter: float,
+	height: float,
+	masked := false,
+	shader: Shader = HALO_SHADER,
+) -> MeshInstance3D:
 	var mesh := PlaneMesh.new()
 	mesh.size = Vector2(diameter, diameter)
 	var material := ShaderMaterial.new()
-	material.shader = HALO_SHADER
+	material.shader = shader
 	material.set_shader_parameter(&"indicator_texture", texture)
 	material.set_shader_parameter(&"apply_radial_mask", masked)
 	var layer := MeshInstance3D.new()

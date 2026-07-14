@@ -394,9 +394,12 @@ func _navigation_tick(delta: float) -> void:
 				if int(agent["command_id"]) <= 0 and not bool(agent["hold"]):
 					agent["destination"] = unit.global_position + velocity * delta
 		_agents[unit.get_instance_id()] = agent
-		resolved_positions[unit.get_instance_id()] = unit.global_position + velocity * delta
 		if unit.has_method("navigation_step"):
 			unit.call("navigation_step", velocity, delta)
+		# Unit may spend this update turning in place when its rules do not allow
+		# simultaneous translation and rotation. Record the actual position so
+		# later swept-disc checks do not reserve movement that never happened.
+		resolved_positions[unit.get_instance_id()] = unit.global_position
 
 
 func _desired_velocity(agent: Dictionary) -> Vector3:
