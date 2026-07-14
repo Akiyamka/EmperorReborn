@@ -43,6 +43,7 @@ func _initialize() -> void:
 	_run_case("begin validation and cancel", _test_begin_and_cancel)
 	_run_case("failed placement keeps active state", _test_failed_placement_keeps_active)
 	_run_case("footprint occupancy and single spawn handoff", _test_occupancy_and_single_spawn)
+	_run_case("placement rotation turns footprint and spawned building", _test_rotated_placement)
 	_run_case("unmaterialed preview mesh gets fallback material", _test_unmaterialed_preview_mesh_gets_fallback_material)
 	_run_case("legacy building without placement anchor", _test_legacy_building_without_placement_anchor)
 	_run_case("rotated existing footprint follows building transform", _test_rotated_existing_footprint)
@@ -174,6 +175,50 @@ func _test_occupancy_and_single_spawn(token: int) -> int:
 		placement.try_place_at_hover_cell(Vector2i(5, 7), scene, 4) == BuildingPlacementScript.PlaceResult.INACTIVE,
 		"a successful placement handoff must not spawn twice"
 	)
+	_free_pair(pair)
+	return token
+
+
+func _test_rotated_placement(token: int) -> int:
+	var pair := _new_placement()
+	var placement = pair[0]
+	var buildings_root = pair[1]
+	var source_rows := _rows(["X..", "XXX"])
+	placement.begin(&"Rotated", "Rotated", source_rows)
+
+	_expect(
+		placement.face_toward_cells(Vector2i.ZERO, Vector2i(5, 0)),
+		"dragging east must perform a quarter turn"
+	)
+	_expect(placement.rotation_quarter_turns() == 1, "east must face the building local +Z toward +X")
+	_expect(
+		not placement.face_toward_cells(Vector2i.ZERO, Vector2i(8, 1)),
+		"continuing in the same cardinal direction must not count as another turn"
+	)
+	_expect(
+		placement._occupy_rows == _rows([".X", ".X", "XX"]),
+		"a quarter turn must rotate asymmetric occupy rows with the model"
+	)
+
+	var template := Node3D.new()
+	var scene := PackedScene.new()
+	_expect(scene.pack(template) == OK, "a rotated in-memory scene must pack")
+	template.free()
+	var placed = placement.try_place_at_hover_cell(Vector2i(9, 11), scene)
+	_expect(placed == BuildingPlacementScript.PlaceResult.PLACED, "a rotated valid footprint must spawn")
+	var spawned := buildings_root.get_child(0) as Node3D
+	_expect(is_equal_approx(spawned.rotation.y, PI * 0.5), "the spawned building must retain the selected quarter turn")
+
+	var expected_cells: Dictionary = {}
+	for cell in placement._occupy_rows_nav_cells(spawned.get_meta(&"placement_anchor_cell"), _rows([".X", ".X", "XX"])):
+		expected_cells[cell] = true
+	var actual_cells := BuildingFootprint.nav_cells_by_marker(
+		spawned, source_rows, FakeGrid.new(), BuildingPlacementScript.NAV_CELLS_PER_OCCUPY_CELL
+	)
+	_expect(actual_cells.size() == expected_cells.size(), "rotated runtime footprint must keep the preview cell count")
+	for cell in expected_cells:
+		_expect(actual_cells.has(cell), "rotated runtime footprint must match preview cell %s" % cell)
+
 	_free_pair(pair)
 	return token
 

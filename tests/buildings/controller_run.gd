@@ -29,6 +29,13 @@ class BuildingStub extends Node:
 		upgrade_level = level
 
 
+class GestureController extends BuildingController:
+	var placement_attempts: Array[Vector2] = []
+
+	func _try_place_ready_building(screen_position: Vector2) -> void:
+		placement_attempts.append(screen_position)
+
+
 func _initialize() -> void:
 	await process_frame
 	var players = root.get_node("Players")
@@ -37,6 +44,7 @@ func _initialize() -> void:
 	players.local_player_id = 1
 
 	_run_case("asset-independent setup owns one placement child", _test_asset_independent_setup)
+	_run_case("rotation release requires a later confirmation click", _test_rotation_release_requires_confirmation)
 	_run_case("repeated setup forwards resources once", _test_repeated_setup_forwards_resources_once.bind(local_player))
 	_run_case("freed controller leaves no resource forwarding", _test_free_disconnects_resource_forwarding.bind(local_player))
 	_run_case("failed completed wall segment refunds paid credits", _test_completed_wall_refund.bind(local_player))
@@ -88,6 +96,32 @@ func _test_asset_independent_setup(token: int) -> int:
 	_setup_without_assets(controller)
 	_expect(controller.get_child_count() == 1, "setup must own exactly one placement child without generated scenes")
 	_expect(controller.get_child(0) is BuildingPlacement, "setup must add the placement feature as its child")
+	controller.free()
+	return token
+
+
+func _test_rotation_release_requires_confirmation(token: int) -> int:
+	var controller := GestureController.new()
+	root.add_child(controller)
+	_setup_without_assets(controller)
+	controller._building_placement.begin(&"Gesture", "Gesture", ["X"])
+	controller._placement_pointer_down = true
+	controller._placement_press_position = Vector2(10.0, 10.0)
+	controller._placement_rotated_during_press = true
+	controller._finish_placement_pointer_action(Vector2(10.0, 10.0))
+	_expect(
+		controller._building_placement.is_active(),
+		"releasing a gesture that rotated must not consume the active placement"
+	)
+	_expect(controller.placement_attempts.is_empty(), "rotation release must not attempt placement")
+	_expect(not controller._placement_pointer_down, "rotation release must finish the held-button gesture")
+
+	controller._begin_placement_pointer_action(Vector2(10.0, 10.0))
+	controller._finish_placement_pointer_action(Vector2(10.0, 10.0))
+	_expect(
+		controller.placement_attempts == [Vector2(10.0, 10.0)],
+		"the next full click without rotation must attempt placement exactly once"
+	)
 	controller.free()
 	return token
 

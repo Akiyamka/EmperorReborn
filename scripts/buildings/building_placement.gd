@@ -14,6 +14,7 @@ const NAV_CELLS_PER_OCCUPY_CELL := 2
 const CELL_SURFACE_OFFSET := 0.06
 const CELL_EMISSION_ENERGY := 1.8
 const INVALID_ANCHOR := Vector2i(-999999, -999999)
+const QUARTER_TURN_RADIANS := PI * 0.5
 
 const UnitPushAsideScript := preload("res://scripts/buildings/unit_push_aside.gd")
 const BuildRadiusScript := preload("res://scripts/buildings/build_radius.gd")
@@ -33,7 +34,9 @@ var _placement_owner_player_id_provider: Callable
 
 var _building_id: StringName = &""
 var _display_name := ""
+var _source_occupy_rows: Array[String] = []
 var _occupy_rows: Array[String] = []
+var _rotation_quarter_turns := 0
 var _anchor_cell := INVALID_ANCHOR
 var _has_anchor := false
 var _can_build := false
@@ -85,7 +88,9 @@ func begin(
 	_clear()
 	_building_id = building_id
 	_display_name = display_name
-	_occupy_rows = occupy_rows.duplicate()
+	_source_occupy_rows = occupy_rows.duplicate()
+	_occupy_rows = _source_occupy_rows.duplicate()
+	_rotation_quarter_turns = 0
 	_is_wall_candidate = is_wall
 	_skip_build_radius_check = skip_build_radius_check
 	visible = false
@@ -100,6 +105,37 @@ func process(pointer_position: Vector2) -> void:
 		_hide_preview()
 		return
 	_update_for_hover_cell(hover_cell)
+
+
+## Faces the building's local +Z exit toward the dominant grid direction from
+## the press point to the cursor. Returns true only when this call performs an
+## actual 90-degree turn, so the controller can distinguish a rotation gesture
+## from the later click that confirms placement.
+func face_toward_pointer(press_position: Vector2, pointer_position: Vector2) -> bool:
+	var press_cell = _hover_cell_from_pointer(press_position)
+	var pointer_cell = _hover_cell_from_pointer(pointer_position)
+	if press_cell == null or pointer_cell == null:
+		return false
+	return face_toward_cells(press_cell, pointer_cell)
+
+
+func face_toward_cells(press_cell: Vector2i, pointer_cell: Vector2i) -> bool:
+	if not is_active():
+		return false
+	var delta := pointer_cell - press_cell
+	if delta == Vector2i.ZERO:
+		return false
+
+	var quarter_turns := 0
+	if absi(delta.x) > absi(delta.y):
+		quarter_turns = 1 if delta.x > 0 else 3
+	elif delta.y < 0:
+		quarter_turns = 2
+	return _set_rotation_quarter_turns(quarter_turns)
+
+
+func rotation_quarter_turns() -> int:
+	return _rotation_quarter_turns
 
 
 func try_place(pointer_position: Vector2, building_scene: PackedScene, owner_player_id = null) -> PlaceResult:
@@ -133,6 +169,7 @@ func try_place_at_hover_cell(
 
 	if building.has_method("setup"):
 		building.call("setup", _building_id)
+	building.rotate_y(float(_rotation_quarter_turns) * QUARTER_TURN_RADIANS)
 	_buildings_root.add_child(building)
 	var placement_position := _snap_to_ground(_world_center(_anchor_cell))
 	if building.is_inside_tree():
@@ -330,7 +367,9 @@ func _occupy_rows_nav_cells(anchor_cell: Vector2i, occupy_rows: Array[String]) -
 func _clear() -> void:
 	_building_id = &""
 	_display_name = ""
+	_source_occupy_rows.clear()
 	_occupy_rows.clear()
+	_rotation_quarter_turns = 0
 	_is_wall_candidate = false
 	_skip_build_radius_check = false
 	_anchor_cell = INVALID_ANCHOR
@@ -362,7 +401,46 @@ func _add_arrow(anchor_cell: Vector2i) -> void:
 	arrow.name = "CenterArrow"
 	_configure_arrow_visuals(arrow)
 	add_child(arrow)
+	arrow.rotate_y(float(_rotation_quarter_turns) * QUARTER_TURN_RADIANS)
 	arrow.global_position = _snap_to_ground(_world_center(anchor_cell)) + Vector3.UP * CELL_SURFACE_OFFSET
+
+
+func _set_rotation_quarter_turns(value: int) -> bool:
+	var normalized := posmod(value, 4)
+	if normalized == _rotation_quarter_turns:
+		return false
+	_rotation_quarter_turns = normalized
+	_occupy_rows = _rotated_occupy_rows(_source_occupy_rows, normalized)
+	# Rotation can swap footprint width/depth while the pointer remains in the
+	# same cell, so force the next process() call to rebuild rather than taking
+	# the unchanged-anchor fast path.
+	_anchor_cell = INVALID_ANCHOR
+	_has_anchor = false
+	return true
+
+
+func _rotated_occupy_rows(source_rows: Array[String], quarter_turns: int) -> Array[String]:
+	var rows := source_rows.duplicate()
+	for _turn in posmod(quarter_turns, 4):
+		rows = _rotate_occupy_rows_counterclockwise(rows)
+	return rows
+
+
+func _rotate_occupy_rows_counterclockwise(rows: Array[String]) -> Array[String]:
+	var rotated: Array[String] = []
+	if rows.is_empty():
+		return rotated
+	var width := 0
+	for row in rows:
+		width = maxi(width, row.length())
+	for new_row_index in width:
+		var new_row := ""
+		var source_column := width - 1 - new_row_index
+		for source_row_index in rows.size():
+			var source_row := rows[source_row_index]
+			new_row += source_row.substr(source_column, 1) if source_column < source_row.length() else "."
+		rotated.append(new_row)
+	return rotated
 
 
 func _configure_arrow_visuals(node: Node) -> void:

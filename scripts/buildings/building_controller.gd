@@ -18,6 +18,7 @@ const DoubleClickTrackerScript := preload("res://scripts/buildings/double_click_
 const DEFAULT_BUILD_RADIUS_TILES := 6
 const WALL_BUILDING_GROUP := "Wall"
 const DOUBLE_CLICK_THRESHOLD_MS := 350
+const PLACEMENT_ROTATION_DRAG_THRESHOLD := 8.0
 
 var camera: Camera3D
 ## docs/mechanics/production.md section 5 "map tech level": extension point
@@ -40,6 +41,9 @@ var _wall_line_start_cell = null
 var _wall_line_building_id: StringName = &""
 var _wall_chain: WallChain
 var _building_double_click := DoubleClickTrackerScript.new()
+var _placement_pointer_down := false
+var _placement_press_position := Vector2.ZERO
+var _placement_rotated_during_press := false
 
 
 func setup(
@@ -89,7 +93,12 @@ func process(delta: float) -> void:
 			_refresh_building_option_states()
 	_process_building_order(delta)
 	if _building_placement.is_active():
-		_building_placement.process(get_viewport().get_mouse_position())
+		var pointer_position := (
+			_placement_press_position
+			if _placement_pointer_down
+			else get_viewport().get_mouse_position()
+		)
+		_building_placement.process(pointer_position)
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
@@ -126,17 +135,63 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 			if _try_handle_building_double_click(event.position):
 				return true
 		return false
-	if not (event is InputEventMouseButton and event.pressed):
+	if event is InputEventMouseMotion:
+		if not _placement_pointer_down:
+			return false
+		_update_placement_rotation(event.position)
+		return true
+	if not event is InputEventMouseButton:
 		return false
 
 	match event.button_index:
 		MOUSE_BUTTON_LEFT:
-			_try_place_ready_building(event.position)
+			if event.pressed:
+				_begin_placement_pointer_action(event.position)
+			else:
+				_finish_placement_pointer_action(event.position)
 			return true
 		MOUSE_BUTTON_RIGHT:
-			_cancel_building_placement()
-			return true
+			if event.pressed:
+				_reset_placement_pointer_action()
+				_cancel_building_placement()
+				return true
 	return false
+
+
+func _begin_placement_pointer_action(screen_position: Vector2) -> void:
+	_placement_pointer_down = true
+	_placement_press_position = screen_position
+	_placement_rotated_during_press = false
+	_building_placement.process(screen_position)
+
+
+func _update_placement_rotation(screen_position: Vector2) -> void:
+	if not _placement_pointer_down:
+		return
+	if _placement_press_position.distance_to(screen_position) < PLACEMENT_ROTATION_DRAG_THRESHOLD:
+		return
+	if _building_placement.face_toward_pointer(_placement_press_position, screen_position):
+		_placement_rotated_during_press = true
+	_building_placement.process(_placement_press_position)
+
+
+func _finish_placement_pointer_action(screen_position: Vector2) -> void:
+	if not _placement_pointer_down:
+		return
+	_update_placement_rotation(screen_position)
+	var placement_position := _placement_press_position
+	var rotated := _placement_rotated_during_press
+	_reset_placement_pointer_action()
+	if rotated:
+		status_changed.emit("%s rotated; click to place" % _building_placement.display_name())
+		return
+	_try_place_ready_building(placement_position)
+
+
+func _reset_placement_pointer_action() -> void:
+	_placement_pointer_down = false
+	_placement_press_position = Vector2.ZERO
+	_placement_rotated_during_press = false
 
 
 func handle_command(command: StringName) -> bool:
@@ -663,6 +718,7 @@ func _try_place_ready_building(screen_position: Vector2) -> void:
 
 
 func _cancel_building_placement() -> void:
+	_reset_placement_pointer_action()
 	if not _building_placement.is_active():
 		return
 	var display_name := _building_placement.cancel()
