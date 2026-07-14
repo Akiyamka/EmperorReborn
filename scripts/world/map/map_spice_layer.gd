@@ -6,6 +6,8 @@ extends RefCounted
 signal spice_changed(cell: Vector2i, previous: int, current: int)
 signal spice_mound_changed(cell: Vector2i, present: bool)
 signal spice_mound_activated(source_cell: Vector2i, early_activation: bool, world_position: Vector3)
+signal spice_spread_stage(source_cell: Vector2i, stage: int, stage_count: int, changed_cells: int)
+signal spice_spread_finished(source_cell: Vector2i)
 
 const TERRAIN_SHADER := preload("res://scripts/world/map/terrain.gdshader")
 const SPICE_COMPOSITE_SHADER := preload("res://scripts/world/map/spice_composite.gdshader")
@@ -13,6 +15,9 @@ const SPICE_TEXTURE := preload("res://assets/raw_original_content/3DDATA/Texture
 const SPICE_MOUND_SCENE := preload("res://scenes/world/spice_mound.tscn")
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 const COMPOSITE_TEXTURE_SIZE := 1024
+const RULE_TICKS_PER_SECOND := 60.0
+const MIN_SPREAD_INTERVAL_SECONDS := 0.001
+const SPREAD_INTERVAL_MULTIPLIER := 3.0
 
 var world_bounds := AABB()
 
@@ -24,10 +29,12 @@ var _spice_mound_image: Image
 var _spice_texture: ImageTexture
 var _spice_mound_texture: ImageTexture
 var _source_grid_size := Vector2i.ZERO
+var _terrain_grid_size := Vector2i.ZERO
 var _composite_viewport: SubViewport
 var _terrain_mesh: MeshInstance3D
 var _spice_mounds_root: Node3D
 var _spice_mound_nodes: Dictionary = {}
+var _active_spice_spreads: Dictionary = {}
 
 
 func load_baked(data: BakedMapData, navigation_grid: MapNavigationGrid, terrain_mesh: MeshInstance3D = null) -> bool:
@@ -49,6 +56,9 @@ func load_baked(data: BakedMapData, navigation_grid: MapNavigationGrid, terrain_
 	_source_grid_size = data.nav_report.get("source_spice_grid_size", Vector2i.ZERO)
 	if _source_grid_size.x <= 0 or _source_grid_size.y <= 0:
 		_source_grid_size = data.nav_report.get("source_grid_size", Vector2i.ZERO)
+	_terrain_grid_size = data.nav_report.get("source_grid_size", _source_grid_size)
+	if _terrain_grid_size.x <= 0 or _terrain_grid_size.y <= 0:
+		_terrain_grid_size = _source_grid_size
 	_load_spice_mounds(data.spice_mound_cells)
 	_build_textures()
 	_terrain_mesh = terrain_mesh
@@ -164,6 +174,11 @@ func spice_mound_mask_texture() -> ImageTexture:
 
 
 func detach_visuals() -> void:
+	for spread: Dictionary in _active_spice_spreads.values():
+		var timer := spread.get("timer") as Timer
+		if is_instance_valid(timer):
+			timer.free()
+	_active_spice_spreads.clear()
 	if is_instance_valid(_composite_viewport):
 		_composite_viewport.free()
 	_composite_viewport = null
@@ -257,6 +272,157 @@ func _on_spice_mound_activated(mound: Variant, early_activation: bool, source_ce
 	if _spice_mound_nodes.get(source_cell) != mound:
 		return
 	spice_mound_activated.emit(source_cell, early_activation, mound.global_position)
+	_start_spice_spread(source_cell, mound.config)
+
+
+func _start_spice_spread(source_cell: Vector2i, config: Resource) -> void:
+	_cancel_spice_spread(source_cell)
+	var spread := _create_spice_spread_job(source_cell, config)
+	var cells := spread.get("cells", []) as Array
+	if cells.is_empty() or not is_instance_valid(_spice_mounds_root):
+		spice_spread_finished.emit(source_cell)
+		return
+
+	var timer := Timer.new()
+	timer.name = "SpiceSpread_%d_%d" % [source_cell.x, source_cell.y]
+	timer.one_shot = false
+	timer.wait_time = _spread_interval_seconds(config)
+	_spice_mounds_root.add_child(timer)
+	spread["timer"] = timer
+	_active_spice_spreads[source_cell] = spread
+	timer.timeout.connect(_advance_spice_spread.bind(source_cell))
+	timer.start()
+
+
+func _spread_interval_seconds(config: Resource) -> float:
+	var build_time_ticks := float(config.field(&"build_time", 0.0)) if config != null else 0.0
+	return maxf(
+		build_time_ticks / RULE_TICKS_PER_SECOND * SPREAD_INTERVAL_MULTIPLIER,
+		MIN_SPREAD_INTERVAL_SECONDS
+	)
+
+
+func _create_spice_spread_job(source_cell: Vector2i, config: Resource) -> Dictionary:
+	var blast_radius := maxf(float(config.field(&"blast_radius", 0.0)), 0.0) if config != null else 0.0
+	var spice_capacity := maxi(int(config.field(&"spice_capacity", 0)), 0) if config != null else 0
+	var stage_count := maxi(int(ceil(blast_radius)), 1)
+	var spread := {
+		"source_cell": source_cell,
+		"stage": 0,
+		"stage_count": stage_count,
+		"blast_radius": blast_radius,
+		"cells": [],
+	}
+	if blast_radius <= 0.0 or spice_capacity <= 0 or not _source_cell_is_valid(source_cell):
+		return spread
+
+	var center_normalized := (Vector2(source_cell) + Vector2(0.5, 0.5)) / Vector2(_source_grid_size)
+	var center_nav := center_normalized * float(MapNavigationGridScript.NAV_SIZE)
+	var nav_radius := Vector2(
+		blast_radius / float(_terrain_grid_size.x) * float(MapNavigationGridScript.NAV_SIZE),
+		blast_radius / float(_terrain_grid_size.y) * float(MapNavigationGridScript.NAV_SIZE)
+	)
+	var min_cell := Vector2i(
+		clampi(int(floor(center_nav.x - nav_radius.x - 0.5)), 0, MapNavigationGridScript.NAV_SIZE - 1),
+		clampi(int(floor(center_nav.y - nav_radius.y - 0.5)), 0, MapNavigationGridScript.NAV_SIZE - 1)
+	)
+	var max_cell := Vector2i(
+		clampi(int(ceil(center_nav.x + nav_radius.x - 0.5)), 0, MapNavigationGridScript.NAV_SIZE - 1),
+		clampi(int(ceil(center_nav.y + nav_radius.y - 0.5)), 0, MapNavigationGridScript.NAV_SIZE - 1)
+	)
+
+	var candidates: Array[Dictionary] = []
+	for y in range(min_cell.y, max_cell.y + 1):
+		for x in range(min_cell.x, max_cell.x + 1):
+			var cell := Vector2i(x, y)
+			if not _is_passable_sand(cell):
+				continue
+			var normalized := (Vector2(cell) + Vector2(0.5, 0.5)) / float(MapNavigationGridScript.NAV_SIZE)
+			var distance_tiles := ((normalized - center_normalized) * Vector2(_terrain_grid_size)).length()
+			if distance_tiles > blast_radius:
+				continue
+			candidates.append({
+				"cell": cell,
+				"distance_tiles": distance_tiles,
+				"stage": clampi(int(ceil(distance_tiles / blast_radius * float(stage_count))), 1, stage_count),
+			})
+
+	candidates.sort_custom(_spread_candidate_less)
+	if candidates.is_empty():
+		return spread
+	var amount_per_cell := spice_capacity / candidates.size()
+	var extra_cells := spice_capacity % candidates.size()
+	for index in candidates.size():
+		candidates[index]["amount"] = mini(amount_per_cell + (1 if index < extra_cells else 0), 255)
+	spread["cells"] = candidates
+	return spread
+
+
+func _advance_spice_spread(source_cell: Vector2i) -> void:
+	var spread := _active_spice_spreads.get(source_cell, {}) as Dictionary
+	if spread.is_empty():
+		return
+	var stage := int(spread.get("stage", 0)) + 1
+	spread["stage"] = stage
+	_active_spice_spreads[source_cell] = spread
+	_apply_spice_spread_stage(spread, stage)
+	if stage >= int(spread.get("stage_count", 1)):
+		_cancel_spice_spread(source_cell)
+		spice_spread_finished.emit(source_cell)
+
+
+func _apply_spice_spread_stage(spread: Dictionary, stage: int) -> int:
+	var changes: Array[Dictionary] = []
+	for entry: Dictionary in spread.get("cells", []):
+		if int(entry.get("stage", 0)) != stage:
+			continue
+		var cell := entry.get("cell", Vector2i(-1, -1)) as Vector2i
+		var index := _cell_index(cell)
+		var amount := int(entry.get("amount", 0))
+		if index < 0 or amount <= 0:
+			continue
+		var previous := int(_spice_values[index])
+		var current := mini(previous + amount, 255)
+		if current == previous:
+			continue
+		_spice_values[index] = current
+		_navigation_grid.spice_value[index] = current
+		_spice_image.set_pixel(cell.x, cell.y, Color(float(current) / 255.0, 0.0, 0.0))
+		changes.append({"cell": cell, "previous": previous, "current": current})
+
+	if not changes.is_empty():
+		_spice_texture.update(_spice_image)
+		_request_composite_update()
+		for change: Dictionary in changes:
+			spice_changed.emit(change["cell"], change["previous"], change["current"])
+	var source_cell := spread.get("source_cell", Vector2i(-1, -1)) as Vector2i
+	spice_spread_stage.emit(source_cell, stage, int(spread.get("stage_count", 1)), changes.size())
+	return changes.size()
+
+
+func _cancel_spice_spread(source_cell: Vector2i) -> void:
+	var spread := _active_spice_spreads.get(source_cell, {}) as Dictionary
+	_active_spice_spreads.erase(source_cell)
+	var timer := spread.get("timer") as Timer
+	if is_instance_valid(timer):
+		timer.stop()
+		timer.queue_free()
+
+
+func _is_passable_sand(cell: Vector2i) -> bool:
+	return _navigation_grid != null \
+		and _navigation_grid.terrain_at(cell) == MapNavigationGridScript.TERRAIN_SAND \
+		and _navigation_grid.is_passable(cell, MapNavigationGridScript.PASS_GROUND)
+
+
+static func _spread_candidate_less(left: Dictionary, right: Dictionary) -> bool:
+	var left_distance := float(left.get("distance_tiles", 0.0))
+	var right_distance := float(right.get("distance_tiles", 0.0))
+	if not is_equal_approx(left_distance, right_distance):
+		return left_distance < right_distance
+	var left_cell := left.get("cell", Vector2i.ZERO) as Vector2i
+	var right_cell := right.get("cell", Vector2i.ZERO) as Vector2i
+	return left_cell.y < right_cell.y or (left_cell.y == right_cell.y and left_cell.x < right_cell.x)
 
 
 func _source_cell_world_rect(source_cell: Vector2i) -> Rect2:

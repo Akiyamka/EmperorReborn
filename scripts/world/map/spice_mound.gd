@@ -8,7 +8,7 @@ signal activated(mound: SpiceMound, early_activation: bool)
 const RULE_TICKS_PER_SECOND := 60.0
 const UNIT_COLLISION_LAYER := 2
 const INITIAL_GROWTH_SCALE := 0.1
-const MATURITY_DURATION_MULTIPLIER := 2.0
+const MATURITY_DURATION_MULTIPLIER := 3.0
 
 @export var source_cell := Vector2i(-1, -1)
 

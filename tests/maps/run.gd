@@ -22,6 +22,7 @@ func _initialize() -> void:
 	_run_case("dynamic spice harvesting and replenishment", _test_dynamic_spice_harvesting_and_replenishment)
 	_run_case("spice mound source-grid mapping", _test_spice_mound_source_grid_mapping)
 	_run_case("spice mound runtime entity contract", _test_spice_mound_runtime_entity_contract)
+	_run_case("spice mound staged passable-sand spread", _test_spice_mound_staged_passable_sand_spread)
 	_run_case("malformed baked data is atomic", _test_malformed_baked_data_is_atomic)
 	_run_case("grid reload semantics", _test_grid_reload_semantics)
 	_run_case("map loader failed replacement is atomic", _test_map_loader_failed_replacement_is_atomic)
@@ -165,7 +166,7 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 	_expect(plane.size == Vector2(2.0, 3.0), "a mound mesh must match its source-cell world footprint")
 	_expect(box.size.x == 2.0 and box.size.z == 3.0, "a mound Area3D must own a collision region matching its mesh")
 	_expect(mound.collision_layer == 0 and mound.collision_mask == 2, "a mound must detect unit bodies without becoming a solid navigation obstacle")
-	_expect(is_equal_approx(timer.wait_time, 2500.0 / 60.0) and timer.one_shot, "the maturity timer must run at half speed over the Size plus randomized Cost lifespan")
+	_expect(is_equal_approx(timer.wait_time, 3750.0 / 60.0) and timer.one_shot, "the maturity multiplier must put the randomized Size plus Cost lifespan near one real minute")
 	_expect("texture(spice_mound_tex, UV)" in shader.code and "repeat_disable" in shader.code, "the mound texture must use one clamped local-UV sample instead of world-space tiling")
 	_expect(is_equal_approx(mound.growth_scale(), 0.1), "a new maturity cycle must start with the mound at 0.1 scale")
 	mound.call("_set_maturity_progress", 0.5)
@@ -183,6 +184,44 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 	_expect(activation_count[0] == 2 and not early_activations[1], "timer activation must fire and begin the next recurring cycle")
 	_expect(is_equal_approx(mound.growth_scale(), 0.1), "timer activation must restart the recurring cycle at 0.1 scale")
 	mound.free()
+	return token
+
+
+func _test_spice_mound_staged_passable_sand_spread(token: int) -> int:
+	var data = _valid_data("spice-spread", AABB(Vector3.ZERO, Vector3(256.0, 1.0, 256.0)))
+	data.nav_report["source_grid_size"] = Vector2i(256, 256)
+	data.nav_report["source_spice_grid_size"] = Vector2i(256, 256)
+	var center := Vector2i(20, 20)
+	var wave_cells := [center, center + Vector2i.RIGHT, center + Vector2i(2, 0), center + Vector2i(3, 0)]
+	for cell: Vector2i in wave_cells:
+		data.nav_pass_mask[cell.y * MapNavigationGridScript.NAV_SIZE + cell.x] = MapNavigationGridScript.PASS_GROUND
+	var passable_rock := center + Vector2i.DOWN
+	var impassable_sand := center + Vector2i.LEFT
+	var beyond_radius := center + Vector2i(4, 0)
+	data.nav_terrain_type[passable_rock.y * MapNavigationGridScript.NAV_SIZE + passable_rock.x] = MapNavigationGridScript.TERRAIN_ROCK
+	data.nav_pass_mask[passable_rock.y * MapNavigationGridScript.NAV_SIZE + passable_rock.x] = MapNavigationGridScript.PASS_GROUND
+	data.nav_pass_mask[impassable_sand.y * MapNavigationGridScript.NAV_SIZE + impassable_sand.x] = MapNavigationGridScript.PASS_AIR
+	data.nav_pass_mask[beyond_radius.y * MapNavigationGridScript.NAV_SIZE + beyond_radius.x] = MapNavigationGridScript.PASS_GROUND
+
+	var grid = MapNavigationGridScript.new()
+	_expect(grid.load_baked(data), "a staged spice-spread fixture must load its navigation grid")
+	var layer = MapSpiceLayerScript.new()
+	_expect(layer.load_baked(data, grid), "a staged spice-spread layer must load")
+	var config = RuleEntityConfigScript.new()
+	config.fields = {"blast_radius": 3.0, "spice_capacity": 800, "build_time": 6}
+	_expect(is_equal_approx(layer.call("_spread_interval_seconds", config), 0.3), "spice rings must advance three times slower than the Rules BuildTime interval")
+	var spread: Dictionary = layer.call("_create_spice_spread_job", center, config)
+	_expect(spread.get("stage_count") == 3 and (spread.get("cells", []) as Array).size() == 4, "BlastRadius must produce one outward ring per tile and select only eligible cells")
+
+	_expect(layer.call("_apply_spice_spread_stage", spread, 1) == 2, "the first stage must populate only the center and first-radius ring")
+	_expect(layer.spice_at(center) == 200 and layer.spice_at(center + Vector2i.RIGHT) == 200, "the first ring must receive its distributed mound capacity")
+	_expect(layer.spice_at(center + Vector2i(2, 0)) == 0 and layer.spice_at(center + Vector2i(3, 0)) == 0, "outer rings must remain empty before their stages")
+	_expect(layer.call("_apply_spice_spread_stage", spread, 2) == 1 and layer.spice_at(center + Vector2i(2, 0)) == 200, "the second stage must extend the field to radius two")
+	_expect(layer.call("_apply_spice_spread_stage", spread, 3) == 1 and layer.spice_at(center + Vector2i(3, 0)) == 200, "the final stage must reach BlastRadius")
+	_expect(layer.spice_at(passable_rock) == 0, "passable rock must not receive spice")
+	_expect(layer.spice_at(impassable_sand) == 0, "impassable sand must not receive spice")
+	_expect(layer.spice_at(beyond_radius) == 0, "passable sand beyond BlastRadius must not receive spice")
+	_expect(grid.spice_value[(center.y * MapNavigationGridScript.NAV_SIZE) + center.x] == 200, "staged spread must keep navigation spice state synchronized")
 	return token
 
 
