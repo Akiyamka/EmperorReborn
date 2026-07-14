@@ -8,9 +8,11 @@ extends Node3D
 @export var environment_path: NodePath
 
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
+const MapSpiceLayerScript := preload("res://scripts/world/map/map_spice_layer.gd")
 
 var terrain_aabb := AABB()
 var navigation_grid: MapNavigationGrid
+var spice_layer
 var map_data: BakedMapData
 
 
@@ -36,10 +38,17 @@ func load_map(path: String) -> void:
 	if not candidate_grid.load_baked(candidate_data):
 		push_error("MapLoader: invalid baked navigation in %s" % path)
 		return
+	var candidate_spice_layer = MapSpiceLayerScript.new()
+	if not candidate_spice_layer.load_baked(candidate_data, candidate_grid, get_node_or_null("TerrainMesh") as MeshInstance3D):
+		push_error("MapLoader: invalid baked spice layer in %s" % path)
+		return
 
 	map_data = candidate_data
 	terrain_aabb = candidate_data.terrain_aabb
 	navigation_grid = candidate_grid
+	if spice_layer != null:
+		spice_layer.detach_visuals()
+	spice_layer = candidate_spice_layer
 
 	_apply_lighting()
 	print("MapLoader: %s - %d surfaces, %d textures, map %s, aabb %s" % [

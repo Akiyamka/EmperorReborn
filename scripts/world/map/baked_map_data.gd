@@ -11,6 +11,7 @@ extends Resource
 @export var texture_count := 0
 @export var surface_count := 0
 @export var xbf_summary := ""
+@export var spice_mound_cells: Array[Vector2i] = []
 
 @export var nav_world_bounds := AABB()
 @export var nav_cpf_values := PackedInt32Array()

@@ -33,6 +33,14 @@ uniform vec3 mottle_mean = vec3(1.0);
 uniform float mottle_strength = 0.0;
 uniform float mottle_world_size = 48.0;
 
+// Runtime resource layer. MapSpiceLayer updates the precomposited field
+// overlay and the mound mask; map bake data only supplies their initial state.
+uniform sampler2D spice_mound_mask : filter_nearest, repeat_disable, hint_default_black;
+uniform sampler2D spice_field_overlay : source_color, filter_linear, repeat_disable, hint_default_black;
+uniform sampler2D spice_mound_tex : source_color, filter_linear, repeat_enable, hint_default_black;
+uniform vec4 spice_world_rect = vec4(0.0, 0.0, 1.0, 1.0);
+uniform vec2 spice_pattern_world_size = vec2(1.0);
+
 varying vec2 world_xz;
 
 void vertex() {
@@ -60,7 +68,17 @@ void fragment() {
 	tone_color = mix(vec3(1.0), tone_color, clamp(ground.a * tone_alpha_gain, 0.0, 1.0));
 	vec3 mottle = texture(mottle_tex, world_xz / mottle_world_size).rgb;
 	vec3 variation = mix(vec3(1.0), mottle / mottle_mean, mottle_strength);
-	ALBEDO = base * tone_color * clamp(variation, 0.0, 1.5);
+	vec3 color = base * tone_color * clamp(variation, 0.0, 1.5);
+	vec2 field_uv = (world_xz - spice_world_rect.xy) / spice_world_rect.zw;
+	if (all(greaterThanEqual(field_uv, vec2(0.0))) && all(lessThan(field_uv, vec2(1.0)))) {
+		vec4 spice = texture(spice_field_overlay, field_uv);
+		color = color * (1.0 - spice.a) + spice.rgb;
+		vec2 pattern_uv = (world_xz - spice_world_rect.xy) / spice_pattern_world_size;
+		float mound_presence = texture(spice_mound_mask, field_uv).r;
+		vec4 mound = texture(spice_mound_tex, pattern_uv);
+		color = mix(color, mound.rgb, mound.a * mound_presence);
+	}
+	ALBEDO = color;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 }

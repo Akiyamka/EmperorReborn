@@ -3,6 +3,7 @@ extends SceneTree
 const BakedMapDataScript := preload("res://scripts/world/map/baked_map_data.gd")
 const MapLoaderScript := preload("res://scripts/world/map/map_loader.gd")
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
+const MapSpiceLayerScript := preload("res://scripts/world/map/map_spice_layer.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -14,6 +15,8 @@ var _temporary_paths: Array[String] = []
 func _initialize() -> void:
 	_run_case("baked grid load and coordinate contract", _test_baked_grid_load_and_coordinates)
 	_run_case("cell debug contract", _test_cell_debug_contract)
+	_run_case("dynamic spice harvesting and replenishment", _test_dynamic_spice_harvesting_and_replenishment)
+	_run_case("spice mound source-grid mapping", _test_spice_mound_source_grid_mapping)
 	_run_case("malformed baked data is atomic", _test_malformed_baked_data_is_atomic)
 	_run_case("grid reload semantics", _test_grid_reload_semantics)
 	_run_case("map loader failed replacement is atomic", _test_map_loader_failed_replacement_is_atomic)
@@ -82,6 +85,41 @@ func _test_cell_debug_contract(token: int) -> int:
 	return token
 
 
+func _test_dynamic_spice_harvesting_and_replenishment(token: int) -> int:
+	var data = _valid_data("dynamic-spice")
+	var cell := Vector2i(12, 34)
+	data.nav_spice_value[cell.y * MapNavigationGridScript.NAV_SIZE + cell.x] = 200
+	var grid = MapNavigationGridScript.new()
+	_expect(grid.load_baked(data), "dynamic spice fixture must load its navigation grid")
+	var layer = MapSpiceLayerScript.new()
+	_expect(layer.load_baked(data, grid), "dynamic spice layer must load from baked initial state")
+	_expect(layer.spice_at(cell) == 200, "the runtime layer must preserve initial baked spice density")
+	_expect(layer.nearest_spice_cell(Vector2i.ZERO) == cell, "the runtime layer must locate the nearest available spice cell")
+	_expect(layer.take_spice(cell, 75) == 75 and layer.spice_at(cell) == 125, "harvesting must return and remove the requested available spice")
+	_expect(data.nav_spice_value[cell.y * MapNavigationGridScript.NAV_SIZE + cell.x] == 200, "runtime harvesting must not mutate baked initial state")
+	_expect(grid.cell_debug(cell).get("spice") == 125, "harvesting must keep navigation spice lookup synchronized")
+	_expect(layer.take_spice(cell, 200) == 125 and layer.spice_at(cell) == 0, "harvesting must stop at an exhausted field")
+	_expect(layer.add_spice(cell, 300) == 255 and layer.spice_at(cell) == 255, "regeneration must saturate the cell at byte density")
+	_expect(layer.spice_mask_texture() != null, "the dynamic field must expose its visual mask texture")
+	_expect(not layer.set_spice(Vector2i(-1, 0), 10), "runtime mutations outside the map must be rejected")
+	_expect(layer.add_spice(Vector2i(-1, 0), 10) == 0, "regeneration outside the map must not report added spice")
+	return token
+
+
+func _test_spice_mound_source_grid_mapping(token: int) -> int:
+	var data = _valid_data("spice-mounds")
+	data.nav_report["source_spice_grid_size"] = Vector2i(128, 128)
+	data.spice_mound_cells.append(Vector2i(4, 5))
+	var grid = MapNavigationGridScript.new()
+	_expect(grid.load_baked(data), "spice mound fixture must load its navigation grid")
+	var layer = MapSpiceLayerScript.new()
+	_expect(layer.load_baked(data, grid), "spice mound layer must load source cells")
+	_expect(layer.has_spice_mound(Vector2i(8, 10)) and layer.has_spice_mound(Vector2i(9, 11)), "one 128-grid mound cell must cover its corresponding 2x2 navigation cells")
+	_expect(not layer.has_spice_mound(Vector2i(10, 10)), "a mound mask must not leak into its neighboring source cell")
+	_expect(layer.set_spice_mound(Vector2i(8, 10), false) and not layer.has_spice_mound(Vector2i(8, 10)) and not layer.has_spice_mound(Vector2i(9, 11)), "a consumed bloom must remove its complete source-grid footprint")
+	return token
+
+
 func _test_malformed_baked_data_is_atomic(token: int) -> int:
 	var grid = MapNavigationGridScript.new()
 	var bad_bounds = _valid_data("bad-bounds", AABB(Vector3.ZERO, Vector3(0.0, 1.0, 16.0)))
@@ -128,9 +166,10 @@ func _test_map_loader_failed_replacement_is_atomic(token: int) -> int:
 	_expect(loader.map_data != null and loader.navigation_grid != null and loader.navigation_grid.is_loaded(), "a valid resource must initialize all map loader state")
 	var original_data = loader.map_data
 	var original_grid = loader.navigation_grid
+	var original_spice_layer = loader.spice_layer
 	var original_aabb: AABB = loader.terrain_aabb
 	loader.load_map(malformed_path)
-	_expect(loader.map_data == original_data and loader.navigation_grid == original_grid and loader.terrain_aabb == original_aabb, "a malformed replacement must preserve the last valid map state")
+	_expect(loader.map_data == original_data and loader.navigation_grid == original_grid and loader.spice_layer == original_spice_layer and loader.terrain_aabb == original_aabb, "a malformed replacement must preserve the last valid map state")
 	loader.load_map("user://missing-map-contract-fixture.tres")
 	_expect(loader.map_data == original_data and loader.navigation_grid == original_grid and loader.terrain_aabb == original_aabb, "a missing replacement must preserve the last valid map state")
 	loader.free()

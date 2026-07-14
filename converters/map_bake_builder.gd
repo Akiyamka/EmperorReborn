@@ -75,6 +75,7 @@ func build(dir: String) -> Resource:
 	data.map_size = xbf.map_size
 	data.texture_count = xbf.textures.size()
 	data.surface_count = mesh.get_surface_count()
+	data.spice_mound_cells.assign(xbf.spice_mounds)
 	if xbf.has_tlv_meta():
 		data.xbf_summary = "meta_end=%d, %s" % [xbf.meta_end, xbf.logical_layer_summary()]
 
