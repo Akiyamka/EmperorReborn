@@ -1,14 +1,17 @@
 class_name SpiceMound
 extends Area3D
-## Runtime spice-bloom trigger. Its plane owns local 0..1 UVs, while this
-## Area3D owns contact activation and the Rules.txt maturation timer.
+## Runtime spice-bloom trigger. The visual is converted from the original
+## Spicemound.xbf mesh; this Area3D owns contact activation and the Rules.txt
+## maturation timer.
 
 signal activated(mound: SpiceMound, early_activation: bool)
 
 const RULE_TICKS_PER_SECOND := 60.0
 const UNIT_COLLISION_LAYER := 2
-const INITIAL_GROWTH_SCALE := 0.1
 const MATURITY_DURATION_MULTIPLIER := 3.0
+const SOURCE_MODEL_DIAMETER := 32.0
+const SOURCE_GROWTH_ANIMATION := &"timeline"
+const SOURCE_GROWTH_TRACK := NodePath("_0Spicemound:transform")
 
 @export var source_cell := Vector2i(-1, -1)
 
@@ -88,14 +91,15 @@ func restart_maturity_cycle() -> void:
 
 
 func growth_scale() -> float:
-	return scale.x
+	var animated_node := get_node_or_null("Visual/_0Spicemound") as Node3D
+	return animated_node.scale.x if animated_node != null else 0.0
 
 
 func _apply_footprint() -> void:
-	var mesh_node := get_node_or_null("Visual") as MeshInstance3D
-	var plane := mesh_node.mesh as PlaneMesh if mesh_node != null else null
-	if plane != null:
-		plane.size = _footprint
+	var visual := get_node_or_null("Visual") as Node3D
+	if visual != null:
+		var vertical_footprint := minf(_footprint.x, _footprint.y)
+		visual.scale = Vector3(_footprint.x, vertical_footprint, _footprint.y) / SOURCE_MODEL_DIAMETER
 	var shape_node := get_node_or_null("CollisionShape3D") as CollisionShape3D
 	var box := shape_node.shape as BoxShape3D if shape_node != null else null
 	if box != null:
@@ -116,8 +120,20 @@ func _prepare_maturity_cycle() -> void:
 
 
 func _set_maturity_progress(progress: float) -> void:
-	var growth := lerpf(INITIAL_GROWTH_SCALE, 1.0, clampf(progress, 0.0, 1.0))
-	scale = Vector3(growth, 1.0, growth)
+	var player := get_node_or_null("Visual/AnimationPlayer") as AnimationPlayer
+	var animated_node := get_node_or_null("Visual/_0Spicemound") as Node3D
+	if player == null or animated_node == null or not player.has_animation(SOURCE_GROWTH_ANIMATION):
+		return
+	player.stop()
+	var animation := player.get_animation(SOURCE_GROWTH_ANIMATION)
+	var track := animation.find_track(SOURCE_GROWTH_TRACK, Animation.TYPE_VALUE)
+	if track < 0 or animation.track_get_key_count(track) == 0:
+		return
+	var last_key := animation.track_get_key_count(track) - 1
+	var growth_time := animation.track_get_key_time(track, last_key) * clampf(progress, 0.0, 1.0)
+	var authored_transform: Variant = animation.value_track_interpolate(track, growth_time)
+	if authored_transform is Transform3D:
+		animated_node.transform = authored_transform
 
 
 func _on_body_entered(body: Node3D) -> void:

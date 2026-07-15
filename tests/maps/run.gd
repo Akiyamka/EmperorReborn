@@ -161,18 +161,20 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 	var mound = SpiceMoundScene.instantiate()
 	mound.configure(Vector2i(4, 5), Vector2(2.0, 3.0), config, 0.5)
 
-	var plane := mound.get_node("Visual").mesh as PlaneMesh
+	var visual := mound.get_node("Visual") as Node3D
+	var model_mesh := mound.get_node("Visual/_0Spicemound/Mesh") as MeshInstance3D
+	var model_player := mound.get_node("Visual/AnimationPlayer") as AnimationPlayer
 	var box := mound.get_node("CollisionShape3D").shape as BoxShape3D
 	var timer := mound.get_node("MaturityTimer") as Timer
-	var shader := (plane.material as ShaderMaterial).shader
-	_expect(plane.size == Vector2(2.0, 3.0), "a mound mesh must match its source-cell world footprint")
+	_expect(model_mesh.mesh.get_surface_count() == 1 and model_mesh.get_aabb().size.y > 0.0, "a mound must use the original three-dimensional XBF mesh")
+	_expect(is_equal_approx(visual.scale.x * 32.0, 2.0) and is_equal_approx(visual.scale.z * 32.0, 3.0), "the original mound mesh must match its source-cell world footprint")
 	_expect(box.size.x == 2.0 and box.size.z == 3.0, "a mound Area3D must own a collision region matching its mesh")
 	_expect(mound.collision_layer == 0 and mound.collision_mask == 2, "a mound must detect unit bodies without becoming a solid navigation obstacle")
 	_expect(is_equal_approx(timer.wait_time, 3750.0 / 60.0) and timer.one_shot, "the maturity multiplier must put the randomized Size plus Cost lifespan near one real minute")
-	_expect("texture(spice_mound_tex, UV)" in shader.code and "repeat_disable" in shader.code, "the mound texture must use one clamped local-UV sample instead of world-space tiling")
-	_expect(is_equal_approx(mound.growth_scale(), 0.1), "a new maturity cycle must start with the mound at 0.1 scale")
+	_expect(model_player.has_animation(&"timeline") and model_player.get_animation(&"timeline").track_get_key_count(0) == 31, "a mound must retain its original XBF growth animation")
+	_expect(is_equal_approx(mound.growth_scale(), 0.001), "a new maturity cycle must start at the authored initial scale")
 	mound.call("_set_maturity_progress", 0.5)
-	_expect(is_equal_approx(mound.growth_scale(), 0.55), "mound growth must follow maturity progress from 0.1 to 1.0")
+	_expect(is_equal_approx(mound.growth_scale(), 0.376259), "mound growth must follow the authored non-linear transform curve")
 
 	var activation_count := [0]
 	var early_activations: Array[bool] = []
@@ -181,10 +183,10 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 		early_activations.append(early)
 	)
 	_expect(mound.activate(true) and activation_count[0] == 1 and early_activations[0], "contact activation must fire the current cycle early")
-	_expect(is_equal_approx(mound.growth_scale(), 0.1), "early activation must immediately restart growth from 0.1 scale")
+	_expect(is_equal_approx(mound.growth_scale(), 0.001), "early activation must immediately restart the authored growth animation")
 	mound.call("_on_maturity_timeout")
 	_expect(activation_count[0] == 2 and not early_activations[1], "timer activation must fire and begin the next recurring cycle")
-	_expect(is_equal_approx(mound.growth_scale(), 0.1), "timer activation must restart the recurring cycle at 0.1 scale")
+	_expect(is_equal_approx(mound.growth_scale(), 0.001), "timer activation must restart the recurring authored growth animation")
 	mound.free()
 	return token
 

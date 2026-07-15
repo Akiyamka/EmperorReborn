@@ -1,6 +1,6 @@
 GODOT_CONTAINER := ./tools/godot-container
 
-.PHONY: rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-placement godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-placement godot-convert-spice-mound godot-export-web godot-watch-export godot-shell godot-version
 
 rules-export:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/import_rules.gd -- --db res://assets/converted/rules.db --clean
@@ -40,6 +40,9 @@ godot-convert-all-units:
 
 godot-convert-placement:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_placement.gd
+
+godot-convert-spice-mound:
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_model.gd -- --source res://assets/raw_original_content/3DDATA/spice/Spicemound.xbf --output res://assets/converted/models/Spicemound/Spicemound.scn
 
 godot-export-web:
 	$(GODOT_CONTAINER) export-web
