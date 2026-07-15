@@ -366,6 +366,14 @@ func _test_refinery_side_dock_layout(token: int) -> int:
 		refinery.refinery_dock_facing_direction(2).is_equal_approx(expected_right_facing),
 		"the right pad must apply its -45 rules angle with the converted positive yaw"
 	)
+	refinery.set_meta(&"placement_anchor_cell", Vector2i.ZERO)
+	var docking_cells := refinery.refinery_dock_navigation_cells(RefCounted.new())
+	var docking_markers: Array = docking_cells.values()
+	_expect(not docking_markers.is_empty(), "a refinery must expose its d/p docking cells")
+	_expect(
+		docking_markers.all(func(marker): return marker == "d" or marker == "p"),
+		"a docking exception must include d/p cells and never building body or skirt cells"
+	)
 
 	centre_user.free()
 	side_user.free()

@@ -142,7 +142,7 @@ func _start_unload_order(refinery: Node, navigation_grid) -> void:
 	_unload_credit_accumulator = 0.0
 	_unload_phase = UnloadPhase.APPROACH
 	_unload_phase_remaining = 0.0
-	_issue_unload_move(refinery.call("refinery_front_position") as Vector3)
+	_issue_unload_move((refinery as Node3D).global_position)
 
 
 func has_unload_order() -> bool:
@@ -239,8 +239,8 @@ func advance_unload_order(delta: float) -> void:
 		UnloadPhase.PARK:
 			if not bool(_unload_refinery.call("refinery_dock_reserved_by", _unload_dock, self)):
 				_unload_dock = INVALID_DOCK
-				_unload_phase = UnloadPhase.WAIT_DOCK
-				_issue_unload_move(_unload_refinery.call("refinery_front_position") as Vector3)
+				_unload_phase = UnloadPhase.APPROACH
+				_issue_unload_move((_unload_refinery as Node3D).global_position)
 				return
 			var dock_position := _unload_refinery.call("refinery_dock_world_position", _unload_dock) as Vector3
 			if not _is_close_to_world(dock_position):

@@ -40,6 +40,11 @@ these local rows to navigation cells. It applies the building's world
 transform, so placement occupancy, build radius, solid blockers, and no-stop
 skirt cells agree for rotated buildings.
 
+Occupy markers have one shared navigation meaning: `b` (and unknown solid
+markers) block movement, while `s`, `d`, and `p` are passable no-stop cells.
+A refinery docking order grants only its reserved harvester a per-agent
+stopping exception on that refinery's `d` and `p` cells; `b` remains blocked.
+
 ## Rotation rules
 
 Entity directions are horizontal: pitch and roll do not affect movement,

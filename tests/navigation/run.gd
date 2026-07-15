@@ -3,6 +3,7 @@ extends SceneTree
 const NavigationMapScript := preload("res://scripts/units/navigation/unit_navigation_map.gd")
 const NavigationPlannerScript := preload("res://scripts/units/navigation/unit_navigation_planner.gd")
 const NavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -53,6 +54,8 @@ func _initialize() -> void:
 	_test_no_stop_cells(grid)
 	_test_unit_navigation_order_api(grid)
 	_test_dock_order_has_per_unit_building_access(grid)
+	_test_building_marker_navigation_semantics(grid)
+	_test_blocked_target_uses_unit_approach_side(grid)
 	_test_rotated_building_blockers(grid)
 	_test_interior_escape(grid)
 	_test_immediate_movement(grid)
@@ -219,32 +222,114 @@ func _test_dock_order_has_per_unit_building_access(grid: MapNavigationGrid) -> v
 	root.add_child(navigation)
 	navigation.set_physics_process(false)
 	_expect(navigation.setup(grid), "navigation system must initialize for docking")
-	var footprint := {}
+	var building_body := {}
+	var dock_cells := {}
 	for y in range(100, 108):
 		for x in range(100, 108):
-			footprint[Vector2i(x, y)] = true
-	navigation.runtime_map.replace_blocked_cells(footprint)
+			var cell := Vector2i(x, y)
+			if x >= 103 and x <= 105 and y >= 103:
+				dock_cells[cell] = true
+			else:
+				building_body[cell] = true
+	for y in range(108, 112):
+		for x in range(103, 106):
+			dock_cells[Vector2i(x, y)] = true
+	navigation.runtime_map.replace_blocked_cells(building_body, dock_cells)
 
 	var harvester := FakeUnit.new(3.0)
 	root.add_child(harvester)
-	harvester.global_position = Vector3(103.5, 0.0, 96.5)
-	var dock := Vector3(103.5, 0.0, 103.5)
-	_expect(navigation.command_dock(harvester, dock, footprint), "a reserved dock order must accept its refinery footprint")
+	harvester.global_position = Vector3(96.5, 0.0, 104.5)
+	var dock := Vector3(104.5, 0.0, 104.5)
+	_expect(navigation.command_dock(harvester, dock, dock_cells), "a reserved harvester must receive a d/p stopping exception")
 	_expect(navigation.arrival_tolerance(harvester) > 0.35, "a size-three harvester must use its larger navigation arrival tolerance")
-	for _iteration in 80:
+	var crossed_building_body := false
+	for _iteration in 200:
 		navigation.call("_navigation_tick", 0.05)
-	_expect(harvester.global_position.distance_to(dock) < 0.6, "the docking harvester must enter and stop on blocked footprint cells")
+		crossed_building_body = crossed_building_body or building_body.has(
+			grid.world_to_grid(harvester.global_position)
+		)
+	_expect(harvester.global_position.distance_to(dock) < 0.6, "the docking harvester must enter and stop on d/p cells")
+	_expect(not crossed_building_body, "a docking route from the side must go around b cells")
 
 	var ordinary := FakeUnit.new()
 	root.add_child(ordinary)
 	ordinary.global_position = Vector3(110.5, 0.0, 103.5)
 	var assignments := navigation.command_move([ordinary], dock)
 	var ordinary_cell: Vector2i = grid.world_to_grid(assignments[0]["position"])
-	_expect(not footprint.has(ordinary_cell), "the same footprint must remain forbidden to an ordinary movement order")
+	_expect(not dock_cells.has(ordinary_cell), "the same d/p cells must remain no-stop for an ordinary movement order")
 
 	navigation.queue_free()
 	harvester.queue_free()
 	ordinary.queue_free()
+
+
+func _test_building_marker_navigation_semantics(grid: MapNavigationGrid) -> void:
+	var match_root := Node3D.new()
+	root.add_child(match_root)
+	var building := FakeBuilding.new(["BDPS"])
+	building.position = Vector3(100.0, 0.0, 100.0)
+	building.add_to_group("buildings")
+	match_root.add_child(building)
+	var navigation := NavigationSystemScript.new()
+	match_root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation must initialize for occupy marker semantics")
+	navigation.call("_refresh_building_blockers")
+	var footprint: Dictionary = BuildingFootprintScript.nav_cells_by_marker(
+		building, building.building_config.list(&"occupy_rows"), grid, 2
+	)
+	for cell in footprint:
+		var marker := String(footprint[cell]).to_lower()
+		if marker == "b":
+			_expect(navigation.runtime_map.is_blocked(cell), "b occupy cells must remain solid")
+		else:
+			_expect(
+				navigation.runtime_map.is_passable(cell, MapNavigationGrid.PASS_VEHICLE)
+					and not navigation.runtime_map.is_stoppable(cell, MapNavigationGrid.PASS_VEHICLE),
+				"s/d/p occupy cells must be passable no-stop space"
+			)
+	match_root.free()
+
+
+func _test_blocked_target_uses_unit_approach_side(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation must initialize for blocked target approach selection")
+	var building_body := {}
+	for y in range(100, 108):
+		for x in range(100, 108):
+			building_body[Vector2i(x, y)] = true
+	navigation.runtime_map.replace_blocked_cells(building_body)
+	var target := Vector3(103.5, 0.0, 103.5)
+
+	var front_unit := FakeUnit.new(3.0)
+	root.add_child(front_unit)
+	front_unit.global_position = Vector3(103.5, 0.0, 114.5)
+	var front_assignment := navigation.command_move([front_unit], target)[0] as Dictionary
+	var front_destination: Vector3 = front_assignment["position"]
+	_expect(
+		front_destination.z > 108.0 and absf(front_destination.x - target.x) < 2.0,
+		"a unit already in front of a blocked target must approach on the front side (got %.1f, %.1f)" % [
+			front_destination.x, front_destination.z
+		]
+	)
+
+	var left_unit := FakeUnit.new(3.0)
+	root.add_child(left_unit)
+	left_unit.global_position = Vector3(90.5, 0.0, 103.5)
+	var left_assignment := navigation.command_move([left_unit], target)[0] as Dictionary
+	var left_destination: Vector3 = left_assignment["position"]
+	_expect(
+		left_destination.x < 99.5 and absf(left_destination.z - target.z) < 2.0,
+		"a unit left of a blocked target must approach on the left side (got %.1f, %.1f)" % [
+			left_destination.x, left_destination.z
+		]
+	)
+
+	navigation.queue_free()
+	front_unit.queue_free()
+	left_unit.queue_free()
 
 
 func _test_rotated_building_blockers(grid: MapNavigationGrid) -> void:

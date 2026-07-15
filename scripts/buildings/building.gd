@@ -497,12 +497,18 @@ func refinery_dock_facing_direction(dock_index: int) -> Vector3:
 func refinery_dock_navigation_cells(navigation_grid) -> Dictionary:
 	if navigation_grid == null:
 		return {}
-	return BuildingFootprintScript.nav_cells_by_marker(
+	var footprint := BuildingFootprintScript.nav_cells_by_marker(
 		self,
 		_refinery_occupy_rows(),
 		navigation_grid,
 		BuildingPlacement.NAV_CELLS_PER_OCCUPY_CELL
 	)
+	var dock_cells := {}
+	for cell in footprint:
+		var marker := String(footprint[cell]).to_lower()
+		if marker == "d" or marker == "p":
+			dock_cells[cell] = marker
+	return dock_cells
 
 
 func _refinery_dock_points() -> Array:

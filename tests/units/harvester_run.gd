@@ -357,7 +357,7 @@ func _test_unload_waits_for_dock(token: int, player: PlayerData) -> int:
 	_expect(harvester.command_unload(refinery, grid), "an owned refinery must accept an unloading order")
 	harvester.advance_unload_order(0.0)
 	harvester.advance_unload_order(0.0)
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.WAIT_DOCK, "an occupied refinery must leave the harvester waiting at its front")
+	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.WAIT_DOCK, "an occupied refinery must leave the harvester waiting near the building")
 	_expect(harvester.unload_dock() == -1 and refinery.reserved_by == null, "waiting must not claim an unavailable pad")
 	refinery.available = true
 	harvester.advance_unload_order(0.0)
@@ -374,6 +374,8 @@ func _test_unload_navigation_arrival(token: int, player: PlayerData) -> int:
 	var grid := FakeGrid.new()
 	var navigation := FakeNavigation.new()
 	var refinery := FakeRefinery.new()
+	refinery.position = Vector3(10.0, 0.0, 4.0)
+	refinery.front = Vector3(30.0, 0.0, 20.0)
 	root.add_child(refinery)
 	var harvester := TestHarvester.new()
 	harvester.owner_player_id = player.player_id
@@ -384,11 +386,15 @@ func _test_unload_navigation_arrival(token: int, player: PlayerData) -> int:
 	harvester.set_navigation_controller(navigation)
 
 	_expect(harvester.command_unload(refinery, grid), "the managed harvester must accept the unloading order")
+	_expect(
+		harvester.target_position.is_equal_approx(refinery.global_position + Vector3(0.0, 0.0, 2.0)),
+		"the approach must target the refinery itself instead of its authored front position"
+	)
 	harvester.global_position = harvester.target_position + Vector3(0.0, 0.0, 0.45)
 	harvester.advance_unload_order(0.0)
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.WAIT_DOCK, "the unload state must follow the feasible destination assigned by navigation")
+	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.WAIT_DOCK, "the unload state must follow the nearest feasible approach assigned by navigation")
 	harvester.advance_unload_order(0.0)
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK, "arrival at the refinery front must proceed to dock reservation")
+	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK, "arrival near the refinery must proceed to dock reservation")
 	harvester.global_position = refinery.dock + Vector3(0.0, 0.0, 0.45)
 	harvester.face_direction(refinery.refinery_dock_facing_direction(0))
 	harvester.advance_unload_order(0.0)

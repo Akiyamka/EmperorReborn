@@ -26,7 +26,14 @@ func prewarm(pass_mask: int, clearance_cells: int, allowed_terrain_mask := 0) ->
 ## unreachable the path leads to the closest reachable cell, matching the
 ## original game's "walk as far as possible" behaviour. Empty when no start
 ## cell is available.
-func find_path(start_cell: Vector2i, target_cell: Vector2i, pass_mask: int, clearance_cells: int, allowed_terrain_mask := 0) -> Array[Vector2i]:
+func find_path(
+		start_cell: Vector2i,
+		target_cell: Vector2i,
+		pass_mask: int,
+		clearance_cells: int,
+		allowed_terrain_mask := 0,
+		stoppable_no_stop_cells: Dictionary = {}
+	) -> Array[Vector2i]:
 	var profile := _profile(pass_mask, clearance_cells, allowed_terrain_mask)
 	if profile.is_empty():
 		return []
@@ -36,7 +43,7 @@ func find_path(start_cell: Vector2i, target_cell: Vector2i, pass_mask: int, clea
 		return []
 	# No-stop cells are open for transit, but the final path cell must still be
 	# a legal place to park.
-	var snapped_target := _nearest_stoppable(solid, target_cell, 24)
+	var snapped_target := _nearest_stoppable(solid, target_cell, 24, stoppable_no_stop_cells)
 	if snapped_target.x < 0:
 		snapped_target = snapped_start
 	var astar: AStarGrid2D = profile["astar"]
@@ -173,23 +180,31 @@ func _nearest_open(solid: PackedByteArray, origin: Vector2i, max_radius: int) ->
 	return Vector2i(-1, -1)
 
 
-func _nearest_stoppable(solid: PackedByteArray, origin: Vector2i, max_radius: int) -> Vector2i:
+func _nearest_stoppable(
+		solid: PackedByteArray,
+		origin: Vector2i,
+		max_radius: int,
+		stoppable_no_stop_cells: Dictionary = {}
+	) -> Vector2i:
 	var no_stop: PackedByteArray = _map.no_stop_cells()
 	var origin_index := _index_of(origin)
-	if origin_index >= 0 and solid[origin_index] == 0 and no_stop[origin_index] == 0:
+	if origin_index >= 0 and solid[origin_index] == 0 \
+	and (no_stop[origin_index] == 0 or stoppable_no_stop_cells.has(origin)):
 		return origin
 	for radius in range(1, max_radius + 1):
 		for x in range(-radius, radius + 1):
 			for y in [-radius, radius]:
 				var candidate := origin + Vector2i(x, y)
 				var index := _index_of(candidate)
-				if index >= 0 and solid[index] == 0 and no_stop[index] == 0:
+				if index >= 0 and solid[index] == 0 \
+				and (no_stop[index] == 0 or stoppable_no_stop_cells.has(candidate)):
 					return candidate
 		for y in range(-radius + 1, radius):
 			for x in [-radius, radius]:
 				var candidate := origin + Vector2i(x, y)
 				var index := _index_of(candidate)
-				if index >= 0 and solid[index] == 0 and no_stop[index] == 0:
+				if index >= 0 and solid[index] == 0 \
+				and (no_stop[index] == 0 or stoppable_no_stop_cells.has(candidate)):
 					return candidate
 	return Vector2i(-1, -1)
 

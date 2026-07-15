@@ -220,10 +220,9 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 	return assignments
 
 
-## Exact single-unit parking order. `allowed_cells` is normally the footprint
-## of the refinery that owns the reserved dock; only this agent may route and
-## stop there, so the global building blocker map remains unchanged for every
-## other unit.
+## Exact single-unit parking order. `allowed_cells` normally contains the d/p
+## cells of the refinery that owns the reserved dock. Only this agent may stop
+## there; they remain ordinary no-stop transit space for every other unit.
 func command_dock(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary) -> bool:
 	if unit == null or runtime_map.grid == null or allowed_cells.is_empty():
 		return false
@@ -263,7 +262,7 @@ func command_dock(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary
 		"slots": [world_target],
 		"dock": true,
 	})
-	return bool(agent["direct_path"])
+	return bool(agent["direct_path"]) or not (agent["path"] as Array).is_empty()
 
 
 func stop(unit: Node3D) -> void:
@@ -296,7 +295,8 @@ func _route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> voi
 		var raw_path: Array[Vector2i] = planner.find_path(
 			runtime_map.grid.world_to_grid(from),
 			runtime_map.grid.world_to_grid(destination),
-			int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])
+			int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"]),
+			agent.get("allowed_cells", {})
 		)
 		agent["path"] = _simplify_path(raw_path, agent)
 
@@ -889,7 +889,12 @@ func _shared_target_assignments(units: Array[Node3D], world_target: Vector3) -> 
 		var offset := unit.global_position - centroid
 		offset.y = 0.0
 		var aim := world_target + offset.limit_length(pack_radius)
-		var anchor := _find_slot(_parking_anchor(aim, span), agent, [])
+		# When the aim lies inside a building footprint, approach it radially from
+		# this unit's current side. A ring-first search otherwise picks a corner
+		# before the centered cell on the same side of a rectangular building.
+		var anchor := _approach_anchor(
+			_parking_anchor(aim, span), agent, unit.global_position
+		)
 		var position := _block_center(anchor, span) if anchor.x >= 0 else aim
 		position.y = world_target.y
 		result.append({
@@ -1008,6 +1013,28 @@ func _claim_radius_for(units: Array[Node3D]) -> float:
 
 func _find_slot(preferred: Vector2i, agent: Dictionary, occupied: Array[Dictionary]) -> Vector2i:
 	return _claim_anchor(preferred, agent, occupied, _block_center(preferred, int(agent["footprint"])))
+
+
+## Initial FREE-move aim selection. Walks outward from a blocked target toward
+## the unit, so approaching a building does not send every unit to whichever
+## corner happens to occur on the first valid Chebyshev ring.
+func _approach_anchor(preferred: Vector2i, agent: Dictionary, from: Vector3) -> Vector2i:
+	var span := int(agent["footprint"])
+	var from_anchor := _parking_anchor(from, span)
+	var delta := from_anchor - preferred
+	var length := maxi(absi(delta.x), absi(delta.y))
+	if length > 0:
+		var limit := mini(length, SLOT_SEARCH_RADIUS)
+		for distance in range(0, limit + 1):
+			var weight := float(distance) / float(length)
+			var offset := Vector2i(
+				roundi(float(delta.x) * weight),
+				roundi(float(delta.y) * weight)
+			)
+			var candidate := preferred + offset
+			if _block_stoppable(candidate, span, agent):
+				return candidate
+	return _claim_anchor(preferred, agent, [], from)
 
 
 ## Ring search for a free grid-aligned footprint block: every cell of the
@@ -1223,9 +1250,11 @@ func _refresh_building_blockers() -> void:
 			building, rows, runtime_map.grid, OCCUPY_CELL_SPAN
 		)
 		for cell in footprint:
-			# Skirt cells are freely traversable, but destination and parking
-			# selection must never let an ordinary unit stop on them.
-			var target := no_stop if String(footprint[cell]).to_lower() == "s" else blocked
+			# Skirts, doors and pads are transit space, but ordinary orders must
+			# not park there. The refinery grants its reserved harvester a local
+			# d/p stopping exception; authored building body cells stay solid.
+			var marker := String(footprint[cell]).to_lower()
+			var target := no_stop if marker in ["s", "d", "p"] else blocked
 			target[cell] = true
 	if runtime_map.replace_blocked_cells(blocked, no_stop):
 		_replan_after_map_change()
