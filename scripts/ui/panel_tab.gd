@@ -17,6 +17,8 @@ var _blink_time := 0.0
 
 func _init() -> void:
 	toggle_mode = true
+	# Tabs are mouse-driven; arrow keys are reserved for camera movement.
+	focus_mode = Control.FOCUS_NONE
 	set_process(false)
 
 
