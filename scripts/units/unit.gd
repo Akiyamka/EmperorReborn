@@ -132,6 +132,8 @@ func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 	if _navigation_managed and _navigation_system != null:
 		_navigation_system.command_move([self], world_position, _navigation_system.MoveMode.FREE, exit_point)
 		return
+	if not prepare_navigation_order(world_position, exit_point, 0):
+		return
 	# The navigation system registers freshly added units deferred, and the
 	# registration resets the agent's destination to the unit's position. An
 	# order issued in the spawn frame (the production rally point) is kept
@@ -141,6 +143,18 @@ func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 	_has_pending_navigation_order = true
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
 	_set_movement_animation(global_position.distance_to(target_position) > arrival_radius)
+
+
+## Called by UnitNavigationSystem before it mutates an agent's route. Units may
+## perform order-specific cleanup or return false to defer/reject the route.
+## Unmanaged fallback movement uses the same API, keeping order preparation in
+## the unit instead of teaching command controllers about unit state machines.
+func prepare_navigation_order(
+		_world_position: Vector3, _exit_point := Vector3.INF, _move_mode := 0
+	) -> bool:
+	return true
+
+
 func set_navigation_managed(active: bool) -> void:
 	_navigation_managed = active
 	if active:

@@ -31,6 +31,8 @@ class FakeHarvester extends FakeUnit:
 	var harvest_commands: Array[Dictionary] = []
 	var unload_commands: Array[Dictionary] = []
 	var cancelled_harvest_orders := 0
+	var defer_navigation_orders := false
+	var prepared_move_targets: Array[Vector3] = []
 
 	func can_harvest_spice() -> bool:
 		return true
@@ -48,6 +50,13 @@ class FakeHarvester extends FakeUnit:
 
 	func command_unload(refinery: Node, navigation_grid) -> bool:
 		unload_commands.append({"refinery": refinery, "grid": navigation_grid})
+		return true
+
+	func prepare_navigation_order(target: Vector3, _exit_point := Vector3.INF, _move_mode := 0) -> bool:
+		prepared_move_targets.append(target)
+		if defer_navigation_orders:
+			return false
+		cancel_harvest_order()
 		return true
 
 
@@ -89,8 +98,16 @@ class FakeUnitCommandController extends UnitCommandController:
 class FakeNavigation extends RefCounted:
 	var commands: Array[Dictionary] = []
 
-	func command_move(units: Array, target: Vector3, mode: int) -> void:
-		commands.append({"units": units, "target": target, "mode": mode})
+	func command_move(units: Array, target: Vector3, mode: int, exit_point := Vector3.INF) -> Array:
+		var accepted := []
+		for unit in units:
+			if unit.has_method("prepare_navigation_order") \
+			and not bool(unit.call("prepare_navigation_order", target, exit_point, mode)):
+				continue
+			accepted.append(unit)
+		if not accepted.is_empty():
+			commands.append({"units": accepted, "target": target, "mode": mode})
+		return accepted
 
 
 class FakeNavigationGrid extends MapNavigationGrid:
@@ -362,6 +379,14 @@ func _test_unload_order(token: int, local_player, enemy_player) -> int:
 	_expect(navigation.commands.is_empty(), "a valid unloading click must not also become generic movement")
 	_expect(statuses.back().begins_with("Unloading at ATRefinery"), "the command status must identify the refinery")
 	_expect(commands.raycast_masks.slice(-2) == [2, 1], "an unload click must resolve the layer-two refinery separately from layer-one terrain")
+
+	harvester.defer_navigation_orders = true
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({"position": Vector3(12.0, 0.0, 13.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(harvester.prepared_move_targets.back() == Vector3(12.0, 0.0, 13.0), "navigation must prepare the direct move through the unit API")
+	_expect(navigation.commands.is_empty(), "a move deferred until UnloadEnd must not reach navigation immediately")
+	harvester.defer_navigation_orders = false
 
 	var enemy_refinery := FakeBuilding.new()
 	enemy_refinery.name = "ORRefinery"

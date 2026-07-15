@@ -24,6 +24,7 @@ func _initialize() -> void:
 	await _run_case("entity forward directions share one world-space contract", _test_entity_orientation_contract)
 	await _run_case("units switch between stationary and movement animations", _test_unit_movement_animations)
 	await _run_case("test match roster is non-empty after boot", _test_match_roster_populated)
+	await _run_case("roster slots leave arrow keys to the camera", _test_roster_slots_ignore_keyboard_focus)
 	await _run_case("rules art configs resolve every test panel icon", _test_match_panel_icons)
 	await _run_case("rules sidebar type selects the panel tab", _test_rules_sidebar_tabs)
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
@@ -316,6 +317,24 @@ func _test_match_roster_populated() -> void:
 		side_panel._building_option_ids.has(&"ATBarracks"),
 		"the roster must reach the side panel's building grid, not just Match's own state"
 	)
+
+	match_instance.queue_free()
+
+
+func _test_roster_slots_ignore_keyboard_focus() -> void:
+	var match_instance := MatchFixtureScene.instantiate()
+	get_root().add_child(match_instance)
+	await process_frame
+	await process_frame
+
+	var side_panel = match_instance.get_node("HUD/SidePanel")
+	for index in SidePanel.QUEUE_GRID_COLUMNS * SidePanel.QUEUE_GRID_ROWS:
+		var slot := side_panel.get_slot(index) as QueueSlot
+		_expect(slot != null, "roster slot %d must exist" % index)
+		_expect(
+			slot != null and slot.focus_mode == Control.FOCUS_NONE,
+			"roster slot %d must not participate in arrow-key focus navigation" % index
+		)
 
 	match_instance.queue_free()
 

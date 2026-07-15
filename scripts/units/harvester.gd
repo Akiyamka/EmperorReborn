@@ -59,18 +59,22 @@ func _process(delta: float) -> void:
 	advance_unload_order(delta)
 
 
-func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
-	if not _issuing_harvest_move and not _issuing_unload_move:
-		if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
-			_queue_pending_order(PendingOrder.MOVE, {
-				"position": world_position,
-				"exit_point": exit_point,
-			})
-			_interrupt_unload_animation()
-			return
-		_cancel_unload_immediately()
-		cancel_harvest_order()
-	super.move_to(world_position, exit_point)
+func prepare_navigation_order(
+		world_position: Vector3, exit_point := Vector3.INF, move_mode := 0
+	) -> bool:
+	if _issuing_harvest_move or _issuing_unload_move:
+		return true
+	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+		_queue_pending_order(PendingOrder.MOVE, {
+			"position": world_position,
+			"exit_point": exit_point,
+			"move_mode": move_mode,
+		})
+		_interrupt_unload_animation()
+		return false
+	_cancel_unload_immediately()
+	cancel_harvest_order()
+	return true
 
 
 func set_navigation_controller(controller) -> void:
@@ -242,7 +246,11 @@ func advance_unload_order(delta: float) -> void:
 			if not _is_close_to_world(dock_position):
 				return
 			stop_at_current_position()
-			face_direction(_unload_refinery.call("refinery_dock_facing_direction", _unload_dock) as Vector3)
+			var dock_facing := _unload_refinery.call(
+				"refinery_dock_facing_direction", _unload_dock
+			) as Vector3
+			if not _turn_toward(dock_facing, delta):
+				return
 			_begin_unload_phase(UnloadPhase.START)
 		UnloadPhase.RETURN_FRONT:
 			if _is_close_to_world(target_position):
@@ -427,7 +435,9 @@ func _issue_unload_move(position: Vector3) -> void:
 func _issue_dock_move(position: Vector3) -> void:
 	if _navigation_managed and _navigation_system != null and _navigation_system.has_method("command_dock"):
 		var cells := _unload_refinery.call("refinery_dock_navigation_cells", _unload_grid) as Dictionary
+		_issuing_unload_move = true
 		_navigation_system.call("command_dock", self, position, cells)
+		_issuing_unload_move = false
 		return
 	_issue_unload_move(position)
 
@@ -518,10 +528,13 @@ func _execute_pending_order() -> void:
 	_pending_order_data.clear()
 	match kind:
 		PendingOrder.MOVE:
-			super.move_to(
-				data.get("position", global_position) as Vector3,
-				data.get("exit_point", Vector3.INF) as Vector3
-			)
+			var position := data.get("position", global_position) as Vector3
+			var exit_point := data.get("exit_point", Vector3.INF) as Vector3
+			var move_mode := int(data.get("move_mode", 0))
+			if _navigation_managed and _navigation_system != null:
+				_navigation_system.call("command_move", [self], position, move_mode, exit_point)
+			else:
+				super.move_to(position, exit_point)
 		PendingOrder.HARVEST:
 			_start_harvest_order(data.get("spice_layer"), data.get("grid"), data.get("cell", Vector2i(-1, -1)))
 		PendingOrder.UNLOAD:

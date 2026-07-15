@@ -45,6 +45,12 @@ var _status: Label
 var _quantity: Label
 
 
+func _init() -> void:
+	# Arrow keys belong to camera movement. Production slots are mouse-driven
+	# and must not enter Godot's keyboard focus navigation after being clicked.
+	focus_mode = Control.FOCUS_NONE
+
+
 func _ready() -> void:
 	_icon_material = ShaderMaterial.new()
 	_icon_material.shader = SLOT_SHADER

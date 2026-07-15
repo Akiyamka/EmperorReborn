@@ -161,6 +161,7 @@ func _initialize() -> void:
 	_run_case("unload rate transfers a full bunker in 17.5 seconds", _test_full_unload.bind(local_player))
 	_run_case("unload waits for a free reserved dock", _test_unload_waits_for_dock.bind(local_player))
 	_run_case("unload arrival uses the navigation tolerance", _test_unload_navigation_arrival.bind(local_player))
+	_run_case("unload parking respects the harvester turn rate", _test_unload_parking_turn_rate.bind(local_player))
 	_run_case("direct orders finish unload animations before moving", _test_unload_interruption.bind(local_player))
 	_run_case("refinery capture gracefully cancels unloading", _test_unload_refinery_capture.bind(local_player))
 	players.reset_for_match()
@@ -389,8 +390,52 @@ func _test_unload_navigation_arrival(token: int, player: PlayerData) -> int:
 	harvester.advance_unload_order(0.0)
 	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK, "arrival at the refinery front must proceed to dock reservation")
 	harvester.global_position = refinery.dock + Vector3(0.0, 0.0, 0.45)
+	harvester.face_direction(refinery.refinery_dock_facing_direction(0))
 	harvester.advance_unload_order(0.0)
 	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.START, "parking must use the shared navigation arrival distance too")
+
+	harvester.queue_free()
+	refinery.queue_free()
+	return token
+
+
+func _test_unload_parking_turn_rate(token: int, player: PlayerData) -> int:
+	var grid := FakeGrid.new()
+	var refinery := FakeRefinery.new()
+	root.add_child(refinery)
+	var harvester := TestHarvester.new()
+	harvester.owner_player_id = player.player_id
+	harvester.max_spice = 700.0
+	harvester.spice = 100.0
+	harvester.turn_rate = 0.1
+	root.add_child(harvester)
+	harvester.global_position = refinery.front
+	harvester.command_unload(refinery, grid)
+	harvester.advance_unload_order(0.0)
+	harvester.advance_unload_order(0.0)
+	harvester.global_position = refinery.dock
+
+	harvester.advance_unload_order(0.25)
+	_expect(
+		harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK \
+		and harvester.animation_log.is_empty(),
+		"parking must wait for the required dock heading before unloading"
+	)
+	_expect(
+		is_equal_approx(absf(harvester.global_rotation.y), 0.5),
+		"a 0.1-radian TurnRate must rotate by 0.5 radians over five movement updates"
+	)
+	harvester.advance_unload_order(1.0)
+	_expect(
+		harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK,
+		"parking must keep turning while the dock heading has not been reached"
+	)
+	harvester.advance_unload_order(0.5)
+	_expect(
+		harvester.unload_phase() != HarvesterScript.UnloadPhase.PARK \
+		and harvester.animation_log.has(HarvesterScript.UNLOAD_START_ANIMATION),
+		"unloading may start after the turn-rate-limited rotation reaches the dock heading"
+	)
 
 	harvester.queue_free()
 	refinery.queue_free()
@@ -433,7 +478,7 @@ func _test_unload_interruption(token: int, player: PlayerData) -> int:
 	hold_harvester.advance_unload_order(0.25)
 	_expect(player.money == 10 and is_equal_approx(hold_harvester.spice, 90.0), "UnloadHold must transfer at 40 credits per second")
 	var hold_move := Vector3(12.0, 0.0, 0.0)
-	hold_harvester.move_to(hold_move)
+	_expect(not hold_harvester.prepare_navigation_order(hold_move), "the unit navigation API must defer a move during UnloadHold")
 	hold_harvester.advance_unload_order(0.25)
 	_expect(player.money == 10 and is_equal_approx(hold_harvester.spice, 90.0), "cargo transfer must stop immediately after an interrupt")
 	_expect(hold_harvester.animation_log.back() == HarvesterScript.UNLOAD_END_ANIMATION, "the interrupted hold cycle must finish before UnloadEnd")
@@ -482,6 +527,7 @@ func _park_for_unload(harvester: TestHarvester, refinery: FakeRefinery, grid: Fa
 	harvester.advance_unload_order(0.0)
 	harvester.advance_unload_order(0.0)
 	harvester.global_position = refinery.dock
+	harvester.face_direction(refinery.refinery_dock_facing_direction(0))
 	harvester.advance_unload_order(0.0)
 
 

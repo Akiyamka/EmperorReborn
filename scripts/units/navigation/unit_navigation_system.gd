@@ -165,6 +165,13 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 	ordered.sort_custom(func(a: Node3D, b: Node3D) -> bool:
 		return int(a.get_meta(&"navigation_agent_id", 0)) < int(b.get_meta(&"navigation_agent_id", 0))
 	)
+	var prepared: Array[Node3D] = []
+	for unit in ordered:
+		if unit.has_method("prepare_navigation_order") \
+		and not bool(unit.call("prepare_navigation_order", world_target, exit_point, mode)):
+			continue
+		prepared.append(unit)
+	ordered = prepared
 	if ordered.is_empty() or runtime_map.grid == null:
 		return []
 
@@ -223,6 +230,9 @@ func command_dock(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary
 	register_unit(unit)
 	var agent: Dictionary = _agent_for(unit)
 	if agent.is_empty():
+		return false
+	if unit.has_method("prepare_navigation_order") \
+	and not bool(unit.call("prepare_navigation_order", world_target, Vector3.INF, MoveMode.FREE)):
 		return false
 	var command_id := _next_command_id
 	_next_command_id += 1

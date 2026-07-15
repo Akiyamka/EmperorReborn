@@ -15,6 +15,8 @@ class FakeUnit extends Node3D:
 	var managed := false
 	var destination := Vector3.ZERO
 	var owner_player_id := 1
+	var defer_navigation_orders := false
+	var prepared_navigation_targets: Array[Vector3] = []
 
 	func _init(size := 1.0, infantry := false) -> void:
 		unit_config.fields = {"size": size, "infantry": infantry, "can_fly": false}
@@ -25,6 +27,10 @@ class FakeUnit extends Node3D:
 
 	func set_navigation_destination(value: Vector3) -> void:
 		destination = value
+
+	func prepare_navigation_order(target: Vector3, _exit_point := Vector3.INF, _move_mode := 0) -> bool:
+		prepared_navigation_targets.append(target)
+		return not defer_navigation_orders
 
 	func navigation_step(value: Vector3, delta: float) -> void:
 		global_position += value * delta
@@ -45,6 +51,7 @@ func _initialize() -> void:
 	var grid := _make_grid()
 	_test_synchronous_paths(grid)
 	_test_no_stop_cells(grid)
+	_test_unit_navigation_order_api(grid)
 	_test_dock_order_has_per_unit_building_access(grid)
 	_test_rotated_building_blockers(grid)
 	_test_interior_escape(grid)
@@ -70,6 +77,34 @@ func _initialize() -> void:
 		return
 	print("Unit navigation tests: %d assertions passed" % _assertions)
 	quit(0)
+
+
+func _test_unit_navigation_order_api(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for the unit order API")
+	var unit := FakeUnit.new()
+	root.add_child(unit)
+	unit.global_position = Vector3(90.5, 0.0, 100.5)
+	unit.defer_navigation_orders = true
+	var target := Vector3(100.5, 0.0, 100.5)
+	var deferred := navigation.command_move([unit], target)
+	_expect(deferred.is_empty(), "a unit must be able to defer a route before navigation mutates its agent")
+	_expect(unit.prepared_navigation_targets == [target], "navigation must pass the assigned destination through the unit API")
+	for _iteration in 20:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(unit.global_position == Vector3(90.5, 0.0, 100.5), "a deferred navigation order must not move the unit")
+
+	unit.defer_navigation_orders = false
+	var accepted := navigation.command_move([unit], target)
+	_expect(accepted.size() == 1, "the same unit must be able to accept a later route")
+	for _iteration in 100:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(unit.global_position.distance_to(target) < 1.0, "an accepted route must move after unit preparation")
+
+	navigation.queue_free()
+	unit.queue_free()
 
 
 func _test_synchronous_paths(grid: MapNavigationGrid) -> void:

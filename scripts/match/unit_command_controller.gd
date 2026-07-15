@@ -195,8 +195,6 @@ func _command_move(screen_position: Vector2) -> void:
 		and bool(entity.call("command_harvest", _terrain.spice_layer, _terrain.navigation_grid, target_cell)):
 			harvesting_entities.append(entity)
 			continue
-		if entity.has_method("cancel_harvest_order"):
-			entity.call("cancel_harvest_order")
 		moving_entities.append(entity)
 
 	if not moving_entities.is_empty():
