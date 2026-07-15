@@ -26,6 +26,15 @@ Imported building occupy rows are reversed once by `import_rules.gd`. After
 import, row zero lies toward local `-Z`, row indices advance toward local `+Z`,
 and skirt (`S`) rows therefore line up with `Building.exit_direction()`.
 
+Source building models are not authored around the occupy-matrix centre,
+while runtime placement centres the full occupy matrix on the node origin.
+`building_bake_builder.gd` compensates by offsetting the `States` node so the
+authored `#~~0` collision volume (SLCT volume when absent) has its rear (-Z)
+face on the matrix's rear edge and is centred on X. Porches and aprons
+overhang the skirt at the front, so the rear face is the reliable reference.
+Converting buildings therefore requires the exported rules configs
+(`make rules-export`) for the matrix depth.
+
 `BuildingFootprint.nav_cells_by_marker()` is the single runtime mapping from
 these local rows to navigation cells. It applies the building's world
 transform, so placement occupancy, build radius, solid blockers, and no-stop

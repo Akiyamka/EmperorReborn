@@ -45,7 +45,7 @@ metadata/_edit_lock_ = true
 [node name="Buildings" type="Node3D" parent="." unique_id=251147608]
 
 [node name="ATConYard" parent="Buildings" unique_id=226675699 instance=ExtResource("9_at_con_yard")]
-transform = Transform3D(0.99999994, 0, 0, 0, 1, 0, 0, 0, 0.99999994, 12.411575, 7.893318, 9.457741)
+transform = Transform3D(0.99999994, 0, 0, 0, 1, 0, 0, 0, 0.99999994, 12.411575, 7.893318, 13.417204)
 owner_player_id = 1
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
