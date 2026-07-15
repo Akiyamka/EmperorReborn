@@ -716,7 +716,9 @@ func _test_real_harvester_unload_trip() -> void:
 	var player = get_root().get_node("Players").player(1)
 	var money_before := int(player.money)
 	_expect(
-		harvester.command_unload(refinery, match_instance.terrain.navigation_grid),
+		harvester.command_unload(
+			refinery, match_instance.terrain.navigation_grid, match_instance.terrain.spice_layer
+		),
 		"the real harvester must accept its real owned refinery"
 	)
 	_expect(
@@ -733,15 +735,15 @@ func _test_real_harvester_unload_trip() -> void:
 			break
 
 	for required_phase in [
-		Harvester.UnloadPhase.WAIT_DOCK,
 		Harvester.UnloadPhase.PARK,
 		Harvester.UnloadPhase.START,
 		Harvester.UnloadPhase.HOLD,
 		Harvester.UnloadPhase.END,
-		Harvester.UnloadPhase.RETURN_FRONT,
 	]:
 		_expect(visited_phases.has(required_phase), "the real unload trip must visit phase %d" % required_phase)
-	_expect(not harvester.has_unload_order(), "the real unload trip must complete instead of stalling in front of the refinery")
+	_expect(not visited_phases.has(Harvester.UnloadPhase.RETURN_FRONT), "an automatic cycle must not insert a refinery-front waypoint before the field")
+	_expect(not harvester.has_unload_order() and harvester.has_harvest_order(), "the real unload trip must hand off directly to harvesting")
+	_expect(match_instance.terrain.spice_layer.spice_at(harvester.harvest_target_cell()) > 0, "the direct post-unload target must be a non-empty spice cell")
 	_expect(is_zero_approx(harvester.spice), "the real unload trip must empty the harvester")
 	_expect(player.money == money_before + 100, "the real unload trip must credit all cargo to the player")
 

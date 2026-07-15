@@ -40,6 +40,8 @@ var _harvest_phase_remaining := 0.0
 var _harvest_spice_layer = null
 var _harvest_grid = null
 var _harvest_target_cell := Vector2i(-1, -1)
+var _harvest_exit_refinery: Node = null
+var _harvest_exit_grid = null
 var _issuing_harvest_move := false
 var _unload_phase := UnloadPhase.NONE
 var _unload_phase_remaining := 0.0
@@ -122,11 +124,16 @@ func command_harvest(spice_layer, navigation_grid, cell: Vector2i) -> bool:
 	return true
 
 
-func _start_harvest_order(spice_layer, navigation_grid, cell: Vector2i) -> void:
+func _start_harvest_order(
+		spice_layer, navigation_grid, cell: Vector2i,
+		exit_refinery: Node = null, exit_grid = null
+	) -> void:
 	cancel_harvest_order()
 	_harvest_spice_layer = spice_layer
 	_harvest_grid = navigation_grid
 	_harvest_target_cell = cell
+	_harvest_exit_refinery = exit_refinery
+	_harvest_exit_grid = exit_grid
 	_harvest_phase = HarvestPhase.TRAVEL
 	_move_to_harvest_cell(cell)
 
@@ -219,9 +226,14 @@ func _start_unload_order(refinery: Node, navigation_grid) -> void:
 	_unload_dock = INVALID_DOCK
 	_unload_interrupted = false
 	_unload_credit_accumulator = 0.0
-	_unload_phase = UnloadPhase.APPROACH
 	_unload_phase_remaining = 0.0
-	_issue_unload_move((refinery as Node3D).global_position)
+	if _try_reserve_dock_and_park():
+		return
+	_unload_phase = UnloadPhase.APPROACH
+	# All pads are occupied, including the central one. Queue outside the
+	# footprint instead of targeting the building centre occupied by the
+	# central harvester.
+	_issue_unload_move(refinery.call("refinery_front_position") as Vector3)
 
 
 func has_unload_order() -> bool:
@@ -243,6 +255,8 @@ func cancel_harvest_order() -> void:
 	_harvest_spice_layer = null
 	_harvest_grid = null
 	_harvest_target_cell = Vector2i(-1, -1)
+	_harvest_exit_refinery = null
+	_harvest_exit_grid = null
 	if was_animating:
 		_set_movement_animation(false)
 
@@ -304,27 +318,23 @@ func advance_unload_order(delta: float) -> void:
 			stop_at_current_position()
 			_unload_phase = UnloadPhase.WAIT_DOCK
 		UnloadPhase.WAIT_DOCK:
-			var reserved := int(_unload_refinery.call("try_reserve_refinery_dock", self))
-			if reserved == INVALID_DOCK:
-				return
-			_unload_dock = reserved
-			var dock_position := _unload_refinery.call("refinery_dock_world_position", reserved) as Vector3
-			if not dock_position.is_finite():
-				_cancel_unload_immediately()
-				return
-			_unload_phase = UnloadPhase.PARK
-			_issue_dock_move(dock_position)
+			_try_reserve_dock_and_park()
 			return
 		UnloadPhase.PARK:
 			if not bool(_unload_refinery.call("refinery_dock_reserved_by", _unload_dock, self)):
 				_unload_dock = INVALID_DOCK
+				if _try_reserve_dock_and_park():
+					return
 				_unload_phase = UnloadPhase.APPROACH
-				_issue_unload_move((_unload_refinery as Node3D).global_position)
+				_issue_unload_move(
+					_unload_refinery.call("refinery_front_position") as Vector3
+				)
 				return
 			var dock_position := _unload_refinery.call("refinery_dock_world_position", _unload_dock) as Vector3
 			if not _is_close_to_world(dock_position):
 				return
 			stop_at_current_position()
+			_set_unload_navigation_hold(true)
 			var dock_facing := _unload_refinery.call(
 				"refinery_dock_facing_direction", _unload_dock
 			) as Vector3
@@ -352,6 +362,22 @@ func advance_unload_order(delta: float) -> void:
 			break
 
 
+func _try_reserve_dock_and_park() -> bool:
+	if not _is_valid_owned_refinery(_unload_refinery):
+		return false
+	var reserved := int(_unload_refinery.call("try_reserve_refinery_dock", self))
+	if reserved == INVALID_DOCK:
+		return false
+	var dock_position := _unload_refinery.call("refinery_dock_world_position", reserved) as Vector3
+	if not dock_position.is_finite():
+		_unload_refinery.call("abandon_refinery_dock", self)
+		return false
+	_unload_dock = reserved
+	_unload_phase = UnloadPhase.PARK
+	_issue_dock_move(dock_position)
+	return true
+
+
 func _advance_unload_phase() -> void:
 	match _unload_phase:
 		UnloadPhase.START:
@@ -362,22 +388,29 @@ func _advance_unload_phase() -> void:
 			else:
 				_begin_unload_phase(UnloadPhase.HOLD)
 		UnloadPhase.END:
+			_set_unload_navigation_hold(false)
 			_release_unload_dock()
 			if _pending_order != PendingOrder.NONE:
 				_finish_unload_order(false)
 				_execute_pending_order()
 			elif not _is_valid_owned_refinery(_unload_refinery):
 				_finish_unload_order(false)
+			elif _try_resume_harvest_from_dock():
+				return
 			else:
 				_unload_phase = UnloadPhase.RETURN_FRONT
 				_unload_phase_remaining = 0.0
-				_issue_unload_move(_unload_refinery.call("refinery_front_position") as Vector3)
+				# Keep the per-agent dock-cell exception until the harvester has
+				# actually cleared the refinery footprint. A generic move issued
+				# from inside the pad would route around a building corner.
+				_issue_dock_move(_unload_refinery.call("refinery_front_position") as Vector3)
 
 
 func _begin_unload_phase(phase: UnloadPhase) -> void:
 	_unload_phase = phase
 	match phase:
 		UnloadPhase.START:
+			_set_unload_navigation_hold(true)
 			_unload_phase_remaining = _start_unload_animation(UNLOAD_START_ANIMATION)
 		UnloadPhase.HOLD:
 			_unload_phase_remaining = maxf(
@@ -439,6 +472,23 @@ func _collect_harvest_cycle() -> void:
 		return
 	var collected := int(_harvest_spice_layer.call("take_spice", _harvest_target_cell, requested))
 	spice += float(collected)
+
+
+func _try_resume_harvest_from_dock() -> bool:
+	if not _harvest_cycle_enabled or _cycle_spice_layer == null or _cycle_grid == null \
+	or spice >= max_spice:
+		return false
+	var origin: Vector2i = _cycle_grid.call("world_to_grid", global_position)
+	var next_cell: Vector2i = _cycle_spice_layer.call(
+		"nearest_spice_cell", origin, 1, -1, _auto_spice_cell_filter
+	)
+	if next_cell.x < 0 or next_cell.y < 0:
+		return false
+	var exit_refinery := _unload_refinery
+	var exit_grid = _unload_grid
+	_finish_unload_order(false)
+	_start_harvest_order(_cycle_spice_layer, _cycle_grid, next_cell, exit_refinery, exit_grid)
+	return true
 
 
 func _retarget_or_finish_harvest() -> void:
@@ -507,15 +557,33 @@ func _is_valid_owned_main_base(main_base: Node) -> bool:
 
 
 func _move_to_harvest_cell(cell: Vector2i) -> void:
+	var exit_refinery := _harvest_exit_refinery
+	var exit_grid = _harvest_exit_grid
+	_harvest_exit_refinery = null
+	_harvest_exit_grid = null
 	_issuing_harvest_move = true
-	move_to(_harvest_grid.call("grid_to_world", cell))
+	var target: Vector3 = _harvest_grid.call("grid_to_world", cell)
+	if _navigation_managed and _navigation_system != null \
+	and _navigation_system.has_method("command_dock") \
+	and _is_valid_owned_refinery(exit_refinery):
+		var cells := exit_refinery.call("refinery_dock_navigation_cells", exit_grid) as Dictionary
+		_navigation_system.call("command_dock", self, target, cells)
+	else:
+		move_to(target)
 	_issuing_harvest_move = false
 
 
 func _is_close_to_harvest_cell(cell: Vector2i) -> bool:
 	var target: Vector3 = _harvest_grid.call("grid_to_world", cell)
 	var cell_dimensions: Vector2 = _harvest_grid.call("cell_size")
-	var approach_radius := maxf(cell_dimensions.x, cell_dimensions.y) * HARVEST_APPROACH_RADIUS_CELLS
+	# Crowd navigation parks large units on non-overlapping footprint blocks.
+	# A size-3 harvester beside another harvester can therefore have its centre
+	# three cells from the clicked spice cell while its hull is already touching
+	# the field. Scale the action radius to the authored footprint instead of
+	# making every harvester fight for the same central parking block.
+	var footprint_cells := float(unit_config.field(&"size", 1.0)) if unit_config != null else 1.0
+	var approach_cells := maxf(HARVEST_APPROACH_RADIUS_CELLS, footprint_cells)
+	var approach_radius := maxf(cell_dimensions.x, cell_dimensions.y) * approach_cells
 	var offset := target - global_position
 	offset.y = 0.0
 	return offset.length() <= maxf(approach_radius, arrival_radius)
@@ -543,6 +611,12 @@ func _start_unload_animation(animation_name: StringName) -> float:
 	return _start_action_animation(animation_name)
 
 
+func _set_unload_navigation_hold(active: bool) -> void:
+	if _navigation_managed and _navigation_system != null \
+	and _navigation_system.has_method("set_hold_position"):
+		_navigation_system.call("set_hold_position", self, active)
+
+
 func _start_action_animation(animation_name: StringName) -> float:
 	var duration := 0.0
 	for player in _animation_players:
@@ -558,12 +632,14 @@ func _start_action_animation(animation_name: StringName) -> float:
 
 
 func _issue_unload_move(position: Vector3) -> void:
+	_set_unload_navigation_hold(false)
 	_issuing_unload_move = true
 	move_to(position)
 	_issuing_unload_move = false
 
 
 func _issue_dock_move(position: Vector3) -> void:
+	_set_unload_navigation_hold(false)
 	if _navigation_managed and _navigation_system != null and _navigation_system.has_method("command_dock"):
 		var cells := _unload_refinery.call("refinery_dock_navigation_cells", _unload_grid) as Dictionary
 		_issuing_unload_move = true
@@ -636,6 +712,7 @@ func _release_unload_dock() -> void:
 
 
 func _finish_unload_order(stop_unit := true) -> void:
+	_set_unload_navigation_hold(false)
 	if stop_unit:
 		stop_at_current_position()
 	_unload_phase = UnloadPhase.NONE

@@ -180,6 +180,14 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 		Vector2i(103, 120), Vector2i(103, 103), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask
 	)
 	_expect(not into_apron.is_empty() and not apron.has(into_apron[into_apron.size() - 1]), "a destination on the apron must snap to the nearest stoppable cell")
+	var explicit_into_apron: Array[Vector2i] = planner.find_path(
+		Vector2i(103, 120), Vector2i(103, 103), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask,
+		{Vector2i(103, 103): true}
+	)
+	_expect(
+		not explicit_into_apron.is_empty() and explicit_into_apron.back() == Vector2i(103, 103),
+		"an explicit no-stop command leg must be able to end on its selected cell"
+	)
 
 
 	var navigation := NavigationSystemScript.new()
@@ -200,7 +208,22 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	clicker.global_position = Vector3(103.5, 0.0, 120.5)
 	var assignments := navigation.command_move([clicker], Vector3(103.5, 0.0, 103.5), NavigationSystemScript.MoveMode.FREE)
 	var slot_cell: Vector2i = grid.world_to_grid(assignments[0]["position"])
-	_expect(not apron.has(slot_cell), "a movement slot must never land on a no-stop cell")
+	_expect(apron.has(slot_cell), "an explicit movement order must retain its selected no-stop destination")
+	_expect(bool(navigation.agent_debug(clicker)["vacate_no_stop"]), "the no-stop leg must be marked for automatic evacuation on arrival")
+	var entered_apron := false
+	for _iteration in 200:
+		navigation.call("_navigation_tick", 0.05)
+		entered_apron = entered_apron or apron.has(grid.world_to_grid(clicker.global_position))
+	var parked_cell: Vector2i = grid.world_to_grid(navigation.agent_debug(clicker)["destination"])
+	_expect(entered_apron, "the unit must actually enter the ordered no-stop area before leaving it")
+	_expect(
+		not apron.has(parked_cell) and clicker.global_position.distance_to(navigation.agent_debug(clicker)["destination"]) < 1.0,
+		"arrival on no-stop space must immediately auto-route the unit to the nearest legal parking cell"
+	)
+	_expect(
+		bool(navigation.command_log().back().get("auto_vacate_no_stop", false)),
+		"the automatic evacuation must be recorded as a navigation order"
+	)
 
 	var produced := FakeUnit.new()
 	root.add_child(produced)
@@ -250,13 +273,21 @@ func _test_dock_order_has_per_unit_building_access(grid: MapNavigationGrid) -> v
 		)
 	_expect(harvester.global_position.distance_to(dock) < 0.6, "the docking harvester must enter and stop on d/p cells")
 	_expect(not crossed_building_body, "a docking route from the side must go around b cells")
+	var followup := navigation.command_move([harvester], dock)
+	_expect(
+		bool(followup[0]["vacate_no_stop"]) and bool(navigation.agent_debug(harvester)["vacate_no_stop"]),
+		"a normal follow-up order must clear the harvester's old permanent dock exception"
+	)
 
 	var ordinary := FakeUnit.new()
 	root.add_child(ordinary)
 	ordinary.global_position = Vector3(110.5, 0.0, 103.5)
 	var assignments := navigation.command_move([ordinary], dock)
 	var ordinary_cell: Vector2i = grid.world_to_grid(assignments[0]["position"])
-	_expect(not dock_cells.has(ordinary_cell), "the same d/p cells must remain no-stop for an ordinary movement order")
+	_expect(
+		dock_cells.has(ordinary_cell) and bool(navigation.agent_debug(ordinary)["vacate_no_stop"]),
+		"an ordinary order may enter the same d/p cells but must auto-vacate them after arrival"
+	)
 
 	navigation.queue_free()
 	harvester.queue_free()
@@ -640,13 +671,16 @@ func _test_yield_behaviour(grid: MapNavigationGrid) -> void:
 	var home := owner.global_position
 	navigation.command_move([owner], home)
 	navigation.call("_navigation_tick", 0.05)
+	var prepared_order_count := owner.prepared_navigation_targets.size()
 	navigation.call("_request_yield", owner, Vector3.RIGHT)
+	_expect(owner.prepared_navigation_targets.size() == prepared_order_count, "an internal yield must not enter the player-order preparation API")
 	for _iteration in 8:
 		navigation.call("_navigation_tick", 0.05)
 	_expect(owner.global_position.x > 141.5, "a yielded commanded unit must move aside first")
 	for _iteration in 60:
 		navigation.call("_navigation_tick", 0.05)
 	_expect(owner.global_position.distance_to(home) < 0.3, "a commanded unit must return to its reserved block after yielding")
+	_expect(owner.prepared_navigation_targets.size() == prepared_order_count, "resuming after yield must preserve the original order instead of issuing a replacement")
 
 	navigation.queue_free()
 	idle.queue_free()

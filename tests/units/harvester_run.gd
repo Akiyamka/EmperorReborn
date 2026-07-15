@@ -6,6 +6,7 @@ const HarvesterScene := preload("res://scenes/units/harvester.tscn")
 const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 const MatchSnapshotScript := preload("res://scripts/match/match_snapshot.gd")
+const NavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -73,6 +74,11 @@ class TestHarvester extends HarvesterScript:
 	func stop_at_current_position() -> void:
 		stop_count += 1
 		target_position = global_position
+		if _navigation_managed and _navigation_system != null:
+			_navigation_system.stop(self)
+
+	func navigation_collision_radius(fallback: float) -> float:
+		return fallback
 
 	func _start_harvest_animation(animation_name: StringName) -> float:
 		animation_log.append(animation_name)
@@ -85,17 +91,29 @@ class TestHarvester extends HarvesterScript:
 
 class FakeNavigation extends RefCounted:
 	enum MoveMode { FREE, FORMATION }
+	var held: Dictionary = {}
+	var dock_targets: Array[Vector3] = []
+	var move_targets: Array[Vector3] = []
 
 	func command_move(_units: Array, _target: Vector3, _mode: int, _exit_point := Vector3.INF) -> Array[Dictionary]:
+		move_targets.append(_target)
 		for unit in _units:
 			unit.set_navigation_destination(_target + Vector3(0.0, 0.0, 2.0))
 		return []
 
-	func command_dock(_unit: Node3D, _target: Vector3, _allowed_cells: Dictionary) -> bool:
+	func command_dock(unit: Node3D, target: Vector3, _allowed_cells: Dictionary) -> bool:
+		dock_targets.append(target)
+		unit.set_navigation_destination(target)
 		return true
 
 	func stop(_unit: Node3D) -> void:
 		pass
+
+	func set_hold_position(unit: Node3D, active: bool) -> void:
+		held[unit] = active
+
+	func is_held(unit: Node3D) -> bool:
+		return bool(held.get(unit, false))
 
 	func arrival_tolerance(_unit: Node3D) -> float:
 		return 0.5
@@ -155,6 +173,36 @@ class FakeMainBase extends Node3D:
 		return owner_player_id == player_id
 
 
+class FakeMultiDockRefinery extends FakeRefinery:
+	var reservations: Dictionary = {}
+	var dock_positions := [Vector3.ZERO, Vector3(-6.0, 0.0, 2.0)]
+
+	func try_reserve_refinery_dock(harvester: Node) -> int:
+		for dock_index in dock_positions.size():
+			if not reservations.has(dock_index):
+				reservations[dock_index] = harvester
+				return dock_index
+		return -1
+
+	func refinery_dock_reserved_by(dock_index: int, harvester: Node) -> bool:
+		return reservations.get(dock_index) == harvester
+
+	func refinery_dock_world_position(dock_index: int) -> Vector3:
+		return dock_positions[dock_index]
+
+	func release_refinery_dock(harvester: Node, cooldown_seconds := 3.0) -> void:
+		for dock_index in reservations.keys():
+			if reservations[dock_index] == harvester:
+				reservations.erase(dock_index)
+		release_delays.append(cooldown_seconds)
+
+	func abandon_refinery_dock(harvester: Node) -> void:
+		for dock_index in reservations.keys():
+			if reservations[dock_index] == harvester:
+				reservations.erase(dock_index)
+		abandoned += 1
+
+
 class FakeCargoEntity extends Node3D:
 	var health := 1.0
 	var max_health := 1.0
@@ -174,11 +222,13 @@ func _initialize() -> void:
 	_run_case("rules capacity and @!Harv halo", _test_rules_capacity_and_halo)
 	_run_case("cycle timing, extraction cap, and nearby retarget", _test_cycle_and_retarget)
 	_run_case("empty arrival and map-wide continuation", _test_empty_arrival)
+	_run_case("two harvesters reach and work the same spice field", _test_two_harvesters_share_field)
 	_run_case("remaining bunker capacity limits extraction", _test_remaining_capacity)
 	_run_case("full harvesters automatically bind to the nearest owned refinery", _test_full_harvester_auto_unload.bind(local_player))
 	_run_case("manual refinery binding persists and automatic fields honor visibility", _test_cycle_binding_and_spice_filter.bind(local_player))
 	_run_case("unload rate transfers a full bunker in 17.5 seconds", _test_full_unload.bind(local_player))
 	_run_case("unload waits for a free reserved dock", _test_unload_waits_for_dock.bind(local_player))
+	_run_case("a free side dock is reserved before approaching the refinery", _test_side_dock_routes_directly.bind(local_player))
 	_run_case("unload arrival uses the navigation tolerance", _test_unload_navigation_arrival.bind(local_player))
 	_run_case("unload parking respects the harvester turn rate", _test_unload_parking_turn_rate.bind(local_player))
 	_run_case("direct orders finish unload animations before moving", _test_unload_interruption.bind(local_player))
@@ -311,6 +361,51 @@ func _test_empty_arrival(token: int) -> int:
 	_expect(not harvester.has_harvest_order(), "the order must stop when the map has no remaining spice")
 	_expect(harvester.harvest_target_cell() == Vector2i(-1, -1), "a completed order must clear its target")
 	harvester.queue_free()
+	return token
+
+
+func _test_two_harvesters_share_field(token: int) -> int:
+	var grid := _make_open_navigation_grid()
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "the crowd-navigation fixture must initialize")
+	var layer := FakeSpiceLayer.new()
+	var field := Vector2i(60, 60)
+	layer.values[field] = 2000
+	var harvesters: Array[TestHarvester] = []
+	for index in 2:
+		var harvester := TestHarvester.new()
+		harvester.unit_config = root.get_node("Rules").unit(&"Harvester")
+		harvester.max_spice = 700.0
+		harvester.move_speed = 4.0
+		harvester.turn_rate = 0.15
+		root.add_child(harvester)
+		harvester.global_position = Vector3(40.5, 0.0, 58.5 + float(index) * 3.0)
+		navigation.register_unit(harvester)
+		_expect(harvester.command_harvest(layer, grid, field), "each harvester must accept the shared field order")
+		harvesters.append(harvester)
+	for _tick in 500:
+		navigation.call("_navigation_tick", 0.05)
+		for harvester in harvesters:
+			harvester.advance_harvest_order(0.05)
+		if harvesters.all(func(harvester: TestHarvester) -> bool: return harvester.spice > 0.0):
+			break
+	_expect(
+		harvesters.all(func(harvester: TestHarvester) -> bool: return harvester.spice > 0.0),
+		"both large harvesters must reach safe parking positions and begin collecting instead of yielding forever; states=%s" % str(harvesters.map(
+			func(harvester: TestHarvester) -> Dictionary: return {
+				"position": harvester.global_position,
+				"destination": harvester.target_position,
+				"field": harvester.harvest_target_cell(),
+				"spice": harvester.spice,
+			}
+		))
+	)
+
+	navigation.queue_free()
+	for harvester in harvesters:
+		harvester.queue_free()
 	return token
 
 
@@ -472,6 +567,8 @@ func _test_unload_waits_for_dock(token: int, player: PlayerData) -> int:
 	var grid := FakeGrid.new()
 	var refinery := FakeRefinery.new()
 	refinery.available = false
+	refinery.position = Vector3(10.0, 0.0, 10.0)
+	refinery.front = Vector3(4.0, 0.0, 10.0)
 	root.add_child(refinery)
 	var harvester := TestHarvester.new()
 	harvester.owner_player_id = player.player_id
@@ -480,6 +577,7 @@ func _test_unload_waits_for_dock(token: int, player: PlayerData) -> int:
 	root.add_child(harvester)
 	harvester.global_position = refinery.front
 	_expect(harvester.command_unload(refinery, grid), "an owned refinery must accept an unloading order")
+	_expect(harvester.target_position == refinery.front, "with every dock occupied the waiting route must stay outside at the refinery front instead of targeting its centre")
 	harvester.advance_unload_order(0.0)
 	harvester.advance_unload_order(0.0)
 	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.WAIT_DOCK, "an occupied refinery must leave the harvester waiting near the building")
@@ -495,8 +593,40 @@ func _test_unload_waits_for_dock(token: int, player: PlayerData) -> int:
 	return token
 
 
+func _test_side_dock_routes_directly(token: int, player: PlayerData) -> int:
+	var grid := FakeGrid.new()
+	var navigation := FakeNavigation.new()
+	var refinery := FakeMultiDockRefinery.new()
+	refinery.owner_player_id = player.player_id
+	var central_harvester := Node.new()
+	refinery.reservations[0] = central_harvester
+	root.add_child(refinery)
+	var harvester := TestHarvester.new()
+	harvester.owner_player_id = player.player_id
+	harvester.max_spice = 700.0
+	harvester.spice = 100.0
+	root.add_child(harvester)
+	harvester.global_position = Vector3(-20.0, 0.0, 2.0)
+	harvester.set_navigation_managed(true)
+	harvester.set_navigation_controller(navigation)
+
+	_expect(harvester.command_unload(refinery, grid), "the second harvester must accept a multi-dock refinery order")
+	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK and harvester.unload_dock() == 1, "an occupied central dock must make the second harvester reserve the free side dock immediately")
+	_expect(navigation.dock_targets == [refinery.dock_positions[1]], "the first route must target the reserved side dock directly")
+	_expect(navigation.move_targets.is_empty(), "a free side dock must not insert a generic approach through the refinery center")
+
+	harvester.cancel_unload_order()
+	harvester.queue_free()
+	refinery.queue_free()
+	central_harvester.free()
+	return token
+
+
 func _test_unload_navigation_arrival(token: int, player: PlayerData) -> int:
 	var grid := FakeGrid.new()
+	var layer := FakeSpiceLayer.new()
+	var field := Vector2i(50, 50)
+	layer.values[field] = 100
 	var navigation := FakeNavigation.new()
 	var refinery := FakeRefinery.new()
 	refinery.position = Vector3(10.0, 0.0, 4.0)
@@ -510,20 +640,24 @@ func _test_unload_navigation_arrival(token: int, player: PlayerData) -> int:
 	harvester.set_navigation_managed(true)
 	harvester.set_navigation_controller(navigation)
 
-	_expect(harvester.command_unload(refinery, grid), "the managed harvester must accept the unloading order")
+	_expect(harvester.command_unload(refinery, grid, layer), "the managed harvester must accept the unloading order")
 	_expect(
-		harvester.target_position.is_equal_approx(refinery.global_position + Vector3(0.0, 0.0, 2.0)),
-		"the approach must target the refinery itself instead of its authored front position"
+		harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK \
+		and harvester.target_position.is_equal_approx(refinery.dock),
+		"an available dock must be reserved and targeted before any generic refinery approach"
 	)
-	harvester.global_position = harvester.target_position + Vector3(0.0, 0.0, 0.45)
-	harvester.advance_unload_order(0.0)
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.WAIT_DOCK, "the unload state must follow the nearest feasible approach assigned by navigation")
-	harvester.advance_unload_order(0.0)
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK, "arrival near the refinery must proceed to dock reservation")
 	harvester.global_position = refinery.dock + Vector3(0.0, 0.0, 0.45)
 	harvester.face_direction(refinery.refinery_dock_facing_direction(0))
 	harvester.advance_unload_order(0.0)
 	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.START, "parking must use the shared navigation arrival distance too")
+	_expect(navigation.is_held(harvester), "a harvester parked on a refinery pad must hold position throughout unloading")
+	harvester.spice = 0.0
+	harvester.advance_unload_order(0.1)
+	harvester.advance_unload_order(0.5)
+	harvester.advance_unload_order(0.1)
+	_expect(not navigation.is_held(harvester), "UnloadEnd completion must release the navigation hold for the exit route")
+	_expect(not harvester.has_unload_order() and harvester.has_harvest_order(), "normal managed unloading must hand off directly to the next harvest order")
+	_expect(navigation.dock_targets.back() == grid.grid_to_world(field), "the direct field route must retain dock-cell access without an intermediate refinery-front waypoint")
 
 	harvester.queue_free()
 	refinery.queue_free()
@@ -668,3 +802,26 @@ func _expect(condition: bool, message: String) -> void:
 		return
 	_failures += 1
 	printerr("FAIL: %s: %s" % [_current_case, message])
+
+
+func _make_open_navigation_grid() -> MapNavigationGrid:
+	var total := MapNavigationGrid.NAV_SIZE * MapNavigationGrid.NAV_SIZE
+	var cpf := PackedInt32Array()
+	var terrain := PackedInt32Array()
+	var source_x := PackedInt32Array()
+	var source_y := PackedInt32Array()
+	var spice_values := PackedByteArray()
+	var pass_mask := PackedInt32Array()
+	var movement_cost := PackedFloat32Array()
+	var buildable := PackedByteArray()
+	for array in [cpf, terrain, source_x, source_y, spice_values, pass_mask, movement_cost, buildable]:
+		array.resize(total)
+	terrain.fill(MapNavigationGrid.TERRAIN_SAND)
+	pass_mask.fill(MapNavigationGrid.PASS_GROUND | MapNavigationGrid.PASS_AIR)
+	movement_cost.fill(1.0)
+	var grid := MapNavigationGrid.new()
+	grid.load_generated(
+		"harvester-crowd-test", AABB(Vector3.ZERO, Vector3(256.0, 1.0, 256.0)), 1.0,
+		cpf, terrain, source_x, source_y, spice_values, pass_mask, movement_cost, buildable, {}, {}
+	)
+	return grid

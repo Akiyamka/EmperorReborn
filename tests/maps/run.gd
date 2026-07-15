@@ -186,7 +186,7 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 	_expect(model_mesh.mesh.get_surface_count() == 1 and model_mesh.get_aabb().size.y > 0.0, "a mound must use the original three-dimensional XBF mesh")
 	_expect(is_equal_approx(visual.scale.x * 32.0, 2.0) and is_equal_approx(visual.scale.z * 32.0, 3.0), "the original mound mesh must match its source-cell world footprint")
 	_expect(box.size.x == 2.0 and box.size.z == 3.0, "a mound Area3D must own a collision region matching its mesh")
-	_expect(dust.one_shot and not dust.emitting and not dust.visible and dust.lifetime == 5.0, "a mound must own a dormant five-second geyser emitter")
+	_expect(dust.one_shot and not dust.emitting and not dust.visible and dust.lifetime == 10.0, "a mound must own a dormant ten-second geyser emitter")
 	_expect(dust_material.direction == Vector3.UP and dust_material.gravity.y < 0.0, "hazard dust must launch upward and fall under downward gravity")
 	_expect(mound.collision_layer == 0 and mound.collision_mask == 2, "a mound must detect unit bodies without becoming a solid navigation obstacle")
 	_expect(is_equal_approx(timer.wait_time, 3750.0 / 60.0) and timer.one_shot, "the maturity multiplier must put the randomized Size plus Cost lifespan near one real minute")
@@ -210,12 +210,23 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 			and is_equal_approx(activation_fractions[0], 0.5),
 		"contact activation must report the elapsed fraction of the current cycle"
 	)
+	_expect(
+		not mound.activate(true) and activation_count[0] == 1,
+		"a recurring mound must reject another contact activation before reaching thirty-percent maturity"
+	)
+	mound.call("_set_maturity_progress", 0.3)
+	_expect(
+		mound.activate(true)
+			and activation_count[0] == 2
+			and is_equal_approx(activation_fractions[1], 0.3),
+		"a recurring mound must allow contact activation at thirty-percent maturity"
+	)
 	_expect(not dust.emitting, "the mound must wait for the map layer to provide the complete spread area")
 	var hazard_points := PackedVector3Array([Vector3.ZERO, Vector3(2.0, 0.25, 1.0)])
 	mound.start_spread_hazard(hazard_points, 1.25)
 	_expect(dust.emitting and dust.visible and dust_material.initial_velocity_max > 0.0, "the geyser must launch across the supplied spread radius from the mound")
 	var uncompensated_velocity := sqrt(Vector2(2.0, 1.0).length() * 1.2) * 1.08
-	_expect(dust_material.initial_velocity_max >= uncompensated_velocity * 1.4, "strong early damping must be offset by a launch boost that preserves the hazard radius")
+	_expect(dust_material.initial_velocity_max >= uncompensated_velocity * 1.65, "the geyser must use an extra launch boost for a faster opening burst")
 	_expect(dust.amount == 48 and dust_quad.size.is_equal_approx(Vector2(1.25, 1.25) / 3.0), "hazard density and reduced particle size must scale from the spread grid")
 	var scale_texture := dust_material.scale_curve as CurveTexture
 	_expect(scale_texture != null and scale_texture.curve.min_value == 0.0 and scale_texture.curve.max_value == 3.0, "hazard clouds must grow from one-third size back to their original size")
@@ -226,14 +237,19 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 			and damping_texture.curve.sample(0.4) > damping_texture.curve.sample(1.0),
 		"hazard clouds must decelerate sharply near the start and drift gently near the end"
 	)
+	_expect(
+		damping_texture.curve.sample(0.62) <= 0.11
+			and damping_texture.curve.sample(1.0) <= 0.03,
+		"the extended geyser animation must ease into a very soft final drift"
+	)
 	mound.stop_spread_hazard()
-	_expect(not dust.emitting and not dust.visible, "ending the five-second hazard must hide its visual indicator immediately")
+	_expect(not dust.emitting and not dust.visible, "ending the ten-second hazard must hide its visual indicator immediately")
 	_expect(is_equal_approx(mound.growth_scale(), 0.001), "early activation must immediately restart the authored growth animation")
 	mound.call("_on_maturity_timeout")
 	_expect(
-		activation_count[0] == 2
-			and not early_activations[1]
-			and activation_fractions[1] == 1.0,
+		activation_count[0] == 3
+			and not early_activations[2]
+			and activation_fractions[2] == 1.0,
 		"timer activation must report a complete cycle and begin the next one"
 	)
 	_expect(is_equal_approx(mound.growth_scale(), 0.001), "timer activation must restart the recurring authored growth animation")
@@ -271,7 +287,7 @@ func _test_spice_mound_staged_passable_sand_spread(token: int) -> int:
 	for entry: Dictionary in early_spread.get("cells", []):
 		early_spice_total += int(entry.get("amount", 0))
 	_expect(early_spice_total == 400, "activation halfway through a mound cycle must spread half of its full spice capacity")
-	_expect(MapSpiceLayerScript.SPICE_HAZARD_DURATION_SECONDS == 5.0 and MapSpiceLayerScript.SPICE_HAZARD_TICK_COUNT == 20, "the damaging visual hazard must remain active for five seconds at four checks per second")
+	_expect(MapSpiceLayerScript.SPICE_HAZARD_DURATION_SECONDS == 10.0 and MapSpiceLayerScript.SPICE_HAZARD_TICK_COUNT == 40, "the damaging visual hazard must remain active for ten seconds at four checks per second")
 	_expect(is_equal_approx(layer.call("_spice_hazard_damage_per_second"), 10.0), "the hazard damage rate must use SpicePuff Damage from the rules catalog")
 
 	var infantry := HazardUnit.new()

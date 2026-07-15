@@ -114,6 +114,10 @@ func register_unit(unit: Node3D) -> int:
 		"claim_radius": 0.0,
 		"claim_center": unit.global_position,
 		"swap_tick": -1000,
+		# An ordinary order may deliberately end on traversable no-stop space.
+		# Once that first leg arrives, navigation immediately parks the unit on
+		# the nearest ordinary stopping block.
+		"vacate_no_stop": false,
 		# Per-order exception used only while a harvester enters its reserved
 		# refinery pad. Ordinary commands always clear it.
 		"allowed_cells": {},
@@ -174,6 +178,14 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 	ordered = prepared
 	if ordered.is_empty() or runtime_map.grid == null:
 		return []
+	# Slot selection must use ordinary movement rules. In particular, a unit's
+	# previous refinery-dock exception must not make that dock look like a legal
+	# permanent destination for its next player order.
+	for unit in ordered:
+		var agent: Dictionary = _agents[unit.get_instance_id()]
+		agent["allowed_cells"] = {}
+		agent["vacate_no_stop"] = false
+		_agents[unit.get_instance_id()] = agent
 
 	var command_id := _next_command_id
 	_next_command_id += 1
@@ -188,7 +200,8 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		# Formation slots are planned upfront; a FREE move flies each unit to
 		# its shape-preserving aim point and lets it claim a parking block on
 		# approach, searching center-out from the shared target.
-		agent["reserved"] = mode == MoveMode.FORMATION
+		agent["vacate_no_stop"] = bool(assignment.get("vacate_no_stop", false))
+		agent["reserved"] = mode == MoveMode.FORMATION or bool(agent["vacate_no_stop"])
 		agent["claim_radius"] = claim_radius
 		agent["claim_center"] = assignment.get("claim_center", world_target)
 		agent["command_id"] = command_id
@@ -248,6 +261,7 @@ func command_dock(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary
 	agent["exit_point"] = Vector3.INF
 	agent["yield_remaining"] = 0.0
 	agent["yield_direction"] = Vector3.ZERO
+	agent["vacate_no_stop"] = false
 	agent["allowed_cells"] = allowed_cells.duplicate()
 	_route_agent(agent, unit.global_position, world_target)
 	_agents[unit.get_instance_id()] = agent
@@ -276,6 +290,7 @@ func stop(unit: Node3D) -> void:
 	agent["exit_point"] = Vector3.INF
 	agent["yield_remaining"] = 0.0
 	agent["yield_direction"] = Vector3.ZERO
+	agent["vacate_no_stop"] = false
 	agent["reserved"] = true
 	_agents[unit.get_instance_id()] = agent
 
@@ -292,11 +307,14 @@ func _route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> voi
 		return
 	agent["direct_path"] = _has_clear_line(from, destination, agent)
 	if not bool(agent["direct_path"]):
+		var stoppable_no_stop_cells: Dictionary = agent.get("allowed_cells", {}).duplicate()
+		if bool(agent.get("vacate_no_stop", false)):
+			stoppable_no_stop_cells[runtime_map.grid.world_to_grid(destination)] = true
 		var raw_path: Array[Vector2i] = planner.find_path(
 			runtime_map.grid.world_to_grid(from),
 			runtime_map.grid.world_to_grid(destination),
 			int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"]),
-			agent.get("allowed_cells", {})
+			stoppable_no_stop_cells
 		)
 		agent["path"] = _simplify_path(raw_path, agent)
 
@@ -346,6 +364,7 @@ func agent_debug(unit: Node3D) -> Dictionary:
 		"mode": agent["mode"],
 		"group_speed": agent["group_speed"],
 		"hold": agent["hold"],
+		"vacate_no_stop": agent["vacate_no_stop"],
 		"blocked_time": agent["blocked_time"],
 		"route_ready": bool(agent["direct_path"]) or not (agent["path"] as Array).is_empty() or (agent["exit_point"] as Vector3).is_finite(),
 	}
@@ -488,7 +507,11 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 	offset.y = 0.0
 	var arrival := arrival_tolerance(unit)
 	if offset.length() <= arrival:
-		return Vector3.ZERO
+		if not bool(agent.get("vacate_no_stop", false)) or not _auto_vacate_no_stop(agent):
+			return Vector3.ZERO
+		destination = agent["destination"]
+		offset = destination - unit.global_position
+		offset.y = 0.0
 	var direction := Vector3.ZERO
 	var path: Array = agent["path"]
 	if bool(agent["direct_path"]):
@@ -515,6 +538,61 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 	if int(agent["mode"]) == MoveMode.FORMATION:
 		speed = minf(speed, float(agent["group_speed"]))
 	return direction * speed
+
+
+## Completes the second half of an ordinary no-stop order. This is internal
+## navigation work rather than a new gameplay order, so it must not call
+## Unit.prepare_navigation_order() and cancel the unit's action state again.
+func _auto_vacate_no_stop(agent: Dictionary) -> bool:
+	var unit: Node3D = agent["unit"]
+	var span := int(agent["footprint"])
+	var anchor := _claim_anchor(
+		_parking_anchor(agent["destination"], span),
+		agent,
+		_reserved_blocks(agent),
+		unit.global_position
+	)
+	if anchor.x < 0:
+		return false
+	var destination := _block_center(anchor, span)
+	destination.y = (agent["destination"] as Vector3).y
+	var command_id := _next_command_id
+	_next_command_id += 1
+	agent["destination"] = destination
+	agent["claim_center"] = destination
+	agent["command_id"] = command_id
+	agent["mode"] = MoveMode.FREE
+	agent["group_speed"] = INF
+	agent["reserved"] = true
+	agent["claim_radius"] = 0.0
+	agent["blocked_time"] = 0.0
+	agent["reported_enemy"] = false
+	agent["exit_point"] = Vector3.INF
+	agent["yield_remaining"] = 0.0
+	agent["yield_direction"] = Vector3.ZERO
+	agent["vacate_no_stop"] = false
+	agent["allowed_cells"] = {}
+	_route_agent(agent, unit.global_position, destination)
+	if unit.has_method("set_navigation_destination"):
+		unit.call("set_navigation_destination", destination)
+	var assignment := {
+		"unit": unit,
+		"agent_id": agent["id"],
+		"slot_id": -1,
+		"position": destination,
+		"available": true,
+	}
+	_command_log.append({
+		"tick": _navigation_tick_index,
+		"command_id": command_id,
+		"mode": MoveMode.FREE,
+		"target": destination,
+		"agents": [agent["id"]],
+		"slots": [destination],
+		"auto_vacate_no_stop": true,
+	})
+	destination_slots_assigned.emit(command_id, [assignment])
+	return true
 
 
 func _has_clear_line(from: Vector3, to: Vector3, agent: Dictionary) -> bool:
@@ -786,6 +864,10 @@ func _yield_direction(requester: Node3D, friend: Node3D, desired: Vector3) -> Ve
 
 
 func _request_yield(unit: Node3D, direction: Vector3) -> void:
+	# Yield is internal steering, not an order. It deliberately bypasses
+	# Unit.prepare_navigation_order(), so action state machines and the player's
+	# current command remain intact. Commanded agents resume their reserved
+	# destination when the short displacement expires (see _navigation_tick).
 	var agent: Dictionary = _agent_for(unit)
 	if agent.is_empty() or bool(agent["hold"]) or direction.is_zero_approx():
 		return
@@ -835,6 +917,7 @@ func _assign_slots(units: Array[Node3D], world_target: Vector3, mode: int) -> Ar
 	var result: Array[Dictionary] = []
 	var occupied: Array[Dictionary] = []
 	var spacing := _largest_footprint(units) + PARKING_GAP_CELLS
+	var allow_no_stop := runtime_map.is_no_stop(runtime_map.grid.world_to_grid(world_target))
 	for index in units.size():
 		var unit := units[index]
 		var agent: Dictionary = _agents[unit.get_instance_id()]
@@ -844,7 +927,8 @@ func _assign_slots(units: Array[Node3D], world_target: Vector3, mode: int) -> Ar
 			preferred += _formation_offset(index, units.size(), float(spacing))
 		else:
 			preferred += _crowd_offset(index) * spacing
-		var anchor := _find_slot(preferred, agent, occupied)
+		var anchor := _claim_passable_anchor(preferred, agent, occupied, unit.global_position) \
+			if allow_no_stop else _find_slot(preferred, agent, occupied)
 		var position: Vector3 = _block_center(anchor, span) if anchor.x >= 0 else unit.global_position
 		position.y = world_target.y
 		var assignment := {
@@ -853,6 +937,7 @@ func _assign_slots(units: Array[Node3D], world_target: Vector3, mode: int) -> Ar
 			"slot_id": index,
 			"position": position,
 			"available": anchor.x >= 0,
+			"vacate_no_stop": anchor.x >= 0 and not _block_stoppable(anchor, span, agent),
 		}
 		result.append(assignment)
 		if anchor.x >= 0:
@@ -868,6 +953,7 @@ func _assign_slots(units: Array[Node3D], world_target: Vector3, mode: int) -> Ar
 ## best free block on approach (_try_claim_slot), packing in arrival order.
 func _shared_target_assignments(units: Array[Node3D], world_target: Vector3) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
+	var occupied: Array[Dictionary] = []
 	var centroid := Vector3.ZERO
 	for unit in units:
 		centroid += unit.global_position
@@ -882,6 +968,7 @@ func _shared_target_assignments(units: Array[Node3D], world_target: Vector3) -> 
 	# point. A group scattered wider than its resting size is being GATHERED:
 	# claims run center-out from the target so the pack fills up tight.
 	var gather := spread > pack_radius * 1.5
+	var allow_no_stop := runtime_map.is_no_stop(runtime_map.grid.world_to_grid(world_target))
 	for index in units.size():
 		var unit := units[index]
 		var agent: Dictionary = _agents[unit.get_instance_id()]
@@ -892,11 +979,12 @@ func _shared_target_assignments(units: Array[Node3D], world_target: Vector3) -> 
 		# When the aim lies inside a building footprint, approach it radially from
 		# this unit's current side. A ring-first search otherwise picks a corner
 		# before the centered cell on the same side of a rectangular building.
-		var anchor := _approach_anchor(
-			_parking_anchor(aim, span), agent, unit.global_position
-		)
+		var preferred := _parking_anchor(aim, span)
+		var anchor := _claim_passable_anchor(preferred, agent, occupied, unit.global_position) \
+			if allow_no_stop else _approach_anchor(preferred, agent, unit.global_position)
 		var position := _block_center(anchor, span) if anchor.x >= 0 else aim
 		position.y = world_target.y
+		var vacate_no_stop := anchor.x >= 0 and not _block_stoppable(anchor, span, agent)
 		result.append({
 			"unit": unit,
 			"agent_id": agent["id"],
@@ -904,7 +992,10 @@ func _shared_target_assignments(units: Array[Node3D], world_target: Vector3) -> 
 			"position": position,
 			"available": true,
 			"claim_center": world_target if gather else position,
+			"vacate_no_stop": vacate_no_stop,
 		})
+		if allow_no_stop and anchor.x >= 0:
+			occupied.append({"anchor": anchor, "span": span})
 	return result
 
 
@@ -942,7 +1033,8 @@ func _try_claim_slot(agent: Dictionary) -> void:
 func _uncross_assignments(agents: Array[Dictionary]) -> void:
 	var groups := {}
 	for agent in agents:
-		if int(agent["command_id"]) <= 0 or not bool(agent["reserved"]) or bool(agent["hold"]):
+		if int(agent["command_id"]) <= 0 or not bool(agent["reserved"]) or bool(agent["hold"]) \
+		or bool(agent.get("vacate_no_stop", false)):
 			continue
 		if (agent["exit_point"] as Vector3).is_finite():
 			continue
@@ -1064,6 +1156,46 @@ func _claim_anchor(preferred: Vector2i, agent: Dictionary, occupied: Array[Dicti
 		if best.x >= 0:
 			return best
 	return Vector2i(-1, -1)
+
+
+## No-stop command legs need the same nearest, non-overlapping block search as
+## ordinary parking, but accept any traversable block for their temporary end.
+func _claim_passable_anchor(
+		preferred: Vector2i,
+		agent: Dictionary,
+		occupied: Array[Dictionary],
+		from: Vector3
+	) -> Vector2i:
+	var span := int(agent["footprint"])
+	for radius in range(0, SLOT_SEARCH_RADIUS + 1):
+		var best := Vector2i(-1, -1)
+		var best_distance := INF
+		for offset in _ring_offsets(radius):
+			var anchor := preferred + offset
+			if not _block_passable(anchor, span, agent):
+				continue
+			var occupied_block := false
+			for other in occupied:
+				if _blocks_conflict(anchor, span, other["anchor"], int(other["span"])):
+					occupied_block = true
+					break
+			if occupied_block:
+				continue
+			var distance := from.distance_to(_block_center(anchor, span))
+			if distance < best_distance:
+				best_distance = distance
+				best = anchor
+		if best.x >= 0:
+			return best
+	return Vector2i(-1, -1)
+
+
+func _block_passable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
+	for y in span:
+		for x in span:
+			if not _agent_cell_passable(agent, anchor + Vector2i(x, y)):
+				return false
+	return true
 
 
 func _block_stoppable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
@@ -1268,13 +1400,19 @@ func _replan_after_map_change() -> void:
 			continue
 		var destination: Vector3 = agent["destination"]
 		var span := int(agent["footprint"])
-		if not _block_stoppable(_parking_anchor(destination, span), span, agent):
+		var destination_anchor := _parking_anchor(destination, span)
+		var destination_stoppable := _block_stoppable(destination_anchor, span, agent)
+		if bool(agent.get("vacate_no_stop", false)) and destination_stoppable:
+			agent["vacate_no_stop"] = false
+		if not destination_stoppable \
+		and not (bool(agent.get("vacate_no_stop", false)) and _block_passable(destination_anchor, span, agent)):
 			var replacement := _find_slot(_parking_anchor(destination, span), agent, _reserved_blocks(agent))
 			if replacement.x >= 0:
 				var height := destination.y
 				destination = _block_center(replacement, span)
 				destination.y = height
 				agent["destination"] = destination
+				agent["vacate_no_stop"] = false
 				agent["original_destination"] = destination
 				var command_id := int(agent["command_id"])
 				if not changed_by_command.has(command_id):
