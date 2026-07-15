@@ -209,7 +209,7 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 	root.add_child(cargo)
 	var halo := SelectionHaloScript.new()
 	cargo.add_child(halo)
-	halo.configure(cargo, 1.0, 0.0)
+	halo.configure(cargo, 1.0, Vector3.ZERO)
 	halo.set_selected(true)
 	halo._process(0.0)
 	var harvester_layer := halo.get_node("Transport") as MeshInstance3D

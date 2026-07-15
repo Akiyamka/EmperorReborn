@@ -643,7 +643,7 @@ func _add_selection_halo() -> void:
 	_selection_halo = SelectionHaloScript.new()
 	_selection_halo.name = "SelectionHalo"
 	add_child(_selection_halo)
-	_selection_halo.configure(self, _selection_radius(), _selection_elevation())
+	_selection_halo.configure(self, _selection_radius(), _selection_position())
 
 
 func _selection_radius() -> float:
@@ -658,12 +658,12 @@ func _selection_radius() -> float:
 	return minf(bounds.size.x, bounds.size.z) * 0.5
 
 
-func _selection_elevation() -> float:
+func _selection_position() -> Vector3:
 	var anchor: Node3D = _halo_anchor_node(visual_root)
 	if anchor != null:
-		return to_local(anchor.to_global(Vector3.ZERO)).y
+		return to_local(anchor.to_global(Vector3.ZERO))
 
-	return _selection_bounds().end.y + 0.05
+	return Vector3(0.0, _selection_bounds().end.y + 0.05, 0.0)
 
 
 func _halo_anchor_bounds() -> AABB:

@@ -26,9 +26,9 @@ var _is_hovered := false
 var _layers := {}
 
 
-func configure(entity: Node3D, radius: float, elevation: float) -> void:
+func configure(entity: Node3D, radius: float, local_position: Vector3) -> void:
 	_entity = entity
-	position.y = elevation
+	position = local_position
 	var diameter := maxf(radius * 2.0, 0.1)
 	_layers[&"outline"] = _add_layer(&"Outline", HALO_TEXTURE, diameter, 0.000, false, ADDITIVE_SHADER)
 	_layers[&"health"] = _add_layer(&"Health", HEALTH_TEXTURES[5], diameter, 0.002, true)

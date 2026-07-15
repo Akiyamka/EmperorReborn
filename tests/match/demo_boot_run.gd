@@ -92,7 +92,18 @@ func _test_authored_collision_meshes() -> void:
 	for building_name in [&"ATConYard", &"ATSmWindtrap"]:
 		var building := match_instance.get_node("Buildings/%s" % building_name)
 		var body := building.get_node_or_null("SelectionCollision") as StaticBody3D
+		var halo := building.get_node_or_null("SelectionHalo") as Node3D
+		var halo_anchor: Node3D = building._halo_anchor_node(building)
 		_expect(body != null, "%s must have a selection collision body" % building_name)
+		_expect(halo != null and halo_anchor != null, "%s must expose its authored halo attachment" % building_name)
+		if halo != null and halo_anchor != null:
+			var expected_halo_position: Vector3 = building.to_local(halo_anchor.global_position)
+			_expect(
+				halo.position.is_equal_approx(expected_halo_position),
+				"%s halo must follow its authored attachment after footprint alignment (expected %s, got %s)" % [
+					building_name, expected_halo_position, halo.position,
+				]
+			)
 		_expect(
 			body != null and _authored_collision_shapes(body).size() > 0,
 			"%s must create collision from its authored volume" % building_name
