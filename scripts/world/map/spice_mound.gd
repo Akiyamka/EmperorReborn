@@ -9,6 +9,7 @@ signal activated(mound: SpiceMound, early_activation: bool, maturity_fraction: f
 const RULE_TICKS_PER_SECOND := 60.0
 const UNIT_COLLISION_LAYER := 2
 const MATURITY_DURATION_MULTIPLIER := 3.0
+const MIN_REPEAT_ACTIVATION_MATURITY := 0.3
 const SOURCE_MODEL_DIAMETER := 32.0
 const SOURCE_GROWTH_ANIMATION := &"timeline"
 const SOURCE_GROWTH_TRACK := NodePath("_0Spicemound:transform")
@@ -19,6 +20,7 @@ const HAZARD_PARTICLE_SIZE_DIVISOR := 3.0
 const HAZARD_DAMPING_MIN_RATIO := 0.24
 const HAZARD_DAMPING_MAX_RATIO := 0.34
 const HAZARD_DAMPING_RANGE_COMPENSATION := 1.45
+const HAZARD_LAUNCH_SPEED_MULTIPLIER := 1.28
 
 @export var source_cell := Vector2i(-1, -1)
 
@@ -28,6 +30,7 @@ var _lifespan_random_fraction := -1.0
 var _cycle_duration_seconds := 0.0
 var _maturity_progress := 0.0
 var _activation_in_progress := false
+var _has_activated := false
 
 @onready var maturity_timer: Timer = $MaturityTimer
 
@@ -42,6 +45,7 @@ func configure(
 	_footprint = Vector2(maxf(footprint.x, 0.001), maxf(footprint.y, 0.001))
 	config = rules_config
 	_lifespan_random_fraction = lifespan_random_fraction
+	_has_activated = false
 	_apply_footprint()
 	_prepare_maturity_cycle()
 
@@ -80,13 +84,17 @@ func maturity_duration_seconds(random_fraction := -1.0) -> float:
 func activate(early_activation := false) -> bool:
 	if _activation_in_progress:
 		return false
-	_activation_in_progress = true
 	var maturity_fraction := maturity_progress() if early_activation else 1.0
+	if early_activation and _has_activated \
+	and maturity_fraction < MIN_REPEAT_ACTIVATION_MATURITY:
+		return false
+	_activation_in_progress = true
 	var timer := get_node_or_null("MaturityTimer") as Timer
 	if timer != null:
 		timer.stop()
 	_set_maturity_progress(1.0)
 	activated.emit(self, early_activation, maturity_fraction)
+	_has_activated = true
 	_activation_in_progress = false
 	restart_maturity_cycle()
 	return true
@@ -133,13 +141,13 @@ func start_spread_hazard(local_points: PackedVector3Array, particle_size: float)
 		hazard_radius = maxf(hazard_radius, Vector2(point.x, point.z).length())
 	# A 48-degree cone gives the burst a narrow vertical core and enough lateral
 	# velocity to open into a geyser umbrella. Scaling both gravity and velocity
-	# from the radius keeps the apex early while the fall fills the five seconds.
+	# from the radius keeps the apex early while the long tail remains gentle.
 	var gravity_strength := maxf(hazard_radius * 0.2, 1.2)
 	# Strong early damping shortens the ballistic arc, so give the burst a
 	# matching launch boost. This restores the hazard radius without sacrificing
 	# the fast-to-slow motion profile.
 	var outer_velocity := sqrt(maxf(hazard_radius, particle_size) * gravity_strength) \
-		* 1.08 * HAZARD_DAMPING_RANGE_COMPENSATION
+		* HAZARD_LAUNCH_SPEED_MULTIPLIER * HAZARD_DAMPING_RANGE_COMPENSATION
 	dust_material.initial_velocity_min = maxf(outer_velocity * 0.38, 0.8)
 	dust_material.initial_velocity_max = maxf(outer_velocity, 1.5)
 	dust_material.gravity = Vector3(0.0, -gravity_strength, 0.0)
@@ -193,9 +201,10 @@ func _ensure_hazard_damping_curve(dust_material: ParticleProcessMaterial) -> voi
 	damping_curve.min_value = 0.0
 	damping_curve.max_value = 1.0
 	damping_curve.add_point(Vector2(0.0, 1.0))
-	damping_curve.add_point(Vector2(0.16, 0.92))
-	damping_curve.add_point(Vector2(0.38, 0.28))
-	damping_curve.add_point(Vector2(1.0, 0.08))
+	damping_curve.add_point(Vector2(0.1, 0.9))
+	damping_curve.add_point(Vector2(0.3, 0.3))
+	damping_curve.add_point(Vector2(0.62, 0.1))
+	damping_curve.add_point(Vector2(1.0, 0.02))
 	var damping_texture := CurveTexture.new()
 	damping_texture.curve = damping_curve
 	dust_material.damping_curve = damping_texture
