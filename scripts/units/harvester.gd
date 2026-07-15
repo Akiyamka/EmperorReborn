@@ -7,10 +7,17 @@ extends Unit
 const HARVEST_START_ANIMATION := &"Harv_Eat_Start"
 const HARVEST_HOLD_ANIMATION := &"Harv_Eat_Hold"
 const HARVEST_END_ANIMATION := &"Harv_Eat_End"
+const UNLOAD_START_ANIMATION := &"Harv_Unload_Start"
+const UNLOAD_HOLD_ANIMATION := &"Harv_Unload_Hold"
+const UNLOAD_END_ANIMATION := &"Harv_Unload_End"
 const HARVEST_HOLD_SECONDS := 0.3
 const HARVEST_CARGO_FRACTION_PER_CYCLE := 0.2
 const HARVEST_SEARCH_RADIUS_CELLS := 8
 const HARVEST_APPROACH_RADIUS_CELLS := 2.0
+const UNLOAD_UPDATES_PER_SECOND := 20.0
+const ORIGINAL_UNLOAD_RATE_PER_UPDATE := 2.0
+const UNLOAD_HOLD_FALLBACK_SECONDS := 0.05
+const INVALID_DOCK := -1
 ## Rules.txt [Harvester] has SpiceCapacity=700. The normalized database
 ## currently preserves this legacy special-unit field as an orphan custom row,
 ## so retain the authoritative value as a compatibility fallback until that
@@ -18,8 +25,11 @@ const HARVEST_APPROACH_RADIUS_CELLS := 2.0
 const ORIGINAL_SPICE_CAPACITY := 700.0
 
 enum HarvestPhase { NONE, TRAVEL, START, HOLD, END }
+enum UnloadPhase { NONE, APPROACH, WAIT_DOCK, PARK, START, HOLD, END, RETURN_FRONT }
+enum PendingOrder { NONE, MOVE, HARVEST, UNLOAD }
 
 @export var max_spice := 0.0
+@export var unload_rate_per_update := ORIGINAL_UNLOAD_RATE_PER_UPDATE
 
 var spice := 0.0:
 	set(value):
@@ -31,23 +41,44 @@ var _harvest_spice_layer = null
 var _harvest_grid = null
 var _harvest_target_cell := Vector2i(-1, -1)
 var _issuing_harvest_move := false
+var _unload_phase := UnloadPhase.NONE
+var _unload_phase_remaining := 0.0
+var _unload_refinery: Node = null
+var _unload_grid = null
+var _unload_dock := INVALID_DOCK
+var _unload_interrupted := false
+var _unload_credit_accumulator := 0.0
+var _issuing_unload_move := false
+var _pending_order := PendingOrder.NONE
+var _pending_order_data: Dictionary = {}
 
 
 func _process(delta: float) -> void:
 	super._process(delta)
 	advance_harvest_order(delta)
+	advance_unload_order(delta)
 
 
 func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
-	if not _issuing_harvest_move:
+	if not _issuing_harvest_move and not _issuing_unload_move:
+		if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+			_queue_pending_order(PendingOrder.MOVE, {
+				"position": world_position,
+				"exit_point": exit_point,
+			})
+			_interrupt_unload_animation()
+			return
+		_cancel_unload_immediately()
 		cancel_harvest_order()
 	super.move_to(world_position, exit_point)
 
 
 func set_navigation_controller(controller) -> void:
 	_issuing_harvest_move = has_harvest_order()
+	_issuing_unload_move = has_unload_order()
 	super.set_navigation_controller(controller)
 	_issuing_harvest_move = false
+	_issuing_unload_move = false
 
 
 func can_harvest_spice() -> bool:
@@ -57,13 +88,69 @@ func can_harvest_spice() -> bool:
 func command_harvest(spice_layer, navigation_grid, cell: Vector2i) -> bool:
 	if not can_harvest_spice() or spice_layer == null or navigation_grid == null:
 		return false
+	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+		_queue_pending_order(PendingOrder.HARVEST, {
+			"spice_layer": spice_layer,
+			"grid": navigation_grid,
+			"cell": cell,
+		})
+		_interrupt_unload_animation()
+		return true
+	_cancel_unload_immediately()
+	_start_harvest_order(spice_layer, navigation_grid, cell)
+	return true
+
+
+func _start_harvest_order(spice_layer, navigation_grid, cell: Vector2i) -> void:
 	cancel_harvest_order()
 	_harvest_spice_layer = spice_layer
 	_harvest_grid = navigation_grid
 	_harvest_target_cell = cell
 	_harvest_phase = HarvestPhase.TRAVEL
 	_move_to_harvest_cell(cell)
+
+
+func can_unload_at(refinery: Node) -> bool:
+	return _is_valid_owned_refinery(refinery)
+
+
+func command_unload(refinery: Node, navigation_grid) -> bool:
+	if navigation_grid == null or not can_unload_at(refinery):
+		return false
+	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+		_queue_pending_order(PendingOrder.UNLOAD, {
+			"refinery": refinery,
+			"grid": navigation_grid,
+		})
+		_interrupt_unload_animation()
+		return true
+	cancel_harvest_order()
+	_cancel_unload_immediately()
+	_start_unload_order(refinery, navigation_grid)
 	return true
+
+
+func _start_unload_order(refinery: Node, navigation_grid) -> void:
+	_unload_refinery = refinery
+	_unload_grid = navigation_grid
+	_unload_dock = INVALID_DOCK
+	_unload_interrupted = false
+	_unload_credit_accumulator = 0.0
+	_unload_phase = UnloadPhase.APPROACH
+	_unload_phase_remaining = 0.0
+	_issue_unload_move(refinery.call("refinery_front_position") as Vector3)
+
+
+func has_unload_order() -> bool:
+	return _unload_phase != UnloadPhase.NONE
+
+
+func unload_phase() -> int:
+	return _unload_phase
+
+
+func unload_dock() -> int:
+	return _unload_dock
 
 
 func cancel_harvest_order() -> void:
@@ -115,6 +202,118 @@ func advance_harvest_order(delta: float) -> void:
 		_harvest_phase_remaining = 0.0
 		_advance_harvest_phase()
 		transitions += 1
+
+
+## Public for deterministic feature tests. Runtime calls this from _process;
+## fixed-rate credit conversion is accumulated independently of render frames.
+func advance_unload_order(delta: float) -> void:
+	if _unload_phase == UnloadPhase.NONE:
+		return
+	if not _is_valid_owned_refinery(_unload_refinery):
+		_interrupt_invalid_refinery()
+		if _unload_phase == UnloadPhase.NONE:
+			return
+
+	match _unload_phase:
+		UnloadPhase.APPROACH:
+			if not _is_close_to_world(target_position):
+				return
+			stop_at_current_position()
+			_unload_phase = UnloadPhase.WAIT_DOCK
+		UnloadPhase.WAIT_DOCK:
+			var reserved := int(_unload_refinery.call("try_reserve_refinery_dock", self))
+			if reserved == INVALID_DOCK:
+				return
+			_unload_dock = reserved
+			var dock_position := _unload_refinery.call("refinery_dock_world_position", reserved) as Vector3
+			if not dock_position.is_finite():
+				_cancel_unload_immediately()
+				return
+			_unload_phase = UnloadPhase.PARK
+			_issue_dock_move(dock_position)
+			return
+		UnloadPhase.PARK:
+			if not bool(_unload_refinery.call("refinery_dock_reserved_by", _unload_dock, self)):
+				_unload_dock = INVALID_DOCK
+				_unload_phase = UnloadPhase.WAIT_DOCK
+				_issue_unload_move(_unload_refinery.call("refinery_front_position") as Vector3)
+				return
+			var dock_position := _unload_refinery.call("refinery_dock_world_position", _unload_dock) as Vector3
+			if not _is_close_to_world(dock_position):
+				return
+			stop_at_current_position()
+			face_direction(_unload_refinery.call("refinery_dock_facing_direction", _unload_dock) as Vector3)
+			_begin_unload_phase(UnloadPhase.START)
+		UnloadPhase.RETURN_FRONT:
+			if _is_close_to_world(target_position):
+				_finish_unload_order()
+			return
+
+	var remaining_delta := maxf(delta, 0.0)
+	var transitions := 0
+	while _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END] and transitions < 256:
+		var segment := minf(_unload_phase_remaining, remaining_delta)
+		if _unload_phase == UnloadPhase.HOLD and not _unload_interrupted:
+			_transfer_unload_credits(segment)
+		_unload_phase_remaining -= segment
+		remaining_delta -= segment
+		if _unload_phase_remaining > 0.0:
+			break
+		_advance_unload_phase()
+		transitions += 1
+		if remaining_delta <= 0.0:
+			break
+
+
+func _advance_unload_phase() -> void:
+	match _unload_phase:
+		UnloadPhase.START:
+			_begin_unload_phase(UnloadPhase.END if _unload_interrupted else UnloadPhase.HOLD)
+		UnloadPhase.HOLD:
+			if _unload_interrupted or spice <= 0.0:
+				_begin_unload_phase(UnloadPhase.END)
+			else:
+				_begin_unload_phase(UnloadPhase.HOLD)
+		UnloadPhase.END:
+			_release_unload_dock()
+			if _pending_order != PendingOrder.NONE:
+				_finish_unload_order(false)
+				_execute_pending_order()
+			elif not _is_valid_owned_refinery(_unload_refinery):
+				_finish_unload_order(false)
+			else:
+				_unload_phase = UnloadPhase.RETURN_FRONT
+				_unload_phase_remaining = 0.0
+				_issue_unload_move(_unload_refinery.call("refinery_front_position") as Vector3)
+
+
+func _begin_unload_phase(phase: UnloadPhase) -> void:
+	_unload_phase = phase
+	match phase:
+		UnloadPhase.START:
+			_unload_phase_remaining = _start_unload_animation(UNLOAD_START_ANIMATION)
+		UnloadPhase.HOLD:
+			_unload_phase_remaining = maxf(
+				_start_unload_animation(UNLOAD_HOLD_ANIMATION), UNLOAD_HOLD_FALLBACK_SECONDS
+			)
+		UnloadPhase.END:
+			_unload_phase_remaining = _start_unload_animation(UNLOAD_END_ANIMATION)
+
+
+func _transfer_unload_credits(delta: float) -> void:
+	if delta <= 0.0 or spice <= 0.0:
+		return
+	var player = owner_player()
+	if player == null:
+		_interrupt_unload_animation()
+		return
+	_unload_credit_accumulator += delta * unload_rate_per_update * UNLOAD_UPDATES_PER_SECOND
+	var credits := mini(floori(_unload_credit_accumulator), floori(spice))
+	if credits <= 0:
+		return
+	_unload_credit_accumulator -= float(credits)
+	spice -= float(credits)
+	player.add_money(credits)
 
 
 func _advance_harvest_phase() -> void:
@@ -198,6 +397,14 @@ func _finish_harvest_order() -> void:
 ## Returns the clip duration so start/end complete before the state advances.
 ## Missing clips intentionally have zero duration and keep gameplay functional.
 func _start_harvest_animation(animation_name: StringName) -> float:
+	return _start_action_animation(animation_name)
+
+
+func _start_unload_animation(animation_name: StringName) -> float:
+	return _start_action_animation(animation_name)
+
+
+func _start_action_animation(animation_name: StringName) -> float:
 	var duration := 0.0
 	for player in _animation_players:
 		if not player.has_animation(animation_name):
@@ -211,6 +418,118 @@ func _start_harvest_animation(animation_name: StringName) -> float:
 	return duration
 
 
+func _issue_unload_move(position: Vector3) -> void:
+	_issuing_unload_move = true
+	move_to(position)
+	_issuing_unload_move = false
+
+
+func _issue_dock_move(position: Vector3) -> void:
+	if _navigation_managed and _navigation_system != null and _navigation_system.has_method("command_dock"):
+		var cells := _unload_refinery.call("refinery_dock_navigation_cells", _unload_grid) as Dictionary
+		_navigation_system.call("command_dock", self, position, cells)
+		return
+	_issue_unload_move(position)
+
+
+func _is_close_to_world(target: Vector3) -> bool:
+	var offset := target - global_position
+	offset.y = 0.0
+	var tolerance := maxf(arrival_radius, 0.35)
+	if _navigation_managed and _navigation_system != null \
+	and _navigation_system.has_method("arrival_tolerance"):
+		tolerance = maxf(tolerance, float(_navigation_system.call("arrival_tolerance", self)) + 0.01)
+	return offset.length() <= tolerance
+
+
+func _is_valid_owned_refinery(refinery: Node) -> bool:
+	if refinery == null or not is_instance_valid(refinery) or refinery.is_queued_for_deletion():
+		return false
+	if not refinery.has_method("is_refinery") or not bool(refinery.call("is_refinery")):
+		return false
+	if refinery.has_method("is_owned_by"):
+		return bool(refinery.call("is_owned_by", owner_player_id))
+	var refinery_owner = refinery.get("owner_player_id")
+	return refinery_owner != null and int(refinery_owner) == owner_player_id
+
+
+func _interrupt_invalid_refinery() -> void:
+	_pending_order = PendingOrder.NONE
+	_pending_order_data.clear()
+	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+		_interrupt_unload_animation()
+		return
+	_cancel_unload_immediately()
+
+
+func _interrupt_unload_animation() -> void:
+	if _unload_phase not in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+		return
+	_unload_interrupted = true
+
+
+func _cancel_unload_immediately() -> void:
+	if _unload_phase == UnloadPhase.NONE:
+		return
+	if is_instance_valid(_unload_refinery) and _unload_dock != INVALID_DOCK:
+		if _unload_phase == UnloadPhase.PARK:
+			_unload_refinery.call("release_refinery_dock", self)
+		else:
+			_unload_refinery.call("abandon_refinery_dock", self)
+	_finish_unload_order(false)
+
+
+func cancel_unload_order() -> void:
+	_pending_order = PendingOrder.NONE
+	_pending_order_data.clear()
+	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+		_interrupt_unload_animation()
+	else:
+		_cancel_unload_immediately()
+
+
+func _release_unload_dock() -> void:
+	if is_instance_valid(_unload_refinery) and _unload_dock != INVALID_DOCK:
+		_unload_refinery.call("release_refinery_dock", self)
+	_unload_dock = INVALID_DOCK
+
+
+func _finish_unload_order(stop_unit := true) -> void:
+	if stop_unit:
+		stop_at_current_position()
+	_unload_phase = UnloadPhase.NONE
+	_unload_phase_remaining = 0.0
+	_unload_refinery = null
+	_unload_grid = null
+	_unload_dock = INVALID_DOCK
+	_unload_interrupted = false
+	_unload_credit_accumulator = 0.0
+
+
+func _queue_pending_order(kind: PendingOrder, data: Dictionary) -> void:
+	_pending_order = kind
+	_pending_order_data = data.duplicate()
+
+
+func _execute_pending_order() -> void:
+	var kind := _pending_order
+	var data := _pending_order_data.duplicate()
+	_pending_order = PendingOrder.NONE
+	_pending_order_data.clear()
+	match kind:
+		PendingOrder.MOVE:
+			super.move_to(
+				data.get("position", global_position) as Vector3,
+				data.get("exit_point", Vector3.INF) as Vector3
+			)
+		PendingOrder.HARVEST:
+			_start_harvest_order(data.get("spice_layer"), data.get("grid"), data.get("cell", Vector2i(-1, -1)))
+		PendingOrder.UNLOAD:
+			var refinery := data.get("refinery") as Node
+			if _is_valid_owned_refinery(refinery):
+				_start_unload_order(refinery, data.get("grid"))
+
+
 func _apply_rules_config() -> void:
 	super._apply_rules_config()
 	if unit_config == null:
@@ -218,16 +537,21 @@ func _apply_rules_config() -> void:
 	max_spice = maxf(float(unit_config.field(&"spice_capacity", max_spice)), 0.0)
 	if max_spice <= 0.0:
 		max_spice = ORIGINAL_SPICE_CAPACITY
+	unload_rate_per_update = maxf(float(
+		unit_config.field(&"unload_rate", ORIGINAL_UNLOAD_RATE_PER_UPDATE)
+	), 0.0)
 	spice = spice
 
 
 func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
-	if _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END]:
+	if _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END] \
+	or _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
 		return
 	super._set_movement_animation(is_moving, speed_scale)
 
 
 func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:
-	if _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END]:
+	if _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END] \
+	or _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
 		return
 	super._on_animation_finished(animation_name, player)

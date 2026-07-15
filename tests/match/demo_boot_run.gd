@@ -1,6 +1,8 @@
 extends SceneTree
 
 const MatchFixtureScene := preload("res://tests/fixtures/match_fixture.tscn")
+const HarvesterScene := preload("res://scenes/units/harvester.tscn")
+const ATRefineryScene := preload("res://assets/converted/buildings/ATRefinery/ATRefinery.scn")
 
 ## Regression test for a startup-ordering bug: Match._enter_tree() used to
 ## compute the building-panel roster via Rules.buildable_building_ids_for_house(),
@@ -28,6 +30,7 @@ func _initialize() -> void:
 	await _run_case("upgrade slot appears after its building is placed later", _test_upgrade_availability_polls)
 	await _run_case("unit slots follow prerequisite buildings and their upgrades", _test_unit_roster_availability)
 	await _run_case("completed units emerge from primary building toward rally point", _test_unit_production_rally_and_primary)
+	await _run_case("real harvester completes a refinery unload trip", _test_real_harvester_unload_trip)
 	await _run_case("occupy matrices are Z-mirrored to match converted models", _test_occupy_rows_are_mirrored)
 
 	if _failures > 0:
@@ -644,6 +647,68 @@ func _test_unit_production_rally_and_primary() -> void:
 		roster._unit_queue_size(&"ATBarracks") == 0,
 		"shift+right click must not reduce the unit queue below zero"
 	)
+
+	match_instance.queue_free()
+
+
+func _test_real_harvester_unload_trip() -> void:
+	var match_instance = MatchFixtureScene.instantiate()
+	for child in match_instance.get_node("Buildings").get_children():
+		child.free()
+	for child in match_instance.get_node("Units").get_children():
+		child.free()
+
+	var refinery := ATRefineryScene.instantiate() as Building
+	refinery.position = Vector3(24.0, 8.0, 12.0)
+	refinery.owner_player_id = 1
+	match_instance.get_node("Buildings").add_child(refinery)
+	var harvester := HarvesterScene.instantiate() as Harvester
+	harvester.owner_player_id = 1
+	match_instance.get_node("Units").add_child(harvester)
+	get_root().add_child(match_instance)
+	await physics_frame
+	await physics_frame
+
+	var navigation = match_instance.get_node("UnitNavigationSystem")
+	navigation.set_physics_process(false)
+	harvester.set_process(false)
+	harvester.set_physics_process(false)
+	navigation.call("_refresh_building_blockers")
+	var front := refinery.refinery_front_position()
+	harvester.global_position = front + refinery.exit_direction() * 6.0
+	harvester.spice = 100.0
+	harvester.stop_at_current_position()
+	var player = get_root().get_node("Players").player(1)
+	var money_before := int(player.money)
+	_expect(
+		harvester.command_unload(refinery, match_instance.terrain.navigation_grid),
+		"the real harvester must accept its real owned refinery"
+	)
+	_expect(
+		harvester.target_position.distance_to(front) > navigation.arrival_tolerance(harvester),
+		"navigation must be allowed to assign a collision-safe approach point outside the exact building front"
+	)
+
+	var visited_phases := {}
+	for _tick in 800:
+		visited_phases[harvester.unload_phase()] = true
+		navigation.call("_navigation_tick", 0.05)
+		harvester.advance_unload_order(0.05)
+		if not harvester.has_unload_order():
+			break
+
+	for required_phase in [
+		Harvester.UnloadPhase.WAIT_DOCK,
+		Harvester.UnloadPhase.PARK,
+		Harvester.UnloadPhase.START,
+		Harvester.UnloadPhase.HOLD,
+		Harvester.UnloadPhase.END,
+		Harvester.UnloadPhase.RETURN_FRONT,
+	]:
+		_expect(visited_phases.has(required_phase), "the real unload trip must visit phase %d" % required_phase)
+	_expect(not harvester.has_unload_order(), "the real unload trip must complete instead of stalling in front of the refinery")
+	_expect(is_zero_approx(harvester.spice), "the real unload trip must empty the harvester")
+	_expect(player.money == money_before + 100, "the real unload trip must credit all cargo to the player")
 
 	match_instance.queue_free()
 

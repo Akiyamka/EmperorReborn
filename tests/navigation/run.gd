@@ -45,6 +45,7 @@ func _initialize() -> void:
 	var grid := _make_grid()
 	_test_synchronous_paths(grid)
 	_test_no_stop_cells(grid)
+	_test_dock_order_has_per_unit_building_access(grid)
 	_test_rotated_building_blockers(grid)
 	_test_interior_escape(grid)
 	_test_immediate_movement(grid)
@@ -126,17 +127,17 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	var exit_path: Array[Vector2i] = planner.find_path(
 		Vector2i(103, 103), Vector2i(103, 120), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask
 	)
-	var exit_touches_apron := false
-	for path_cell in exit_path:
-		exit_touches_apron = exit_touches_apron or apron.has(path_cell)
-	_expect(not exit_path.is_empty() and not exit_touches_apron, "a unit spawned on the apron must get a route that starts outside it")
+	_expect(
+		not exit_path.is_empty() and exit_path[0] == Vector2i(103, 103) and exit_path.back() == Vector2i(103, 120),
+		"a route may start on and leave a no-stop cell normally"
+	)
 	var through: Array[Vector2i] = planner.find_path(
 		Vector2i(103, 95), Vector2i(103, 112), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask
 	)
 	var crossed_apron := false
 	for path_cell in through:
 		crossed_apron = crossed_apron or apron.has(path_cell)
-	_expect(not through.is_empty() and through[through.size() - 1] == Vector2i(103, 112) and not crossed_apron, "routes must go around the apron, never through it")
+	_expect(not through.is_empty() and through.back() == Vector2i(103, 112) and crossed_apron, "routes must freely cross a no-stop apron")
 	var into_apron: Array[Vector2i] = planner.find_path(
 		Vector2i(103, 120), Vector2i(103, 103), MapNavigationGrid.PASS_VEHICLE, 0, rock_mask
 	)
@@ -148,6 +149,14 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	navigation.set_physics_process(false)
 	_expect(navigation.setup(grid), "navigation system must initialize")
 	navigation.runtime_map.replace_blocked_cells({}, apron)
+	var passer := FakeUnit.new()
+	root.add_child(passer)
+	passer.global_position = Vector3(103.5, 0.0, 95.5)
+	navigation.command_move([passer], Vector3(103.5, 0.0, 112.5), NavigationSystemScript.MoveMode.FREE)
+	for _iteration in 100:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(passer.global_position.distance_to(Vector3(103.5, 0.0, 112.5)) < 2.0, "local steering must drive straight through a no-stop apron")
+
 	var clicker := FakeUnit.new()
 	root.add_child(clicker)
 	clicker.global_position = Vector3(103.5, 0.0, 120.5)
@@ -165,8 +174,42 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	_expect(produced.global_position.distance_to(Vector3(103.5, 0.0, 120.5)) < 2.0, "a unit produced inside the apron must walk out and reach its destination")
 
 	navigation.queue_free()
+	passer.queue_free()
 	clicker.queue_free()
 	produced.queue_free()
+
+
+func _test_dock_order_has_per_unit_building_access(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for docking")
+	var footprint := {}
+	for y in range(100, 108):
+		for x in range(100, 108):
+			footprint[Vector2i(x, y)] = true
+	navigation.runtime_map.replace_blocked_cells(footprint)
+
+	var harvester := FakeUnit.new(3.0)
+	root.add_child(harvester)
+	harvester.global_position = Vector3(103.5, 0.0, 96.5)
+	var dock := Vector3(103.5, 0.0, 103.5)
+	_expect(navigation.command_dock(harvester, dock, footprint), "a reserved dock order must accept its refinery footprint")
+	_expect(navigation.arrival_tolerance(harvester) > 0.35, "a size-three harvester must use its larger navigation arrival tolerance")
+	for _iteration in 80:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(harvester.global_position.distance_to(dock) < 0.6, "the docking harvester must enter and stop on blocked footprint cells")
+
+	var ordinary := FakeUnit.new()
+	root.add_child(ordinary)
+	ordinary.global_position = Vector3(110.5, 0.0, 103.5)
+	var assignments := navigation.command_move([ordinary], dock)
+	var ordinary_cell: Vector2i = grid.world_to_grid(assignments[0]["position"])
+	_expect(not footprint.has(ordinary_cell), "the same footprint must remain forbidden to an ordinary movement order")
+
+	navigation.queue_free()
+	harvester.queue_free()
+	ordinary.queue_free()
 
 
 func _test_rotated_building_blockers(grid: MapNavigationGrid) -> void:

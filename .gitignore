@@ -20,7 +20,11 @@ Thumbs.db
 *.swp
 
 # Original assets for testing
-assets/
+assets/*
+!assets/converted/
+assets/converted/*
+!assets/converted/rules.db
+!assets/converted/schema.sql
 
 # Debug
 scenes/debug

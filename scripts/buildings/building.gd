@@ -2,6 +2,7 @@ class_name Building
 extends Node3D
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 ## Converted Emperor buildings expose their apron/door on authored local +Z.
 const LOCAL_EXIT_DIRECTION := Vector3.BACK
 
@@ -17,6 +18,9 @@ const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 const COLLISION_OBJECT_NAME := "#~~0"
 const RALLY_POINT_CLEARANCE := 1.5
 const OCCUPY_CELL_WORLD_SPAN := 2.0
+const REFINERY_ROLE := "Refinery"
+const REFINERY_DOCK_RELEASE_DELAY_SECONDS := 3.0
+const INVALID_REFINERY_DOCK := -1
 
 ## Refinery dock upgrades are visual states of the refinery itself, not
 ## separate Building nodes. The first/right upgrade unfolds ~~3SmallPad01 and
@@ -75,6 +79,8 @@ var _scroll_fx_time := 0.0
 var _generated_energy := 0
 var _selection_halo
 var _has_rally_point := false
+var _refinery_dock_users: Dictionary = {}
+var _refinery_dock_cooldowns: Dictionary = {}
 
 
 func _ready() -> void:
@@ -103,6 +109,7 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
+	_advance_refinery_dock_cooldowns(delta)
 	if _scroll_fx_meshes.is_empty():
 		return
 	# Scrolling textures (e.g. the windtrap's spinning blades/spotlights) need
@@ -391,6 +398,131 @@ func set_upgrade_level(level: int) -> void:
 
 func dock_count() -> int:
 	return refinery_upgrade_state
+
+
+## The base refinery starts with its central pad; refinery_upgrade_state counts
+## only the one or two additional pads unfolded by upgrades.
+func refinery_dock_capacity() -> int:
+	if not is_refinery():
+		return 0
+	return mini(1 + refinery_upgrade_state, _refinery_deploy_points().size())
+
+
+func is_refinery() -> bool:
+	return building_config != null and building_config.list(&"roles").has(REFINERY_ROLE)
+
+
+## Reserves one currently active pad immediately. A reservation remains owned
+## by this harvester through docking and Unload_End, then enters a three-second
+## cooldown so the departing vehicle can clear the lane.
+func try_reserve_refinery_dock(harvester: Node) -> int:
+	if harvester == null or not is_instance_valid(harvester):
+		return INVALID_REFINERY_DOCK
+	_prune_refinery_dock_users()
+	for dock_index in refinery_dock_capacity():
+		if float(_refinery_dock_cooldowns.get(dock_index, 0.0)) > 0.0:
+			continue
+		if _refinery_dock_users.has(dock_index):
+			continue
+		_refinery_dock_users[dock_index] = harvester
+		return dock_index
+	return INVALID_REFINERY_DOCK
+
+
+func refinery_dock_reserved_by(dock_index: int, harvester: Node) -> bool:
+	_prune_refinery_dock_users()
+	return _refinery_dock_users.get(dock_index) == harvester
+
+
+func release_refinery_dock(
+		harvester: Node, cooldown_seconds := REFINERY_DOCK_RELEASE_DELAY_SECONDS
+	) -> void:
+	for dock_index in _refinery_dock_users.keys():
+		if _refinery_dock_users[dock_index] != harvester:
+			continue
+		_refinery_dock_users.erase(dock_index)
+		_refinery_dock_cooldowns[dock_index] = maxf(cooldown_seconds, 0.0)
+
+
+## Before a vehicle enters the pad lane there is nothing that needs a departure
+## gap. This is used when an approach/wait order is replaced or the refinery is
+## captured before parking begins.
+func abandon_refinery_dock(harvester: Node) -> void:
+	release_refinery_dock(harvester, 0.0)
+
+
+func refinery_front_position() -> Vector3:
+	return global_position + exit_direction() * (
+		_front_footprint_extent() + RALLY_POINT_CLEARANCE
+	)
+
+
+## Converts the authoritative Rules.txt DeployTile into world space. Exported
+## occupy rows are Z-mirrored to match converted models, while deploy_points
+## intentionally retain their source orientation (import_rules.gd); mirror Y
+## here against the occupy height before applying the building transform.
+func refinery_dock_world_position(dock_index: int) -> Vector3:
+	var points := _refinery_deploy_points()
+	var rows := _refinery_occupy_rows()
+	if dock_index < 0 or dock_index >= refinery_dock_capacity() or rows.is_empty():
+		return Vector3.INF
+	var point: Dictionary = points[dock_index]
+	var width := 0
+	for row in rows:
+		width = maxi(width, String(row).length())
+	if width <= 0:
+		return Vector3.INF
+	var source_y := int(point.get("tile_y", 0))
+	var mirrored_y := rows.size() - 1 - source_y
+	var local_x := (float(point.get("tile_x", 0)) + 0.5 - float(width) * 0.5) * OCCUPY_CELL_WORLD_SPAN
+	var local_z := (float(mirrored_y) + 0.5 - float(rows.size()) * 0.5) * OCCUPY_CELL_WORLD_SPAN
+	return global_position \
+		+ SpatialOrientationScript.world_right(self) * local_x \
+		+ exit_direction() * local_z
+
+
+func refinery_dock_facing_direction(dock_index: int) -> Vector3:
+	var points := _refinery_deploy_points()
+	if dock_index < 0 or dock_index >= refinery_dock_capacity():
+		return exit_direction()
+	var degrees := float((points[dock_index] as Dictionary).get("angle", 0.0))
+	return exit_direction().rotated(Vector3.UP, deg_to_rad(degrees)).normalized()
+
+
+func refinery_dock_navigation_cells(navigation_grid) -> Dictionary:
+	if navigation_grid == null:
+		return {}
+	return BuildingFootprintScript.nav_cells_by_marker(
+		self,
+		_refinery_occupy_rows(),
+		navigation_grid,
+		BuildingPlacement.NAV_CELLS_PER_OCCUPY_CELL
+	)
+
+
+func _refinery_deploy_points() -> Array:
+	return building_config.list(&"deploy_points") if building_config != null else []
+
+
+func _refinery_occupy_rows() -> Array:
+	return building_config.list(&"occupy_rows") if building_config != null else []
+
+
+func _advance_refinery_dock_cooldowns(delta: float) -> void:
+	_prune_refinery_dock_users()
+	for dock_index in _refinery_dock_cooldowns.keys():
+		var remaining := maxf(float(_refinery_dock_cooldowns[dock_index]) - maxf(delta, 0.0), 0.0)
+		if remaining <= 0.0001:
+			_refinery_dock_cooldowns.erase(dock_index)
+		else:
+			_refinery_dock_cooldowns[dock_index] = remaining
+
+
+func _prune_refinery_dock_users() -> void:
+	for dock_index in _refinery_dock_users.keys():
+		var harvester = _refinery_dock_users[dock_index]
+		if not is_instance_valid(harvester) or harvester.is_queued_for_deletion():
+			_refinery_dock_users.erase(dock_index)
 
 
 func can_add_dock() -> bool:

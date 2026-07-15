@@ -52,6 +52,7 @@ func _initialize() -> void:
 	)
 
 	_run_case("refinery dock upgrades use three persistent animated states", _test_refinery_dock_states)
+	_run_case("refinery dock reservations include a departure cooldown", _test_refinery_dock_reservations)
 	_run_case(
 		"dock orders auto-select an eligible refinery and never create a building",
 		_test_automatic_refinery_upgrade.bind(local_player)
@@ -289,6 +290,45 @@ func _test_refinery_dock_states(token: int) -> int:
 	_expect(refinery.dock_count() == 2 and not refinery.can_add_dock(), "state 2 must be the refinery's maximum")
 	_expect(not refinery.add_refinery_dock_upgrade(), "a third dock state must be rejected")
 
+	refinery.free()
+	return token
+
+
+func _test_refinery_dock_reservations(token: int) -> int:
+	var refinery := BuildingScript.new()
+	refinery.config_id = &"ATRefinery"
+	root.add_child(refinery)
+	var first := Node.new()
+	var second := Node.new()
+	root.add_child(first)
+	root.add_child(second)
+
+	_expect(refinery.is_refinery(), "the Refinery role must enable the runtime dock API")
+	_expect(refinery.refinery_dock_capacity() == 1, "an unupgraded refinery must expose its central dock")
+	var first_dock := refinery.try_reserve_refinery_dock(first)
+	_expect(first_dock == 0, "the first harvester must reserve the central dock immediately")
+	_expect(refinery.try_reserve_refinery_dock(second) == -1, "a reserved dock must reject a second harvester")
+	refinery.release_refinery_dock(first)
+	refinery._process(2.9)
+	_expect(refinery.try_reserve_refinery_dock(second) == -1, "the dock must remain unavailable during its three-second departure gap")
+	refinery._process(0.1)
+	_expect(refinery.try_reserve_refinery_dock(second) == 0, "the dock must reopen after exactly three seconds")
+	_expect(refinery.refinery_dock_world_position(0).is_finite(), "the central DeployTile must resolve to a world position")
+
+	refinery.abandon_refinery_dock(second)
+	refinery.set_refinery_upgrade_state(2)
+	_expect(refinery.refinery_dock_capacity() == 3, "two completed upgrades must expose all three DeployTile entries")
+	var users: Array[Node] = []
+	for expected_index in 3:
+		var user := Node.new()
+		users.append(user)
+		root.add_child(user)
+		_expect(refinery.try_reserve_refinery_dock(user) == expected_index, "active docks must be reserved in deterministic rules order")
+
+	for user in users:
+		user.free()
+	first.free()
+	second.free()
 	refinery.free()
 	return token
 

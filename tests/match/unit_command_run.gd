@@ -29,6 +29,7 @@ class FakeUnit extends Node3D:
 
 class FakeHarvester extends FakeUnit:
 	var harvest_commands: Array[Dictionary] = []
+	var unload_commands: Array[Dictionary] = []
 	var cancelled_harvest_orders := 0
 
 	func can_harvest_spice() -> bool:
@@ -41,11 +42,20 @@ class FakeHarvester extends FakeUnit:
 	func cancel_harvest_order() -> void:
 		cancelled_harvest_orders += 1
 
+	func can_unload_at(refinery: Node) -> bool:
+		return refinery.has_method("is_refinery") and bool(refinery.call("is_refinery")) \
+			and refinery.is_owned_by(player.player_id)
+
+	func command_unload(refinery: Node, navigation_grid) -> bool:
+		unload_commands.append({"refinery": refinery, "grid": navigation_grid})
+		return true
+
 
 class FakeBuilding extends Node3D:
 	var player = null
 	var selected := false
 	var rally_points: Array[Vector3] = []
+	var refinery := false
 
 	func set_selected(active: bool) -> void:
 		selected = active
@@ -58,6 +68,9 @@ class FakeBuilding extends Node3D:
 
 	func set_rally_point(target: Vector3) -> void:
 		rally_points.append(target)
+
+	func is_refinery() -> bool:
+		return refinery
 
 
 class FakeUnitCommandController extends UnitCommandController:
@@ -111,6 +124,7 @@ func _initialize() -> void:
 	_run_case("rectangle unit selection", _test_rectangle_unit_selection.bind(local_player, enemy_player))
 	_run_case("J modifies movement formation", _test_formation_modifier.bind(local_player))
 	_run_case("spice click issues harvester order", _test_harvester_order.bind(local_player))
+	_run_case("owned refinery click issues unload order", _test_unload_order.bind(local_player, enemy_player))
 	_run_case("building selection", _test_building_selection.bind(local_player))
 	players.reset_for_match()
 	if _failures > 0:
@@ -291,6 +305,7 @@ func _test_harvester_order(token: int, local_player) -> int:
 	commands.raycast_hits.append({"collider": collider})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
 
+	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(12.4, 0.0, 14.8)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(harvester.harvest_commands.size() == 1, "a spice-cell click must issue the dedicated harvesting order")
@@ -298,6 +313,7 @@ func _test_harvester_order(token: int, local_player) -> int:
 	_expect(navigation.commands.is_empty() and harvester.move_targets.is_empty(), "a harvester spice order must not also become a generic move")
 	_expect(statuses.back().begins_with("Harvesting spice at 12.4, 14.8"), "the command status must identify resource collection")
 
+	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(20.0, 0.0, 21.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(harvester.cancelled_harvest_orders == 1, "a later ordinary move must cancel the harvesting order")
@@ -305,6 +321,66 @@ func _test_harvester_order(token: int, local_player) -> int:
 
 	commands.queue_free()
 	harvester.queue_free()
+	terrain.free()
+	return token
+
+
+func _test_unload_order(token: int, local_player, enemy_player) -> int:
+	var navigation := FakeNavigation.new()
+	var terrain := MapLoader.new()
+	terrain.navigation_grid = FakeNavigationGrid.new()
+	terrain.spice_layer = FakeSpiceLayer.new()
+	var commands := FakeUnitCommandController.new()
+	commands.setup(null, terrain, navigation)
+	var statuses: Array[String] = []
+	commands.status_changed.connect(func(status: String) -> void: statuses.append(status))
+	root.add_child(commands)
+
+	var harvester := FakeHarvester.new()
+	harvester.name = "Harvester"
+	harvester.player = local_player
+	harvester.add_to_group("units")
+	root.add_child(harvester)
+	var harvester_collider := Node.new()
+	harvester.add_child(harvester_collider)
+	commands.raycast_hits.append({"collider": harvester_collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+
+	var owned_refinery := FakeBuilding.new()
+	owned_refinery.name = "ATRefinery"
+	owned_refinery.player = local_player
+	owned_refinery.refinery = true
+	owned_refinery.add_to_group("buildings")
+	root.add_child(owned_refinery)
+	var owned_collider := Node.new()
+	owned_refinery.add_child(owned_collider)
+	commands.raycast_hits.append({"collider": owned_collider})
+	commands.raycast_hits.append({"position": Vector3(8.0, 0.0, 9.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(harvester.unload_commands.size() == 1, "an owned refinery click must issue the dedicated unloading order")
+	_expect(harvester.unload_commands[0]["refinery"] == owned_refinery, "the unloading order must retain the clicked refinery")
+	_expect(navigation.commands.is_empty(), "a valid unloading click must not also become generic movement")
+	_expect(statuses.back().begins_with("Unloading at ATRefinery"), "the command status must identify the refinery")
+	_expect(commands.raycast_masks.slice(-2) == [2, 1], "an unload click must resolve the layer-two refinery separately from layer-one terrain")
+
+	var enemy_refinery := FakeBuilding.new()
+	enemy_refinery.name = "ORRefinery"
+	enemy_refinery.player = enemy_player
+	enemy_refinery.refinery = true
+	enemy_refinery.add_to_group("buildings")
+	root.add_child(enemy_refinery)
+	var enemy_collider := Node.new()
+	enemy_refinery.add_child(enemy_collider)
+	commands.raycast_hits.append({"collider": enemy_collider})
+	commands.raycast_hits.append({"position": Vector3(18.0, 0.0, 19.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(harvester.unload_commands.size() == 1, "an enemy refinery must not accept an unloading order")
+	_expect(navigation.commands.size() == 1, "an enemy refinery click must retain ordinary movement")
+
+	commands.queue_free()
+	harvester.queue_free()
+	owned_refinery.queue_free()
+	enemy_refinery.queue_free()
 	terrain.free()
 	return token
 

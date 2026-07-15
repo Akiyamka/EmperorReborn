@@ -18,6 +18,8 @@ var _drag_start: Vector2 = Vector2.INF
 var _formation_modifier_down := false
 
 const DRAG_SELECTION_THRESHOLD := 8.0
+const TERRAIN_COLLISION_MASK := 1
+const ENTITY_SELECTION_COLLISION_MASK := 2
 
 
 func setup(command_camera: Camera3D, command_terrain: MapLoader, navigation = null, selection_rectangle = null) -> void:
@@ -136,7 +138,20 @@ func _command_move(screen_position: Vector2) -> void:
 	if movable_entities.is_empty() and rally_buildings.is_empty():
 		return
 
-	var hit := _raycast(screen_position, 1)
+	# Buildings and units expose their selectable collision on layer 2, while
+	# movement positions come from terrain layer 1. Keep the queries separate:
+	# otherwise a refinery click resolves only to the ground below it and loses
+	# the entity required by the dedicated unload command.
+	var target_entity = null
+	for entity in movable_entities:
+		if not entity.has_method("can_unload_at"):
+			continue
+		var entity_hit := _raycast(screen_position, ENTITY_SELECTION_COLLISION_MASK)
+		if not entity_hit.is_empty():
+			target_entity = _find_selectable_entity(entity_hit.get("collider") as Node)
+		break
+
+	var hit := _raycast(screen_position, TERRAIN_COLLISION_MASK)
 	if hit.is_empty():
 		return
 
@@ -162,8 +177,17 @@ func _command_move(screen_position: Vector2) -> void:
 		spice_target = _terrain.spice_layer != null and bool(_terrain.spice_layer.call("has_spice", target_cell))
 
 	var harvesting_entities: Array[Node] = []
+	var unloading_entities: Array[Node] = []
 	var moving_entities: Array[Node] = []
 	for entity in movable_entities:
+		var can_unload := target_entity != null \
+			and entity.has_method("can_unload_at") \
+			and bool(entity.call("can_unload_at", target_entity)) \
+			and entity.has_method("command_unload")
+		if can_unload and _terrain != null and _terrain.navigation_grid != null \
+		and bool(entity.call("command_unload", target_entity, _terrain.navigation_grid)):
+			unloading_entities.append(entity)
+			continue
 		var can_harvest := entity.has_method("can_harvest_spice") \
 			and bool(entity.call("can_harvest_spice")) \
 			and entity.has_method("command_harvest")
@@ -190,7 +214,15 @@ func _command_move(screen_position: Vector2) -> void:
 			str(debug.get("terrain_name", "?")),
 		]
 	var movement_label := ""
-	if not harvesting_entities.is_empty():
+	if not unloading_entities.is_empty():
+		movement_label = "Unloading at %s" % String(target_entity.name)
+		if unloading_entities.size() > 1:
+			movement_label = "Unloading %d harvesters at %s" % [
+				unloading_entities.size(), String(target_entity.name)
+			]
+		if not moving_entities.is_empty():
+			movement_label += " | moving %d other units" % moving_entities.size()
+	elif not harvesting_entities.is_empty():
 		movement_label = "Harvesting spice at %.1f, %.1f" % [target.x, target.z]
 		if harvesting_entities.size() > 1:
 			movement_label = "Harvesting spice with %d units at %.1f, %.1f" % [harvesting_entities.size(), target.x, target.z]
