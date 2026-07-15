@@ -12,6 +12,13 @@ const MATURITY_DURATION_MULTIPLIER := 3.0
 const SOURCE_MODEL_DIAMETER := 32.0
 const SOURCE_GROWTH_ANIMATION := &"timeline"
 const SOURCE_GROWTH_TRACK := NodePath("_0Spicemound:transform")
+const PARTICLES_PER_HAZARD_CELL := 3
+const MIN_HAZARD_PARTICLES := 48
+const MAX_HAZARD_PARTICLES := 512
+const HAZARD_PARTICLE_SIZE_DIVISOR := 3.0
+const HAZARD_DAMPING_MIN_RATIO := 0.24
+const HAZARD_DAMPING_MAX_RATIO := 0.34
+const HAZARD_DAMPING_RANGE_COMPENSATION := 1.45
 
 @export var source_cell := Vector2i(-1, -1)
 
@@ -105,6 +112,92 @@ func _apply_footprint() -> void:
 	if box != null:
 		box.size = Vector3(_footprint.x, maxf(minf(_footprint.x, _footprint.y), 0.5), _footprint.y)
 		shape_node.position.y = box.size.y * 0.5
+
+
+func start_spread_hazard(local_points: PackedVector3Array, particle_size: float) -> void:
+	var dust := get_node_or_null("SpreadDust") as GPUParticles3D
+	var dust_material := dust.process_material as ParticleProcessMaterial if dust != null else null
+	if dust == null or dust_material == null or local_points.is_empty():
+		return
+	var hazard_radius := 0.0
+	for point: Vector3 in local_points:
+		hazard_radius = maxf(hazard_radius, Vector2(point.x, point.z).length())
+	# A 48-degree cone gives the burst a narrow vertical core and enough lateral
+	# velocity to open into a geyser umbrella. Scaling both gravity and velocity
+	# from the radius keeps the apex early while the fall fills the five seconds.
+	var gravity_strength := maxf(hazard_radius * 0.2, 1.2)
+	# Strong early damping shortens the ballistic arc, so give the burst a
+	# matching launch boost. This restores the hazard radius without sacrificing
+	# the fast-to-slow motion profile.
+	var outer_velocity := sqrt(maxf(hazard_radius, particle_size) * gravity_strength) \
+		* 1.08 * HAZARD_DAMPING_RANGE_COMPENSATION
+	dust_material.initial_velocity_min = maxf(outer_velocity * 0.38, 0.8)
+	dust_material.initial_velocity_max = maxf(outer_velocity, 1.5)
+	dust_material.gravity = Vector3(0.0, -gravity_strength, 0.0)
+	# Front-load the damping so the geyser bursts outward quickly, loses most of
+	# its speed early, then drifts and falls gently for the rest of its lifetime.
+	dust_material.damping_min = maxf(outer_velocity * HAZARD_DAMPING_MIN_RATIO, 0.55)
+	dust_material.damping_max = maxf(outer_velocity * HAZARD_DAMPING_MAX_RATIO, 0.8)
+	_ensure_hazard_damping_curve(dust_material)
+	_ensure_hazard_scale_curve(dust_material)
+	dust.amount = clampi(
+		local_points.size() * PARTICLES_PER_HAZARD_CELL,
+		MIN_HAZARD_PARTICLES,
+		MAX_HAZARD_PARTICLES
+	)
+	var dust_quad := dust.draw_pass_1 as QuadMesh
+	if dust_quad != null:
+		var size := maxf(particle_size / HAZARD_PARTICLE_SIZE_DIVISOR, 0.1)
+		dust_quad.size = Vector2(size, size)
+	var margin := maxf(particle_size, 1.0) * 2.0
+	var apex_height := dust_material.initial_velocity_max * dust_material.initial_velocity_max \
+		/ (2.0 * gravity_strength)
+	dust.visibility_aabb = AABB(
+		Vector3(-hazard_radius - margin, -margin, -hazard_radius - margin),
+		Vector3(
+			(hazard_radius + margin) * 2.0,
+			apex_height + margin * 2.0,
+			(hazard_radius + margin) * 2.0
+		)
+	)
+	dust.visible = true
+	dust.restart()
+
+
+func _ensure_hazard_scale_curve(dust_material: ParticleProcessMaterial) -> void:
+	if dust_material.scale_curve != null:
+		return
+	var growth_curve := Curve.new()
+	growth_curve.min_value = 0.0
+	growth_curve.max_value = HAZARD_PARTICLE_SIZE_DIVISOR
+	growth_curve.add_point(Vector2(0.0, 1.0))
+	growth_curve.add_point(Vector2(1.0, HAZARD_PARTICLE_SIZE_DIVISOR))
+	var growth_texture := CurveTexture.new()
+	growth_texture.curve = growth_curve
+	dust_material.scale_curve = growth_texture
+
+
+func _ensure_hazard_damping_curve(dust_material: ParticleProcessMaterial) -> void:
+	if dust_material.damping_curve != null:
+		return
+	var damping_curve := Curve.new()
+	damping_curve.min_value = 0.0
+	damping_curve.max_value = 1.0
+	damping_curve.add_point(Vector2(0.0, 1.0))
+	damping_curve.add_point(Vector2(0.16, 0.92))
+	damping_curve.add_point(Vector2(0.38, 0.28))
+	damping_curve.add_point(Vector2(1.0, 0.08))
+	var damping_texture := CurveTexture.new()
+	damping_texture.curve = damping_curve
+	dust_material.damping_curve = damping_texture
+
+
+func stop_spread_hazard() -> void:
+	var dust := get_node_or_null("SpreadDust") as GPUParticles3D
+	if dust == null:
+		return
+	dust.emitting = false
+	dust.visible = false
 
 
 func _prepare_maturity_cycle() -> void:

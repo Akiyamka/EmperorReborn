@@ -1,22 +1,62 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene format=3 uid="uid://rnfmvdlicxlt"]
 
-[ext_resource type="Script" path="res://scripts/world/map/spice_mound.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://bxodgqelnxn0j" path="res://scripts/world/map/spice_mound.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://assets/converted/models/Spicemound/Spicemound.scn" id="2_model"]
+[ext_resource type="Shader" uid="uid://bm25q3mu1b4cw" path="res://scripts/world/map/spice_dust.gdshader" id="3_dust_shader"]
 
 [sub_resource type="BoxShape3D" id="BoxShape_mound"]
 resource_local_to_scene = true
-size = Vector3(1, 1, 1)
 
-[node name="SpiceMound" type="Area3D"]
+[sub_resource type="Gradient" id="Gradient_dust"]
+offsets = PackedFloat32Array(0, 0.35, 0.72, 1)
+colors = PackedColorArray(1, 0.38039216, 0, 0.9019608, 1, 0.38039216, 0, 0.68, 1, 0.38039216, 0, 0.2784314, 1, 0.38039216, 0, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_dust"]
+gradient = SubResource("Gradient_dust")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_dust"]
+resource_local_to_scene = true
+direction = Vector3(0, 1, 0)
+spread = 48.0
+initial_velocity_min = 1.5
+initial_velocity_max = 4.0
+gravity = Vector3(0, -1.5, 0)
+damping_min = 0.65
+damping_max = 1.0
+color_ramp = SubResource("GradientTexture1D_dust")
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_dust"]
+render_priority = 1
+shader = ExtResource("3_dust_shader")
+
+[sub_resource type="QuadMesh" id="QuadMesh_dust"]
+resource_local_to_scene = true
+material = SubResource("ShaderMaterial_dust")
+size = Vector2(0.65, 0.65)
+
+[node name="SpiceMound" type="Area3D" unique_id=570618679]
 collision_layer = 0
 collision_mask = 2
 script = ExtResource("1_script")
 
-[node name="Visual" parent="." instance=ExtResource("2_model")]
+[node name="Visual" parent="." unique_id=1659606497 instance=ExtResource("2_model")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-position = Vector3(0, 0.5, 0)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1673345209]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
 shape = SubResource("BoxShape_mound")
 
-[node name="MaturityTimer" type="Timer" parent="."]
+[node name="SpreadDust" type="GPUParticles3D" parent="." unique_id=615874653]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.12, 0)
+visible = false
+emitting = false
+amount = 48
+lifetime = 5.0
+one_shot = true
+explosiveness = 1.0
+fixed_fps = 0
+visibility_aabb = AABB(-3, -0.5, -3, 6, 4.5, 6)
+process_material = SubResource("ParticleProcessMaterial_dust")
+draw_pass_1 = SubResource("QuadMesh_dust")
+
+[node name="MaturityTimer" type="Timer" parent="." unique_id=1771354149]
 one_shot = true

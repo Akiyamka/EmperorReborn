@@ -18,6 +18,11 @@ const COMPOSITE_TEXTURE_SIZE := 1024
 const RULE_TICKS_PER_SECOND := 60.0
 const MIN_SPREAD_INTERVAL_SECONDS := 0.001
 const SPREAD_INTERVAL_MULTIPLIER := 3.0
+const SPICE_HAZARD_DURATION_SECONDS := 5.0
+const SPICE_HAZARD_TICK_SECONDS := 0.25
+const SPICE_HAZARD_TICK_COUNT := int(SPICE_HAZARD_DURATION_SECONDS / SPICE_HAZARD_TICK_SECONDS)
+const SPICE_PUFF_ID := &"SpicePuff"
+const DEFAULT_SPICE_HAZARD_DAMAGE := 10.0
 
 var world_bounds := AABB()
 
@@ -35,6 +40,7 @@ var _terrain_mesh: MeshInstance3D
 var _spice_mounds_root: Node3D
 var _spice_mound_nodes: Dictionary = {}
 var _active_spice_spreads: Dictionary = {}
+var _active_spice_hazards: Dictionary = {}
 
 
 func load_baked(data: BakedMapData, navigation_grid: MapNavigationGrid, terrain_mesh: MeshInstance3D = null) -> bool:
@@ -191,6 +197,8 @@ func detach_visuals() -> void:
 		if is_instance_valid(timer):
 			timer.free()
 	_active_spice_spreads.clear()
+	for source_cell: Vector2i in _active_spice_hazards.keys():
+		_cancel_spice_hazard(source_cell)
 	if is_instance_valid(_composite_viewport):
 		_composite_viewport.free()
 	_composite_viewport = null
@@ -264,6 +272,7 @@ func _spawn_spice_mound(source_cell: Vector2i) -> void:
 
 
 func _remove_spice_mound(source_cell: Vector2i) -> void:
+	_cancel_spice_hazard(source_cell)
 	var mound: Variant = _spice_mound_nodes.get(source_cell)
 	_spice_mound_nodes.erase(source_cell)
 	if is_instance_valid(mound):
@@ -289,11 +298,13 @@ func _on_spice_mound_activated(mound: Variant, early_activation: bool, source_ce
 
 func _start_spice_spread(source_cell: Vector2i, config: Resource) -> void:
 	_cancel_spice_spread(source_cell)
+	_cancel_spice_hazard(source_cell)
 	var spread := _create_spice_spread_job(source_cell, config)
 	var cells := spread.get("cells", []) as Array
 	if cells.is_empty() or not is_instance_valid(_spice_mounds_root):
 		spice_spread_finished.emit(source_cell)
 		return
+	_start_spice_hazard(source_cell, spread)
 
 	var timer := Timer.new()
 	timer.name = "SpiceSpread_%d_%d" % [source_cell.x, source_cell.y]
@@ -419,6 +430,124 @@ func _cancel_spice_spread(source_cell: Vector2i) -> void:
 	if is_instance_valid(timer):
 		timer.stop()
 		timer.queue_free()
+
+
+func _start_spice_hazard(source_cell: Vector2i, spread: Dictionary) -> void:
+	_cancel_spice_hazard(source_cell)
+	var mound: Variant = _spice_mound_nodes.get(source_cell)
+	if not is_instance_valid(mound) or not is_instance_valid(_spice_mounds_root):
+		return
+	var affected_cells := {}
+	var local_points := PackedVector3Array()
+	for entry: Dictionary in spread.get("cells", []):
+		if int(entry.get("amount", 0)) <= 0:
+			continue
+		var cell := entry.get("cell", Vector2i(-1, -1)) as Vector2i
+		if _cell_index(cell) < 0:
+			continue
+		affected_cells[cell] = true
+		var point := _navigation_grid.grid_to_world(cell)
+		point.y = _terrain_height_at(Vector2(point.x, point.z))
+		local_points.append(point - mound.global_position)
+	if affected_cells.is_empty():
+		return
+
+	var cell_size := _navigation_grid.cell_size()
+	mound.start_spread_hazard(local_points, maxf(minf(cell_size.x, cell_size.y) * 1.35, 0.25))
+	var damage_timer := Timer.new()
+	damage_timer.name = "SpiceHazardDamage_%d_%d" % [source_cell.x, source_cell.y]
+	damage_timer.wait_time = SPICE_HAZARD_TICK_SECONDS
+	var end_timer := Timer.new()
+	end_timer.name = "SpiceHazardEnd_%d_%d" % [source_cell.x, source_cell.y]
+	end_timer.one_shot = true
+	end_timer.wait_time = SPICE_HAZARD_DURATION_SECONDS
+	_spice_mounds_root.add_child(damage_timer)
+	_spice_mounds_root.add_child(end_timer)
+	_active_spice_hazards[source_cell] = {
+		"cells": affected_cells,
+		"damage": _spice_hazard_damage_per_second() * SPICE_HAZARD_TICK_SECONDS,
+		"damage_timer": damage_timer,
+		"end_timer": end_timer,
+		"remaining_delayed_ticks": SPICE_HAZARD_TICK_COUNT - 1,
+	}
+	damage_timer.timeout.connect(_on_spice_hazard_damage_timeout.bind(source_cell))
+	end_timer.timeout.connect(_cancel_spice_hazard.bind(source_cell))
+	_apply_spice_hazard_damage(source_cell)
+	damage_timer.start()
+	end_timer.start()
+
+
+func _on_spice_hazard_damage_timeout(source_cell: Vector2i) -> void:
+	var hazard := _active_spice_hazards.get(source_cell, {}) as Dictionary
+	if hazard.is_empty():
+		return
+	var remaining := int(hazard.get("remaining_delayed_ticks", 0))
+	if remaining <= 0:
+		return
+	_apply_spice_hazard_damage(source_cell)
+	remaining -= 1
+	hazard["remaining_delayed_ticks"] = remaining
+	_active_spice_hazards[source_cell] = hazard
+	if remaining == 0:
+		var damage_timer := hazard.get("damage_timer") as Timer
+		if is_instance_valid(damage_timer):
+			damage_timer.stop()
+
+
+func _apply_spice_hazard_damage(source_cell: Vector2i) -> int:
+	var hazard := _active_spice_hazards.get(source_cell, {}) as Dictionary
+	if hazard.is_empty():
+		return 0
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return 0
+	return _damage_infantry_in_cells(
+		hazard.get("cells", {}) as Dictionary,
+		float(hazard.get("damage", DEFAULT_SPICE_HAZARD_DAMAGE * SPICE_HAZARD_TICK_SECONDS)),
+		tree.get_nodes_in_group(&"units")
+	)
+
+
+func _damage_infantry_in_cells(cells: Dictionary, damage: float, units: Array) -> int:
+	if cells.is_empty() or damage <= 0.0 or _navigation_grid == null:
+		return 0
+	var damaged := 0
+	for unit: Variant in units:
+		if not is_instance_valid(unit) or not unit.has_method("take_damage"):
+			continue
+		var unit_config: Resource = unit.get("unit_config")
+		if unit_config == null or not bool(unit_config.field(&"infantry", false)):
+			continue
+		var world_position: Vector3 = unit.global_position if unit.is_inside_tree() else unit.position
+		if not cells.has(_navigation_grid.world_to_grid(world_position)):
+			continue
+		unit.take_damage(damage)
+		damaged += 1
+	return damaged
+
+
+func _spice_hazard_damage_per_second() -> float:
+	var tree := Engine.get_main_loop() as SceneTree
+	var rules := tree.root.get_node_or_null("Rules") if tree != null else null
+	var spice_puff: Resource = rules.bullet(SPICE_PUFF_ID) if rules != null else null
+	return maxf(
+		float(spice_puff.field(&"damage", DEFAULT_SPICE_HAZARD_DAMAGE)) if spice_puff != null \
+		else DEFAULT_SPICE_HAZARD_DAMAGE,
+		0.0
+	)
+
+
+func _cancel_spice_hazard(source_cell: Vector2i) -> void:
+	var hazard := _active_spice_hazards.get(source_cell, {}) as Dictionary
+	_active_spice_hazards.erase(source_cell)
+	for key in [&"damage_timer", &"end_timer"]:
+		var timer := hazard.get(key) as Timer
+		if is_instance_valid(timer):
+			timer.stop()
+			timer.queue_free()
+	var mound: Variant = _spice_mound_nodes.get(source_cell)
+	if is_instance_valid(mound):
+		mound.stop_spread_hazard()
 
 
 func _is_passable_sand(cell: Vector2i) -> bool:

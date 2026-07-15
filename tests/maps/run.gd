@@ -8,6 +8,16 @@ const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.
 const SpiceMoundScene := preload("res://scenes/world/spice_mound.tscn")
 const TextureImageUtilsScript := preload("res://converters/texture_image_utils.gd")
 
+
+class HazardUnit:
+	extends Node3D
+	var unit_config: Resource
+	var damage_taken := 0.0
+
+	func take_damage(amount: float) -> void:
+		damage_taken += amount
+
+
 var _assertions := 0
 var _failures := 0
 var _current_case := ""
@@ -165,10 +175,15 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 	var model_mesh := mound.get_node("Visual/_0Spicemound/Mesh") as MeshInstance3D
 	var model_player := mound.get_node("Visual/AnimationPlayer") as AnimationPlayer
 	var box := mound.get_node("CollisionShape3D").shape as BoxShape3D
+	var dust := mound.get_node("SpreadDust") as GPUParticles3D
+	var dust_material := dust.process_material as ParticleProcessMaterial
+	var dust_quad := dust.draw_pass_1 as QuadMesh
 	var timer := mound.get_node("MaturityTimer") as Timer
 	_expect(model_mesh.mesh.get_surface_count() == 1 and model_mesh.get_aabb().size.y > 0.0, "a mound must use the original three-dimensional XBF mesh")
 	_expect(is_equal_approx(visual.scale.x * 32.0, 2.0) and is_equal_approx(visual.scale.z * 32.0, 3.0), "the original mound mesh must match its source-cell world footprint")
 	_expect(box.size.x == 2.0 and box.size.z == 3.0, "a mound Area3D must own a collision region matching its mesh")
+	_expect(dust.one_shot and not dust.emitting and not dust.visible and dust.lifetime == 5.0, "a mound must own a dormant five-second geyser emitter")
+	_expect(dust_material.direction == Vector3.UP and dust_material.gravity.y < 0.0, "hazard dust must launch upward and fall under downward gravity")
 	_expect(mound.collision_layer == 0 and mound.collision_mask == 2, "a mound must detect unit bodies without becoming a solid navigation obstacle")
 	_expect(is_equal_approx(timer.wait_time, 3750.0 / 60.0) and timer.one_shot, "the maturity multiplier must put the randomized Size plus Cost lifespan near one real minute")
 	_expect(model_player.has_animation(&"timeline") and model_player.get_animation(&"timeline").track_get_key_count(0) == 31, "a mound must retain its original XBF growth animation")
@@ -183,6 +198,24 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 		early_activations.append(early)
 	)
 	_expect(mound.activate(true) and activation_count[0] == 1 and early_activations[0], "contact activation must fire the current cycle early")
+	_expect(not dust.emitting, "the mound must wait for the map layer to provide the complete spread area")
+	var hazard_points := PackedVector3Array([Vector3.ZERO, Vector3(2.0, 0.25, 1.0)])
+	mound.start_spread_hazard(hazard_points, 1.25)
+	_expect(dust.emitting and dust.visible and dust_material.initial_velocity_max > 0.0, "the geyser must launch across the supplied spread radius from the mound")
+	var uncompensated_velocity := sqrt(Vector2(2.0, 1.0).length() * 1.2) * 1.08
+	_expect(dust_material.initial_velocity_max >= uncompensated_velocity * 1.4, "strong early damping must be offset by a launch boost that preserves the hazard radius")
+	_expect(dust.amount == 48 and dust_quad.size.is_equal_approx(Vector2(1.25, 1.25) / 3.0), "hazard density and reduced particle size must scale from the spread grid")
+	var scale_texture := dust_material.scale_curve as CurveTexture
+	_expect(scale_texture != null and scale_texture.curve.min_value == 0.0 and scale_texture.curve.max_value == 3.0, "hazard clouds must grow from one-third size back to their original size")
+	var damping_texture := dust_material.damping_curve as CurveTexture
+	_expect(
+		damping_texture != null
+			and damping_texture.curve.sample(0.0) > damping_texture.curve.sample(0.4)
+			and damping_texture.curve.sample(0.4) > damping_texture.curve.sample(1.0),
+		"hazard clouds must decelerate sharply near the start and drift gently near the end"
+	)
+	mound.stop_spread_hazard()
+	_expect(not dust.emitting and not dust.visible, "ending the five-second hazard must hide its visual indicator immediately")
 	_expect(is_equal_approx(mound.growth_scale(), 0.001), "early activation must immediately restart the authored growth animation")
 	mound.call("_on_maturity_timeout")
 	_expect(activation_count[0] == 2 and not early_activations[1], "timer activation must fire and begin the next recurring cycle")
@@ -216,6 +249,29 @@ func _test_spice_mound_staged_passable_sand_spread(token: int) -> int:
 	_expect(is_equal_approx(layer.call("_spread_interval_seconds", config), 0.3), "spice rings must advance three times slower than the Rules BuildTime interval")
 	var spread: Dictionary = layer.call("_create_spice_spread_job", center, config)
 	_expect(spread.get("stage_count") == 3 and (spread.get("cells", []) as Array).size() == 4, "BlastRadius must produce one outward ring per tile and select only eligible cells")
+	_expect(MapSpiceLayerScript.SPICE_HAZARD_DURATION_SECONDS == 5.0 and MapSpiceLayerScript.SPICE_HAZARD_TICK_COUNT == 20, "the damaging visual hazard must remain active for five seconds at four checks per second")
+	_expect(is_equal_approx(layer.call("_spice_hazard_damage_per_second"), 10.0), "the hazard damage rate must use SpicePuff Damage from the rules catalog")
+
+	var infantry := HazardUnit.new()
+	infantry.unit_config = RuleEntityConfigScript.new()
+	infantry.unit_config.fields = {"infantry": true}
+	infantry.position = grid.grid_to_world(center)
+	var vehicle := HazardUnit.new()
+	vehicle.unit_config = RuleEntityConfigScript.new()
+	vehicle.unit_config.fields = {"infantry": false}
+	vehicle.position = grid.grid_to_world(center)
+	var outside_infantry := HazardUnit.new()
+	outside_infantry.unit_config = infantry.unit_config
+	outside_infantry.position = grid.grid_to_world(beyond_radius)
+	root.add_child(infantry)
+	root.add_child(vehicle)
+	root.add_child(outside_infantry)
+	var hazard_cells := {center: true, center + Vector2i.RIGHT: true, center + Vector2i(2, 0): true, center + Vector2i(3, 0): true}
+	_expect(layer.call("_damage_infantry_in_cells", hazard_cells, 10.0, [infantry, vehicle, outside_infantry]) == 1, "a hazard tick must target only infantry inside the spice-spread cells")
+	_expect(infantry.damage_taken == 10.0 and vehicle.damage_taken == 0.0 and outside_infantry.damage_taken == 0.0, "hazard damage must exclude vehicles and infantry outside BlastRadius")
+	infantry.free()
+	vehicle.free()
+	outside_infantry.free()
 
 	_expect(layer.call("_apply_spice_spread_stage", spread, 1) == 2, "the first stage must populate only the center and first-radius ring")
 	_expect(layer.spice_at(center) == 200 and layer.spice_at(center + Vector2i.RIGHT) == 200, "the first ring must receive its distributed mound capacity")
