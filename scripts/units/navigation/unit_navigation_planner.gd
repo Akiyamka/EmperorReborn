@@ -34,7 +34,9 @@ func find_path(start_cell: Vector2i, target_cell: Vector2i, pass_mask: int, clea
 	var snapped_start := _nearest_open(solid, start_cell, 8)
 	if snapped_start.x < 0:
 		return []
-	var snapped_target := _nearest_open(solid, target_cell, 24)
+	# No-stop cells are open for transit, but the final path cell must still be
+	# a legal place to park.
+	var snapped_target := _nearest_stoppable(solid, target_cell, 24)
 	if snapped_target.x < 0:
 		snapped_target = snapped_start
 	var astar: AStarGrid2D = profile["astar"]
@@ -106,14 +108,10 @@ func _solid_map(pass_mask: int, clearance_cells: int, allowed_terrain_mask: int)
 	var static_pass: PackedInt32Array = _map.grid.pass_mask
 	var terrain: PackedInt32Array = _map.grid.terrain_type
 	var blocked: PackedByteArray = _map.blocked_cells()
-	# No-stop cells (building exit aprons) count as solid for routing: paths
-	# never lead into or through them. Only local steering crosses them, which
-	# lets a freshly produced unit walk out.
-	var no_stop: PackedByteArray = _map.no_stop_cells()
 	var solid := PackedByteArray()
 	solid.resize(total)
 	for index in total:
-		if (static_pass[index] & pass_mask) == 0 or blocked[index] != 0 or no_stop[index] != 0:
+		if (static_pass[index] & pass_mask) == 0 or blocked[index] != 0:
 			solid[index] = 1
 		elif allowed_terrain_mask != 0 and (allowed_terrain_mask & (1 << terrain[index])) == 0:
 			solid[index] = 1
@@ -171,6 +169,27 @@ func _nearest_open(solid: PackedByteArray, origin: Vector2i, max_radius: int) ->
 				var candidate := origin + Vector2i(x, y)
 				var index := _index_of(candidate)
 				if index >= 0 and solid[index] == 0:
+					return candidate
+	return Vector2i(-1, -1)
+
+
+func _nearest_stoppable(solid: PackedByteArray, origin: Vector2i, max_radius: int) -> Vector2i:
+	var no_stop: PackedByteArray = _map.no_stop_cells()
+	var origin_index := _index_of(origin)
+	if origin_index >= 0 and solid[origin_index] == 0 and no_stop[origin_index] == 0:
+		return origin
+	for radius in range(1, max_radius + 1):
+		for x in range(-radius, radius + 1):
+			for y in [-radius, radius]:
+				var candidate := origin + Vector2i(x, y)
+				var index := _index_of(candidate)
+				if index >= 0 and solid[index] == 0 and no_stop[index] == 0:
+					return candidate
+		for y in range(-radius + 1, radius):
+			for x in [-radius, radius]:
+				var candidate := origin + Vector2i(x, y)
+				var index := _index_of(candidate)
+				if index >= 0 and solid[index] == 0 and no_stop[index] == 0:
 					return candidate
 	return Vector2i(-1, -1)
 

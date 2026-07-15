@@ -22,8 +22,8 @@ func setup(source_grid: MapNavigationGrid) -> bool:
 	return true
 
 
-## `no_stop_cells` are exit-only building aprons: solid for routing and never a
-## destination, yet physically passable so a unit produced inside can leave.
+## `no_stop_cells` are traversable building aprons that may be crossed by any
+## route, but may never be selected as an ordinary stopping destination.
 func replace_blocked_cells(cells: Dictionary, no_stop_cells: Dictionary = {}) -> bool:
 	if grid == null:
 		return false
@@ -51,6 +51,11 @@ func _bytes_from_cells(cells: Dictionary) -> PackedByteArray:
 func is_blocked(cell: Vector2i) -> bool:
 	var index := grid.cell_index(cell) if grid != null else -1
 	return index < 0 or _blocked[index] != 0
+
+
+func is_no_stop(cell: Vector2i) -> bool:
+	var index := grid.cell_index(cell) if grid != null else -1
+	return index < 0 or _no_stop[index] != 0
 
 
 func blocked_cells() -> PackedByteArray:

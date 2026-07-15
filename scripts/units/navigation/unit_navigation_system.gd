@@ -114,6 +114,9 @@ func register_unit(unit: Node3D) -> int:
 		"claim_radius": 0.0,
 		"claim_center": unit.global_position,
 		"swap_tick": -1000,
+		# Per-order exception used only while a harvester enters its reserved
+		# refinery pad. Ordinary commands always clear it.
+		"allowed_cells": {},
 	}
 	_agents[key] = agent
 	_next_agent_id += 1
@@ -188,6 +191,7 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		agent["blocked_time"] = 0.0
 		agent["reported_enemy"] = false
 		agent["exit_point"] = exit_point
+		agent["allowed_cells"] = {}
 		# A fresh order overrides an in-progress yield; a stale yield would keep
 		# steering the unit aside and, on expiry, replace this destination with
 		# wherever the unit happens to stand.
@@ -207,6 +211,49 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 	})
 	destination_slots_assigned.emit(command_id, assignments)
 	return assignments
+
+
+## Exact single-unit parking order. `allowed_cells` is normally the footprint
+## of the refinery that owns the reserved dock; only this agent may route and
+## stop there, so the global building blocker map remains unchanged for every
+## other unit.
+func command_dock(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary) -> bool:
+	if unit == null or runtime_map.grid == null or allowed_cells.is_empty():
+		return false
+	register_unit(unit)
+	var agent: Dictionary = _agent_for(unit)
+	if agent.is_empty():
+		return false
+	var command_id := _next_command_id
+	_next_command_id += 1
+	agent["destination"] = world_target
+	agent["reserved"] = true
+	agent["claim_radius"] = 0.0
+	agent["claim_center"] = world_target
+	agent["command_id"] = command_id
+	agent["mode"] = MoveMode.FREE
+	agent["group_speed"] = INF
+	agent["hold"] = false
+	agent["blocked_time"] = 0.0
+	agent["reported_enemy"] = false
+	agent["exit_point"] = Vector3.INF
+	agent["yield_remaining"] = 0.0
+	agent["yield_direction"] = Vector3.ZERO
+	agent["allowed_cells"] = allowed_cells.duplicate()
+	_route_agent(agent, unit.global_position, world_target)
+	_agents[unit.get_instance_id()] = agent
+	if unit.has_method("set_navigation_destination"):
+		unit.call("set_navigation_destination", world_target)
+	_command_log.append({
+		"tick": _navigation_tick_index,
+		"command_id": command_id,
+		"mode": MoveMode.FREE,
+		"target": world_target,
+		"agents": [agent["id"]],
+		"slots": [world_target],
+		"dock": true,
+	})
+	return bool(agent["direct_path"])
 
 
 func stop(unit: Node3D) -> void:
@@ -292,6 +339,15 @@ func agent_debug(unit: Node3D) -> Dictionary:
 		"blocked_time": agent["blocked_time"],
 		"route_ready": bool(agent["direct_path"]) or not (agent["path"] as Array).is_empty() or (agent["exit_point"] as Vector3).is_finite(),
 	}
+
+
+## Shared arrival contract for navigation-driven gameplay state machines.
+## Large authored vehicles stop farther from an exact point than small units;
+## callers waiting for arrival must use the same tolerance as steering.
+func arrival_tolerance(unit: Node3D) -> float:
+	var agent := _agent_for(unit)
+	var radius := float(agent.get("radius", 0.0))
+	return maxf(_arrival_radius(unit), radius * 0.35)
 
 
 func command_log() -> Array[Dictionary]:
@@ -420,7 +476,7 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 	var destination: Vector3 = agent["destination"]
 	var offset := destination - unit.global_position
 	offset.y = 0.0
-	var arrival := maxf(_arrival_radius(unit), float(agent["radius"]) * 0.35)
+	var arrival := arrival_tolerance(unit)
 	if offset.length() <= arrival:
 		return Vector3.ZERO
 	var direction := Vector3.ZERO
@@ -465,13 +521,13 @@ func _has_clear_line(from: Vector3, to: Vector3, agent: Dictionary) -> bool:
 			roundi(lerpf(float(start.x), float(finish.x), weight)),
 			roundi(lerpf(float(start.y), float(finish.y), weight))
 		)
-		if not runtime_map.is_stoppable(cell, int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+		if not _agent_cell_passable(agent, cell):
 			return false
 		var step: Vector2i = cell - previous
 		if step.x != 0 and step.y != 0:
-			if not runtime_map.is_stoppable(previous + Vector2i(step.x, 0), int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+			if not _agent_cell_passable(agent, previous + Vector2i(step.x, 0)):
 				return false
-			if not runtime_map.is_stoppable(previous + Vector2i(0, step.y), int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+			if not _agent_cell_passable(agent, previous + Vector2i(0, step.y)):
 				return false
 		previous = cell
 	return true
@@ -521,15 +577,15 @@ func _evaluate_candidates(agent: Dictionary, desired: Vector3, delta: float, blo
 	# the filter suspended (the escape route leads them out); apron units keep
 	# the blocked-cell filter but drop the clearance window.
 	var origin_cell: Vector2i = runtime_map.grid.world_to_grid(unit.global_position)
-	var origin_open: bool = runtime_map.is_passable(origin_cell, int(agent["pass_mask"]), 0, 0)
+	var origin_open := _agent_cell_passable(agent, origin_cell, 0, 0)
 	var origin_clearance := int(agent["clearance"])
-	if origin_open and not runtime_map.is_stoppable(origin_cell, int(agent["pass_mask"]), 0, 0):
+	if origin_open and not _agent_cell_stoppable(agent, origin_cell, 0, 0):
 		origin_clearance = 0
 	for angle in CANDIDATE_ANGLES:
 		var candidate := scaled.rotated(Vector3.UP, angle)
 		var destination := unit.global_position + candidate * delta
 		var cell: Vector2i = runtime_map.grid.world_to_grid(destination)
-		if origin_open and not runtime_map.is_passable(cell, int(agent["pass_mask"]), origin_clearance, int(agent["terrain_mask"])):
+		if origin_open and not _agent_cell_passable(agent, cell, origin_clearance):
 			continue
 		# Prediction uses unscaled speed, otherwise a slow squeeze probe could
 		# mistake a nearby wall for a valid lane merely because it looks less far.
@@ -586,10 +642,10 @@ func _evaluate_candidates(agent: Dictionary, desired: Vector3, delta: float, blo
 func _motion_is_passable(agent: Dictionary, displacement: Vector3) -> bool:
 	var unit: Node3D = agent["unit"]
 	var start: Vector2i = runtime_map.grid.world_to_grid(unit.global_position)
-	if not runtime_map.is_passable(start, int(agent["pass_mask"]), 0, 0):
+	if not _agent_cell_passable(agent, start, 0, 0):
 		return true
 	var clearance := int(agent["clearance"])
-	if not runtime_map.is_stoppable(start, int(agent["pass_mask"]), 0, 0):
+	if not _agent_cell_stoppable(agent, start, 0, 0):
 		clearance = 0
 	var finish: Vector2i = runtime_map.grid.world_to_grid(unit.global_position + displacement)
 	var cell_delta := finish - start
@@ -601,15 +657,67 @@ func _motion_is_passable(agent: Dictionary, displacement: Vector3) -> bool:
 			roundi(lerpf(float(start.x), float(finish.x), weight)),
 			roundi(lerpf(float(start.y), float(finish.y), weight))
 		)
-		if not runtime_map.is_passable(cell, int(agent["pass_mask"]), clearance, int(agent["terrain_mask"])):
+		if not _agent_cell_passable(agent, cell, clearance):
 			return false
 		var step := cell - previous
 		if step.x != 0 and step.y != 0:
-			if not runtime_map.is_passable(previous + Vector2i(step.x, 0), int(agent["pass_mask"]), clearance, int(agent["terrain_mask"])):
+			if not _agent_cell_passable(agent, previous + Vector2i(step.x, 0), clearance):
 				return false
-			if not runtime_map.is_passable(previous + Vector2i(0, step.y), int(agent["pass_mask"]), clearance, int(agent["terrain_mask"])):
+			if not _agent_cell_passable(agent, previous + Vector2i(0, step.y), clearance):
 				return false
 		previous = cell
+	return true
+
+
+func _agent_cell_passable(
+		agent: Dictionary,
+		cell: Vector2i,
+		clearance_cells := -1,
+		allowed_terrain_mask := -1
+	) -> bool:
+	var clearance := int(agent["clearance"]) if clearance_cells < 0 else clearance_cells
+	var terrain_mask := int(agent["terrain_mask"]) if allowed_terrain_mask < 0 else allowed_terrain_mask
+	var pass_mask := int(agent["pass_mask"])
+	if runtime_map.is_passable(cell, pass_mask, clearance, terrain_mask):
+		return true
+	var allowed: Dictionary = agent.get("allowed_cells", {})
+	if allowed.is_empty():
+		return false
+	for y in range(-clearance, clearance + 1):
+		for x in range(-clearance, clearance + 1):
+			var sample := cell + Vector2i(x, y)
+			if not runtime_map.grid.is_passable(sample, pass_mask):
+				return false
+			if terrain_mask != 0 and (terrain_mask & (1 << runtime_map.grid.terrain_at(sample))) == 0:
+				return false
+			if runtime_map.is_blocked(sample) and not allowed.has(sample):
+				return false
+	return true
+
+
+func _agent_cell_stoppable(
+		agent: Dictionary,
+		cell: Vector2i,
+		clearance_cells := -1,
+		allowed_terrain_mask := -1
+	) -> bool:
+	var clearance := int(agent["clearance"]) if clearance_cells < 0 else clearance_cells
+	var terrain_mask := int(agent["terrain_mask"]) if allowed_terrain_mask < 0 else allowed_terrain_mask
+	var pass_mask := int(agent["pass_mask"])
+	if runtime_map.is_stoppable(cell, pass_mask, clearance, terrain_mask):
+		return true
+	var allowed: Dictionary = agent.get("allowed_cells", {})
+	if allowed.is_empty():
+		return false
+	for y in range(-clearance, clearance + 1):
+		for x in range(-clearance, clearance + 1):
+			var sample := cell + Vector2i(x, y)
+			if not runtime_map.grid.is_passable(sample, pass_mask):
+				return false
+			if terrain_mask != 0 and (terrain_mask & (1 << runtime_map.grid.terrain_at(sample))) == 0:
+				return false
+			if (runtime_map.is_blocked(sample) or runtime_map.is_no_stop(sample)) and not allowed.has(sample):
+				return false
 	return true
 
 
@@ -924,7 +1032,7 @@ func _claim_anchor(preferred: Vector2i, agent: Dictionary, occupied: Array[Dicti
 func _block_stoppable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
 	for y in span:
 		for x in span:
-			if not runtime_map.is_stoppable(anchor + Vector2i(x, y), int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"])):
+			if not _agent_cell_stoppable(agent, anchor + Vector2i(x, y)):
 				return false
 	return true
 
@@ -1105,9 +1213,8 @@ func _refresh_building_blockers() -> void:
 			building, rows, runtime_map.grid, OCCUPY_CELL_SPAN
 		)
 		for cell in footprint:
-			# Skirt cells overlap the building model: routing treats them as
-			# solid so nothing drives through the mesh, but local steering may
-			# cross them, letting a freshly produced unit walk out.
+			# Skirt cells are freely traversable, but destination and parking
+			# selection must never let an ordinary unit stop on them.
 			var target := no_stop if String(footprint[cell]).to_lower() == "s" else blocked
 			target[cell] = true
 	if runtime_map.replace_blocked_cells(blocked, no_stop):
