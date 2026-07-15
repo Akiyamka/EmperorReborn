@@ -23,12 +23,16 @@ const REFINERY_DOCK_RELEASE_DELAY_SECONDS := 3.0
 const INVALID_REFINERY_DOCK := -1
 
 ## Refinery dock upgrades are visual states of the refinery itself, not
-## separate Building nodes. The first/right upgrade unfolds ~~3SmallPad01 and
-## the second/left unfolds ~~4SmallPad02; both retain their final pose.
-enum RefineryUpgradeState { NONE, RIGHT_DOCK, BOTH_DOCKS }
+## separate Building nodes. The first/left upgrade unfolds ~~3SmallPad01 and
+## the second/right unfolds ~~4SmallPad02; both retain their final pose.
+enum RefineryUpgradeState { NONE, LEFT_DOCK, BOTH_DOCKS }
 
 const MAX_REFINERY_DOCKS := 2
 const REFINERY_DOCK_ANIMATIONS: Array[StringName] = [&"Refinery_Pad_1", &"Refinery_Pad_2"]
+## Rules.txt lists the pads as centre, right, left. Upgrade animation 1 opens
+## the left pad, so runtime dock ids follow the order in which pads become
+## available: centre, left, right.
+const REFINERY_DOCK_POINT_ORDER := [0, 2, 1]
 
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
@@ -46,7 +50,7 @@ const REFINERY_DOCK_ANIMATIONS: Array[StringName] = [&"Refinery_Pad_1", &"Refine
 @export var max_health := 0.0
 @export var max_shields := 0.0
 @export var upgrade_level := 0
-@export_enum("No upgrades", "Right dock", "Both docks") var refinery_upgrade_state: int = RefineryUpgradeState.NONE
+@export_enum("No upgrades", "Left dock", "Both docks") var refinery_upgrade_state: int = RefineryUpgradeState.NONE
 
 var building_config: Resource
 var health := 0.0:
@@ -405,7 +409,7 @@ func dock_count() -> int:
 func refinery_dock_capacity() -> int:
 	if not is_refinery():
 		return 0
-	return mini(1 + refinery_upgrade_state, _refinery_deploy_points().size())
+	return mini(1 + refinery_upgrade_state, _refinery_dock_points().size())
 
 
 func is_refinery() -> bool:
@@ -462,7 +466,7 @@ func refinery_front_position() -> Vector3:
 ## intentionally retain their source orientation (import_rules.gd); mirror Y
 ## here against the occupy height before applying the building transform.
 func refinery_dock_world_position(dock_index: int) -> Vector3:
-	var points := _refinery_deploy_points()
+	var points := _refinery_dock_points()
 	var rows := _refinery_occupy_rows()
 	if dock_index < 0 or dock_index >= refinery_dock_capacity() or rows.is_empty():
 		return Vector3.INF
@@ -482,11 +486,12 @@ func refinery_dock_world_position(dock_index: int) -> Vector3:
 
 
 func refinery_dock_facing_direction(dock_index: int) -> Vector3:
-	var points := _refinery_deploy_points()
+	var points := _refinery_dock_points()
 	if dock_index < 0 or dock_index >= refinery_dock_capacity():
 		return exit_direction()
 	var degrees := float((points[dock_index] as Dictionary).get("angle", 0.0))
-	return exit_direction().rotated(Vector3.UP, deg_to_rad(degrees)).normalized()
+	# Rules angles use the source model's opposite yaw convention.
+	return exit_direction().rotated(Vector3.UP, deg_to_rad(-degrees)).normalized()
 
 
 func refinery_dock_navigation_cells(navigation_grid) -> Dictionary:
@@ -500,8 +505,13 @@ func refinery_dock_navigation_cells(navigation_grid) -> Dictionary:
 	)
 
 
-func _refinery_deploy_points() -> Array:
-	return building_config.list(&"deploy_points") if building_config != null else []
+func _refinery_dock_points() -> Array:
+	var source_points: Array = building_config.list(&"deploy_points") if building_config != null else []
+	var ordered_points: Array = []
+	for source_index in REFINERY_DOCK_POINT_ORDER:
+		if source_index < source_points.size():
+			ordered_points.append(source_points[source_index])
+	return ordered_points
 
 
 func _refinery_occupy_rows() -> Array:

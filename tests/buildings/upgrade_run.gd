@@ -53,6 +53,7 @@ func _initialize() -> void:
 
 	_run_case("refinery dock upgrades use three persistent animated states", _test_refinery_dock_states)
 	_run_case("refinery dock reservations include a departure cooldown", _test_refinery_dock_reservations)
+	_run_case("refinery side docks follow upgrade side and rules angles", _test_refinery_side_dock_layout)
 	_run_case(
 		"dock orders auto-select an eligible refinery and never create a building",
 		_test_automatic_refinery_upgrade.bind(local_player)
@@ -329,6 +330,45 @@ func _test_refinery_dock_reservations(token: int) -> int:
 		user.free()
 	first.free()
 	second.free()
+	refinery.free()
+	return token
+
+
+func _test_refinery_side_dock_layout(token: int) -> int:
+	var refinery := BuildingScript.new()
+	refinery.config_id = &"ATRefinery"
+	root.add_child(refinery)
+	refinery.set_refinery_upgrade_state(1)
+
+	var centre_user := Node.new()
+	var side_user := Node.new()
+	root.add_child(centre_user)
+	root.add_child(side_user)
+	_expect(refinery.try_reserve_refinery_dock(centre_user) == 0, "the base pad must remain the first dock")
+	_expect(refinery.try_reserve_refinery_dock(side_user) == 1, "the first upgrade must expose the next logical dock")
+
+	var right := refinery.global_transform.basis * Vector3.RIGHT
+	right.y = 0.0
+	right = right.normalized()
+	var first_side_offset := refinery.refinery_dock_world_position(1) - refinery.global_position
+	_expect(first_side_offset.dot(right) < 0.0, "the first upgrade must send its harvester to the left pad")
+	var expected_left_facing := refinery.exit_direction().rotated(Vector3.UP, deg_to_rad(-45.0)).normalized()
+	_expect(
+		refinery.refinery_dock_facing_direction(1).is_equal_approx(expected_left_facing),
+		"the left pad must apply its +45 rules angle with the converted negative yaw"
+	)
+
+	refinery.set_refinery_upgrade_state(2)
+	var second_side_offset := refinery.refinery_dock_world_position(2) - refinery.global_position
+	_expect(second_side_offset.dot(right) > 0.0, "the second upgrade must expose the right pad")
+	var expected_right_facing := refinery.exit_direction().rotated(Vector3.UP, deg_to_rad(45.0)).normalized()
+	_expect(
+		refinery.refinery_dock_facing_direction(2).is_equal_approx(expected_right_facing),
+		"the right pad must apply its -45 rules angle with the converted positive yaw"
+	)
+
+	centre_user.free()
+	side_user.free()
 	refinery.free()
 	return token
 
