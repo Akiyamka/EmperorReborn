@@ -185,7 +185,9 @@ func _command_move(screen_position: Vector2) -> void:
 			and bool(entity.call("can_unload_at", target_entity)) \
 			and entity.has_method("command_unload")
 		if can_unload and _terrain != null and _terrain.navigation_grid != null \
-		and bool(entity.call("command_unload", target_entity, _terrain.navigation_grid)):
+		and bool(entity.call(
+			"command_unload", target_entity, _terrain.navigation_grid, _terrain.spice_layer
+		)):
 			unloading_entities.append(entity)
 			continue
 		var can_harvest := entity.has_method("can_harvest_spice") \

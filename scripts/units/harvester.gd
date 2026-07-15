@@ -12,11 +12,11 @@ const UNLOAD_HOLD_ANIMATION := &"Harv_Unload_Hold"
 const UNLOAD_END_ANIMATION := &"Harv_Unload_End"
 const HARVEST_HOLD_SECONDS := 0.3
 const HARVEST_CARGO_FRACTION_PER_CYCLE := 0.2
-const HARVEST_SEARCH_RADIUS_CELLS := 8
 const HARVEST_APPROACH_RADIUS_CELLS := 2.0
 const UNLOAD_UPDATES_PER_SECOND := 20.0
 const ORIGINAL_UNLOAD_RATE_PER_UPDATE := 2.0
 const UNLOAD_HOLD_FALLBACK_SECONDS := 0.05
+const AUTO_SEARCH_RETRY_SECONDS := 1.0
 const INVALID_DOCK := -1
 ## Rules.txt [Harvester] has SpiceCapacity=700. The normalized database
 ## currently preserves this legacy special-unit field as an orphan custom row,
@@ -49,21 +49,32 @@ var _unload_dock := INVALID_DOCK
 var _unload_interrupted := false
 var _unload_credit_accumulator := 0.0
 var _issuing_unload_move := false
+var _issuing_main_base_move := false
 var _pending_order := PendingOrder.NONE
 var _pending_order_data: Dictionary = {}
+var _harvest_cycle_enabled := false
+var _cycle_spice_layer = null
+var _cycle_grid = null
+var _assigned_refinery: Node = null
+var _return_main_base: Node3D = null
+var _auto_spice_cell_filter := Callable()
+var _auto_search_cooldown := 0.0
 
 
 func _process(delta: float) -> void:
 	super._process(delta)
 	advance_harvest_order(delta)
 	advance_unload_order(delta)
+	advance_harvest_cycle(delta)
 
 
 func prepare_navigation_order(
 		world_position: Vector3, exit_point := Vector3.INF, move_mode := 0
 	) -> bool:
-	if _issuing_harvest_move or _issuing_unload_move:
+	if _issuing_harvest_move or _issuing_unload_move or _issuing_main_base_move:
 		return true
+	_harvest_cycle_enabled = false
+	_return_main_base = null
 	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
 		_queue_pending_order(PendingOrder.MOVE, {
 			"position": world_position,
@@ -80,9 +91,11 @@ func prepare_navigation_order(
 func set_navigation_controller(controller) -> void:
 	_issuing_harvest_move = has_harvest_order()
 	_issuing_unload_move = has_unload_order()
+	_issuing_main_base_move = _return_main_base != null
 	super.set_navigation_controller(controller)
 	_issuing_harvest_move = false
 	_issuing_unload_move = false
+	_issuing_main_base_move = false
 
 
 func can_harvest_spice() -> bool:
@@ -92,6 +105,7 @@ func can_harvest_spice() -> bool:
 func command_harvest(spice_layer, navigation_grid, cell: Vector2i) -> bool:
 	if not can_harvest_spice() or spice_layer == null or navigation_grid == null:
 		return false
+	_enable_harvest_cycle(spice_layer, navigation_grid)
 	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
 		_queue_pending_order(PendingOrder.HARVEST, {
 			"spice_layer": spice_layer,
@@ -101,6 +115,9 @@ func command_harvest(spice_layer, navigation_grid, cell: Vector2i) -> bool:
 		_interrupt_unload_animation()
 		return true
 	_cancel_unload_immediately()
+	if spice >= max_spice:
+		advance_harvest_cycle()
+		return true
 	_start_harvest_order(spice_layer, navigation_grid, cell)
 	return true
 
@@ -118,9 +135,13 @@ func can_unload_at(refinery: Node) -> bool:
 	return _is_valid_owned_refinery(refinery)
 
 
-func command_unload(refinery: Node, navigation_grid) -> bool:
+func command_unload(refinery: Node, navigation_grid, spice_layer = null) -> bool:
 	if navigation_grid == null or not can_unload_at(refinery):
 		return false
+	_assigned_refinery = refinery
+	_return_main_base = null
+	if spice_layer != null:
+		_enable_harvest_cycle(spice_layer, navigation_grid)
 	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
 		_queue_pending_order(PendingOrder.UNLOAD, {
 			"refinery": refinery,
@@ -132,6 +153,64 @@ func command_unload(refinery: Node, navigation_grid) -> bool:
 	_cancel_unload_immediately()
 	_start_unload_order(refinery, navigation_grid)
 	return true
+
+
+## A manual unload order and every later automatic trip use this refinery
+## until it is destroyed, captured, or explicitly replaced by another manual
+## unload order.
+func assigned_refinery() -> Node:
+	if not _is_valid_owned_refinery(_assigned_refinery):
+		_assigned_refinery = null
+	return _assigned_refinery
+
+
+## The future fog-of-war layer can install a player-specific predicate here.
+## Explicitly clicked harvest cells remain valid manual targets; the predicate
+## applies only when the harvester autonomously chooses its next field.
+func set_auto_spice_cell_filter(candidate_filter: Callable) -> void:
+	_auto_spice_cell_filter = candidate_filter
+	_auto_search_cooldown = 0.0
+
+
+## Public for deterministic feature tests. The runtime advances this after
+## both action state machines, closing the harvest -> unload -> harvest loop.
+func advance_harvest_cycle(delta := 0.0) -> void:
+	if not _harvest_cycle_enabled:
+		return
+	if _assigned_refinery != null and not _is_valid_owned_refinery(_assigned_refinery):
+		_assigned_refinery = null
+	if has_harvest_order() or has_unload_order() or _pending_order != PendingOrder.NONE:
+		return
+	if _cycle_spice_layer == null or _cycle_grid == null or max_spice <= 0.0:
+		return
+	_auto_search_cooldown = maxf(_auto_search_cooldown - maxf(float(delta), 0.0), 0.0)
+	if _auto_search_cooldown > 0.0:
+		return
+	if spice >= max_spice:
+		var refinery := assigned_refinery()
+		if refinery == null:
+			refinery = _nearest_owned_refinery()
+			_assigned_refinery = refinery
+		if refinery == null:
+			if _return_to_primary_main_base():
+				# Returning to the main base is the terminal fallback for this
+				# cycle. A refinery built later must not pull the harvester away
+				# without a new player order.
+				_harvest_cycle_enabled = false
+			else:
+				_auto_search_cooldown = AUTO_SEARCH_RETRY_SECONDS
+			return
+		_return_main_base = null
+		_start_unload_order(refinery, _cycle_grid)
+		return
+	var origin: Vector2i = _cycle_grid.call("world_to_grid", global_position)
+	var next_cell: Vector2i = _cycle_spice_layer.call(
+		"nearest_spice_cell", origin, 1, -1, _auto_spice_cell_filter
+	)
+	if next_cell.x < 0 or next_cell.y < 0:
+		_auto_search_cooldown = AUTO_SEARCH_RETRY_SECONDS
+		return
+	_start_harvest_order(_cycle_spice_layer, _cycle_grid, next_cell)
 
 
 func _start_unload_order(refinery: Node, navigation_grid) -> void:
@@ -364,7 +443,7 @@ func _collect_harvest_cycle() -> void:
 
 func _retarget_or_finish_harvest() -> void:
 	var next_cell: Vector2i = _harvest_spice_layer.call(
-		"nearest_spice_cell", _harvest_target_cell, 1, HARVEST_SEARCH_RADIUS_CELLS
+		"nearest_spice_cell", _harvest_target_cell, 1, -1, _auto_spice_cell_filter
 	)
 	if next_cell.x < 0 or next_cell.y < 0:
 		_finish_harvest_order()
@@ -373,6 +452,58 @@ func _retarget_or_finish_harvest() -> void:
 	_harvest_phase = HarvestPhase.TRAVEL
 	_harvest_phase_remaining = 0.0
 	_move_to_harvest_cell(next_cell)
+
+
+func _enable_harvest_cycle(spice_layer, navigation_grid) -> void:
+	_harvest_cycle_enabled = true
+	_cycle_spice_layer = spice_layer
+	_cycle_grid = navigation_grid
+	_return_main_base = null
+	_auto_search_cooldown = 0.0
+
+
+func _nearest_owned_refinery() -> Node:
+	if not is_inside_tree():
+		return null
+	var nearest: Node = null
+	var nearest_distance_squared := INF
+	for candidate_variant in get_tree().get_nodes_in_group("buildings"):
+		var candidate := candidate_variant as Node
+		if not _is_valid_owned_refinery(candidate) or not candidate is Node3D:
+			continue
+		var offset := (candidate as Node3D).global_position - global_position
+		offset.y = 0.0
+		var distance_squared := offset.length_squared()
+		if distance_squared < nearest_distance_squared:
+			nearest = candidate
+			nearest_distance_squared = distance_squared
+	return nearest
+
+
+func _return_to_primary_main_base() -> bool:
+	var players = _players()
+	var main_base: Node3D = players.call("main_base_for_player", owner_player_id) \
+		if players != null and players.has_method("main_base_for_player") else null
+	if not _is_valid_owned_main_base(main_base):
+		_return_main_base = null
+		return false
+	if _return_main_base == main_base:
+		return true
+	_return_main_base = main_base
+	_issuing_main_base_move = true
+	move_to(main_base.global_position)
+	_issuing_main_base_move = false
+	return true
+
+
+func _is_valid_owned_main_base(main_base: Node) -> bool:
+	if main_base == null or not is_instance_valid(main_base) \
+	or main_base.is_queued_for_deletion() or not main_base is Node3D:
+		return false
+	if main_base.has_method("is_owned_by"):
+		return bool(main_base.call("is_owned_by", owner_player_id))
+	var base_owner = main_base.get("owner_player_id")
+	return base_owner != null and int(base_owner) == owner_player_id
 
 
 func _move_to_harvest_cell(cell: Vector2i) -> void:
@@ -536,7 +667,10 @@ func _execute_pending_order() -> void:
 			else:
 				super.move_to(position, exit_point)
 		PendingOrder.HARVEST:
-			_start_harvest_order(data.get("spice_layer"), data.get("grid"), data.get("cell", Vector2i(-1, -1)))
+			if spice >= max_spice:
+				advance_harvest_cycle()
+			else:
+				_start_harvest_order(data.get("spice_layer"), data.get("grid"), data.get("cell", Vector2i(-1, -1)))
 		PendingOrder.UNLOAD:
 			var refinery := data.get("refinery") as Node
 			if _is_valid_owned_refinery(refinery):

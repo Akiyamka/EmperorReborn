@@ -17,6 +17,9 @@ class FakeGrid extends RefCounted:
 	func grid_to_world(cell: Vector2i, _centered := true) -> Vector3:
 		return Vector3(float(cell.x) + 0.5, 0.0, float(cell.y) + 0.5)
 
+	func world_to_grid(world_position: Vector3) -> Vector2i:
+		return Vector2i(floori(world_position.x), floori(world_position.z))
+
 	func cell_size() -> Vector2:
 		return Vector2.ONE
 
@@ -32,7 +35,12 @@ class FakeSpiceLayer extends RefCounted:
 		values[cell] = spice_at(cell) - taken
 		return taken
 
-	func nearest_spice_cell(origin: Vector2i, minimum_amount := 1, maximum_distance := -1) -> Vector2i:
+	func nearest_spice_cell(
+			origin: Vector2i,
+			minimum_amount := 1,
+			maximum_distance := -1,
+			candidate_filter := Callable()
+		) -> Vector2i:
 		var best := Vector2i(-1, -1)
 		var best_distance := 0x7fffffff
 		for candidate_variant in values:
@@ -41,6 +49,8 @@ class FakeSpiceLayer extends RefCounted:
 				continue
 			var distance := origin.distance_squared_to(candidate)
 			if maximum_distance >= 0 and distance > maximum_distance * maximum_distance:
+				continue
+			if candidate_filter.is_valid() and not bool(candidate_filter.call(candidate)):
 				continue
 			if distance < best_distance:
 				best = candidate
@@ -135,7 +145,14 @@ class FakeRefinery extends Node3D:
 	func abandon_refinery_dock(harvester: Node) -> void:
 		if reserved_by == harvester:
 			reserved_by = null
-		abandoned += 1
+			abandoned += 1
+
+
+class FakeMainBase extends Node3D:
+	var owner_player_id := 1
+
+	func is_owned_by(player_id: int) -> bool:
+		return owner_player_id == player_id
 
 
 class FakeCargoEntity extends Node3D:
@@ -156,8 +173,10 @@ func _initialize() -> void:
 	var local_player = players.create_player(1, "Harvester Tester", Color.BLUE, &"Atreides", [], 1, 0, 0)
 	_run_case("rules capacity and @!Harv halo", _test_rules_capacity_and_halo)
 	_run_case("cycle timing, extraction cap, and nearby retarget", _test_cycle_and_retarget)
-	_run_case("empty arrival and bounded search", _test_empty_arrival)
+	_run_case("empty arrival and map-wide continuation", _test_empty_arrival)
 	_run_case("remaining bunker capacity limits extraction", _test_remaining_capacity)
+	_run_case("full harvesters automatically bind to the nearest owned refinery", _test_full_harvester_auto_unload.bind(local_player))
+	_run_case("manual refinery binding persists and automatic fields honor visibility", _test_cycle_binding_and_spice_filter.bind(local_player))
 	_run_case("unload rate transfers a full bunker in 17.5 seconds", _test_full_unload.bind(local_player))
 	_run_case("unload waits for a free reserved dock", _test_unload_waits_for_dock.bind(local_player))
 	_run_case("unload arrival uses the navigation tolerance", _test_unload_navigation_arrival.bind(local_player))
@@ -285,7 +304,11 @@ func _test_empty_arrival(token: int) -> int:
 	layer.values[distant] = 100
 	harvester.global_position = grid.grid_to_world(nearby)
 	harvester.advance_harvest_order(0.0)
-	_expect(not harvester.has_harvest_order(), "the order must stop when no spice exists in the eight-cell search radius")
+	_expect(harvester.has_harvest_order() and harvester.harvest_target_cell() == distant, "an unfinished bunker must continue at the nearest non-empty field even beyond the old local radius")
+	layer.values[distant] = 0
+	harvester.global_position = grid.grid_to_world(distant)
+	harvester.advance_harvest_order(0.0)
+	_expect(not harvester.has_harvest_order(), "the order must stop when the map has no remaining spice")
 	_expect(harvester.harvest_target_cell() == Vector2i(-1, -1), "a completed order must clear its target")
 	harvester.queue_free()
 	return token
@@ -308,6 +331,108 @@ func _test_remaining_capacity(token: int) -> int:
 	harvester.advance_harvest_order(0.1)
 	_expect(not harvester.has_harvest_order(), "a full bunker must complete the harvesting order")
 	harvester.queue_free()
+	return token
+
+
+func _test_full_harvester_auto_unload(token: int, player: PlayerData) -> int:
+	var grid := FakeGrid.new()
+	var layer := FakeSpiceLayer.new()
+	var target_cell := Vector2i(4, 4)
+	layer.values[target_cell] = 100
+	var near_owned := FakeRefinery.new()
+	near_owned.position = Vector3(5.0, 0.0, 0.0)
+	near_owned.owner_player_id = player.player_id
+	near_owned.add_to_group("buildings")
+	root.add_child(near_owned)
+	var far_owned := FakeRefinery.new()
+	far_owned.position = Vector3(20.0, 0.0, 0.0)
+	far_owned.owner_player_id = player.player_id
+	far_owned.add_to_group("buildings")
+	root.add_child(far_owned)
+	var enemy := FakeRefinery.new()
+	enemy.position = Vector3(1.0, 0.0, 0.0)
+	enemy.owner_player_id = player.player_id + 1
+	enemy.add_to_group("buildings")
+	root.add_child(enemy)
+	var harvester := TestHarvester.new()
+	harvester.owner_player_id = player.player_id
+	harvester.max_spice = 100.0
+	harvester.spice = 100.0
+	root.add_child(harvester)
+	var main_base := FakeMainBase.new()
+	main_base.owner_player_id = player.player_id
+	main_base.position = Vector3(40.0, 0.0, 0.0)
+	root.add_child(main_base)
+	root.get_node("Players").set_main_base(player.player_id, main_base)
+
+	_expect(harvester.command_harvest(layer, grid, target_cell), "a full harvester must accept a harvest command as a request to continue its cycle")
+	_expect(not harvester.has_harvest_order() and harvester.has_unload_order(), "a full bunker must skip field travel and immediately start unloading")
+	_expect(harvester.assigned_refinery() == near_owned, "automatic unloading must bind the nearest owned refinery and ignore a closer enemy refinery")
+
+	near_owned.owner_player_id = player.player_id + 1
+	harvester.advance_unload_order(0.0)
+	harvester.advance_harvest_cycle()
+	_expect(harvester.assigned_refinery() == far_owned and harvester.has_unload_order(), "capture of the bound refinery must trigger a new nearest-owned search")
+
+	far_owned.owner_player_id = player.player_id + 1
+	harvester.advance_unload_order(0.0)
+	harvester.advance_harvest_cycle()
+	_expect(not harvester.has_unload_order() and harvester.target_position == main_base.global_position, "without an owned refinery a full harvester must return to the player's primary Construction Yard")
+	near_owned.owner_player_id = player.player_id
+	harvester.advance_harvest_cycle(HarvesterScript.AUTO_SEARCH_RETRY_SECONDS)
+	_expect(not harvester.has_unload_order() and harvester.target_position == main_base.global_position, "a refinery built later must not redirect a harvester returning to its main base")
+
+	harvester.queue_free()
+	near_owned.queue_free()
+	far_owned.queue_free()
+	enemy.queue_free()
+	main_base.free()
+	return token
+
+
+func _test_cycle_binding_and_spice_filter(token: int, player: PlayerData) -> int:
+	var grid := FakeGrid.new()
+	var layer := FakeSpiceLayer.new()
+	var hidden_cell := Vector2i(1, 1)
+	var visible_cell := Vector2i(10, 10)
+	layer.values[hidden_cell] = 100
+	layer.values[visible_cell] = 100
+	var near_refinery := FakeRefinery.new()
+	near_refinery.position = Vector3(2.0, 0.0, 0.0)
+	near_refinery.owner_player_id = player.player_id
+	near_refinery.add_to_group("buildings")
+	root.add_child(near_refinery)
+	var manual_refinery := FakeRefinery.new()
+	manual_refinery.position = Vector3(30.0, 0.0, 0.0)
+	manual_refinery.owner_player_id = player.player_id
+	manual_refinery.add_to_group("buildings")
+	root.add_child(manual_refinery)
+	var harvester := TestHarvester.new()
+	harvester.owner_player_id = player.player_id
+	harvester.max_spice = 100.0
+	harvester.spice = 50.0
+	root.add_child(harvester)
+
+	_expect(harvester.command_unload(manual_refinery, grid, layer), "manual unloading with map context must enable the continuing cycle")
+	harvester.cancel_unload_order()
+	harvester.set_auto_spice_cell_filter(func(cell: Vector2i) -> bool: return cell != hidden_cell)
+	harvester.advance_harvest_cycle()
+	_expect(harvester.harvest_target_cell() == visible_cell, "automatic field selection must skip cells rejected by the future visibility predicate")
+
+	harvester.cancel_harvest_order()
+	harvester.spice = harvester.max_spice
+	harvester.advance_harvest_cycle()
+	_expect(harvester.assigned_refinery() == manual_refinery, "the manually selected refinery must remain bound even when another owned refinery is closer")
+	_expect(harvester.command_unload(near_refinery, grid, layer), "a later manual unload must be able to redirect the active trip")
+	_expect(harvester.assigned_refinery() == near_refinery, "manual redirection must replace the persistent refinery binding")
+	var manual_move := Vector3(40.0, 0.0, 40.0)
+	harvester.move_to(manual_move)
+	harvester.advance_harvest_cycle()
+	_expect(not harvester.has_harvest_order() and not harvester.has_unload_order(), "an ordinary manual move must stop automatic cycling until a new harvest or unload command")
+
+	harvester.queue_free()
+	near_refinery.queue_free()
+	manual_refinery.queue_free()
 	return token
 
 

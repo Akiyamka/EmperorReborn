@@ -48,8 +48,10 @@ class FakeHarvester extends FakeUnit:
 		return refinery.has_method("is_refinery") and bool(refinery.call("is_refinery")) \
 			and refinery.is_owned_by(player.player_id)
 
-	func command_unload(refinery: Node, navigation_grid) -> bool:
-		unload_commands.append({"refinery": refinery, "grid": navigation_grid})
+	func command_unload(refinery: Node, navigation_grid, spice_layer = null) -> bool:
+		unload_commands.append({
+			"refinery": refinery, "grid": navigation_grid, "spice_layer": spice_layer
+		})
 		return true
 
 	func prepare_navigation_order(target: Vector3, _exit_point := Vector3.INF, _move_mode := 0) -> bool:
@@ -376,6 +378,7 @@ func _test_unload_order(token: int, local_player, enemy_player) -> int:
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(harvester.unload_commands.size() == 1, "an owned refinery click must issue the dedicated unloading order")
 	_expect(harvester.unload_commands[0]["refinery"] == owned_refinery, "the unloading order must retain the clicked refinery")
+	_expect(harvester.unload_commands[0]["spice_layer"] == terrain.spice_layer, "manual unloading must retain the spice layer needed to resume the cycle")
 	_expect(navigation.commands.is_empty(), "a valid unloading click must not also become generic movement")
 	_expect(statuses.back().begins_with("Unloading at ATRefinery"), "the command status must identify the refinery")
 	_expect(commands.raycast_masks.slice(-2) == [2, 1], "an unload click must resolve the layer-two refinery separately from layer-one terrain")

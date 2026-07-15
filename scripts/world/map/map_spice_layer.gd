@@ -82,7 +82,16 @@ func has_spice(cell: Vector2i) -> bool:
 	return spice_at(cell) > 0
 
 
-func nearest_spice_cell(origin: Vector2i, minimum_amount := 1, maximum_distance := -1) -> Vector2i:
+## `candidate_filter` keeps automatic resource searches independent from map
+## visibility. It currently defaults to accepting every non-empty cell; a
+## player-specific fog-of-war service can later reject cells the owner cannot
+## see without changing harvesting or spice storage APIs.
+func nearest_spice_cell(
+		origin: Vector2i,
+		minimum_amount := 1,
+		maximum_distance := -1,
+		candidate_filter := Callable()
+	) -> Vector2i:
 	var best := Vector2i(-1, -1)
 	var best_distance_squared := 0x7fffffff
 	var maximum_distance_squared := maximum_distance * maximum_distance
@@ -100,6 +109,8 @@ func nearest_spice_cell(origin: Vector2i, minimum_amount := 1, maximum_distance 
 		for x in range(minimum_x, maximum_x + 1):
 			var cell := Vector2i(x, y)
 			if _spice_values[y * size + x] < maxi(minimum_amount, 1):
+				continue
+			if candidate_filter.is_valid() and not bool(candidate_filter.call(cell)):
 				continue
 			var distance_squared := origin.distance_squared_to(cell)
 			if maximum_distance >= 0 and distance_squared > maximum_distance_squared:
