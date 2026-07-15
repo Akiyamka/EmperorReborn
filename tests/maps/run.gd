@@ -193,11 +193,19 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 
 	var activation_count := [0]
 	var early_activations: Array[bool] = []
-	mound.activated.connect(func(_entity, early: bool) -> void:
+	var activation_fractions: Array[float] = []
+	mound.activated.connect(func(_entity, early: bool, maturity_fraction: float) -> void:
 		activation_count[0] += 1
 		early_activations.append(early)
+		activation_fractions.append(maturity_fraction)
 	)
-	_expect(mound.activate(true) and activation_count[0] == 1 and early_activations[0], "contact activation must fire the current cycle early")
+	_expect(
+		mound.activate(true)
+			and activation_count[0] == 1
+			and early_activations[0]
+			and is_equal_approx(activation_fractions[0], 0.5),
+		"contact activation must report the elapsed fraction of the current cycle"
+	)
 	_expect(not dust.emitting, "the mound must wait for the map layer to provide the complete spread area")
 	var hazard_points := PackedVector3Array([Vector3.ZERO, Vector3(2.0, 0.25, 1.0)])
 	mound.start_spread_hazard(hazard_points, 1.25)
@@ -218,7 +226,12 @@ func _test_spice_mound_runtime_entity_contract(token: int) -> int:
 	_expect(not dust.emitting and not dust.visible, "ending the five-second hazard must hide its visual indicator immediately")
 	_expect(is_equal_approx(mound.growth_scale(), 0.001), "early activation must immediately restart the authored growth animation")
 	mound.call("_on_maturity_timeout")
-	_expect(activation_count[0] == 2 and not early_activations[1], "timer activation must fire and begin the next recurring cycle")
+	_expect(
+		activation_count[0] == 2
+			and not early_activations[1]
+			and activation_fractions[1] == 1.0,
+		"timer activation must report a complete cycle and begin the next one"
+	)
 	_expect(is_equal_approx(mound.growth_scale(), 0.001), "timer activation must restart the recurring authored growth animation")
 	mound.free()
 	return token
@@ -249,6 +262,11 @@ func _test_spice_mound_staged_passable_sand_spread(token: int) -> int:
 	_expect(is_equal_approx(layer.call("_spread_interval_seconds", config), 0.3), "spice rings must advance three times slower than the Rules BuildTime interval")
 	var spread: Dictionary = layer.call("_create_spice_spread_job", center, config)
 	_expect(spread.get("stage_count") == 3 and (spread.get("cells", []) as Array).size() == 4, "BlastRadius must produce one outward ring per tile and select only eligible cells")
+	var early_spread: Dictionary = layer.call("_create_spice_spread_job", center, config, 0.5)
+	var early_spice_total := 0
+	for entry: Dictionary in early_spread.get("cells", []):
+		early_spice_total += int(entry.get("amount", 0))
+	_expect(early_spice_total == 400, "activation halfway through a mound cycle must spread half of its full spice capacity")
 	_expect(MapSpiceLayerScript.SPICE_HAZARD_DURATION_SECONDS == 5.0 and MapSpiceLayerScript.SPICE_HAZARD_TICK_COUNT == 20, "the damaging visual hazard must remain active for five seconds at four checks per second")
 	_expect(is_equal_approx(layer.call("_spice_hazard_damage_per_second"), 10.0), "the hazard damage rate must use SpicePuff Damage from the rules catalog")
 

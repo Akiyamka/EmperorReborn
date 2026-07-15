@@ -289,17 +289,22 @@ func _ensure_spice_mounds_root() -> void:
 	_spice_mounds_root.global_transform = Transform3D.IDENTITY
 
 
-func _on_spice_mound_activated(mound: Variant, early_activation: bool, source_cell: Vector2i) -> void:
+func _on_spice_mound_activated(
+	mound: Variant,
+	early_activation: bool,
+	maturity_fraction: float,
+	source_cell: Vector2i
+) -> void:
 	if _spice_mound_nodes.get(source_cell) != mound:
 		return
 	spice_mound_activated.emit(source_cell, early_activation, mound.global_position)
-	_start_spice_spread(source_cell, mound.config)
+	_start_spice_spread(source_cell, mound.config, maturity_fraction)
 
 
-func _start_spice_spread(source_cell: Vector2i, config: Resource) -> void:
+func _start_spice_spread(source_cell: Vector2i, config: Resource, maturity_fraction := 1.0) -> void:
 	_cancel_spice_spread(source_cell)
 	_cancel_spice_hazard(source_cell)
-	var spread := _create_spice_spread_job(source_cell, config)
+	var spread := _create_spice_spread_job(source_cell, config, maturity_fraction)
 	var cells := spread.get("cells", []) as Array
 	if cells.is_empty() or not is_instance_valid(_spice_mounds_root):
 		spice_spread_finished.emit(source_cell)
@@ -325,9 +330,14 @@ func _spread_interval_seconds(config: Resource) -> float:
 	)
 
 
-func _create_spice_spread_job(source_cell: Vector2i, config: Resource) -> Dictionary:
+func _create_spice_spread_job(
+	source_cell: Vector2i,
+	config: Resource,
+	maturity_fraction := 1.0
+) -> Dictionary:
 	var blast_radius := maxf(float(config.field(&"blast_radius", 0.0)), 0.0) if config != null else 0.0
-	var spice_capacity := maxi(int(config.field(&"spice_capacity", 0)), 0) if config != null else 0
+	var full_spice_capacity := maxi(int(config.field(&"spice_capacity", 0)), 0) if config != null else 0
+	var spice_capacity := floori(float(full_spice_capacity) * clampf(maturity_fraction, 0.0, 1.0))
 	var stage_count := maxi(int(ceil(blast_radius)), 1)
 	var spread := {
 		"source_cell": source_cell,

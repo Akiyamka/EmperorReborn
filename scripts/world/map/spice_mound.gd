@@ -4,7 +4,7 @@ extends Area3D
 ## Spicemound.xbf mesh; this Area3D owns contact activation and the Rules.txt
 ## maturation timer.
 
-signal activated(mound: SpiceMound, early_activation: bool)
+signal activated(mound: SpiceMound, early_activation: bool, maturity_fraction: float)
 
 const RULE_TICKS_PER_SECOND := 60.0
 const UNIT_COLLISION_LAYER := 2
@@ -26,6 +26,7 @@ var config: Resource
 var _footprint := Vector2.ONE
 var _lifespan_random_fraction := -1.0
 var _cycle_duration_seconds := 0.0
+var _maturity_progress := 0.0
 var _activation_in_progress := false
 
 @onready var maturity_timer: Timer = $MaturityTimer
@@ -80,11 +81,12 @@ func activate(early_activation := false) -> bool:
 	if _activation_in_progress:
 		return false
 	_activation_in_progress = true
+	var maturity_fraction := maturity_progress() if early_activation else 1.0
 	var timer := get_node_or_null("MaturityTimer") as Timer
 	if timer != null:
 		timer.stop()
 	_set_maturity_progress(1.0)
-	activated.emit(self, early_activation)
+	activated.emit(self, early_activation, maturity_fraction)
 	_activation_in_progress = false
 	restart_maturity_cycle()
 	return true
@@ -100,6 +102,13 @@ func restart_maturity_cycle() -> void:
 func growth_scale() -> float:
 	var animated_node := get_node_or_null("Visual/_0Spicemound") as Node3D
 	return animated_node.scale.x if animated_node != null else 0.0
+
+
+func maturity_progress() -> float:
+	var timer := get_node_or_null("MaturityTimer") as Timer
+	if timer == null or timer.is_stopped() or _cycle_duration_seconds <= 0.0:
+		return _maturity_progress
+	return clampf(1.0 - timer.time_left / _cycle_duration_seconds, 0.0, 1.0)
 
 
 func _apply_footprint() -> void:
@@ -213,6 +222,7 @@ func _prepare_maturity_cycle() -> void:
 
 
 func _set_maturity_progress(progress: float) -> void:
+	_maturity_progress = clampf(progress, 0.0, 1.0)
 	var player := get_node_or_null("Visual/AnimationPlayer") as AnimationPlayer
 	var animated_node := get_node_or_null("Visual/_0Spicemound") as Node3D
 	if player == null or animated_node == null or not player.has_animation(SOURCE_GROWTH_ANIMATION):
@@ -223,7 +233,7 @@ func _set_maturity_progress(progress: float) -> void:
 	if track < 0 or animation.track_get_key_count(track) == 0:
 		return
 	var last_key := animation.track_get_key_count(track) - 1
-	var growth_time := animation.track_get_key_time(track, last_key) * clampf(progress, 0.0, 1.0)
+	var growth_time := animation.track_get_key_time(track, last_key) * _maturity_progress
 	var authored_transform: Variant = animation.value_track_interpolate(track, growth_time)
 	if authored_transform is Transform3D:
 		animated_node.transform = authored_transform
