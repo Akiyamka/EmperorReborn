@@ -197,6 +197,7 @@ const BOOL_COLUMNS := {
 	"units": [
 		"tasty_to_worms",
 		"can_move_any_direction",
+		"mech",
 		"can_be_deviated",
 		"can_self_repair",
 		"can_be_repaired",

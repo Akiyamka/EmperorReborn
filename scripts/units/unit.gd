@@ -15,6 +15,11 @@ const TERRAIN_RAY_HEIGHT := 200.0
 const MIN_SLOPE_SPEED_MULTIPLIER := 0.65
 const MAX_SLOPE_SPEED_MULTIPLIER := 1.50
 const SLOPE_PROBE_DISTANCE := 0.5
+const SLOPE_ALIGNMENT_RESPONSE := 10.0
+## The incidental Tleilaxu walker predates the Mech rule used by the three
+## playable House walkers, but its converted model has the same articulated
+## leg hierarchy and must retain a level gameplay root as well.
+const LEGACY_WALKER_UNIT_IDS: Array[StringName] = [&"INTLWalker"]
 ## Rules.txt stores TurnRate in radians per movement update. Navigation runs at
 ## 20 fixed updates per second, so use the same cadence for the unmanaged
 ## fallback to keep turning independent of the caller's frame rate.
@@ -22,6 +27,12 @@ const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
 const MOVING_ANIMATION := &"Move"
 const IDLE_ANIMATION := &"Stationary"
 const IDLE_ANIMATION_PREFIX := "Idle"
+
+enum SlopeAlignmentMode {
+	AUTO,
+	ENABLED,
+	DISABLED,
+}
 
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
@@ -37,6 +48,10 @@ const IDLE_ANIMATION_PREFIX := "Idle"
 @export var can_move_any_direction := false
 @export var arrival_radius := 0.2
 @export var visual_root_path := NodePath("VisualRoot")
+## AUTO follows the terrain only for ground vehicles. Infantry, aircraft and
+## articulated Mech units stay upright; individual scenes can force either
+## behavior for unusual visuals that are not described by the original rules.
+@export var slope_alignment_mode := SlopeAlignmentMode.AUTO
 @export var max_health := 0.0
 @export var max_shields := 0.0
 @export var max_passengers := 0.0
@@ -70,9 +85,15 @@ var _pending_navigation_order := Vector3.ZERO
 var _pending_navigation_exit := Vector3.INF
 var _has_pending_navigation_order := false
 var _navigation_requested_velocity := Vector3.ZERO
+var _visual_root_rest_basis := Basis.IDENTITY
+var _visual_slope_target_basis := Basis.IDENTITY
+var _last_terrain_normal := Vector3.UP
 
 
 func _ready() -> void:
+	if visual_root != null:
+		_visual_root_rest_basis = visual_root.transform.basis.orthonormalized()
+		_visual_slope_target_basis = _visual_root_rest_basis
 	_apply_rules_config()
 	target_position = global_position
 	# Terrain height is sampled explicitly below. Letting CharacterBody collide
@@ -93,6 +114,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_advance_visual_slope_alignment(delta)
 	# These shaders take their scroll/pulse phase from here: a continuous
 	# phase cannot come from animation tracks (it would snap on clip loops),
 	# and TIME in the shader would keep the editor viewport redrawing.
@@ -258,6 +280,62 @@ func _snap_to_terrain() -> void:
 		return
 
 	global_position.y = (hit["position"] as Vector3).y
+	_set_visual_slope_target(hit.get("normal", Vector3.UP) as Vector3)
+
+
+## Keeps gameplay orientation, navigation collision and the selection halo
+## upright while tilting only the rendered model. A terrain normal uniquely
+## determines pitch and roll; projecting the unit's forward vector onto that
+## plane preserves its current yaw.
+func _set_visual_slope_target(terrain_normal: Vector3) -> void:
+	_last_terrain_normal = terrain_normal.normalized() \
+		if terrain_normal.length_squared() > 0.000001 else Vector3.UP
+	if _last_terrain_normal.dot(Vector3.UP) < 0.0:
+		_last_terrain_normal = -_last_terrain_normal
+	if visual_root == null or not aligns_visual_to_terrain_slope():
+		_visual_slope_target_basis = _visual_root_rest_basis
+		return
+
+	var unit_basis := global_transform.basis.orthonormalized()
+	var slope_forward := (-unit_basis.z).slide(_last_terrain_normal)
+	if slope_forward.length_squared() <= 0.000001:
+		slope_forward = unit_basis.x.cross(_last_terrain_normal)
+	if slope_forward.length_squared() <= 0.000001:
+		_visual_slope_target_basis = _visual_root_rest_basis
+		return
+	slope_forward = slope_forward.normalized()
+	var slope_z := -slope_forward
+	var slope_x := _last_terrain_normal.cross(slope_z).normalized()
+	var slope_basis := Basis(slope_x, _last_terrain_normal, slope_z).orthonormalized()
+	_visual_slope_target_basis = (
+		unit_basis.inverse() * slope_basis * _visual_root_rest_basis
+	).orthonormalized()
+
+
+func _advance_visual_slope_alignment(delta: float) -> void:
+	if visual_root == null or delta <= 0.0:
+		return
+	var blend := 1.0 - exp(-SLOPE_ALIGNMENT_RESPONSE * delta)
+	visual_root.transform.basis = visual_root.transform.basis.orthonormalized().slerp(
+		_visual_slope_target_basis, clampf(blend, 0.0, 1.0)
+	).orthonormalized()
+
+
+func aligns_visual_to_terrain_slope() -> bool:
+	match slope_alignment_mode:
+		SlopeAlignmentMode.ENABLED:
+			return true
+		SlopeAlignmentMode.DISABLED:
+			return false
+	if unit_config == null:
+		return false
+	return (
+		float(unit_config.field(&"size", 1.0)) > 1.0
+		and not bool(unit_config.field(&"infantry", false))
+		and not bool(unit_config.field(&"can_fly", false))
+		and not bool(unit_config.field(&"mech", false))
+		and config_id not in LEGACY_WALKER_UNIT_IDS
+	)
 
 
 func _slope_speed_multiplier(direction: Vector3, delta: float) -> float:
@@ -304,6 +382,7 @@ func face_direction(direction: Vector3) -> void:
 	var target_yaw := SpatialOrientationScript.yaw_facing(direction, current_yaw)
 	if is_inside_tree():
 		global_rotation.y = target_yaw
+		_set_visual_slope_target(_last_terrain_normal)
 	else:
 		rotation.y = target_yaw
 
@@ -326,6 +405,7 @@ func setup(unit_id: StringName) -> void:
 	_apply_rules_config()
 	health = max_health
 	shields = max_shields
+	_set_visual_slope_target(_last_terrain_normal)
 
 
 ## Used by runtime unit production and startup snapshots when a generic Unit

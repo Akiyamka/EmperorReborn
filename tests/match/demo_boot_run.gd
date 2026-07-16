@@ -19,7 +19,7 @@ var _current_case := ""
 
 func _initialize() -> void:
 	await _run_case("units and buildings use authored collision meshes", _test_authored_collision_meshes)
-	await _run_case("units follow terrain elevation", _test_units_follow_terrain)
+	await _run_case("ground vehicles follow terrain elevation and slope", _test_units_follow_terrain)
 	await _run_case("units turn at their rules rates", _test_unit_turn_rates)
 	await _run_case("entity forward directions share one world-space contract", _test_entity_orientation_contract)
 	await _run_case("units switch between stationary and movement animations", _test_unit_movement_animations)
@@ -125,16 +125,43 @@ func _test_units_follow_terrain() -> void:
 	await physics_frame
 
 	for unit_name in [&"ScoutA", &"OrdosAPC", &"NIABTank"]:
-		var unit := match_instance.get_node("Units/%s" % unit_name) as CharacterBody3D
+		var unit := match_instance.get_node("Units/%s" % unit_name) as Unit
 		_expect(unit.collision_mask == 0, "%s must not physically collide with terrain triangles" % unit_name)
 		var terrain_hit := _terrain_hit_below(unit)
 		_expect(not terrain_hit.is_empty(), "%s must have terrain beneath it" % unit_name)
 		if not terrain_hit.is_empty():
 			var terrain_position: Vector3 = terrain_hit["position"]
+			var terrain_normal: Vector3 = terrain_hit["normal"]
 			_expect(
 				is_equal_approx(unit.global_position.y, terrain_position.y),
 				"%s must sit on the terrain instead of hovering at its spawn height" % unit_name
 			)
+			unit.call("_advance_visual_slope_alignment", 1.0)
+			var visual_up := unit.visual_root.global_transform.basis.y.normalized()
+			if unit_name == &"ScoutA":
+				_expect(not unit.aligns_visual_to_terrain_slope(), "infantry must stay upright on slopes")
+				_expect(visual_up.dot(Vector3.UP) > 0.999, "infantry visuals must remain upright")
+			else:
+				_expect(unit.aligns_visual_to_terrain_slope(), "%s must align its visual to slopes" % unit_name)
+				_expect(
+					visual_up.dot(terrain_normal.normalized()) > 0.999,
+					"%s visual up axis must follow the terrain normal" % unit_name
+				)
+
+	var vehicle := match_instance.get_node("Units/OrdosAPC") as Unit
+	var synthetic_normal := Vector3(0.35, 1.0, -0.2).normalized()
+	vehicle.call("_set_visual_slope_target", synthetic_normal)
+	vehicle.call("_advance_visual_slope_alignment", 1.0)
+	_expect(
+		vehicle.visual_root.global_transform.basis.y.normalized().dot(synthetic_normal) > 0.999,
+		"a ground vehicle must pitch and roll toward a non-flat terrain normal"
+	)
+
+	var infantry := match_instance.get_node("Units/ScoutA") as Unit
+	infantry.setup(&"ATMongoose")
+	_expect(not infantry.aligns_visual_to_terrain_slope(), "Mech=true walkers must not tilt their complete visual")
+	infantry.setup(&"INTLWalker")
+	_expect(not infantry.aligns_visual_to_terrain_slope(), "the legacy Tleilaxu walker must remain upright")
 
 	match_instance.queue_free()
 

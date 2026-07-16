@@ -389,6 +389,8 @@ CREATE TABLE units (
     build_time                   INTEGER,
     size                         INTEGER,
     speed                        REAL,
+    mech_speed                   REAL,     -- скорость шагохода из MechSpeed, игровых координат за update
+    mech                         INTEGER,  -- bool: корпус на ногах; не наклоняется целиком по склону
     turn_rate                    REAL,
     armour_type_id               INTEGER REFERENCES armour_types(id),
     armour_modifier_percent      REAL,     -- напр. "Armour = None, 50, InfRock" -> 50
