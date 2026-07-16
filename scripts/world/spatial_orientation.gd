@@ -10,17 +10,27 @@ const LOCAL_RIGHT := Vector3.RIGHT
 const DIRECTION_EPSILON := 0.000001
 
 
-static func world_horizontal_axis(node: Node3D, local_axis: Vector3) -> Vector3:
+## Transforms an authored local axis into a full 3D world direction, preserving
+## pitch. Use world_horizontal_axis() for movement constrained to the XZ plane.
+static func world_axis(node: Node3D, local_axis: Vector3) -> Vector3:
 	if node == null:
 		return Vector3.ZERO
 	var basis := node.global_transform.basis if node.is_inside_tree() else node.transform.basis
 	var direction: Vector3 = basis * local_axis
+	if direction.length_squared() <= DIRECTION_EPSILON:
+		return Vector3.ZERO
+	return direction.normalized()
+
+
+static func world_horizontal_axis(node: Node3D, local_axis: Vector3) -> Vector3:
+	var direction := world_axis(node, local_axis)
 	direction.y = 0.0
 	if direction.length_squared() <= DIRECTION_EPSILON:
 		return Vector3.ZERO
 	return direction.normalized()
 
 
+## Semantic forward direction projected onto the XZ movement plane.
 static func world_forward(node: Node3D) -> Vector3:
 	return world_horizontal_axis(node, LOCAL_FORWARD)
 

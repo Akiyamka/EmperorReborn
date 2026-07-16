@@ -128,28 +128,51 @@ func _edge_scroll_direction() -> Vector2:
 func _clamp_view_to_bounds() -> void:
 	if not target_bounds.has_area():
 		return
-	var camera_position := camera.global_position
-	var view_direction := SpatialOrientationScript.world_forward(camera)
-	if view_direction.y >= -0.01:
+	var view_center: Variant = _ground_view_center()
+	if view_center == null:
 		return
-	var distance := camera_position.y / -view_direction.y
-	var view_center := camera_position + view_direction * distance
-	var clamped_x := clampf(view_center.x, target_bounds.position.x, target_bounds.end.x)
-	var clamped_z := clampf(view_center.z, target_bounds.position.y, target_bounds.end.y)
-	global_position.x += clamped_x - view_center.x
-	global_position.z += clamped_z - view_center.z
+	var center: Vector3 = view_center
+	var clamped_x := clampf(center.x, target_bounds.position.x, target_bounds.end.x)
+	var clamped_z := clampf(center.z, target_bounds.position.y, target_bounds.end.y)
+	global_position.x += clamped_x - center.x
+	global_position.z += clamped_z - center.z
 
 
 func _set_zoom(value: float) -> void:
 	_ensure_config()
 	_zoom = clampf(value, config.min_zoom, config.max_zoom)
-	_apply_zoom()
+	_apply_zoom(true)
 
 
-func _apply_zoom() -> void:
+func _apply_zoom(preserve_view_center := false) -> void:
+	var previous_view_center = _ground_view_center() if preserve_view_center else null
 	camera.position = Vector3(0.0, _zoom * config.camera_height_per_zoom, _zoom)
-	camera.rotation_degrees = Vector3(config.camera_pitch_degrees, 0.0, 0.0)
+	camera.rotation_degrees = Vector3(_zoom_pitch_degrees(), 0.0, 0.0)
+	if previous_view_center != null:
+		var current_view_center: Variant = _ground_view_center()
+		if current_view_center != null:
+			var previous: Vector3 = previous_view_center
+			var current: Vector3 = current_view_center
+			global_position.x += previous.x - current.x
+			global_position.z += previous.z - current.z
 	_clamp_view_to_bounds()
+
+
+func _zoom_pitch_degrees() -> float:
+	var zoom_range := config.max_zoom - config.min_zoom
+	if is_zero_approx(zoom_range):
+		return config.near_pitch_degrees
+	var zoom_ratio := clampf((_zoom - config.min_zoom) / zoom_range, 0.0, 1.0)
+	return lerpf(config.near_pitch_degrees, config.far_pitch_degrees, zoom_ratio)
+
+
+func _ground_view_center() -> Variant:
+	var camera_position := camera.global_position
+	var view_direction := SpatialOrientationScript.world_axis(camera, SpatialOrientationScript.LOCAL_FORWARD)
+	if view_direction.y >= -0.01:
+		return null
+	var distance := camera_position.y / -view_direction.y
+	return camera_position + view_direction * distance
 
 
 func _apply_camera_defaults() -> void:

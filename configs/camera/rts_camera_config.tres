@@ -8,4 +8,6 @@ move_speed = 70.0
 min_zoom = 32.0
 max_zoom = 100.0
 default_zoom = 70.0
+near_pitch_degrees = -35.0
+far_pitch_degrees = -60.0
 edge_scroll_margin = 32.0

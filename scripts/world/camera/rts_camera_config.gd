@@ -8,7 +8,8 @@ extends Resource
 @export var min_zoom := 14.0
 @export var max_zoom := 240.0
 @export var default_zoom := 32.0
-@export var camera_pitch_degrees := -60.0
+@export var near_pitch_degrees := -35.0
+@export var far_pitch_degrees := -60.0
 @export var camera_height_per_zoom := 0.75
 @export var bounds_margin := 8.0
 @export var edge_scroll_margin := 16.0
