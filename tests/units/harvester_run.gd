@@ -256,6 +256,11 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 	var scene_harvester := HarvesterScene.instantiate()
 	_expect(scene_harvester is HarvesterScript and scene_harvester is UnitScript, "the dedicated Harvester scene must remain a Unit subtype")
 	root.add_child(scene_harvester)
+	var body_radius := float(scene_harvester.navigation_collision_radius(1.26))
+	var rotation_radius := float(scene_harvester.navigation_rotation_radius(body_radius))
+	_expect(rotation_radius > body_radius * 1.4,
+		"harvester navigation must retain its long capsule envelope (width %.2f, rotation %.2f)" \
+			% [body_radius, rotation_radius])
 	var has_unload_clips := false
 	for node in scene_harvester.find_children("*", "AnimationPlayer", true, false):
 		var player := node as AnimationPlayer
@@ -286,12 +291,18 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 	cargo.add_child(halo)
 	halo.configure(cargo, 1.0, Vector3.ZERO)
 	halo.set_selected(true)
+	halo.set_movement_direction(Vector3.RIGHT)
 	halo._process(0.0)
 	var harvester_layer := halo.get_node("Transport") as MeshInstance3D
 	var spice_layer := halo.get_node("Spice") as MeshInstance3D
+	var movement_arrow := halo.get_node("MovementDirection") as MeshInstance3D
 	var material := harvester_layer.material_override as ShaderMaterial
 	_expect(harvester_layer.visible and not spice_layer.visible, "harvester cargo must use the authored @!Harv ring without a duplicate @!Spice ring")
 	_expect(is_equal_approx(float(material.get_shader_parameter("fill")), 0.5), "@!Harv fill must track spice divided by bunker capacity")
+	_expect(movement_arrow.visible and movement_arrow.mesh != null,
+		"a selected moving unit must expose its final navigation course as a visible arrow")
+	halo.set_selected(false)
+	_expect(not movement_arrow.visible, "the navigation course arrow must disappear with selection")
 	harvester.queue_free()
 	cargo.queue_free()
 	return token

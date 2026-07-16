@@ -69,6 +69,7 @@ var _navigation_system = null
 var _pending_navigation_order := Vector3.ZERO
 var _pending_navigation_exit := Vector3.INF
 var _has_pending_navigation_order := false
+var _navigation_requested_velocity := Vector3.ZERO
 
 
 func _ready() -> void:
@@ -110,17 +111,20 @@ func _physics_process(delta: float) -> void:
 		return
 	var offset := target_position - global_position
 	offset.y = 0.0
+	var requested_velocity := Vector3.ZERO
 
 	if offset.length() <= arrival_radius:
 		velocity = Vector3.ZERO
 	else:
 		var direction := offset.normalized()
+		requested_velocity = direction * move_speed
 		var heading_reached := _turn_toward(direction, delta)
 		if can_move_any_direction or heading_reached:
 			velocity = direction * move_speed * _slope_speed_multiplier(direction, delta)
 		else:
 			velocity = Vector3.ZERO
 
+	_set_navigation_debug_direction(requested_velocity)
 	_set_movement_animation(not velocity.is_zero_approx(), _movement_animation_speed_scale())
 	move_and_slide()
 	_snap_to_terrain()
@@ -159,6 +163,7 @@ func set_navigation_managed(active: bool) -> void:
 	_navigation_managed = active
 	if active:
 		velocity = Vector3.ZERO
+		_set_navigation_debug_direction(Vector3.ZERO)
 
 
 func set_navigation_controller(controller) -> void:
@@ -181,6 +186,26 @@ func set_navigation_destination(world_position: Vector3) -> void:
 ## axis would leave vehicle-sized gaps beside every tank, while the rules-only
 ## radius is small enough for infantry to run visibly through their hulls.
 func navigation_collision_radius(fallback: float) -> float:
+	var half_extents := _navigation_collision_half_extents()
+	var authored_width_radius := minf(half_extents.x, half_extents.y)
+	return maxf(fallback, authored_width_radius)
+
+
+## Long vehicles are represented as rounded capsules for navigation. `radius`
+## above is their cross-section and remains the right unit/unit spacing. Around
+## static terrain, however, a freely turning capsule needs its complete rotation
+## envelope: otherwise the centre path clears a building while the harvester's
+## nose and tail still sweep through its cells.
+func navigation_rotation_radius(fallback: float) -> float:
+	var half_extents := _navigation_collision_half_extents()
+	return maxf(fallback, maxf(half_extents.x, half_extents.y))
+
+
+func _navigation_collision_half_extents() -> Vector2:
+	# Lightweight gameplay test doubles intentionally omit the converted visual
+	# hierarchy; in that case the rules-derived fallback remains authoritative.
+	if visual_root == null:
+		return Vector2.ZERO
 	var maximum_x := 0.0
 	var maximum_z := 0.0
 	var to_unit := global_transform.affine_inverse()
@@ -191,11 +216,14 @@ func navigation_collision_radius(fallback: float) -> float:
 			var local_point: Vector3 = source_to_unit * point
 			maximum_x = maxf(maximum_x, absf(local_point.x))
 			maximum_z = maxf(maximum_z, absf(local_point.z))
-	var authored_width_radius := minf(maximum_x, maximum_z)
-	return maxf(fallback, authored_width_radius)
+	return Vector2(maximum_x, maximum_z)
 
 
 func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
+	# Preserve the requested course before a tracked unit possibly converts its
+	# translational velocity to zero while turning in place. This is the value
+	# shown by the selected-unit navigation debug arrow.
+	_set_navigation_debug_direction(horizontal_velocity)
 	velocity = Vector3(horizontal_velocity.x, 0.0, horizontal_velocity.z)
 	# Crowded units receive tiny non-zero velocities from collision resolution;
 	# skip negligible motion so it cannot jitter the unit's heading.
@@ -346,6 +374,7 @@ func stop_at_current_position() -> void:
 		_navigation_system.stop(self)
 	target_position = global_position
 	velocity = Vector3.ZERO
+	_set_navigation_debug_direction(Vector3.ZERO)
 	_set_movement_animation(false)
 
 
@@ -356,6 +385,16 @@ func set_selected(value: bool) -> void:
 	is_selected = value
 	if _selection_halo != null:
 		_selection_halo.set_selected(value)
+
+
+func navigation_requested_velocity() -> Vector3:
+	return _navigation_requested_velocity
+
+
+func _set_navigation_debug_direction(value: Vector3) -> void:
+	_navigation_requested_velocity = Vector3(value.x, 0.0, value.z)
+	if _selection_halo != null:
+		_selection_halo.set_movement_direction(_navigation_requested_velocity)
 
 
 func set_hovered(value: bool) -> void:
@@ -644,6 +683,7 @@ func _add_selection_halo() -> void:
 	_selection_halo.name = "SelectionHalo"
 	add_child(_selection_halo)
 	_selection_halo.configure(self, _selection_radius(), _selection_position())
+	_selection_halo.set_movement_direction(_navigation_requested_velocity)
 
 
 func _selection_radius() -> float:

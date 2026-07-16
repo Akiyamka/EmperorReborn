@@ -11,11 +11,16 @@ var _failures := 0
 
 class FakeUnit extends Node3D:
 	var move_speed := 6.0
+	var turn_rate := 0.15
+	var navigation_radius_override := -1.0
+	var navigation_rotation_radius_override := -1.0
+	var can_move_any_direction := true
 	var arrival_radius := 0.2
 	var unit_config := RuleEntityConfig.new()
 	var managed := false
 	var destination := Vector3.ZERO
 	var owner_player_id := 1
+	var is_selected := false
 	var defer_navigation_orders := false
 	var prepared_navigation_targets: Array[Vector3] = []
 
@@ -29,6 +34,16 @@ class FakeUnit extends Node3D:
 	func set_navigation_destination(value: Vector3) -> void:
 		destination = value
 
+	func set_selected(value: bool) -> void:
+		is_selected = value
+
+	func navigation_collision_radius(fallback: float) -> float:
+		return navigation_radius_override if navigation_radius_override > 0.0 else fallback
+
+	func navigation_rotation_radius(fallback: float) -> float:
+		return navigation_rotation_radius_override \
+			if navigation_rotation_radius_override > 0.0 else fallback
+
 	func prepare_navigation_order(target: Vector3, _exit_point := Vector3.INF, _move_mode := 0) -> bool:
 		prepared_navigation_targets.append(target)
 		return not defer_navigation_orders
@@ -38,6 +53,40 @@ class FakeUnit extends Node3D:
 
 	func is_enemy_of(player_id: int) -> bool:
 		return owner_player_id != player_id
+
+
+class FakeTurningUnit extends FakeUnit:
+	var facing := Vector3.RIGHT
+	var turn_starts := 0
+	var commanded_headings: Array[Vector3] = []
+	var _turning := false
+
+	func _init(size := 1.0, infantry := false) -> void:
+		super(size, infantry)
+		can_move_any_direction = false
+
+	func facing_direction() -> Vector3:
+		return facing
+
+	func navigation_step(value: Vector3, delta: float) -> void:
+		if value.length_squared() <= 0.000001:
+			_turning = false
+			return
+		var target := value.normalized()
+		commanded_headings.append(target)
+		var difference := facing.signed_angle_to(target, Vector3.UP)
+		var maximum_step := turn_rate * 20.0 * delta
+		if absf(difference) > maximum_step + 0.000001:
+			if not _turning:
+				turn_starts += 1
+			_turning = true
+			facing = facing.rotated(
+				Vector3.UP, clampf(difference, -maximum_step, maximum_step)
+			).normalized()
+			return
+		_turning = false
+		facing = target
+		global_position += value * delta
 
 
 class FakeBuilding extends Node3D:
@@ -60,10 +109,23 @@ func _initialize() -> void:
 	_test_interior_escape(grid)
 	_test_immediate_movement(grid)
 	_test_navigation_catch_up_budget(grid)
+	_test_selected_unit_navigation_debug(grid)
+	_test_rounded_local_avoidance_field(grid)
+	_test_local_avoidance_preserves_route_half_plane(grid)
+	_test_continuous_corner_steering(grid)
+	_test_long_steering_arc_does_not_periodically_stop(grid)
+	_test_far_target_large_bearing_starts_driven_arc(grid)
+	_test_close_target_does_not_become_orbit(grid)
+	_test_path_lookahead_smooths_waypoint_corner(grid)
+	_test_path_chord_uses_rounded_geometry(grid)
+	_test_missed_waypoint_advances_through_route_gate(grid)
+	_test_large_unit_steers_smoothly_around_corner(grid)
+	_test_jagged_boundary_steering_stays_smooth(grid)
 	_test_slots_and_collision(grid)
 	_test_slide_around_stopped_friend(grid)
 	_test_group_convergence(grid)
 	_test_group_rounds_sharp_corner(grid)
+	_test_large_pair_keeps_lanes_at_shared_corner(grid)
 	_test_yield_behaviour(grid)
 	_test_command_overrides_yield(grid)
 	_test_grid_aligned_slots(grid)
@@ -72,6 +134,7 @@ func _initialize() -> void:
 	_test_large_overlap_spans_spatial_buckets(grid)
 	_test_enemy_stays_solid_under_separation(grid)
 	_test_elastic_corridor_pass(grid)
+	_test_large_reciprocal_crossing(grid)
 	_test_circle_convergence_metrics(grid)
 	_test_group_shift_keeps_shape(grid)
 	if _failures > 0:
@@ -478,6 +541,505 @@ func _test_navigation_catch_up_budget(grid: MapNavigationGrid) -> void:
 	navigation.queue_free()
 
 
+func _test_selected_unit_navigation_debug(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for selected route debug")
+	var unit := FakeUnit.new(3.0)
+	root.add_child(unit)
+	unit.global_position = Vector3(80.5, 0.0, 80.5)
+	unit.set_selected(true)
+	navigation.command_move([unit], Vector3(90.5, 0.0, 86.5))
+	navigation.call("_navigation_tick", 0.05)
+	var debug = navigation.get_node("NavigationDebug")
+	var geometry := debug.get_node("Geometry") as MeshInstance3D
+	_expect(debug.has_geometry() and geometry.mesh != null \
+		and geometry.mesh.get_surface_count() >= 4,
+		"a selected unit must draw route, waypoint, look-ahead, and destination surfaces")
+	unit.set_selected(false)
+	navigation.call("_navigation_tick", 0.05)
+	_expect(not debug.has_geometry(), "navigation route diagnostics must disappear after deselection")
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## Local avoidance uses continuous round geometry even though A* remains a
+## discrete cell graph. The diagonal corner of an isolated cell is outside its
+## hard circle, while a soft field is already pushing the unit away from it.
+func _test_rounded_local_avoidance_field(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for rounded avoidance")
+	var blocked_cell := Vector2i(100, 100)
+	navigation.runtime_map.replace_blocked_cells({blocked_cell: true})
+
+	var unit := FakeUnit.new(3.0)
+	root.add_child(unit)
+	var obstacle := grid.grid_to_world(blocked_cell)
+	unit.global_position = obstacle + Vector3(1.4, 0.0, 1.4)
+	navigation.register_unit(unit)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	var away := (unit.global_position - obstacle).normalized()
+	var pressure: Vector3 = navigation.avoidance.terrain_pressure(agent)
+	_expect(
+		pressure.length() > 0.05 and pressure.normalized().dot(away) > 0.95,
+		"an isolated blocked cell must produce a smooth radial pressure field"
+	)
+	var tangent := Vector3(away.z, 0.0, -away.x) * 0.4
+	_expect(
+		navigation.avoidance.terrain_sweep_fraction(agent, tangent) >= 0.999,
+		"a large round unit must be able to slide past the rounded corner of one cell"
+	)
+	_expect(
+		navigation.avoidance.terrain_sweep_fraction(agent, -away * 1.0) < 0.999,
+		"the same rounded cell must retain a hard inner boundary against inward motion"
+	)
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## A rules-rate-limited harvester must follow one continuous steering arc around
+## a wall tip. Repeated target-heading changes make a real Unit stop and turn
+## its chassis again, even when the continuous collision geometry is clear.
+func _test_large_unit_steers_smoothly_around_corner(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for smooth corner steering")
+	var walls := {}
+	for x in range(40, 121):
+		walls[Vector2i(x, 100)] = true
+	navigation.runtime_map.replace_blocked_cells(walls)
+
+	var unit := FakeTurningUnit.new(3.0)
+	unit.move_speed = 4.0
+	unit.navigation_radius_override = 2.179
+	unit.navigation_rotation_radius_override = 3.393
+	root.add_child(unit)
+	unit.global_position = Vector3(110.5, 0.0, 90.5)
+	var target := Vector3(130.5, 0.0, 110.5)
+	navigation.command_move([unit], target)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	_expect(float(agent.get("rotation_radius", agent["radius"])) >= 3.39,
+		"harvester corner routing must include its full 3.39-unit rotation envelope")
+	_expect(int(agent["clearance"]) >= 3,
+		"the A* profile must leave enough building clearance for the harvester's long body")
+	unit.facing = (navigation.call("_desired_velocity", agent) as Vector3).normalized()
+	for _tick in 500:
+		navigation.call("_navigation_tick", 0.05)
+		if unit.global_position.distance_to(navigation.agent_debug(unit)["destination"]) < 1.0:
+			break
+	_expect(
+		unit.global_position.distance_to(navigation.agent_debug(unit)["destination"]) < 1.0,
+		"a large turn-rate-limited unit must still reach the far side of the corner"
+	)
+	_expect(
+		unit.turn_starts <= 1,
+		"corner avoidance must be one continuous chassis turn, not repeated steering corrections (got %d)" \
+			% unit.turn_starts
+	)
+	var steering_reversals := 0
+	var previous_turn_side := 0
+	for index in range(1, unit.commanded_headings.size()):
+		var change := unit.commanded_headings[index - 1].signed_angle_to(
+			unit.commanded_headings[index], Vector3.UP
+		)
+		if absf(change) <= 0.01:
+			continue
+		var turn_side := 1 if change > 0.0 else -1
+		if previous_turn_side != 0 and turn_side != previous_turn_side:
+			steering_reversals += 1
+		previous_turn_side = turn_side
+	_expect(steering_reversals <= 2,
+		"a harvester must round one building tip without repeated left/right corrections (got %d)" \
+			% steering_reversals)
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## A harvester skirting a jagged diagonal terrain boundary (staircase cells)
+## rides inside the soft pressure band for many seconds. Its commanded course
+## must stay one continuous arc: the discrete candidate lattice and the
+## position-fed avoidance feedback used to alternate the course left/right at
+## half the tick rate, which a rules-turn-rate chassis rendered as constant
+## aiming twitches while driving along the obstacle.
+func _test_jagged_boundary_steering_stays_smooth(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for jagged boundary steering")
+	var walls := {}
+	for y in range(80, 132):
+		var edge := 96 - int((131 - y) / 2.0)
+		for x in range(50, edge + 1):
+			walls[Vector2i(x, y)] = true
+	navigation.runtime_map.replace_blocked_cells(walls)
+
+	var unit := FakeTurningUnit.new(3.0)
+	unit.move_speed = 4.0
+	unit.navigation_radius_override = 2.179
+	unit.navigation_rotation_radius_override = 3.393
+	root.add_child(unit)
+	unit.global_position = Vector3(98.5, 0.0, 128.5)
+	unit.facing = Vector3(0.0, 0.0, -1.0)
+	navigation.command_move([unit], Vector3(64.5, 0.0, 74.5))
+	for _tick in 500:
+		navigation.call("_navigation_tick", 0.05)
+		if unit.global_position.distance_to(navigation.agent_debug(unit)["destination"]) < 1.0:
+			break
+	_expect(
+		unit.global_position.distance_to(navigation.agent_debug(unit)["destination"]) < 1.0,
+		"the harvester must clear the jagged boundary and reach its destination"
+	)
+	var sharp_reversals := 0
+	var previous_side := 0
+	for index in range(1, unit.commanded_headings.size()):
+		var change := unit.commanded_headings[index - 1].signed_angle_to(
+			unit.commanded_headings[index], Vector3.UP
+		)
+		if absf(change) <= 0.035:
+			continue
+		var side := 1 if change > 0.0 else -1
+		if previous_side != 0 and side != previous_side:
+			sharp_reversals += 1
+		previous_side = side
+	_expect(sharp_reversals <= 2,
+		"skirting a jagged boundary must be one continuous course, not left/right twitching (got %d sharp reversals)" \
+			% sharp_reversals)
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+func _test_continuous_corner_steering(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for continuous steering")
+	var blocked_cell := Vector2i(100, 100)
+	navigation.runtime_map.replace_blocked_cells({blocked_cell: true})
+	var obstacle := grid.grid_to_world(blocked_cell)
+	var unit := FakeTurningUnit.new(3.0)
+	unit.move_speed = 4.0
+	unit.navigation_radius_override = 2.179
+	unit.navigation_rotation_radius_override = 3.393
+	root.add_child(unit)
+	unit.global_position = obstacle + Vector3(-5.0, 0.0, 0.4)
+	unit.facing = Vector3.RIGHT
+	navigation.register_unit(unit)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	for _tick in 100:
+		var result: Dictionary = navigation.avoidance.resolve_velocity(
+			agent, Vector3.RIGHT * unit.move_speed, 0.05, [agent], {}
+		)
+		var velocity: Vector3 = navigation.avoidance.stabilize_velocity(
+			agent, result["velocity"], 0.05, [agent], {}
+		)
+		unit.navigation_step(velocity, 0.05)
+		if unit.global_position.x > obstacle.x + 4.0:
+			break
+	var large_course_changes := 0
+	for index in range(1, unit.commanded_headings.size()):
+		if absf(unit.commanded_headings[index - 1].signed_angle_to(
+			unit.commanded_headings[index], Vector3.UP
+		)) > 0.16:
+			large_course_changes += 1
+	print("Direct rounded-corner steering: %d large course changes, %d turn starts" % [
+		large_course_changes, unit.turn_starts])
+	_expect(unit.global_position.x > obstacle.x + 4.0,
+		"continuous local steering must carry a large unit past a rounded cell")
+	_expect(large_course_changes <= 2 and unit.turn_starts <= 2,
+		"rounded-corner steering must stay on one smooth arc (course changes %d, turn starts %d)" % [
+			large_course_changes, unit.turn_starts])
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## A legitimate long bend can keep the pursuit heading a few degrees ahead of
+## the chassis for several seconds. The reachable heading remains inside the
+## unit's turn rate on every tick, so elapsed time alone must never convert the
+## arc into a periodic stop-and-turn cycle.
+func _test_long_steering_arc_does_not_periodically_stop(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for sustained steering arcs")
+	var unit := FakeTurningUnit.new(3.0)
+	unit.move_speed = 4.0
+	unit.facing = Vector3.RIGHT
+	root.add_child(unit)
+	unit.global_position = Vector3(180.5, 0.0, 180.5)
+	navigation.register_unit(unit)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	var delta := 0.05
+	var reachable_step := unit.turn_rate * 20.0 * delta * 0.85
+	var stationary_ticks := 0
+	for tick in 80:
+		var desired_direction := Vector3.RIGHT.rotated(
+			Vector3.UP, 0.3 + reachable_step * float(tick)
+		).normalized()
+		var velocity: Vector3 = navigation.avoidance.stabilize_velocity(
+			agent, desired_direction * unit.move_speed, delta, [agent], {}
+		)
+		var previous := unit.global_position
+		unit.navigation_step(velocity, delta)
+		if unit.global_position.distance_to(previous) <= 0.001:
+			stationary_ticks += 1
+	_expect(stationary_ticks == 0,
+		"a reachable sustained arc must not periodically stop translation (%d stopped ticks)" \
+			% stationary_ticks)
+	_expect(unit.turn_starts == 0,
+		"a reachable sustained arc must not enter turn-in-place (%d entries)" % unit.turn_starts)
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## A large bearing is not itself a reason to stop: with a distant pursuit
+## target the turn-rate-limited intermediate heading forms a valid driven arc.
+## Turn-in-place is reserved for a target inside that arc's capture radius.
+func _test_far_target_large_bearing_starts_driven_arc(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for far-bearing arcs")
+	var unit := FakeTurningUnit.new(3.0)
+	unit.move_speed = 4.0
+	unit.facing = Vector3.RIGHT
+	root.add_child(unit)
+	unit.global_position = Vector3(180.5, 0.0, 180.5)
+	navigation.register_unit(unit)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	var target := unit.global_position + Vector3.BACK * 10.0
+	agent["steering_target"] = target
+	var velocity: Vector3 = navigation.avoidance.stabilize_velocity(
+		agent, Vector3.BACK * unit.move_speed, 0.05, [agent], {}
+	)
+	var previous := unit.global_position
+	unit.navigation_step(velocity, 0.05)
+	_expect(unit.global_position.distance_to(previous) > 0.1,
+		"a distant large-bearing target must begin a driven arc without stopping")
+	_expect(unit.turn_starts == 0,
+		"a distant large-bearing target must not enter turn-in-place")
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## A short-range collision response may stop or sidestep while a new route is
+## prepared, but it must never reinterpret a stable route target as a retreat.
+## The latter used to alternate with forward motion at rounded grid boundaries
+## and made a tracked harvester turn exactly 180 degrees every second.
+func _test_local_avoidance_preserves_route_half_plane(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid),
+		"navigation system must initialize for route-direction avoidance")
+	var corner := {}
+	for offset in range(-3, 4):
+		corner[Vector2i(100, 100 + offset)] = true
+		corner[Vector2i(100 + offset, 100)] = true
+	navigation.runtime_map.replace_blocked_cells(corner)
+
+	var unit := FakeUnit.new(3.0)
+	root.add_child(unit)
+	navigation.register_unit(unit)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	var reverse_samples := 0
+	var worst_progress := 1.0
+	for x_offset in range(-4, 5):
+		for z_offset in range(-4, 5):
+			var sample := Vector3(100.5 + float(x_offset) * 0.55, 0.0,
+				100.5 + float(z_offset) * 0.55)
+			var cell := grid.world_to_grid(sample)
+			if corner.has(cell):
+				continue
+			unit.global_position = sample
+			for heading_index in 24:
+				var route_direction := Vector3.RIGHT.rotated(
+					Vector3.UP, TAU * float(heading_index) / 24.0
+				).normalized()
+				var result: Dictionary = navigation.avoidance.resolve_velocity(
+					agent, route_direction * unit.move_speed, 0.05, [agent], {}
+				)
+				var velocity: Vector3 = result["velocity"]
+				if velocity.is_zero_approx():
+					continue
+				var progress := velocity.normalized().dot(route_direction)
+				worst_progress = minf(worst_progress, progress)
+				if progress < -0.001:
+					reverse_samples += 1
+	_expect(reverse_samples == 0,
+		"local avoidance must not reverse a stable route (samples %d, worst %.3f)" % [
+			reverse_samples, worst_progress])
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## Course smoothing must not turn a close target into a minimum-radius orbit.
+## When the target bearing is too far from the chassis heading, a tracked unit
+## needs to turn in place before resuming translation.
+func _test_close_target_does_not_become_orbit(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for close-target steering")
+	var unit := FakeTurningUnit.new(3.0)
+	root.add_child(unit)
+	var target := Vector3(100.5, 0.0, 100.5)
+	unit.global_position = target + Vector3.RIGHT
+	unit.facing = Vector3.FORWARD
+	navigation.register_unit(unit)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	var closest := unit.global_position.distance_to(target)
+	for _tick in 200:
+		var offset := target - unit.global_position
+		offset.y = 0.0
+		if offset.length() < 0.2:
+			break
+		var result: Dictionary = navigation.avoidance.resolve_velocity(
+			agent, offset.normalized() * unit.move_speed, 0.05, [agent], {}
+		)
+		var velocity: Vector3 = navigation.avoidance.stabilize_velocity(
+			agent, result["velocity"], 0.05, [agent], {}
+		)
+		unit.navigation_step(velocity, 0.05)
+		closest = minf(closest, unit.global_position.distance_to(target))
+	_expect(closest < 0.2,
+		"a close target outside the current heading must be reached instead of orbited (closest %.2f)" \
+			% closest)
+	_expect(unit.turn_starts <= 1,
+		"escaping a potential orbit should require one turn-in-place phase (got %d)" % unit.turn_starts)
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## A radius- and turn-rate-aware follower begins steering before the exact cell
+## waypoint. Aiming at cell centres until arrival produces an abrupt near-right
+## angle even though both route segments themselves are valid.
+func _test_path_lookahead_smooths_waypoint_corner(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for path look-ahead")
+	var unit := FakeTurningUnit.new(3.0)
+	unit.move_speed = 4.0
+	root.add_child(unit)
+	var corner_cell := Vector2i(100, 90)
+	var corner := grid.grid_to_world(corner_cell)
+	unit.global_position = corner + Vector3(-4.0, 0.0, 0.0)
+	navigation.register_unit(unit)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	agent["direct_path"] = false
+	agent["path"] = [
+		corner_cell + Vector2i(-10, 0),
+		corner_cell,
+		corner_cell + Vector2i(0, 10),
+	] as Array[Vector2i]
+	agent["path_index"] = 1
+	agent["destination"] = grid.grid_to_world(corner_cell + Vector2i(0, 10))
+	navigation._agents[unit.get_instance_id()] = agent
+	var previous := Vector3.ZERO
+	var largest_change := 0.0
+	for sample in 19:
+		unit.global_position = corner + Vector3(-4.0 + float(sample) * 0.25, 0.0, 0.0)
+		var direction: Vector3 = navigation.call("_desired_velocity", agent)
+		if not previous.is_zero_approx() and not direction.is_zero_approx():
+			largest_change = maxf(largest_change, previous.angle_to(direction))
+		previous = direction
+	_expect(largest_change < 0.45,
+		"a large unit's route heading must blend across a cell corner (largest change %.2f rad)" \
+			% largest_change)
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+## Global A* deliberately keeps square cells, but runtime look-ahead must use
+## the same rounded collision geometry as actual motion. This diagonal clears
+## the expanded obstacle circle while the conservative square cell/corner test
+## rejects it; keeping that square veto pins the yellow target to the waypoint
+## until it advances by a visible step.
+func _test_path_chord_uses_rounded_geometry(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for rounded path chords")
+	var blocked_cell := Vector2i(100, 100)
+	navigation.runtime_map.replace_blocked_cells({blocked_cell: true})
+	var obstacle := grid.grid_to_world(blocked_cell)
+	var unit := FakeUnit.new(3.0)
+	root.add_child(unit)
+	unit.global_position = obstacle + Vector3(-1.0, 0.0, 4.0)
+	navigation.register_unit(unit)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	var rounded_target := obstacle + Vector3(4.0, 0.0, -1.0)
+	_expect(navigation.avoidance.terrain_sweep_fraction(
+		agent, rounded_target - unit.global_position
+	) >= 0.999, "the diagonal fixture must clear the rounded obstacle field")
+	_expect(not navigation.call("_has_clear_line", unit.global_position, rounded_target, agent),
+		"the same diagonal must expose the old square corner veto")
+	_expect(navigation.call("_path_chord_is_clear", agent, unit.global_position, rounded_target),
+		"runtime path look-ahead must accept a chord that its rounded body can traverse")
+	var blocked_target := obstacle + Vector3(1.0, 0.0, -4.0)
+	_expect(not navigation.call(
+		"_path_chord_is_clear", agent, unit.global_position, blocked_target
+	), "rounded path chords must still reject a real cut through the obstacle")
+	unit.global_position = obstacle
+	var escape_target := obstacle + Vector3(4.0, 0.0, 0.0)
+	_expect(not navigation.call(
+		"_path_chord_is_clear", agent, unit.global_position, escape_target
+	), "the inside-obstacle escape exception must not clear a long chord through its building")
+
+	# This test is immediately followed by another NavigationSystem fixture.
+	# Free synchronously so its node_added hook cannot register the next test's
+	# units before the queued deletion is flushed by SceneTree.
+	navigation.free()
+	unit.free()
+
+
+## A collision can push a large body across the outgoing side of a waypoint
+## without bringing its centre close to the waypoint cell centre. Route
+## progress must advance through that cross-section instead of steering back.
+func _test_missed_waypoint_advances_through_route_gate(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for waypoint gates")
+	var unit := FakeUnit.new(3.0)
+	root.add_child(unit)
+	var corner_cell := Vector2i(100, 90)
+	var corner := grid.grid_to_world(corner_cell)
+	unit.global_position = corner + Vector3(0.9, 0.0, 1.0)
+	navigation.register_unit(unit)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	agent["direct_path"] = false
+	agent["path"] = [
+		corner_cell + Vector2i(-10, 0),
+		corner_cell,
+		corner_cell + Vector2i(0, 10),
+	] as Array[Vector2i]
+	agent["path_index"] = 1
+	agent["destination"] = grid.grid_to_world(corner_cell + Vector2i(0, 10))
+	var desired: Vector3 = navigation.call("_desired_velocity", agent)
+	_expect(int(agent["path_index"]) == 2,
+		"a unit already across the outgoing waypoint gate must advance monotonically")
+	_expect(desired.normalized().dot(Vector3.BACK) > 0.9,
+		"a missed waypoint must keep steering along the outgoing route, not back to its centre")
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
 func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 	var navigation := NavigationSystemScript.new()
 	root.add_child(navigation)
@@ -499,13 +1061,21 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 	var claimed: Array[Dictionary] = []
 	for unit in units:
 		var destination: Vector3 = navigation.agent_debug(unit)["destination"]
-		_expect(unit.global_position.distance_to(destination) < 0.6, "every free-move unit must settle on its claimed block")
+		var debug_agent: Dictionary = navigation._agents[unit.get_instance_id()]
+		_expect(unit.global_position.distance_to(destination) < 0.6,
+			"every free-move unit must settle on its claimed block (id %d pos %.2f,%.2f dest %.2f,%.2f dist %.2f direct %s path %s index %d blocked %.2f steer %.2f,%.2f)" % [
+				int(debug_agent["id"]),
+				unit.global_position.x, unit.global_position.z, destination.x, destination.z,
+				unit.global_position.distance_to(destination), str(debug_agent["direct_path"]),
+				str(debug_agent["path"]), int(debug_agent["path_index"]), float(debug_agent["blocked_time"]),
+				(debug_agent["steering_target"] as Vector3).x, (debug_agent["steering_target"] as Vector3).z])
 		claimed.append({"anchor": navigation._parking_anchor(destination, 1), "span": 1})
 	for a in claimed.size():
 		for b in range(a + 1, claimed.size()):
 			_expect(
 				not navigation._blocks_conflict(claimed[a]["anchor"], 1, claimed[b]["anchor"], 1),
-				"claimed parking blocks must keep a one-cell gap"
+				"claimed parking blocks must keep a one-cell gap (%s vs %s)" % [
+					str(claimed[a]["anchor"]), str(claimed[b]["anchor"])]
 			)
 	units[0].move_speed = 9.0
 	units[1].move_speed = 3.0
@@ -742,6 +1312,76 @@ func _test_group_rounds_sharp_corner(grid: MapNavigationGrid) -> void:
 		unit.queue_free()
 
 
+## Two harvester-sized bodies approach the same A* corner abreast. Their
+## centre paths are allowed to share the compact cell waypoint, but the runtime
+## targets must remain ordered across the route so neither body is funnelled
+## into the wall by the other one.
+func _test_large_pair_keeps_lanes_at_shared_corner(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for shared-corner lanes")
+	var walls := {}
+	for x in range(40, 121):
+		walls[Vector2i(x, 100)] = true
+	navigation.runtime_map.replace_blocked_cells(walls)
+
+	var inner := FakeUnit.new(3.0)
+	var outer := FakeUnit.new(3.0)
+	root.add_child(inner)
+	root.add_child(outer)
+	inner.global_position = Vector3(108.5, 0.0, 90.1)
+	outer.global_position = Vector3(108.5, 0.0, 87.5)
+	var units: Array[Node3D] = [inner, outer]
+	var assignments := navigation.command_move(
+		units, Vector3(132.5, 0.0, 112.5), NavigationSystemScript.MoveMode.FREE
+	)
+	var inner_agent: Dictionary = navigation._agents[inner.get_instance_id()]
+	var outer_agent: Dictionary = navigation._agents[outer.get_instance_id()]
+	_expect(not (inner_agent["path"] as Array).is_empty() \
+		and not (outer_agent["path"] as Array).is_empty(),
+		"both large units must receive an indirect route around the wall tip")
+	var contact_distance := float(inner_agent["radius"]) + float(outer_agent["radius"])
+	var comfort_distance := contact_distance + minf(
+		float(inner_agent["radius"]), float(outer_agent["radius"])
+	) * 0.35
+	_expect(float(inner_agent["route_lane_max"]) - float(inner_agent["route_lane_min"]) \
+		>= comfort_distance,
+		"parallel route lanes must clear both bodies and their soft avoidance field")
+
+	var settled_tick := 700
+	var contact_streak := 0
+	var longest_contact_streak := 0
+	for tick in range(1, settled_tick + 1):
+		navigation.call("_navigation_tick", 0.05)
+		if inner.global_position.distance_to(outer.global_position) < contact_distance + 0.05:
+			contact_streak += 1
+			longest_contact_streak = maxi(longest_contact_streak, contact_streak)
+		else:
+			contact_streak = 0
+		if assignments.all(func(assignment: Dictionary) -> bool:
+			return (assignment["unit"] as Node3D).global_position.distance_to(
+				navigation.agent_debug(assignment["unit"])["destination"]
+			) < 1.0
+		):
+			settled_tick = tick
+			break
+	_expect(settled_tick < 600,
+		"both large units must clear one shared wall corner without leaving a unit nose-first at terrain (%.1f s)" \
+			% (float(settled_tick) * 0.05))
+	_expect(longest_contact_streak < 10,
+		"parallel large units must not push in continuous contact around the corner (%.2f s)" \
+			% (float(longest_contact_streak) * 0.05))
+	for assignment in assignments:
+		var unit: Node3D = assignment["unit"]
+		_expect(unit.global_position.distance_to(navigation.agent_debug(unit)["destination"]) < 1.0,
+			"every large unit using the shared corner must reach its destination")
+
+	navigation.queue_free()
+	inner.queue_free()
+	outer.queue_free()
+
+
 ## Destinations are always the center of a free `size x size` cell block: odd
 ## footprints center on a cell, even footprints on a shared cell corner, and
 ## the blocks of one command never overlap.
@@ -972,6 +1612,55 @@ func _test_lane_through_standing_formation(grid: MapNavigationGrid) -> void:
 	for unit in formation:
 		unit.queue_free()
 	runner.queue_free()
+
+
+## Four large round units meet at one point from reciprocal directions. A
+## stable passing-side bias and soft personal fields must resolve the crossing
+## once, rather than making the group retry alternating detours for many cycles.
+func _test_large_reciprocal_crossing(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for large-unit crossing")
+	var center := Vector3(170.5, 0.0, 170.5)
+	var starts := [
+		center + Vector3(-12.0, 0.0, 0.0),
+		center + Vector3(12.0, 0.0, 0.0),
+		center + Vector3(0.0, 0.0, -12.0),
+		center + Vector3(0.0, 0.0, 12.0),
+	]
+	var targets := [starts[1], starts[0], starts[3], starts[2]]
+	var units: Array[FakeUnit] = []
+	for index in starts.size():
+		var unit := FakeUnit.new(3.0)
+		root.add_child(unit)
+		unit.global_position = starts[index]
+		units.append(unit)
+		navigation.command_move([unit], targets[index])
+	var settled_tick := 320
+	for tick in range(1, settled_tick + 1):
+		navigation.call("_navigation_tick", 0.05)
+		if units.all(func(unit: FakeUnit) -> bool:
+			return unit.global_position.distance_to(
+				navigation.agent_debug(unit)["destination"]
+			) < 1.0
+		):
+			settled_tick = tick
+			break
+	_expect(
+		settled_tick < 240,
+		"four reciprocal size-three units must settle after one bounded avoidance manoeuvre (%.1f s)" \
+			% (float(settled_tick) * 0.05)
+	)
+	for unit in units:
+		_expect(
+			unit.global_position.distance_to(navigation.agent_debug(unit)["destination"]) < 1.0,
+			"every large unit in the reciprocal crossing must reach its destination"
+		)
+
+	navigation.queue_free()
+	for unit in units:
+		unit.queue_free()
 
 
 ## 21 units ringed around a point are all ordered into its center — the worst

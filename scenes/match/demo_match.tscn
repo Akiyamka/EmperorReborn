@@ -2,7 +2,6 @@
 
 [ext_resource type="Script" uid="uid://3psqgxv6e2ys" path="res://scripts/match/match.gd" id="1_main"]
 [ext_resource type="Script" uid="uid://xoynnrvxuq2p" path="res://scripts/world/camera/rts_camera.gd" id="2_camera"]
-[ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="3_unit"]
 [ext_resource type="PackedScene" path="res://assets/converted/maps/#M25 GM Aprit Chard S 2/terrain.tscn" id="4_map"]
 [ext_resource type="Resource" uid="uid://nj40xd0p0abq" path="res://configs/camera/rts_camera_config.tres" id="6_camera_config"]
 [ext_resource type="PackedScene" path="res://assets/converted/buildings/ATConYard/ATConYard.scn" id="9_at_con_yard"]
@@ -49,18 +48,6 @@ transform = Transform3D(0.99999994, 0, 0, 0, 1, 0, 0, 0, 0.99999994, 12.411575, 
 owner_player_id = 1
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
-
-[node name="ScoutA" parent="Units" unique_id=1502406383 instance=ExtResource("3_unit")]
-transform = Transform3D(-0.99996823, 0.007970574, 0, -0.007970574, -0.99996823, 0, 0, 0, 1, 129.64633, 6.1563997, 22.207596)
-owner_player_id = 1
-
-[node name="ScoutB" parent="Units" unique_id=1281454651 instance=ExtResource("3_unit")]
-transform = Transform3D(-0.99996823, 0.007970574, 0, -0.007970574, -0.99996823, 0, 0, 0, 1, 126.62214, 9.180871, 20.207596)
-owner_player_id = 1
-
-[node name="ScoutC" parent="Units" unique_id=325326372 instance=ExtResource("3_unit")]
-transform = Transform3D(-0.99996823, 0.007970574, 0, -0.007970574, -0.99996823, 0, 0, 0, 1, 123.62199, 9.18774, 23.207596)
-owner_player_id = 1
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
 

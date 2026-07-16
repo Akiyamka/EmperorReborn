@@ -1,11 +1,13 @@
 class_name UnitNavigationSystem
 extends Node
-## Match-scoped RTS navigation coordinator. It owns path work, destination
-## assignment and local collision resolution; Unit remains presentation and
-## terrain-following code.
+## Match-scoped RTS navigation coordinator. It owns path work and destination
+## assignment, delegates short-range collision steering to UnitLocalAvoidance,
+## and leaves presentation/terrain following to Unit.
 
 const UnitNavigationMapScript := preload("res://scripts/units/navigation/unit_navigation_map.gd")
 const UnitNavigationPlannerScript := preload("res://scripts/units/navigation/unit_navigation_planner.gd")
+const UnitLocalAvoidanceScript := preload("res://scripts/units/navigation/unit_local_avoidance.gd")
+const UnitNavigationDebugScript := preload("res://scripts/units/navigation/unit_navigation_debug.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 
 signal destination_slots_assigned(command_id: int, assignments: Array[Dictionary])
@@ -22,25 +24,15 @@ const CELL_BUCKET_SIZE := 4.0
 ## Blocked cells must cover exactly the footprint the placement grid reserves.
 const OCCUPY_CELL_SPAN := BuildingPlacement.NAV_CELLS_PER_OCCUPY_CELL
 const SLOT_SEARCH_RADIUS := 32
-const CANDIDATE_ANGLES := [0.0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35, PI / 2.0, -PI / 2.0, PI]
-## Units closer than this beyond touching distance count as in contact: they may
-## slide tangentially or separate at full speed, just not push deeper in.
-const CONTACT_BUFFER := 0.05
 ## Ticks a unit sits out of assignment trading after a swap (anti flip-flop).
 const SWAP_COOLDOWN_TICKS := 10
 ## Free cells kept between parked footprints, so a standing formation stays
 ## permeable: small units can thread the lanes between the parking blocks.
 const PARKING_GAP_CELLS := 1
-## How far ahead local steering checks candidate lanes. A one-tick sweep starts
-## turning only at contact, which makes a legitimate detour look like phasing.
-const STEERING_LOOKAHEAD_SECONDS := 0.4
-## Speed factor for squeezing through friends when steering is walled in.
-const SQUEEZE_SPEED_FACTOR := 0.5
-## Push speed per unit of overlap depth. Its cap stays below squeeze speed so a
-## determined unit can force its way through instead of reaching an overlap
-## equilibrium, while idle overlaps are still expelled as soon as room opens.
-const SEPARATION_STIFFNESS := 2.5
-const SEPARATION_MAX_SPEED_FACTOR := 0.35
+## Parallel route lanes must sit outside the same soft personal-space field
+## used by local avoidance. Otherwise units technically have different targets
+## but still spend the whole trip steering away from each other.
+const ROUTE_LANE_COMFORT_RADIUS_FACTOR := 0.4
 ## Never let a slow navigation tick create an unbounded catch-up loop. Dropping
 ## excess simulation time makes units briefly slow down under overload, but the
 ## render thread can recover instead of spending every following frame on old
@@ -49,6 +41,8 @@ const MAX_CATCH_UP_TICKS := 2
 
 var runtime_map = UnitNavigationMapScript.new()
 var planner = UnitNavigationPlannerScript.new()
+var avoidance = UnitLocalAvoidanceScript.new()
+var navigation_debug = UnitNavigationDebugScript.new()
 
 var _agents: Dictionary = {}
 var _next_agent_id := 1
@@ -60,6 +54,9 @@ var _command_log: Array[Dictionary] = []
 
 
 func _ready() -> void:
+	if navigation_debug.get_parent() == null:
+		navigation_debug.name = "NavigationDebug"
+		add_child(navigation_debug)
 	if not get_tree().node_added.is_connected(_on_tree_node_added):
 		get_tree().node_added.connect(_on_tree_node_added)
 
@@ -74,6 +71,7 @@ func setup(source_grid: MapNavigationGrid) -> bool:
 		push_error("UnitNavigationSystem: navigation grid is unavailable")
 		return false
 	planner.setup(runtime_map)
+	avoidance.setup(runtime_map)
 	_refresh_building_blockers()
 	if is_inside_tree():
 		for node in get_tree().get_nodes_in_group("units"):
@@ -93,9 +91,13 @@ func register_unit(unit: Node3D) -> int:
 		"id": _next_agent_id,
 		"unit": unit,
 		"radius": profile["radius"],
+		"rotation_radius": profile["rotation_radius"],
+		"terrain_radius": profile["rotation_radius"],
 		"pass_mask": profile["pass_mask"],
 		"terrain_mask": profile["terrain_mask"],
 		"clearance": profile["clearance"],
+		"body_clearance": profile["body_clearance"],
+		"rotation_clearance": profile["clearance"],
 		"footprint": profile["footprint"],
 		"path": [] as Array[Vector2i],
 		"path_index": 0,
@@ -106,6 +108,16 @@ func register_unit(unit: Node3D) -> int:
 		"hold": false,
 		"blocked_time": 0.0,
 		"reported_enemy": false,
+		"avoidance_direction": Vector3.ZERO,
+		"avoidance_side": 0,
+		"steering_turn_in_place": false,
+		"steering_target": unit.global_position,
+		# Units issued one group order keep their initial cross-route ordering.
+		# The compact A* paths may share a corner cell, but the runtime follower
+		# treats it as a gate and gives each body a parallel lane through it.
+		"route_lane_offset": 0.0,
+		"route_lane_min": 0.0,
+		"route_lane_max": 0.0,
 		"yield_direction": Vector3.ZERO,
 		"yield_remaining": 0.0,
 		"direct_path": false,
@@ -129,6 +141,7 @@ func register_unit(unit: Node3D) -> int:
 	_agents[key] = agent
 	_next_agent_id += 1
 	planner.prewarm(int(profile["pass_mask"]), int(profile["clearance"]), int(profile["terrain_mask"]))
+	avoidance.prewarm(int(profile["pass_mask"]), int(profile["terrain_mask"]))
 	unit.set_meta(&"navigation_agent_id", agent["id"])
 	if unit.has_method("set_navigation_managed"):
 		unit.call("set_navigation_managed", true)
@@ -149,6 +162,7 @@ func set_hold_position(unit: Node3D, active: bool) -> void:
 		return
 	agent["hold"] = active
 	if active:
+		avoidance.reset_agent(agent)
 		agent["path"] = [] as Array[Vector2i]
 		agent["destination"] = unit.global_position
 		agent["exit_point"] = Vector3.INF
@@ -187,6 +201,8 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 	# permanent destination for its next player order.
 	for unit in ordered:
 		var agent: Dictionary = _agents[unit.get_instance_id()]
+		avoidance.reset_agent(agent)
+		_set_agent_rotation_envelope(agent, true)
 		agent["allowed_cells"] = {}
 		agent["vacate_no_stop"] = false
 		agent["departure_access"] = false
@@ -226,6 +242,7 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		_agents[unit.get_instance_id()] = agent
 		if unit.has_method("set_navigation_destination"):
 			unit.call("set_navigation_destination", assignment["position"])
+	_assign_route_lanes(ordered, world_target)
 	_command_log.append({
 		"tick": _navigation_tick_index,
 		"command_id": command_id,
@@ -249,6 +266,7 @@ func command_depart(unit: Node3D, world_target: Vector3, allowed_cells: Dictiona
 	if assignments.is_empty():
 		return false
 	var agent: Dictionary = _agent_for(unit)
+	_set_agent_rotation_envelope(agent, false)
 	agent["allowed_cells"] = allowed_cells.duplicate()
 	agent["departure_access"] = true
 	_route_agent(agent, unit.global_position, agent["destination"])
@@ -269,6 +287,13 @@ func command_dock(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary
 	if unit.has_method("prepare_navigation_order") \
 	and not bool(unit.call("prepare_navigation_order", world_target, Vector3.INF, MoveMode.FREE)):
 		return false
+	avoidance.reset_agent(agent)
+	# Refinery d/p cells deliberately receive the harvester body. Its full
+	# direction-independent rotation envelope would also cover adjacent solid
+	# refinery cells and make the authored dock unreachable. Use capsule width
+	# only inside this explicitly reserved corridor; ordinary buildings still
+	# use the full nose/tail envelope.
+	_set_agent_rotation_envelope(agent, false)
 	var command_id := _next_command_id
 	_next_command_id += 1
 	agent["destination"] = world_target
@@ -284,6 +309,9 @@ func command_dock(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary
 	agent["exit_point"] = Vector3.INF
 	agent["yield_remaining"] = 0.0
 	agent["yield_direction"] = Vector3.ZERO
+	agent["route_lane_offset"] = 0.0
+	agent["route_lane_min"] = 0.0
+	agent["route_lane_max"] = 0.0
 	agent["vacate_no_stop"] = false
 	agent["departure_access"] = false
 	agent["allowed_cells"] = allowed_cells.duplicate()
@@ -386,6 +414,8 @@ func agent_debug(unit: Node3D) -> Dictionary:
 	return {
 		"id": agent["id"],
 		"radius": agent["radius"],
+		"rotation_radius": agent["rotation_radius"],
+		"terrain_radius": agent["terrain_radius"],
 		"destination": agent["destination"],
 		"command_id": agent["command_id"],
 		"mode": agent["mode"],
@@ -463,7 +493,9 @@ func _navigation_tick(delta: float) -> void:
 			buckets,
 			float(agent["radius"]) + largest_radius
 		)
-		var result := _resolve_velocity(agent, desired, delta, nearby, resolved_positions)
+		var result := avoidance.resolve_velocity(
+			agent, desired, delta, nearby, resolved_positions
+		)
 		var velocity: Vector3 = result["velocity"]
 		if desired.length_squared() > 0.01 and velocity.length_squared() < 0.01:
 			agent["blocked_time"] = float(agent["blocked_time"]) + delta
@@ -496,18 +528,23 @@ func _navigation_tick(delta: float) -> void:
 					_route_agent(agent, unit.global_position, agent["destination"])
 		# Elastic overlap resolution: overlapping units keep pushing on each
 		# other and pop apart the moment free room appears.
-		var separation := _separation_velocity(agent, nearby)
+		var separation := avoidance.separation_velocity(agent, nearby)
 		if not separation.is_zero_approx():
 			var total := (velocity + separation).limit_length(_unit_speed(unit))
 			# Separation may cross friends, but it must not turn the already-safe
 			# steering result into motion through an enemy or forbidden terrain.
-			if _motion_is_passable(agent, total * delta) \
-			and _enemy_sweep_fraction(agent, total * delta, nearby, resolved_positions) >= 0.999:
+			if avoidance.motion_is_passable(agent, total * delta) \
+			and avoidance.enemy_sweep_fraction(
+				agent, total * delta, nearby, resolved_positions
+			) >= 0.999:
 				velocity = total
 				# An idle unit has no spot to defend; it goes where it is pushed
 				# instead of fighting its way back into the overlap.
 				if int(agent["command_id"]) <= 0 and not bool(agent["hold"]):
 					agent["destination"] = unit.global_position + velocity * delta
+		velocity = avoidance.stabilize_velocity(
+			agent, velocity, delta, nearby, resolved_positions
+		)
 		_agents[unit.get_instance_id()] = agent
 		if unit.has_method("navigation_step"):
 			unit.call("navigation_step", velocity, delta)
@@ -515,25 +552,31 @@ func _navigation_tick(delta: float) -> void:
 		# simultaneous translation and rotation. Record the actual position so
 		# later swept-disc checks do not reserve movement that never happened.
 		resolved_positions[unit.get_instance_id()] = unit.global_position
+	_refresh_navigation_debug()
 
 
 func _desired_velocity(agent: Dictionary) -> Vector3:
 	var unit: Node3D = agent["unit"]
+	agent["steering_target"] = unit.global_position
 	if bool(agent["hold"]):
 		return Vector3.ZERO
 	if float(agent["yield_remaining"]) > 0.0:
+		agent["steering_target"] = unit.global_position \
+			+ (agent["yield_direction"] as Vector3) * maxf(float(agent["radius"]) * 2.0, 2.0)
 		return (agent["yield_direction"] as Vector3) * _unit_speed(unit) * 0.7
 	var exit_point: Vector3 = agent["exit_point"]
 	if exit_point.is_finite():
 		var exit_offset := exit_point - unit.global_position
 		exit_offset.y = 0.0
 		if exit_offset.length() > maxf(_arrival_radius(unit), float(agent["radius"]) * 0.35):
+			agent["steering_target"] = exit_point
 			return exit_offset.normalized() * _unit_speed(unit)
 		agent["exit_point"] = Vector3.INF
 		_route_agent(agent, unit.global_position, agent["destination"])
 	var destination: Vector3 = agent["destination"]
 	var offset := destination - unit.global_position
 	offset.y = 0.0
+	agent["steering_target"] = destination
 	var arrival := arrival_tolerance(unit)
 	if offset.length() <= arrival:
 		if not bool(agent.get("vacate_no_stop", false)) or not _auto_vacate_no_stop(agent):
@@ -541,6 +584,9 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 		destination = agent["destination"]
 		offset = destination - unit.global_position
 		offset.y = 0.0
+	var speed := _unit_speed(unit)
+	if int(agent["mode"]) == MoveMode.FORMATION:
+		speed = minf(speed, float(agent["group_speed"]))
 	var direction := Vector3.ZERO
 	var path: Array = agent["path"]
 	if bool(agent["direct_path"]):
@@ -549,24 +595,260 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 		var path_index := int(agent["path_index"])
 		if path_index == 0 and path.size() > 1:
 			path_index = 1
-		while path_index < path.size() - 1:
-			var probe: Vector3 = runtime_map.grid.grid_to_world(path[path_index])
-			probe.y = unit.global_position.y
-			if unit.global_position.distance_to(probe) > maxf(0.35, float(agent["radius"]) * 0.4):
-				break
-			path_index += 1
+		path_index = _advanced_path_index(agent, path, path_index, unit.global_position)
 		agent["path_index"] = path_index
-		var waypoint: Vector3 = runtime_map.grid.grid_to_world(path[path_index])
-		waypoint.y = unit.global_position.y
-		direction = unit.global_position.direction_to(waypoint)
+		var steering_target := _path_steering_target(
+			agent, path, path_index, unit.global_position, speed
+		)
+		steering_target = _path_lane_target(
+			agent, path, path_index, unit.global_position, steering_target, speed
+		)
+		agent["steering_target"] = steering_target
+		direction = unit.global_position.direction_to(steering_target)
 		direction.y = 0.0
 		direction = direction.normalized()
 	if direction.is_zero_approx():
 		return Vector3.ZERO
-	var speed := _unit_speed(unit)
-	if int(agent["mode"]) == MoveMode.FORMATION:
-		speed = minf(speed, float(agent["group_speed"]))
 	return direction * speed
+
+
+func _refresh_navigation_debug() -> void:
+	if navigation_debug == null or not navigation_debug.is_inside_tree():
+		return
+	var snapshots: Array[Dictionary] = []
+	for value in _agents.values():
+		var agent: Dictionary = value
+		var unit: Node3D = agent["unit"]
+		if not is_instance_valid(unit) or not &"is_selected" in unit \
+		or not bool(unit.get("is_selected")):
+			continue
+		var height := unit.global_position.y + maxf(float(agent["radius"]) * 0.12, 0.18)
+		var position := _debug_height(unit.global_position, height)
+		var destination := _debug_height(agent["destination"], height)
+		var route: Array[Vector3] = [position]
+		var waypoint := Vector3.INF
+		var exit_point: Vector3 = agent["exit_point"]
+		if exit_point.is_finite():
+			waypoint = _debug_height(exit_point, height)
+			route.append(waypoint)
+		elif bool(agent["direct_path"]):
+			waypoint = destination
+			route.append(destination)
+		else:
+			var path: Array = agent["path"]
+			if not path.is_empty():
+				var path_index := clampi(int(agent["path_index"]), 0, path.size() - 1)
+				for index in range(path_index, path.size()):
+					var point: Vector3 = runtime_map.grid.grid_to_world(path[index])
+					point = _debug_height(point, height)
+					if route.back().distance_squared_to(point) > 0.0001:
+						route.append(point)
+				if route.size() > 1:
+					waypoint = route[1]
+			if route.back().distance_squared_to(destination) > 0.0001:
+				route.append(destination)
+		var look_ahead: Vector3 = agent.get("steering_target", Vector3.INF)
+		if look_ahead.is_finite():
+			look_ahead = _debug_height(look_ahead, height)
+		snapshots.append({
+			"radius": agent["radius"],
+			"route": route,
+			"waypoint": waypoint,
+			"look_ahead": look_ahead,
+			"destination": destination,
+		})
+	navigation_debug.update_agents(snapshots)
+
+
+static func _debug_height(point: Vector3, height: float) -> Vector3:
+	return Vector3(point.x, height, point.z)
+
+
+## Follow a point ahead on the compact path instead of aiming at a corner until
+## its centre is reached. The look-ahead combines body radius with minimum turn
+## radius, so a large slow-turning unit begins one continuous bend earlier.
+## A chord across the corner is accepted only while the agent's real swept disc
+## remains clear; otherwise a short binary search keeps the furthest safe point.
+func _path_steering_target(
+		agent: Dictionary,
+		path: Array,
+		path_index: int,
+		position: Vector3,
+		speed: float
+	) -> Vector3:
+	var current: Vector3 = runtime_map.grid.grid_to_world(path[path_index])
+	current.y = position.y
+	if path_index >= path.size() - 1:
+		var destination: Vector3 = agent["destination"]
+		destination.y = position.y
+		return destination if _path_chord_is_clear(agent, position, destination) else current
+	var look_ahead := _path_look_ahead_distance(agent, speed)
+	var first_leg := current - position
+	first_leg.y = 0.0
+	if first_leg.length() >= look_ahead:
+		return current
+	var remaining := look_ahead - first_leg.length()
+	var cursor := current
+	var candidate := current
+	for index in range(path_index + 1, path.size()):
+		var endpoint: Vector3 = runtime_map.grid.grid_to_world(path[index])
+		endpoint.y = position.y
+		var segment := endpoint - cursor
+		segment.y = 0.0
+		var length := segment.length()
+		if length >= remaining and length > 0.001:
+			candidate = cursor + segment / length * remaining
+			break
+		candidate = endpoint
+		remaining -= length
+		cursor = endpoint
+		if remaining <= 0.001:
+			break
+	if _path_chord_is_clear(agent, position, candidate):
+		return candidate
+	if not _path_chord_is_clear(agent, position, current):
+		return current
+	var safe := current
+	var blocked := candidate
+	for _iteration in 8:
+		var probe := safe.lerp(blocked, 0.5)
+		if _path_chord_is_clear(agent, position, probe):
+			safe = probe
+		else:
+			blocked = probe
+	return safe
+
+
+## A compact-path waypoint is a cross-section of the route, not a pin that the
+## unit centre must touch. Collision steering can displace a large body past a
+## corner without ever entering the old radius-based capture circle. Once it is
+## on the outgoing side and still near that segment, progress is monotonic and
+## the follower must not turn back toward the missed cell centre.
+func _advanced_path_index(
+		agent: Dictionary,
+		path: Array,
+		path_index: int,
+		position: Vector3
+	) -> int:
+	var result := path_index
+	var cell_size: Vector2 = runtime_map.grid.cell_size()
+	var cell_width := maxf(minf(cell_size.x, cell_size.y), 0.001)
+	var capture := maxf(0.35, float(agent["radius"]) * 0.4)
+	var corridor := maxf(float(agent["radius"]) * 2.0, cell_width * 1.5)
+	while result < path.size() - 1:
+		var waypoint: Vector3 = runtime_map.grid.grid_to_world(path[result])
+		var next: Vector3 = runtime_map.grid.grid_to_world(path[result + 1])
+		waypoint.y = position.y
+		next.y = position.y
+		var outgoing := next - waypoint
+		outgoing.y = 0.0
+		var length := outgoing.length()
+		if length <= 0.001:
+			result += 1
+			continue
+		outgoing /= length
+		var relative := position - waypoint
+		relative.y = 0.0
+		var along := relative.dot(outgoing)
+		var lateral := (relative - outgoing * clampf(along, 0.0, length)).length()
+		if relative.length() <= capture or (along > 0.0 and lateral <= corridor):
+			result += 1
+			continue
+		break
+	return result
+
+
+## Preserve the group's cross-route order while several A* paths share a
+## corner. In open space lanes remain centred around the path. If one side of a
+## waypoint is terrain, the whole set is rebased onto the open side: the
+## innermost unit follows the A* centre line and its neighbours remain outside
+## it instead of being squeezed into the obstacle.
+func _path_lane_target(
+		agent: Dictionary,
+		path: Array,
+		path_index: int,
+		position: Vector3,
+		base_target: Vector3,
+		speed: float
+	) -> Vector3:
+	if path_index >= path.size() - 1:
+		return base_target
+	var lane_min := float(agent.get("route_lane_min", 0.0))
+	var lane_max := float(agent.get("route_lane_max", 0.0))
+	var lane_span := lane_max - lane_min
+	if lane_span <= 0.05:
+		return base_target
+	var forward := base_target - position
+	forward.y = 0.0
+	if forward.length_squared() <= 0.0001:
+		return base_target
+	forward = forward.normalized()
+	var lateral := forward.cross(Vector3.UP).normalized()
+	var probe_distance := maxf(lane_span, float(agent["radius"]) * 0.75)
+	var positive := base_target + lateral * probe_distance
+	var negative := base_target - lateral * probe_distance
+	var positive_open := _has_clear_line(base_target, positive, agent)
+	var negative_open := _has_clear_line(base_target, negative, agent)
+	var lane_offset := float(agent.get("route_lane_offset", 0.0))
+	if positive_open and not negative_open:
+		lane_offset -= lane_min
+	elif negative_open and not positive_open:
+		lane_offset -= lane_max
+	elif not positive_open and not negative_open:
+		return base_target
+	# Merge back into the unit's exact destination instead of carrying a lane
+	# offset into the final parking block.
+	var destination: Vector3 = agent["destination"]
+	destination.y = position.y
+	var fade_distance := maxf(_path_look_ahead_distance(agent, speed) * 2.0, 0.001)
+	lane_offset *= clampf(base_target.distance_to(destination) / fade_distance, 0.0, 1.0)
+	if absf(lane_offset) <= 0.01:
+		return base_target
+	var candidate := base_target + lateral * lane_offset
+	if _path_chord_is_clear(agent, position, candidate):
+		return candidate
+	# The route can narrow after a broad approach. Retain as much lateral order
+	# as the real swept body can reach rather than snapping every unit to centre.
+	var safe := base_target
+	var blocked := candidate
+	for _iteration in 8:
+		var probe := safe.lerp(blocked, 0.5)
+		if _path_chord_is_clear(agent, position, probe):
+			safe = probe
+		else:
+			blocked = probe
+	return safe
+
+
+func _path_chord_is_clear(agent: Dictionary, from: Vector3, to: Vector3) -> bool:
+	# Square visibility belongs to global A*: it is conservative enough to find
+	# a route for every footprint, but releases a rounded corner one whole cell
+	# at a time. Runtime pursuit already starts at the real unit position, so its
+	# swept disc against the rounded obstacle field is both the exact movement
+	# constraint and a continuous visibility test. Keeping _has_clear_line here
+	# made the yellow look-ahead target advance in visible steps.
+	# A unit spawned inside production/refinery body cells temporarily receives
+	# an escape sweep which accepts outward motion. That exception is safe for a
+	# short movement tick but must not declare an arbitrary long look-ahead chord
+	# clear through the building it is leaving.
+	if not _agent_cell_passable(agent, runtime_map.grid.world_to_grid(from), 0):
+		return _has_clear_line(from, to, agent)
+	return avoidance.terrain_sweep_fraction(agent, to - from) >= 0.999
+
+
+func _path_look_ahead_distance(agent: Dictionary, speed: float) -> float:
+	var cell_size: Vector2 = runtime_map.grid.cell_size()
+	var cell_width := maxf(minf(cell_size.x, cell_size.y), 0.001)
+	var radius_distance := float(agent.get("rotation_radius", agent["radius"])) * 1.5
+	var unit: Node3D = agent["unit"]
+	var turn_rate_value = unit.get("turn_rate")
+	var turn_distance := cell_width
+	var omnidirectional_value = unit.get("can_move_any_direction")
+	if (omnidirectional_value == null or not bool(omnidirectional_value)) \
+	and turn_rate_value != null and float(turn_rate_value) > 0.0:
+		var angular_speed := float(turn_rate_value) * NAVIGATION_TICK_RATE
+		turn_distance = clampf(speed / angular_speed * 2.5, cell_width, cell_width * 6.0)
+	return maxf(radius_distance, turn_distance)
 
 
 func _release_departure_access_if_clear(agent: Dictionary) -> void:
@@ -574,9 +856,11 @@ func _release_departure_access_if_clear(agent: Dictionary) -> void:
 		return
 	var allowed: Dictionary = agent["allowed_cells"]
 	agent["allowed_cells"] = {}
+	_set_agent_rotation_envelope(agent, true)
 	var unit: Node3D = agent["unit"]
 	var anchor := _parking_anchor(unit.global_position, int(agent["footprint"]))
 	if not _block_stoppable(anchor, int(agent["footprint"]), agent):
+		_set_agent_rotation_envelope(agent, false)
 		agent["allowed_cells"] = allowed
 		return
 	agent["departure_access"] = false
@@ -665,142 +949,6 @@ func _has_clear_line(from: Vector3, to: Vector3, agent: Dictionary) -> bool:
 	return true
 
 
-## Collision is elastic: units steer around each other while there is room
-## (full-speed candidate evaluation against every neighbour), but a unit walled
-## in by friends squeezes through them at reduced speed — enemies and terrain
-## stay solid — while the per-tick separation push works the overlap back out.
-func _resolve_velocity(agent: Dictionary, desired: Vector3, delta: float, nearby: Array, resolved: Dictionary) -> Dictionary:
-	if desired.is_zero_approx():
-		return {"velocity": Vector3.ZERO, "enemies": [] as Array[Node3D], "friends": [] as Array[Node3D]}
-	var unit: Node3D = agent["unit"]
-	var blockers := []
-	for other in nearby:
-		if other["unit"] != unit:
-			blockers.append(other)
-	var full: Dictionary = _evaluate_candidates(agent, desired, delta, blockers, resolved, 1.0)
-	var velocity: Vector3 = full["velocity"]
-	# Squeezing is not a fallback for any slow result. It is allowed only when
-	# friends remove every non-reversing steering lane that would otherwise be
-	# open; in ordinary space the full-speed side lane wins and units go around.
-	if not bool(full["has_escape"]):
-		var solid := []
-		for other in blockers:
-			if _are_enemies(unit, other["unit"]):
-				solid.append(other)
-		var squeeze: Dictionary = _evaluate_candidates(agent, desired, delta, solid, resolved, SQUEEZE_SPEED_FACTOR)
-		if bool(squeeze["has_escape"]):
-			velocity = squeeze["velocity"]
-	return {"velocity": velocity, "enemies": full["enemies"], "friends": full["friends"]}
-
-
-func _evaluate_candidates(agent: Dictionary, desired: Vector3, delta: float, blockers: Array, resolved: Dictionary, speed_scale: float) -> Dictionary:
-	var unit: Node3D = agent["unit"]
-	var scaled := desired * speed_scale
-	var desired_direction := desired.normalized()
-	var desired_speed := scaled.length()
-	var enemies: Array[Node3D] = []
-	var friends: Array[Node3D] = []
-	var best_velocity := Vector3.ZERO
-	var best_score := -INF
-	var has_escape := false
-	# A unit standing on building cells cannot satisfy the normal cell filter:
-	# inside the interior every neighbour is blocked too, and on the apron the
-	# clearance window still touches the building. Interior units steer with
-	# the filter suspended (the escape route leads them out); apron units keep
-	# the blocked-cell filter but drop the clearance window.
-	var origin_cell: Vector2i = runtime_map.grid.world_to_grid(unit.global_position)
-	var origin_open := _agent_cell_passable(agent, origin_cell, 0, 0)
-	var origin_clearance := int(agent["clearance"])
-	if origin_open and not _agent_cell_stoppable(agent, origin_cell, 0, 0):
-		origin_clearance = 0
-	for angle in CANDIDATE_ANGLES:
-		var candidate := scaled.rotated(Vector3.UP, angle)
-		var destination := unit.global_position + candidate * delta
-		var cell: Vector2i = runtime_map.grid.world_to_grid(destination)
-		if origin_open and not _agent_cell_passable(agent, cell, origin_clearance):
-			continue
-		# Prediction uses unscaled speed, otherwise a slow squeeze probe could
-		# mistake a nearby wall for a valid lane merely because it looks less far.
-		var prediction := desired.rotated(Vector3.UP, angle) * STEERING_LOOKAHEAD_SECONDS
-		var terrain_clear := _motion_is_passable(agent, prediction)
-		var fraction := 1.0
-		var predicted_fraction := 1.0
-		for other in blockers:
-			var other_unit: Node3D = other["unit"]
-			var other_position: Vector3 = resolved.get(other_unit.get_instance_id(), other_unit.global_position)
-			var safe := _sweep_fraction(
-				unit.global_position,
-				candidate * delta,
-				other_position,
-				float(agent["radius"]) + float(other["radius"])
-			)
-			var predicted_safe := _sweep_fraction(
-				unit.global_position,
-				prediction,
-				other_position,
-				float(agent["radius"]) + float(other["radius"])
-			)
-			if safe < fraction:
-				fraction = safe
-			predicted_fraction = minf(predicted_fraction, predicted_safe)
-			if predicted_safe < 0.999 or safe < 0.999:
-				if _are_enemies(unit, other_unit):
-					if not enemies.has(other_unit):
-						enemies.append(other_unit)
-				elif not friends.has(other_unit):
-					friends.append(other_unit)
-		var velocity := candidate * fraction
-		var projected := candidate * predicted_fraction
-		var score := projected.dot(desired_direction) - absf(angle) * 0.05 * desired_speed
-		if not terrain_clear:
-			score -= desired_speed * 2.0
-		# A near-frozen candidate must lose to any real motion, sideways
-		# included, or a unit meeting a stopped friend halts for good instead
-		# of sliding around. Backing off still scores below standing still.
-		if fraction < 0.15:
-			score -= desired_speed
-		if terrain_clear and predicted_fraction >= 0.999 \
-		and candidate.dot(desired_direction) >= -0.001:
-			has_escape = true
-		if score > best_score:
-			best_score = score
-			best_velocity = velocity
-	return {"velocity": best_velocity, "enemies": enemies, "friends": friends, "has_escape": has_escape}
-
-
-## Candidate motion against the map using the agent's real clearance and
-## terrain profile. Units spawned inside a building retain the existing escape
-## exception until their origin reaches a passable cell.
-func _motion_is_passable(agent: Dictionary, displacement: Vector3) -> bool:
-	var unit: Node3D = agent["unit"]
-	var start: Vector2i = runtime_map.grid.world_to_grid(unit.global_position)
-	if not _agent_cell_passable(agent, start, 0, 0):
-		return true
-	var clearance := int(agent["clearance"])
-	if not _agent_cell_stoppable(agent, start, 0, 0):
-		clearance = 0
-	var finish: Vector2i = runtime_map.grid.world_to_grid(unit.global_position + displacement)
-	var cell_delta := finish - start
-	var steps := maxi(absi(cell_delta.x), absi(cell_delta.y))
-	var previous := start
-	for index in range(1, steps + 1):
-		var weight := float(index) / float(steps)
-		var cell := Vector2i(
-			roundi(lerpf(float(start.x), float(finish.x), weight)),
-			roundi(lerpf(float(start.y), float(finish.y), weight))
-		)
-		if not _agent_cell_passable(agent, cell, clearance):
-			return false
-		var step := cell - previous
-		if step.x != 0 and step.y != 0:
-			if not _agent_cell_passable(agent, previous + Vector2i(step.x, 0), clearance):
-				return false
-			if not _agent_cell_passable(agent, previous + Vector2i(0, step.y), clearance):
-				return false
-		previous = cell
-	return true
-
-
 func _agent_cell_passable(
 		agent: Dictionary,
 		cell: Vector2i,
@@ -853,48 +1001,6 @@ func _agent_cell_stoppable(
 	return true
 
 
-func _enemy_sweep_fraction(agent: Dictionary, displacement: Vector3, nearby: Array, resolved: Dictionary) -> float:
-	var unit: Node3D = agent["unit"]
-	var fraction := 1.0
-	for other in nearby:
-		var other_unit: Node3D = other["unit"]
-		if other_unit == unit or not _are_enemies(unit, other_unit):
-			continue
-		var other_position: Vector3 = resolved.get(other_unit.get_instance_id(), other_unit.global_position)
-		fraction = minf(fraction, _sweep_fraction(
-			unit.global_position,
-			displacement,
-			other_position,
-			float(agent["radius"]) + float(other["radius"])
-		))
-	return fraction
-
-
-## The elastic push between overlapping units: proportional to penetration
-## depth, capped below squeeze speed, and always pointing apart. Fully stacked
-## pairs split along a deterministic axis.
-func _separation_velocity(agent: Dictionary, nearby: Array) -> Vector3:
-	var unit: Node3D = agent["unit"]
-	var push := Vector3.ZERO
-	for other in nearby:
-		if other["unit"] == unit:
-			continue
-		var other_unit: Node3D = other["unit"]
-		var away := unit.global_position - other_unit.global_position
-		away.y = 0.0
-		var combined := float(agent["radius"]) + float(other["radius"])
-		var distance := away.length()
-		if distance >= combined:
-			continue
-		if distance <= 0.001:
-			push += (Vector3.RIGHT if int(agent["id"]) < int(other["id"]) else Vector3.LEFT) * combined
-		else:
-			push += away / distance * (combined - distance)
-	if push.is_zero_approx():
-		return Vector3.ZERO
-	return (push * SEPARATION_STIFFNESS).limit_length(_unit_speed(unit) * SEPARATION_MAX_SPEED_FACTOR)
-
-
 ## A yielding friend steps sideways out of the requester's lane (toward the
 ## side it is already offset to), not along it — walking the lane keeps it in
 ## front of the requester and drags it deep into the crowd.
@@ -933,28 +1039,103 @@ func _is_en_route(agent: Dictionary) -> bool:
 	return offset.length() > maxf(_arrival_radius(unit), float(agent["radius"]) * 0.35)
 
 
-func _sweep_fraction(start: Vector3, displacement: Vector3, obstacle: Vector3, combined_radius: float) -> float:
-	var relative := start - obstacle
-	relative.y = 0.0
-	var motion := displacement
-	motion.y = 0.0
-	# The swept stop leaves a hair's gap, so a contact test on the exact radius
-	# never fires and every later step quantizes to zero, freezing groups at
-	# their first touch. Within the buffer tangential and separating motion pass
-	# at full speed; only digging deeper is forbidden.
-	var contact := combined_radius + CONTACT_BUFFER
-	if relative.length_squared() <= contact * contact:
-		return 1.0 if relative.dot(motion) >= 0.0 else 0.0
-	var c := relative.length_squared() - combined_radius * combined_radius
-	var a := motion.length_squared()
-	if a <= 0.000001:
-		return 0.0
-	var b := 2.0 * relative.dot(motion)
-	var discriminant := b * b - 4.0 * a * c
-	if discriminant < 0.0:
-		return 1.0
-	var hit := (-b - sqrt(discriminant)) / (2.0 * a)
-	return clampf(hit - 0.01, 0.0, 1.0) if hit >= 0.0 and hit <= 1.0 else 1.0
+## Captures the group's initial lateral ordering once per player command. The
+## value is deliberately geometric rather than agent-id based: units that
+## already form an upper/lower row keep that row while the common A* centreline
+## bends around terrain. Very scattered groups are clamped to their natural
+## resting-pack width so a gather order does not create enormous detours.
+func _assign_route_lanes(units: Array[Node3D], world_target: Vector3) -> void:
+	if units.is_empty():
+		return
+	var centroid := Vector3.ZERO
+	for unit in units:
+		centroid += unit.global_position
+	centroid /= float(units.size())
+	var travel := world_target - centroid
+	travel.y = 0.0
+	if units.size() <= 1 or travel.length_squared() <= 0.0001:
+		for unit in units:
+			var agent: Dictionary = _agents[unit.get_instance_id()]
+			agent["route_lane_offset"] = 0.0
+			agent["route_lane_min"] = 0.0
+			agent["route_lane_max"] = 0.0
+		return
+	var lateral := travel.normalized().cross(Vector3.UP).normalized()
+	var cell: Vector2 = runtime_map.grid.cell_size()
+	var lane_limit := ceilf(sqrt(float(units.size()))) * 0.5 \
+		* float(_largest_footprint(units) + PARKING_GAP_CELLS) * maxf(cell.x, cell.y)
+	var entries: Array[Dictionary] = []
+	for unit in units:
+		var offset := unit.global_position - centroid
+		offset.y = 0.0
+		var agent: Dictionary = _agents[unit.get_instance_id()]
+		entries.append({
+			"unit": unit,
+			"raw": clampf(offset.dot(lateral), -lane_limit, lane_limit),
+			"radius": float(agent["radius"]),
+			"id": int(agent["id"]),
+		})
+	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if is_equal_approx(float(a["raw"]), float(b["raw"])):
+			return int(a["id"]) < int(b["id"])
+		return float(a["raw"]) < float(b["raw"])
+	)
+	# Units already in the same longitudinal file have essentially identical
+	# lateral coordinates and should keep one lane. Distinct files are expanded
+	# only when their authored spacing is narrower than the collision field.
+	var clusters: Array[Dictionary] = []
+	for entry in entries:
+		if clusters.is_empty():
+			clusters.append({
+				"entries": [entry], "raw_sum": float(entry["raw"]),
+				"raw_max": float(entry["raw"]), "radius": float(entry["radius"]),
+			})
+			continue
+		var cluster: Dictionary = clusters.back()
+		var same_lane_threshold := minf(float(cluster["radius"]), float(entry["radius"])) * 0.35
+		if float(entry["raw"]) - float(cluster["raw_max"]) <= same_lane_threshold:
+			(cluster["entries"] as Array).append(entry)
+			cluster["raw_sum"] = float(cluster["raw_sum"]) + float(entry["raw"])
+			cluster["raw_max"] = float(entry["raw"])
+			cluster["radius"] = maxf(float(cluster["radius"]), float(entry["radius"]))
+		else:
+			clusters.append({
+				"entries": [entry], "raw_sum": float(entry["raw"]),
+				"raw_max": float(entry["raw"]), "radius": float(entry["radius"]),
+			})
+	var previous_lane := -INF
+	var previous_radius := 0.0
+	for cluster in clusters:
+		var cluster_entries: Array = cluster["entries"]
+		var raw_center := float(cluster["raw_sum"]) / float(cluster_entries.size())
+		var lane := raw_center
+		if previous_lane > -INF:
+			var comfort := minf(previous_radius, float(cluster["radius"])) \
+				* ROUTE_LANE_COMFORT_RADIUS_FACTOR
+			lane = maxf(lane, previous_lane + previous_radius + float(cluster["radius"]) + comfort)
+		cluster["raw_center"] = raw_center
+		cluster["lane"] = lane
+		previous_lane = lane
+		previous_radius = float(cluster["radius"])
+	# Expanding from the low side alone would translate the whole formation.
+	# Recenter the packed lanes around the midpoint of their original span.
+	var raw_midpoint := (float(clusters.front()["raw_center"]) + float(clusters.back()["raw_center"])) * 0.5
+	var lane_midpoint := (float(clusters.front()["lane"]) + float(clusters.back()["lane"])) * 0.5
+	var recenter := raw_midpoint - lane_midpoint
+	var offsets := {}
+	var lane_min := INF
+	var lane_max := -INF
+	for cluster in clusters:
+		var lane := float(cluster["lane"]) + recenter
+		for entry in cluster["entries"]:
+			offsets[(entry["unit"] as Node3D).get_instance_id()] = lane
+		lane_min = minf(lane_min, lane)
+		lane_max = maxf(lane_max, lane)
+	for unit in units:
+		var agent: Dictionary = _agents[unit.get_instance_id()]
+		agent["route_lane_offset"] = float(offsets[unit.get_instance_id()])
+		agent["route_lane_min"] = lane_min
+		agent["route_lane_max"] = lane_max
 
 
 func _assign_slots(units: Array[Node3D], world_target: Vector3, mode: int) -> Array[Dictionary]:
@@ -1380,14 +1561,40 @@ func _profile_for(unit: Node3D) -> Dictionary:
 	var radius := maxf(0.35, size * 0.42)
 	if unit.has_method("navigation_collision_radius"):
 		radius = float(unit.call("navigation_collision_radius", radius))
+	var rotation_radius := radius
+	if unit.has_method("navigation_rotation_radius"):
+		rotation_radius = maxf(
+			radius, float(unit.call("navigation_rotation_radius", rotation_radius))
+		)
 	var cell_size: Vector2 = runtime_map.grid.cell_size()
-	var clearance := maxi(0, int(ceil(radius / maxf(minf(cell_size.x, cell_size.y), 0.001))) - 1)
+	var body_clearance := maxi(
+		0,
+		int(ceil(radius / maxf(minf(cell_size.x, cell_size.y), 0.001))) - 1
+	)
+	var clearance := maxi(
+		0,
+		int(ceil(rotation_radius / maxf(minf(cell_size.x, cell_size.y), 0.001))) - 1
+	)
 	var pass_mask := MapNavigationGrid.PASS_AIR if can_fly else (MapNavigationGrid.PASS_INFANTRY if infantry else MapNavigationGrid.PASS_VEHICLE)
 	var terrain_mask := _terrain_mask(config.list(&"terrain") if config != null else [])
 	# `size` is the side of the unit's square footprint in navigation cells;
 	# destinations are always the center of a free size x size cell block.
 	var footprint := maxi(1, roundi(size))
-	return {"radius": radius, "clearance": clearance, "pass_mask": pass_mask, "terrain_mask": terrain_mask, "footprint": footprint}
+	return {
+		"radius": radius,
+		"rotation_radius": rotation_radius,
+		"body_clearance": body_clearance,
+		"clearance": clearance,
+		"pass_mask": pass_mask,
+		"terrain_mask": terrain_mask,
+		"footprint": footprint,
+	}
+
+
+func _set_agent_rotation_envelope(agent: Dictionary, active: bool) -> void:
+	agent["terrain_radius"] = agent["rotation_radius"] if active else agent["radius"]
+	agent["clearance"] = agent["rotation_clearance"] \
+		if active else agent["body_clearance"]
 
 
 func _terrain_mask(names: Array) -> int:
@@ -1473,13 +1680,6 @@ func _replan_after_map_change() -> void:
 
 func _empty_occupy_marker(marker: String) -> bool:
 	return marker.is_empty() or marker == " " or marker == "." or marker == "_" or marker.to_lower() == "n"
-
-
-func _are_enemies(a: Node3D, b: Node3D) -> bool:
-	if a.has_method("is_enemy_of"):
-		var owner_id = b.get("owner_player_id")
-		return owner_id != null and bool(a.call("is_enemy_of", int(owner_id)))
-	return false
 
 
 func _unit_speed(unit: Node3D) -> float:

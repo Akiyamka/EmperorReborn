@@ -19,15 +19,20 @@ const HARVESTER_TEXTURE := preload("res://assets/raw_original_content/3DDATA/Tex
 const HALO_SHADER := preload("res://scripts/ui/selection_halo.gdshader")
 const ADDITIVE_SHADER := preload("res://scripts/ui/selection_halo_outline.gdshader")
 const OUTLINE_ROTATION_SPEED := 0.5
+const MOVEMENT_DIRECTION_COLOR := Color(1.0, 0.08, 0.82, 0.95)
 
 var _entity: Node3D
 var _is_selected := false
 var _is_hovered := false
 var _layers := {}
+var _movement_arrow: MeshInstance3D
+var _movement_direction := Vector3.ZERO
+var _indicator_radius := 1.0
 
 
 func configure(entity: Node3D, radius: float, local_position: Vector3) -> void:
 	_entity = entity
+	_indicator_radius = maxf(radius, 0.1)
 	position = local_position
 	var diameter := maxf(radius * 2.0, 0.1)
 	_layers[&"outline"] = _add_layer(&"Outline", HALO_TEXTURE, diameter, 0.000, false, ADDITIVE_SHADER)
@@ -40,16 +45,35 @@ func configure(entity: Node3D, radius: float, local_position: Vector3) -> void:
 	_layers[&"spice"] = _add_layer(&"Spice", SPICE_TEXTURE, diameter, 0.010, true)
 	_layers[&"empty_transport"] = _add_layer(&"EmptyTransport", EMPTY_HARVESTER_TEXTURE, diameter, 0.012, false, ADDITIVE_SHADER)
 	_layers[&"transport"] = _add_layer(&"Transport", HARVESTER_TEXTURE, diameter, 0.014, true)
+	_add_movement_arrow()
 	_refresh()
 
 
 func set_selected(value: bool) -> void:
 	_is_selected = value
+	if value:
+		_rebuild_movement_arrow()
 	_refresh_visibility()
 
 
 func set_hovered(value: bool) -> void:
 	_is_hovered = value
+	_refresh_visibility()
+
+
+## World-space final steering direction supplied to Unit.navigation_step. The
+## halo cancels its parent's yaw below, so these local vertices stay aligned
+## with world axes and visibly expose 180-degree steering flip-flops.
+func set_movement_direction(value: Vector3) -> void:
+	var horizontal := Vector3(value.x, 0.0, value.z)
+	var direction := horizontal.normalized() if not horizontal.is_zero_approx() else Vector3.ZERO
+	if direction.is_equal_approx(_movement_direction):
+		return
+	_movement_direction = direction
+	# Every unit receives steering updates, but mesh allocation is useful only
+	# for selected units. A later selection rebuilds from the stored direction.
+	if _is_selected:
+		_rebuild_movement_arrow()
 	_refresh_visibility()
 
 
@@ -95,6 +119,8 @@ func _refresh() -> void:
 
 func _refresh_visibility() -> void:
 	visible = _is_selected or _is_hovered
+	if _movement_arrow != null:
+		_movement_arrow.visible = _is_selected and not _movement_direction.is_zero_approx()
 
 
 func _fraction(current: StringName, maximum: StringName) -> float:
@@ -129,6 +155,56 @@ func _add_layer(
 	layer.position.y = height
 	add_child(layer)
 	return layer
+
+
+func _add_movement_arrow() -> void:
+	_movement_arrow = MeshInstance3D.new()
+	_movement_arrow.name = "MovementDirection"
+	_movement_arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_movement_arrow.extra_cull_margin = 2.0
+	_movement_arrow.position.y = 0.03
+	add_child(_movement_arrow)
+	_rebuild_movement_arrow()
+
+
+func _rebuild_movement_arrow() -> void:
+	if _movement_arrow == null:
+		return
+	if _movement_direction.is_zero_approx():
+		_movement_arrow.mesh = null
+		return
+	var material := StandardMaterial3D.new()
+	material.albedo_color = MOVEMENT_DIRECTION_COLOR
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.no_depth_test = true
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.render_priority = 20
+	var mesh := ImmediateMesh.new()
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, material)
+	var direction := _movement_direction
+	var lateral := Vector3(-direction.z, 0.0, direction.x)
+	var start_distance := maxf(_indicator_radius * 0.65, 0.3)
+	var arrow_length := maxf(_indicator_radius * 2.5, 1.5)
+	var head_length := minf(arrow_length * 0.4, maxf(_indicator_radius * 0.8, 0.5))
+	var shaft_half_width := maxf(_indicator_radius * 0.10, 0.08)
+	var head_half_width := maxf(_indicator_radius * 0.32, 0.24)
+	var start := direction * start_distance
+	var tip := direction * (start_distance + arrow_length)
+	var neck := tip - direction * head_length
+	var shaft_left := lateral * shaft_half_width
+	var head_left := lateral * head_half_width
+	_add_arrow_triangle(mesh, start - shaft_left, neck - shaft_left, neck + shaft_left)
+	_add_arrow_triangle(mesh, start - shaft_left, neck + shaft_left, start + shaft_left)
+	_add_arrow_triangle(mesh, neck - head_left, tip, neck + head_left)
+	mesh.surface_end()
+	_movement_arrow.mesh = mesh
+
+
+func _add_arrow_triangle(mesh: ImmediateMesh, a: Vector3, b: Vector3, c: Vector3) -> void:
+	mesh.surface_add_vertex(a)
+	mesh.surface_add_vertex(b)
+	mesh.surface_add_vertex(c)
 
 
 func _set_layer(layer_id: StringName, texture: Texture2D, fill: float, masked: bool) -> void:
