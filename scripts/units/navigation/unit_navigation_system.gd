@@ -118,6 +118,10 @@ func register_unit(unit: Node3D) -> int:
 		# Once that first leg arrives, navigation immediately parks the unit on
 		# the nearest ordinary stopping block.
 		"vacate_no_stop": false,
+		# A harvester leaving a refinery temporarily keeps access to that
+		# refinery's d/p cells. The exception is dropped as soon as its complete
+		# footprint reaches ordinary stoppable ground.
+		"departure_access": false,
 		# Per-order exception used only while a harvester enters its reserved
 		# refinery pad. Ordinary commands always clear it.
 		"allowed_cells": {},
@@ -185,6 +189,7 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		var agent: Dictionary = _agents[unit.get_instance_id()]
 		agent["allowed_cells"] = {}
 		agent["vacate_no_stop"] = false
+		agent["departure_access"] = false
 		_agents[unit.get_instance_id()] = agent
 
 	var command_id := _next_command_id
@@ -233,6 +238,24 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 	return assignments
 
 
+## Ordinary single-unit movement that starts on a reserved refinery pad.
+## Unlike command_dock(), the destination is claimed with normal FREE-move
+## parking rules, so several departing harvesters never reserve the same spice
+## cell. `allowed_cells` exists only long enough to clear the refinery apron.
+func command_depart(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary) -> bool:
+	if unit == null or allowed_cells.is_empty():
+		return false
+	var assignments := command_move([unit], world_target, MoveMode.FREE)
+	if assignments.is_empty():
+		return false
+	var agent: Dictionary = _agent_for(unit)
+	agent["allowed_cells"] = allowed_cells.duplicate()
+	agent["departure_access"] = true
+	_route_agent(agent, unit.global_position, agent["destination"])
+	_agents[unit.get_instance_id()] = agent
+	return bool(agent["direct_path"]) or not (agent["path"] as Array).is_empty()
+
+
 ## Exact single-unit parking order. `allowed_cells` normally contains the d/p
 ## cells of the refinery that owns the reserved dock. Only this agent may stop
 ## there; they remain ordinary no-stop transit space for every other unit.
@@ -262,6 +285,7 @@ func command_dock(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary
 	agent["yield_remaining"] = 0.0
 	agent["yield_direction"] = Vector3.ZERO
 	agent["vacate_no_stop"] = false
+	agent["departure_access"] = false
 	agent["allowed_cells"] = allowed_cells.duplicate()
 	_route_agent(agent, unit.global_position, world_target)
 	_agents[unit.get_instance_id()] = agent
@@ -291,6 +315,9 @@ func stop(unit: Node3D) -> void:
 	agent["yield_remaining"] = 0.0
 	agent["yield_direction"] = Vector3.ZERO
 	agent["vacate_no_stop"] = false
+	if bool(agent.get("departure_access", false)):
+		agent["departure_access"] = false
+		agent["allowed_cells"] = {}
 	agent["reserved"] = true
 	_agents[unit.get_instance_id()] = agent
 
@@ -365,6 +392,7 @@ func agent_debug(unit: Node3D) -> Dictionary:
 		"group_speed": agent["group_speed"],
 		"hold": agent["hold"],
 		"vacate_no_stop": agent["vacate_no_stop"],
+		"departure_access": agent["departure_access"],
 		"blocked_time": agent["blocked_time"],
 		"route_ready": bool(agent["direct_path"]) or not (agent["path"] as Array).is_empty() or (agent["exit_point"] as Vector3).is_finite(),
 	}
@@ -407,6 +435,7 @@ func _navigation_tick(delta: float) -> void:
 	var ordered := _ordered_agents()
 	var claimants: Array[Dictionary] = []
 	for agent in ordered:
+		_release_departure_access_if_clear(agent)
 		if not bool(agent["reserved"]):
 			claimants.append(agent)
 	# Closest to the target claims first: the unit already standing next to a
@@ -540,6 +569,20 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 	return direction * speed
 
 
+func _release_departure_access_if_clear(agent: Dictionary) -> void:
+	if not bool(agent.get("departure_access", false)):
+		return
+	var allowed: Dictionary = agent["allowed_cells"]
+	agent["allowed_cells"] = {}
+	var unit: Node3D = agent["unit"]
+	var anchor := _parking_anchor(unit.global_position, int(agent["footprint"]))
+	if not _block_stoppable(anchor, int(agent["footprint"]), agent):
+		agent["allowed_cells"] = allowed
+		return
+	agent["departure_access"] = false
+	_route_agent(agent, unit.global_position, agent["destination"])
+
+
 ## Completes the second half of an ordinary no-stop order. This is internal
 ## navigation work rather than a new gameplay order, so it must not call
 ## Unit.prepare_navigation_order() and cancel the unit's action state again.
@@ -571,6 +614,7 @@ func _auto_vacate_no_stop(agent: Dictionary) -> bool:
 	agent["yield_remaining"] = 0.0
 	agent["yield_direction"] = Vector3.ZERO
 	agent["vacate_no_stop"] = false
+	agent["departure_access"] = false
 	agent["allowed_cells"] = {}
 	_route_agent(agent, unit.global_position, destination)
 	if unit.has_method("set_navigation_destination"):

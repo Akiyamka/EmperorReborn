@@ -93,6 +93,7 @@ class FakeNavigation extends RefCounted:
 	enum MoveMode { FREE, FORMATION }
 	var held: Dictionary = {}
 	var dock_targets: Array[Vector3] = []
+	var departure_targets: Array[Vector3] = []
 	var move_targets: Array[Vector3] = []
 
 	func command_move(_units: Array, _target: Vector3, _mode: int, _exit_point := Vector3.INF) -> Array[Dictionary]:
@@ -103,6 +104,11 @@ class FakeNavigation extends RefCounted:
 
 	func command_dock(unit: Node3D, target: Vector3, _allowed_cells: Dictionary) -> bool:
 		dock_targets.append(target)
+		unit.set_navigation_destination(target)
+		return true
+
+	func command_depart(unit: Node3D, target: Vector3, _allowed_cells: Dictionary) -> bool:
+		departure_targets.append(target)
 		unit.set_navigation_destination(target)
 		return true
 
@@ -222,7 +228,7 @@ func _initialize() -> void:
 	_run_case("rules capacity and @!Harv halo", _test_rules_capacity_and_halo)
 	_run_case("cycle timing, extraction cap, and nearby retarget", _test_cycle_and_retarget)
 	_run_case("empty arrival and map-wide continuation", _test_empty_arrival)
-	_run_case("two harvesters reach and work the same spice field", _test_two_harvesters_share_field)
+	_run_case("a crowded harvester group reaches and works the same spice field", _test_two_harvesters_share_field)
 	_run_case("remaining bunker capacity limits extraction", _test_remaining_capacity)
 	_run_case("full harvesters automatically bind to the nearest owned refinery", _test_full_harvester_auto_unload.bind(local_player))
 	_run_case("manual refinery binding persists and automatic fields honor visibility", _test_cycle_binding_and_spice_filter.bind(local_player))
@@ -372,20 +378,24 @@ func _test_two_harvesters_share_field(token: int) -> int:
 	_expect(navigation.setup(grid), "the crowd-navigation fixture must initialize")
 	var layer := FakeSpiceLayer.new()
 	var field := Vector2i(60, 60)
-	layer.values[field] = 2000
+	layer.values[field] = 100000
 	var harvesters: Array[TestHarvester] = []
-	for index in 2:
+	for index in 6:
 		var harvester := TestHarvester.new()
 		harvester.unit_config = root.get_node("Rules").unit(&"Harvester")
 		harvester.max_spice = 700.0
 		harvester.move_speed = 4.0
 		harvester.turn_rate = 0.15
 		root.add_child(harvester)
-		harvester.global_position = Vector3(40.5, 0.0, 58.5 + float(index) * 3.0)
+		harvester.global_position = Vector3(
+			40.5 + float(index % 2) * 2.0,
+			0.0,
+			54.5 + float(index / 2) * 2.0
+		)
 		navigation.register_unit(harvester)
 		_expect(harvester.command_harvest(layer, grid, field), "each harvester must accept the shared field order")
 		harvesters.append(harvester)
-	for _tick in 500:
+	for _tick in 1500:
 		navigation.call("_navigation_tick", 0.05)
 		for harvester in harvesters:
 			harvester.advance_harvest_order(0.05)
@@ -393,7 +403,7 @@ func _test_two_harvesters_share_field(token: int) -> int:
 			break
 	_expect(
 		harvesters.all(func(harvester: TestHarvester) -> bool: return harvester.spice > 0.0),
-		"both large harvesters must reach safe parking positions and begin collecting instead of yielding forever; states=%s" % str(harvesters.map(
+		"every large harvester must accept its safe parking position and begin collecting instead of waiting forever in TRAVEL; states=%s" % str(harvesters.map(
 			func(harvester: TestHarvester) -> Dictionary: return {
 				"position": harvester.global_position,
 				"destination": harvester.target_position,
@@ -657,7 +667,7 @@ func _test_unload_navigation_arrival(token: int, player: PlayerData) -> int:
 	harvester.advance_unload_order(0.1)
 	_expect(not navigation.is_held(harvester), "UnloadEnd completion must release the navigation hold for the exit route")
 	_expect(not harvester.has_unload_order() and harvester.has_harvest_order(), "normal managed unloading must hand off directly to the next harvest order")
-	_expect(navigation.dock_targets.back() == grid.grid_to_world(field), "the direct field route must retain dock-cell access without an intermediate refinery-front waypoint")
+	_expect(navigation.departure_targets.back() == grid.grid_to_world(field), "the direct field route must retain temporary dock-cell access without becoming an exact dock order")
 
 	harvester.queue_free()
 	refinery.queue_free()

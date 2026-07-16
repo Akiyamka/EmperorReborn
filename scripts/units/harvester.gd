@@ -564,10 +564,10 @@ func _move_to_harvest_cell(cell: Vector2i) -> void:
 	_issuing_harvest_move = true
 	var target: Vector3 = _harvest_grid.call("grid_to_world", cell)
 	if _navigation_managed and _navigation_system != null \
-	and _navigation_system.has_method("command_dock") \
+	and _navigation_system.has_method("command_depart") \
 	and _is_valid_owned_refinery(exit_refinery):
 		var cells := exit_refinery.call("refinery_dock_navigation_cells", exit_grid) as Dictionary
-		_navigation_system.call("command_dock", self, target, cells)
+		_navigation_system.call("command_depart", self, target, cells)
 	else:
 		move_to(target)
 	_issuing_harvest_move = false
@@ -586,7 +586,14 @@ func _is_close_to_harvest_cell(cell: Vector2i) -> bool:
 	var approach_radius := maxf(cell_dimensions.x, cell_dimensions.y) * approach_cells
 	var offset := target - global_position
 	offset.y = 0.0
-	return offset.length() <= maxf(approach_radius, arrival_radius)
+	if offset.length() <= maxf(approach_radius, arrival_radius):
+		return true
+	# Crowd navigation may park a later size-3 harvester outside the nominal
+	# action radius because nearer non-overlapping blocks already belong to its
+	# peers. Reaching that navigation-owned safe destination is still arrival;
+	# otherwise the gameplay state remains in TRAVEL forever with no route left.
+	return _navigation_managed and _navigation_system != null \
+		and _is_close_to_world(target_position)
 
 
 func _finish_harvest_order() -> void:

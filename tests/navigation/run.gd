@@ -273,10 +273,27 @@ func _test_dock_order_has_per_unit_building_access(grid: MapNavigationGrid) -> v
 		)
 	_expect(harvester.global_position.distance_to(dock) < 0.6, "the docking harvester must enter and stop on d/p cells")
 	_expect(not crossed_building_body, "a docking route from the side must go around b cells")
-	var followup := navigation.command_move([harvester], dock)
+	var second_harvester := FakeUnit.new(3.0)
+	root.add_child(second_harvester)
+	second_harvester.global_position = Vector3(104.5, 0.0, 108.5)
+	var departure_target := Vector3(120.5, 0.0, 104.5)
 	_expect(
-		bool(followup[0]["vacate_no_stop"]) and bool(navigation.agent_debug(harvester)["vacate_no_stop"]),
-		"a normal follow-up order must clear the harvester's old permanent dock exception"
+		navigation.command_depart(harvester, departure_target, dock_cells) \
+		and navigation.command_depart(second_harvester, departure_target, dock_cells) \
+		and bool(navigation.agent_debug(harvester)["departure_access"]),
+		"departing harvesters must temporarily retain access to their refinery cells"
+	)
+	for _iteration in 200:
+		navigation.call("_navigation_tick", 0.05)
+	var first_destination: Vector3 = navigation.agent_debug(harvester)["destination"]
+	var second_destination: Vector3 = navigation.agent_debug(second_harvester)["destination"]
+	_expect(
+		harvester.global_position.distance_to(first_destination) < 1.0 \
+		and second_harvester.global_position.distance_to(second_destination) < 1.0 \
+		and first_destination.distance_to(second_destination) > 1.0 \
+		and not bool(navigation.agent_debug(harvester)["departure_access"]) \
+		and not bool(navigation.agent_debug(second_harvester)["departure_access"]),
+		"departures must claim separate normal parking blocks and drop refinery access after exiting"
 	)
 
 	var ordinary := FakeUnit.new()
@@ -291,6 +308,7 @@ func _test_dock_order_has_per_unit_building_access(grid: MapNavigationGrid) -> v
 
 	navigation.queue_free()
 	harvester.queue_free()
+	second_harvester.queue_free()
 	ordinary.queue_free()
 
 
