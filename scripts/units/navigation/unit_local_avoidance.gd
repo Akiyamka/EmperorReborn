@@ -726,6 +726,8 @@ static func _are_enemies(a: Node3D, b: Node3D) -> bool:
 
 
 static func _unit_speed(unit: Node3D) -> float:
+	if unit.has_method("navigation_move_speed"):
+		return maxf(float(unit.call("navigation_move_speed")), 0.0)
 	var value = unit.get("move_speed")
 	return maxf(float(value), 0.0) if value != null else 0.0
 

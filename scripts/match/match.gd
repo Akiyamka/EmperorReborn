@@ -215,6 +215,10 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _handle_mech_gait_debug_shortcut(event):
+		get_viewport().set_input_as_handled()
+		return
+
 	if _handle_snapshot_shortcut(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -229,6 +233,16 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if _unit_command_controller != null and _unit_command_controller.handle_unhandled_input(event):
 		get_viewport().set_input_as_handled()
+
+
+func _handle_mech_gait_debug_shortcut(event: InputEvent) -> bool:
+	if not (event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F3):
+		return false
+	var panel := get_node_or_null("HUD/MechGaitDebug") as Control
+	if panel == null:
+		return false
+	panel.visible = not panel.visible
+	return true
 
 
 func _handle_snapshot_shortcut(event: InputEvent) -> bool:

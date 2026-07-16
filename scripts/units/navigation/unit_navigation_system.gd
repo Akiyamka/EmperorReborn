@@ -1686,6 +1686,13 @@ func _empty_occupy_marker(marker: String) -> bool:
 
 
 func _unit_speed(unit: Node3D) -> float:
+	if unit.has_method("navigation_move_speed"):
+		return maxf(float(unit.call("navigation_move_speed")), 0.0)
+	var value = unit.get("move_speed")
+	return maxf(float(value), 0.0) if value != null else 0.0
+
+
+func _unit_cruise_speed(unit: Node3D) -> float:
 	var value = unit.get("move_speed")
 	return maxf(float(value), 0.0) if value != null else 0.0
 
@@ -1698,7 +1705,9 @@ func _arrival_radius(unit: Node3D) -> float:
 func _slowest_speed(units: Array[Node3D]) -> float:
 	var speed := INF
 	for unit in units:
-		speed = minf(speed, _unit_speed(unit))
+		# Formation pace is a persistent cap. Capturing a mech's temporary
+		# between-step speed here would pin the whole group to that low phase.
+		speed = minf(speed, _unit_cruise_speed(unit))
 	return speed
 
 

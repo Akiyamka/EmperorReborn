@@ -27,6 +27,23 @@ const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
 const MOVING_ANIMATION := &"Move"
 const IDLE_ANIMATION := &"Stationary"
 const IDLE_ANIMATION_PREFIX := "Idle"
+## A converted Move clip contains a complete left/right gait cycle. Each half
+## alternates an authored walking-speed phase with the slower MechSpeed pause.
+const DEFAULT_MECH_STEPS_PER_MOVE_CYCLE := 2.0
+const DEFAULT_MECH_STEP_RISE_START := 0.37
+const DEFAULT_MECH_STEP_RISE_END := 0.44
+const DEFAULT_MECH_STEP_FALL_START := 0.47
+const DEFAULT_MECH_STEP_FALL_END := 0.49
+const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
+
+## Runtime copies are intentionally shared so the demo debug panel can tune
+## every existing and newly spawned mech without rebuilding rules resources.
+static var mech_steps_per_move_cycle := DEFAULT_MECH_STEPS_PER_MOVE_CYCLE
+static var mech_step_rise_start := DEFAULT_MECH_STEP_RISE_START
+static var mech_step_rise_end := DEFAULT_MECH_STEP_RISE_END
+static var mech_step_fall_start := DEFAULT_MECH_STEP_FALL_START
+static var mech_step_fall_end := DEFAULT_MECH_STEP_FALL_END
+static var mech_move_cycle_fallback_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
 
 enum SlopeAlignmentMode {
 	AUTO,
@@ -44,6 +61,7 @@ enum SlopeAlignmentMode {
 			_refresh_owner_visuals()
 		owner_changed.emit(owner_player_id)
 @export var move_speed := 5.0
+@export var mech_speed := 0.0
 @export var turn_rate := 0.0
 @export var can_move_any_direction := false
 @export var arrival_radius := 0.2
@@ -88,6 +106,8 @@ var _navigation_requested_velocity := Vector3.ZERO
 var _visual_root_rest_basis := Basis.IDENTITY
 var _visual_slope_target_basis := Basis.IDENTITY
 var _last_terrain_normal := Vector3.UP
+var _uses_mech_gait := false
+var _mech_gait_elapsed := 0.0
 
 
 func _ready() -> void:
@@ -134,20 +154,23 @@ func _physics_process(delta: float) -> void:
 	var offset := target_position - global_position
 	offset.y = 0.0
 	var requested_velocity := Vector3.ZERO
+	var movement_speed := navigation_move_speed()
 
 	if offset.length() <= arrival_radius:
 		velocity = Vector3.ZERO
 	else:
 		var direction := offset.normalized()
-		requested_velocity = direction * move_speed
+		requested_velocity = direction * movement_speed
 		var heading_reached := _turn_toward(direction, delta)
 		if can_move_any_direction or heading_reached:
-			velocity = direction * move_speed * _slope_speed_multiplier(direction, delta)
+			velocity = direction * movement_speed * _slope_speed_multiplier(direction, delta)
 		else:
 			velocity = Vector3.ZERO
 
 	_set_navigation_debug_direction(requested_velocity)
-	_set_movement_animation(not velocity.is_zero_approx(), _movement_animation_speed_scale())
+	var animation_speed_scale := _movement_animation_speed_scale()
+	_set_movement_animation(not velocity.is_zero_approx(), animation_speed_scale)
+	_advance_mech_gait(delta, animation_speed_scale)
 	move_and_slide()
 	_snap_to_terrain()
 
@@ -253,12 +276,86 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 		var heading_reached := _turn_toward(velocity.normalized(), delta)
 		if not can_move_any_direction and not heading_reached:
 			velocity = Vector3.ZERO
-	_set_movement_animation(not velocity.is_zero_approx(), _movement_animation_speed_scale())
+	var animation_speed_scale := _movement_animation_speed_scale()
+	_set_movement_animation(not velocity.is_zero_approx(), animation_speed_scale)
+	_advance_mech_gait(delta, animation_speed_scale)
 	# Unit/unit collision has already been resolved centrally as swept discs.
 	# Applying the exact fixed navigation delta avoids depending on physics-frame
 	# frequency and keeps command replays stable.
 	global_position += velocity * delta
 	_snap_to_terrain()
+
+
+## The navigation solver must see the phase speed before avoidance is resolved;
+## applying it afterwards would let following units plan through a mech that is
+## currently in its slower between-step phase.
+func navigation_move_speed() -> float:
+	if not _uses_mech_gait:
+		return move_speed
+	var cycle_duration := _mech_move_cycle_duration()
+	var cycle_phase := fposmod(_mech_gait_elapsed, cycle_duration) / cycle_duration
+	var step_phase := fposmod(cycle_phase * mech_steps_per_move_cycle, 1.0)
+	# Smoothstep keeps the two rule-defined speeds intact away from the short
+	# transition windows while preventing an abrupt velocity change at a footfall.
+	var rise := smoothstep(mech_step_rise_start, mech_step_rise_end, step_phase)
+	var fall := 1.0 - smoothstep(mech_step_fall_start, mech_step_fall_end, step_phase)
+	return lerpf(mech_speed, move_speed, rise * fall)
+
+
+func _advance_mech_gait(delta: float, animation_speed_scale: float) -> void:
+	if not _uses_mech_gait or not _movement_animation_active or delta <= 0.0:
+		return
+	var cycle_duration := _mech_move_cycle_duration()
+	_mech_gait_elapsed = fposmod(
+		_mech_gait_elapsed + delta * maxf(animation_speed_scale, 0.0),
+		cycle_duration
+	)
+
+
+func _mech_move_cycle_duration() -> float:
+	for player in _animation_players:
+		if not player.has_animation(MOVING_ANIMATION):
+			continue
+		var animation := player.get_animation(MOVING_ANIMATION)
+		if animation != null and animation.length > 0.0:
+			return animation.length
+	return mech_move_cycle_fallback_seconds
+
+
+static func mech_gait_tuning() -> Dictionary:
+	return {
+		&"steps_per_cycle": mech_steps_per_move_cycle,
+		&"rise_start": mech_step_rise_start,
+		&"rise_end": mech_step_rise_end,
+		&"fall_start": mech_step_fall_start,
+		&"fall_end": mech_step_fall_end,
+		&"fallback_cycle_seconds": mech_move_cycle_fallback_seconds,
+	}
+
+
+static func set_mech_gait_tuning_value(key: StringName, value: float) -> void:
+	match key:
+		&"steps_per_cycle":
+			mech_steps_per_move_cycle = maxf(value, 0.1)
+		&"rise_start":
+			mech_step_rise_start = clampf(value, 0.0, mech_step_rise_end - 0.001)
+		&"rise_end":
+			mech_step_rise_end = clampf(value, mech_step_rise_start + 0.001, mech_step_fall_start)
+		&"fall_start":
+			mech_step_fall_start = clampf(value, mech_step_rise_end, mech_step_fall_end - 0.001)
+		&"fall_end":
+			mech_step_fall_end = clampf(value, mech_step_fall_start + 0.001, 1.0)
+		&"fallback_cycle_seconds":
+			mech_move_cycle_fallback_seconds = maxf(value, 0.05)
+
+
+static func reset_mech_gait_tuning() -> void:
+	mech_steps_per_move_cycle = DEFAULT_MECH_STEPS_PER_MOVE_CYCLE
+	mech_step_rise_start = DEFAULT_MECH_STEP_RISE_START
+	mech_step_rise_end = DEFAULT_MECH_STEP_RISE_END
+	mech_step_fall_start = DEFAULT_MECH_STEP_FALL_START
+	mech_step_fall_end = DEFAULT_MECH_STEP_FALL_END
+	mech_move_cycle_fallback_seconds = DEFAULT_MECH_MOVE_CYCLE_SECONDS
 
 
 func navigation_blocked_by_enemy(enemies: Array[Node3D]) -> void:
@@ -534,6 +631,11 @@ func _apply_rules_config() -> void:
 		return
 
 	move_speed = float(unit_config.field(&"speed", move_speed))
+	mech_speed = maxf(float(unit_config.field(&"mech_speed", move_speed)), 0.0)
+	_uses_mech_gait = bool(unit_config.field(&"mech", false)) \
+		and mech_speed > 0.0 \
+		and not is_equal_approx(mech_speed, move_speed)
+	_mech_gait_elapsed = 0.0
 	turn_rate = maxf(float(unit_config.field(&"turn_rate", 0.0)), 0.0)
 	can_move_any_direction = bool(unit_config.field(&"can_move_any_direction", false))
 	max_health = float(unit_config.field(&"health", max_health))
@@ -582,6 +684,8 @@ func _prepare_idle_animations() -> void:
 
 
 func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
+	if not is_moving:
+		_mech_gait_elapsed = 0.0
 	_movement_animation_active = is_moving
 	for player in _animation_players:
 		if is_moving:
@@ -672,9 +776,10 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 
 
 func _movement_animation_speed_scale() -> float:
-	if move_speed <= 0.0:
+	var phase_speed := navigation_move_speed()
+	if phase_speed <= 0.0:
 		return 1.0
-	return velocity.length() / move_speed
+	return velocity.length() / phase_speed
 
 
 func _refresh_owner_visuals() -> void:

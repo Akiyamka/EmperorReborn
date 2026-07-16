@@ -23,6 +23,8 @@ func _initialize() -> void:
 	await _run_case("units turn at their rules rates", _test_unit_turn_rates)
 	await _run_case("entity forward directions share one world-space contract", _test_entity_orientation_contract)
 	await _run_case("units switch between stationary and movement animations", _test_unit_movement_animations)
+	await _run_case("mechs alternate smoothly between gait speeds", _test_mech_gait_speeds)
+	await _run_case("F3 toggles the temporary mech gait panel", _test_mech_gait_debug_shortcut)
 	await _run_case("test match roster is non-empty after boot", _test_match_roster_populated)
 	await _run_case("roster controls leave arrow keys to the camera", _test_roster_controls_ignore_keyboard_focus)
 	await _run_case("rules art configs resolve every test panel icon", _test_match_panel_icons)
@@ -295,6 +297,90 @@ func _test_unit_movement_animations() -> void:
 		_expect(player != null and _is_unit_idle(player), "%s must return to an idle animation when stopped" % unit_name)
 		_expect(player != null and is_equal_approx(player.speed_scale, 1.0), "%s must reset its animation speed when stopped" % unit_name)
 
+	match_instance.queue_free()
+
+
+func _test_mech_gait_speeds() -> void:
+	Unit.reset_mech_gait_tuning()
+	var match_instance := MatchFixtureScene.instantiate()
+	get_root().add_child(match_instance)
+	await physics_frame
+
+	var unit := match_instance.get_node("Units/ScoutA") as Unit
+	unit.setup(&"ATMongoose")
+	var configured_speed := float(unit.unit_config.field(&"speed", 0.0))
+	var configured_mech_speed := float(unit.unit_config.field(&"mech_speed", 0.0))
+	_expect(
+		is_equal_approx(unit.move_speed, configured_speed),
+		"Mongoose must load its editable Speed rule"
+	)
+	_expect(
+		is_equal_approx(unit.mech_speed, configured_mech_speed),
+		"Mongoose must load its editable MechSpeed rule"
+	)
+	_expect(unit.move_speed > unit.mech_speed, "the gait test requires Speed above MechSpeed")
+
+	var cycle_duration := float(unit.call("_mech_move_cycle_duration"))
+	unit.set("_mech_gait_elapsed", 0.0)
+	_expect(
+		is_equal_approx(unit.navigation_move_speed(), unit.mech_speed),
+		"a mech must use MechSpeed between authored steps"
+	)
+	unit.set("_mech_gait_elapsed", cycle_duration * 0.2025)
+	var blended_speed := unit.navigation_move_speed()
+	_expect(
+		blended_speed > unit.mech_speed and blended_speed < unit.move_speed,
+		"a mech must blend rather than snap between MechSpeed and Speed"
+	)
+	unit.set("_mech_gait_elapsed", cycle_duration * 0.225)
+	_expect(
+		is_equal_approx(unit.navigation_move_speed(), unit.move_speed),
+		"a mech must use ordinary Speed during the active step"
+	)
+	unit.set("_mech_gait_elapsed", cycle_duration * 0.50)
+	_expect(
+		is_equal_approx(unit.navigation_move_speed(), unit.mech_speed),
+		"each half of the Move cycle must begin with the between-step speed"
+	)
+
+	# At its full phase speed the authored Move animation stays at 1x. Dividing
+	# by ordinary Speed here would stretch the slow phase and desynchronise it
+	# from the feet that define the next transition.
+	unit.velocity = Vector3.RIGHT * unit.mech_speed
+	_expect(
+		is_equal_approx(float(unit.call("_movement_animation_speed_scale")), 1.0),
+		"MechSpeed motion must keep the gait animation at its authored rate"
+	)
+
+	unit.setup(&"IMTANK")
+	_expect(
+		is_equal_approx(unit.navigation_move_speed(), unit.move_speed),
+		"non-mechs must retain their ordinary constant movement speed"
+	)
+	match_instance.queue_free()
+	Unit.reset_mech_gait_tuning()
+
+
+func _test_mech_gait_debug_shortcut() -> void:
+	var match_instance := MatchFixtureScene.instantiate()
+	get_root().add_child(match_instance)
+	await physics_frame
+
+	var panel := Control.new()
+	panel.name = "MechGaitDebug"
+	panel.visible = false
+	match_instance.get_node("HUD").add_child(panel)
+	var event := InputEventKey.new()
+	event.keycode = KEY_F3
+	event.pressed = true
+	_expect(
+		bool(match_instance.call("_handle_mech_gait_debug_shortcut", event)) and panel.visible,
+		"F3 must reveal the hidden mech gait panel"
+	)
+	_expect(
+		bool(match_instance.call("_handle_mech_gait_debug_shortcut", event)) and not panel.visible,
+		"a second F3 press must hide the mech gait panel"
+	)
 	match_instance.queue_free()
 
 
