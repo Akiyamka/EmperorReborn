@@ -526,9 +526,12 @@ func _navigation_tick(delta: float) -> void:
 					agent["destination"] = _snapped_parking(agent, unit.global_position + velocity * delta)
 					agent["reserved"] = true
 					_route_agent(agent, unit.global_position, agent["destination"])
-		# Elastic overlap resolution: overlapping units keep pushing on each
-		# other and pop apart the moment free room appears.
-		var separation := avoidance.separation_velocity(agent, nearby)
+		# Elastic overlap resolution normally lets overlapping units push each
+		# other apart. A held unit, however, owns its exact position (for example
+		# a harvester unloading on a refinery pad); only the other agent may move
+		# to resolve an overlap with it.
+		var separation := Vector3.ZERO if bool(agent["hold"]) \
+			else avoidance.separation_velocity(agent, nearby)
 		if not separation.is_zero_approx():
 			var total := (velocity + separation).limit_length(_unit_speed(unit))
 			# Separation may cross friends, but it must not turn the already-safe

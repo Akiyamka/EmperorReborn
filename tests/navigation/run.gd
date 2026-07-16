@@ -131,6 +131,7 @@ func _initialize() -> void:
 	_test_grid_aligned_slots(grid)
 	_test_lane_through_standing_formation(grid)
 	_test_overlap_is_squeezed_out(grid)
+	_test_hold_position_resists_separation(grid)
 	_test_large_overlap_spans_spatial_buckets(grid)
 	_test_enemy_stays_solid_under_separation(grid)
 	_test_elastic_corridor_pass(grid)
@@ -1455,6 +1456,42 @@ func _test_overlap_is_squeezed_out(grid: MapNavigationGrid) -> void:
 	navigation.queue_free()
 	first.queue_free()
 	second.queue_free()
+
+
+## Hold position is a hard ownership of the current point. Overlap recovery may
+## move the other friendly (for example one arriving behind a refinery), but it
+## must not dislodge a harvester while that harvester unloads on its dock.
+func _test_hold_position_resists_separation(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var held := FakeUnit.new()
+	var overlapping := FakeUnit.new()
+	root.add_child(held)
+	root.add_child(overlapping)
+	held.global_position = Vector3(210.5, 0.0, 210.5)
+	overlapping.global_position = Vector3(210.6, 0.0, 210.5)
+	navigation.register_unit(held)
+	navigation.register_unit(overlapping)
+	navigation.set_hold_position(held, true)
+	var held_position := held.global_position
+	var contact := float(navigation._agents[held.get_instance_id()]["radius"]) \
+		+ float(navigation._agents[overlapping.get_instance_id()]["radius"])
+	_expect(held.global_position.distance_to(overlapping.global_position) < contact,
+		"hold-position fixture must begin with overlapping agents")
+
+	for _iteration in 60:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(held.global_position.is_equal_approx(held_position),
+		"separation must not displace a held unit")
+	_expect(held.global_position.distance_to(overlapping.global_position) >= contact - 0.01,
+		"the non-held unit must still separate from a held unit")
+
+	navigation.queue_free()
+	held.queue_free()
+	overlapping.queue_free()
 
 
 ## Large unit discs can overlap while their centres are more than one spatial
