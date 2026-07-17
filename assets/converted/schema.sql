@@ -1,80 +1,79 @@
 -- =============================================================================
 -- Emperor: Battle for Dune — Rules.txt → SQLite
--- Нормализованная схема, строгая типизация по сущностям (units/buildings/
+-- Normalized schema with strict per-entity typing (units/buildings/
 -- turrets/bullets/warheads/debris/crates/splats/spice mounds).
 --
--- Источник правды — эта БД. Экспорт в движок (Godot) делается отдельным
--- шагом (SQLite -> JSON/Resource), эта схема сюда не завязана.
+-- This database is the source of truth. Export to the engine (Godot) is a
+-- separate SQLite -> JSON/Resource step and is not coupled to this schema.
 --
--- Дизайн-принципы:
---   1. Частые поля (>=~20 вхождений в категории) -> отдельные типизированные
---      колонки.
---   2. Составные/списковые поля (Terrain=, PrimaryBuilding=, Occupy=,
---      VeterancyLevel=, Armour=..,N,Terrain) -> дочерние/junction-таблицы.
---   3. Редкие one-off поля (встречаются 1-3 раза во всём файле) -> не
---      получают персональную колонку, а идут в overflow-таблицу
---      `custom_fields` (entity_type, entity_id, key, value) — иначе схема
---      разрастётся на сотни в основном NULL-колонок. Это не нарушает
---      "строгую типизацию по сущностям": просто garbage-collector для
---      длинного хвоста редких флагов, не сама схема.
---   4. Все ссылки на другие сущности по имени (TurretAttach, Bullet,
---      Warhead, ExplosionType, ChaosEffect...) резолвятся в FK на этапе
---      импорта, а не хранятся как TEXT.
+-- Design principles:
+--   1. Frequent fields (>=~20 occurrences in a category) get dedicated
+--      typed columns.
+--   2. Composite/list fields (Terrain=, PrimaryBuilding=, Occupy=,
+--      VeterancyLevel=, Armour=..,N,Terrain) use child/junction tables.
+--   3. Rare one-off fields (1-3 occurrences in the entire file) do not get
+--      dedicated columns. They go into the `custom_fields` overflow table
+--      (entity_type, entity_id, key, value), avoiding hundreds of mostly-NULL
+--      columns. This does not weaken per-entity typing; it is a collector for
+--      the long tail of rare flags, not the schema itself.
+--   4. Named references to other entities (TurretAttach, Bullet, Warhead,
+--      ExplosionType, ChaosEffect...) are resolved to FKs during import
+--      instead of being stored as TEXT.
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
 
 -- =============================================================================
--- 1. СПРАВОЧНИКИ / ENUM-ТАБЛИЦЫ
+-- 1. LOOKUP / ENUM TABLES
 -- =============================================================================
 
--- [TerrainTypes] — фиксированный список, порядок = числовой ID в движке
--- (совпадает с TYPE в tiledef.dat из terrain-contour-system.md).
+-- [TerrainTypes] is a fixed list whose order is the numeric engine ID
+-- (matching TYPE in tiledef.dat as documented by terrain-contour-system.md).
 CREATE TABLE terrain_types (
-    id          INTEGER PRIMARY KEY,   -- совпадает с исходным TYPE-индексом (0..7)
+    id          INTEGER PRIMARY KEY,   -- matches the original TYPE index (0..7)
     name        TEXT NOT NULL UNIQUE,  -- Sand, Rock, Cliff, NBRock, InfRock, DustBowl, MapEdge, Ramp
     sort_order  INTEGER NOT NULL
 );
 
--- [ArmourTypes] — тоже фиксированный enum, используется как FK почти
--- отовсюду (Armour у юнитов/зданий, столбцы в warhead_armour_damage).
+-- [ArmourTypes] is another fixed enum, used as an FK nearly everywhere
+-- (unit/building Armour and the warhead_armour_damage columns).
 CREATE TABLE armour_types (
     id          INTEGER PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,  -- None, BPV, Light, Medium, Heavy, Concrete, Walls, Building, CY, Harvester, Invulnerable, Aircraft
     sort_order  INTEGER NOT NULL
 );
 
--- Полный реестр имён из ВСЕХ [ExplosionTypes]-деклараций по файлу.
--- Часть из них — просто имена FX-хуков без своих параметров (Muzzle1,
--- LargeChaosFX...), часть — полноценные сущности с DamageToTile/FaceCamera
--- (расширяются в explosion_configs). Единый реестр нужен, потому что
--- ChaosEffect/HawkEffect/DamageEffect/ExplosionType на юнитах/зданиях/
--- пулях ссылаются на одно и то же пространство имён.
+-- Complete name registry from every [ExplosionTypes] declaration in the file.
+-- Some entries are parameterless FX hook names (Muzzle1, LargeChaosFX...);
+-- others are full entities with DamageToTile/FaceCamera properties and are
+-- extended by explosion_configs. A shared registry is required because
+-- ChaosEffect/HawkEffect/DamageEffect/ExplosionType on units, buildings, and
+-- bullets all reference the same namespace.
 CREATE TABLE explosion_types (
     id          INTEGER PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
-    source_line INTEGER                -- строка первого упоминания в Rules.txt (диагностика)
+    source_line INTEGER                -- line of first occurrence in Rules.txt (diagnostics)
 );
 
--- [BuildingGroupTypes] — используется для схлопывания дублей иконок
+-- [BuildingGroupTypes] is used to collapse duplicate icons
 -- (SmWindtrap, Outpost, Refinery...).
 CREATE TABLE building_groups (
     id   INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE
 );
 
--- [UnitGroupTypes] — категория юнита для группировки в производстве.
+-- [UnitGroupTypes] categorizes units for production grouping.
 CREATE TABLE unit_groups (
     id   INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE
 );
 
--- [HouseTypes] + данные из секций [Atreides]/[Ordos]/... (SubHouse, SoundFile).
--- Не чистый enum — есть собственные данные, поэтому полноценная таблица.
--- ПРОВЕРЕНО НА ДАННЫХ: SubHouse/Subhouse — это булев флаг ("TRUE" всегда),
--- а не имя родительской фракции. Изначальное предположение про
--- self-reference ("Imperial = Sardaukar") было неверным домыслом без
--- проверки — реальных данных о иерархии House->House в файле нет вообще.
+-- [HouseTypes] plus data from [Atreides]/[Ordos]/... sections (SubHouse,
+-- SoundFile). This is a full table rather than a plain enum because houses
+-- have their own data. Data validation shows that SubHouse/Subhouse is a
+-- boolean flag (always "TRUE"), not the name of a parent faction. The earlier
+-- self-reference assumption ("Imperial = Sardaukar") was unsupported; the
+-- source contains no House->House hierarchy data.
 CREATE TABLE houses (
     id           INTEGER PRIMARY KEY,
     name         TEXT NOT NULL UNIQUE,   -- Atreides, Ordos, Harkonnen, Ix, Tleilaxu, Fremen, Imperial, Guild, Incidental
@@ -87,18 +86,16 @@ CREATE TABLE houses (
 -- 2. WARHEADS
 -- =============================================================================
 
--- [WarheadTypes] — сама секция warhead'а не имеет "обычных" полей: её тело
--- это построчно "ИмяТипаБрони = процент урона" (None/BPV/Light/Medium/...).
+-- A [WarheadTypes] section has no conventional fields. Its body consists of
+-- "ArmourTypeName = damage percentage" lines (None/BPV/Light/Medium/...).
 --
--- Проверено на данных: в [WarheadTypes] попадают и настоящие warhead'ы
--- бомб/пуль (тело = таблица урона по броне, на них есть ссылки Warhead=),
--- и пара "хвостов" без чёткой роли — AntiPersonnel (нет тела вообще, нет
--- ни одной ссылки Warhead=) и AntiTank (тело ЕСТЬ, структурно как у
--- обычного warhead'а, но тоже ни разу не встречается в Warhead=).
--- Чистого структурного деления "категория vs реальный warhead" в данных
--- нет, поэтому отдельного флага-признака здесь намеренно нет — вопрос
--- "используется ли этот warhead хоть одной пулей/юнитом" считается
--- запросом (JOIN на bullets.warhead_id), а не хранимым состоянием.
+-- Data validation shows that [WarheadTypes] contains both real bomb/bullet
+-- warheads (an armour damage table referenced by Warhead=) and two entries
+-- without a clear role: AntiPersonnel (no body and no Warhead= references)
+-- and AntiTank (a normal-looking body but no Warhead= references). The data
+-- has no structural "category vs real warhead" distinction, so no dedicated
+-- flag is stored. Whether a warhead is used is a query (JOIN against
+-- bullets.warhead_id), not persisted state.
 CREATE TABLE warheads (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE     -- AntiPersonnel, AntiTank, Pistol_W, ...
@@ -116,8 +113,8 @@ CREATE TABLE warhead_armour_damage (
 -- 3. DEBRIS
 -- =============================================================================
 
--- [DebrisTypes]: DebrisLarge/Medium/Small — одинаковый набор из 6 визуальных
--- полей траектории обломков.
+-- [DebrisTypes]: DebrisLarge/Medium/Small share the same six visual debris
+-- trajectory fields.
 CREATE TABLE debris_types (
     id                          INTEGER PRIMARY KEY,
     name                        TEXT NOT NULL UNIQUE,
@@ -144,7 +141,7 @@ CREATE TABLE bullets (
     debris_id                   INTEGER REFERENCES debris_types(id),
     speed                       REAL,
     explosion_type_id           INTEGER REFERENCES explosion_types(id),
-    blow_up                     INTEGER,  -- bool (проверено: только TRUE в данных)
+    blow_up                     INTEGER,  -- bool (only TRUE occurs in source data)
     blast_radius                REAL,
     shot                        INTEGER,
     reduce_damage_with_distance INTEGER,  -- bool
@@ -154,11 +151,11 @@ CREATE TABLE bullets (
     missile_trail_wiggle_scale   INTEGER,
     missile_trail_length         INTEGER,
     missile_trail_delta          REAL,
-    -- DamageFriendly (bool) и FriendlyDamageAmount (число) в исходнике
-    -- НИКОГДА не встречаются в одной секции одновременно (проверено по
-    -- всем 19 вхождениям) — это два разных способа задать одно и то же
-    -- в разные периоды разработки. При импорте: DamageFriendly=TRUE -> 100,
-    -- DamageFriendly=FALSE -> 0, FriendlyDamageAmount=N -> N как есть.
+    -- DamageFriendly (bool) and FriendlyDamageAmount (numeric) never occur
+    -- together in one source section (verified across all 19 occurrences).
+    -- They are two historical representations of the same setting. Import:
+    -- DamageFriendly=TRUE -> 100, DamageFriendly=FALSE -> 0, and
+    -- FriendlyDamageAmount=N -> N unchanged.
     friendly_damage_amount      REAL,
     anti_aircraft                INTEGER,  -- bool
     anti_ground                  INTEGER,  -- bool
@@ -166,16 +163,16 @@ CREATE TABLE bullets (
     homing_delay                 REAL,
     turn_rate                    REAL,
     continuous                   INTEGER,  -- bool
-    trajectory                   INTEGER,  -- bool (проверено: только true в данных)
+    trajectory                   INTEGER,  -- bool (only true occurs in source data)
     burnt                         INTEGER,  -- bool
     ignites                       INTEGER,  -- bool
     gassed                        INTEGER,  -- bool
     is_laser                      INTEGER,  -- bool
     leech                         INTEGER,  -- bool
-    infantry                      INTEGER,  -- bool ("работает по пехоте" — контекст уточнить при импорте)
+    infantry                      INTEGER,  -- bool ("affects infantry"; confirm context during import)
     health                        REAL,
     shield_health                 REAL,
-    damage_column                 INTEGER,  -- bool (проверено: только TRUE в данных)
+    damage_column                 INTEGER,  -- bool (only TRUE occurs in source data)
     linger_duration                REAL,
     linger_damage                  REAL,
     deviate                        INTEGER,  -- bool
@@ -200,7 +197,7 @@ CREATE TABLE turrets (
     turret_min_x_rotation            REAL,
     turret_max_x_rotation            REAL,
     turret_x_rotation_angle          REAL,
-    turret_next_joint_id             INTEGER REFERENCES turrets(id),  -- составные турели база+ствол (напр. ORGasTurretBase -> ORGasTurretGun)
+    turret_next_joint_id             INTEGER REFERENCES turrets(id),  -- compound base+barrel turrets (e.g. ORGasTurretBase -> ORGasTurretGun)
     turret_disable_if_unit_deployed  INTEGER,  -- bool
     turret_disable_if_unit_undeployed INTEGER, -- bool
     turret_y_acceptable_aim          REAL,
@@ -209,7 +206,7 @@ CREATE TABLE turrets (
 );
 
 -- =============================================================================
--- 6. EXPLOSIONS (расширение explosion_types для тех, у кого есть параметры)
+-- 6. EXPLOSIONS (extends parameterized explosion_types entries)
 -- =============================================================================
 
 CREATE TABLE explosion_configs (
@@ -219,18 +216,17 @@ CREATE TABLE explosion_configs (
     chained_explosion_type_id INTEGER REFERENCES explosion_types(id)
 );
 
--- ExplosionType = в исходнике иногда встречается НЕСКОЛЬКО раз в одной
--- секции с РАЗНЫМИ значениями (проверено: у DevPlasma_B — ShellHit и
--- DevImpact, т.е. разные эффекты для разных событий пули), а не просто
--- задвоенное значение по ошибке. Основные таблицы (units/buildings/
--- bullets/splat_types/spice_mound_types) хранят "главный"/первый эффект
--- в explosion_type_id для удобных запросов, а этот реестр — полный
--- упорядоченный список, если он длиннее одного значения.
+-- ExplosionType= can occur several times in one source section with different
+-- values. DevPlasma_B, for example, uses ShellHit and DevImpact for different
+-- bullet events; this is not an accidental duplicate. Primary tables
+-- (units/buildings/bullets/splat_types/spice_mound_types) keep the first/main
+-- effect in explosion_type_id for convenient queries, while this registry
+-- preserves the complete ordered list when multiple values exist.
 CREATE TABLE entity_explosion_effects (
     id                 INTEGER PRIMARY KEY,
     entity_type        TEXT NOT NULL,   -- 'unit' | 'building' | 'bullet' | 'splat_type' | 'spice_mound_type'
     entity_id          INTEGER NOT NULL,
-    seq                INTEGER NOT NULL,  -- порядок появления в исходнике, с 0
+    seq                INTEGER NOT NULL,  -- zero-based source occurrence order
     explosion_type_id  INTEGER NOT NULL REFERENCES explosion_types(id),
     UNIQUE (entity_type, entity_id, seq)
 );
@@ -254,9 +250,9 @@ CREATE TABLE buildings (
     armour_type_id              INTEGER REFERENCES armour_types(id),
     tech_level                  INTEGER,
     power_used                  INTEGER,
-    -- PowerGenerated — ОТДЕЛЬНОЕ от power_used поле (ветряки/windtrap'ы
-    -- производят, остальные здания потребляют). Пропустил на первом
-    -- проходе по частоте полей, нашлось при прогоне парсера.
+    -- PowerGenerated is distinct from power_used: windtraps generate power,
+    -- while other buildings consume it. The field was found during parser
+    -- validation after being missed by the initial frequency pass.
     power_generated             INTEGER,
     storm_damage                INTEGER,
     roof_height                 INTEGER,
@@ -265,12 +261,12 @@ CREATE TABLE buildings (
     can_be_engineered           INTEGER,  -- bool
     can_be_primary              INTEGER,  -- bool
     is_con_yard                 INTEGER NOT NULL DEFAULT 0, -- ConYard = true
-    ai_exit                     INTEGER,  -- bool (проверено: только true/false в данных)
+    ai_exit                     INTEGER,  -- bool (only true/false occur in source data)
     upgrade_tech_level          INTEGER,
     upgrade_cost                INTEGER,
-    ai_manufacturing            INTEGER,  -- bool (проверено: только true/false)
+    ai_manufacturing            INTEGER,  -- bool (only true/false occur)
     selectable                  INTEGER,  -- bool
-    ai_defence                  INTEGER,  -- bool (проверено: только true/false)
+    ai_defence                  INTEGER,  -- bool (only true/false occur)
     ai_critical                 INTEGER,  -- bool
     ai_core                     INTEGER,  -- bool
     ai_resource                 INTEGER,  -- bool
@@ -283,14 +279,13 @@ CREATE TABLE buildings (
     disable_with_low_power      INTEGER,  -- bool
     disable_if_no_spice_on_map  INTEGER,  -- bool
     hide_unit_on_radar          INTEGER,  -- bool
-    range_indicator             INTEGER,  -- радиус визуального индикатора дальности (у турелей-зданий)
+    range_indicator             INTEGER,  -- visual range indicator radius (building turrets)
     range_mask                  INTEGER,
-    get_unit_when_built_id      INTEGER REFERENCES units(id),      -- forward ref, ок для SQLite (FK резолвится не при CREATE)
-    -- ObjectTypeWhenGone: полиморфное поле — проверено, что значениями
-    -- бывают и крейты (CashCrate, MoneyCrate), и юнит (FRADVFremen), и
-    -- FX-маркер (WormSign0), т.е. НЕ только другое здание. Раньше здесь
-    -- был FK на buildings(id), это было неверно — оставляю сырым именем,
-    -- разрешение по типу делает GUI/парсер, а не строгий FK.
+    get_unit_when_built_id      INTEGER REFERENCES units(id),      -- forward reference; SQLite resolves FKs after CREATE
+    -- ObjectTypeWhenGone is polymorphic. Values include crates (CashCrate,
+    -- MoneyCrate), a unit (FRADVFremen), and an FX marker (WormSign0), not
+    -- only other buildings. The previous buildings(id) FK was incorrect, so
+    -- the raw name is retained and the GUI/parser resolves its entity type.
     object_type_when_gone       TEXT,
     chaos_effect_id             INTEGER REFERENCES explosion_types(id),
     hawk_effect_id               INTEGER REFERENCES explosion_types(id),
@@ -302,16 +297,16 @@ CREATE TABLE buildings (
     view_range_bonus             REAL,
     view_range_bonus_terrain_id INTEGER REFERENCES terrain_types(id),
     gets_height_advantage        INTEGER,  -- bool
-    source_line                  INTEGER   -- строка в исходном Rules.txt (для диффа/трассировки)
+    source_line                  INTEGER   -- source Rules.txt line (diffing/tracing)
 );
 
--- Occupy = построчная маска footprint'а здания (символ на клетку:
--- s/n/b и т.п.), одна строка Occupy= в исходнике = одна строка маски.
+-- Occupy= is a row-based building footprint mask (one character per cell,
+-- such as s/n/b). Each source Occupy= line is one mask row.
 CREATE TABLE building_occupy_rows (
     id           INTEGER PRIMARY KEY,
     building_id  INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
-    row_index    INTEGER NOT NULL,   -- порядок строки сверху вниз, с 0
-    pattern      TEXT NOT NULL,      -- напр. "nbbbn"
+    row_index    INTEGER NOT NULL,   -- zero-based top-to-bottom row order
+    pattern      TEXT NOT NULL,      -- e.g. "nbbbn"
     UNIQUE (building_id, row_index)
 );
 
@@ -321,8 +316,9 @@ CREATE TABLE building_terrain (
     PRIMARY KEY (building_id, terrain_type_id)
 );
 
--- PrimaryBuilding/SecondaryBuilding у зданий — список "нужно одно из этих
--- уже построенных зданий" (напр. HKSmWindtrap требует ATConYard|ORConYard|HKConYard).
+-- Building PrimaryBuilding/SecondaryBuilding values mean "one of these
+-- buildings must already exist" (e.g. HKSmWindtrap requires
+-- ATConYard|ORConYard|HKConYard).
 CREATE TABLE building_requires_primary (
     building_id          INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
     required_building_id INTEGER NOT NULL REFERENCES buildings(id),
@@ -335,34 +331,33 @@ CREATE TABLE building_requires_secondary (
     PRIMARY KEY (building_id, required_building_id)
 );
 
--- DeployTile/DeployAngle — точки доковки/выхода юнитов у здания. Формат в
--- исходнике неоднородный:
---   а) Refinery-стиль: несколько ОТДЕЛЬНЫХ строк "DeployTile = x,y", у
---      каждой сразу следом своя "DeployAngle = угол" (доки харвестера
---      с направлением подъезда);
---   б) Factory/Starport-стиль: ОДНА строка с несколькими парами координат
---      через пробел/запятую ("DeployTile = 3,7, 3,1"), без угла вообще —
---      просто точки выхода юнитов.
--- Таблица покрывает оба случая: angle NULL для варианта (б).
+-- DeployTile/DeployAngle describe building docking or unit exit points. The
+-- source format is inconsistent:
+--   a) Refinery style: several separate "DeployTile = x,y" lines, each
+--      immediately followed by its own "DeployAngle = angle" (harvester
+--      docks with an approach direction).
+--   b) Factory/Starport style: one line containing several coordinate pairs
+--      separated by spaces/commas ("DeployTile = 3,7, 3,1"), with no angle;
+--      these are plain unit exit points.
+-- This table covers both forms; angle is NULL for form (b).
 CREATE TABLE building_deploy_points (
     id          INTEGER PRIMARY KEY,
     building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
-    seq         INTEGER NOT NULL,   -- порядок точки, с 0
+    seq         INTEGER NOT NULL,   -- zero-based point order
     tile_x      INTEGER NOT NULL,
     tile_y      INTEGER NOT NULL,
-    angle       REAL,               -- NULL, если угол не задан в исходнике
+    angle       REAL,               -- NULL when the source does not specify an angle
     UNIQUE (building_id, seq)
 );
 
 -- Factory/Wall/Refinery/Barracks/Hanger/Dockable/Outpost/Starport/
--- PopupTurret — булевы самомаркеры роли здания. Изначально выглядели как
--- дубль building_group_id, но проверка на данных показала обратное:
--- [BuildingGroupTypes] (список для дедупа иконок миникарты) вообще НЕ
--- содержит 'Factory'/'Barracks'/'Hanger' — этим ролям физически некуда
--- деться в Group. Значит это независимая от Group классификация (роль
--- здания для другой игровой логики — что производит юнитов, что можно
--- обстроить стеной и т.п.), просто пересекающаяся с Group там, где обе
--- системы существуют (Wall, Refinery, Outpost, Starport, Helipad).
+-- PopupTurret and the preceding names are boolean building-role markers.
+-- They initially appeared redundant with building_group_id, but validation
+-- showed otherwise: [BuildingGroupTypes], which deduplicates minimap icons,
+-- does not contain Factory/Barracks/Hanger at all. Roles are therefore an
+-- independent classification used by other game logic (unit production,
+-- wall adjacency, etc.), overlapping Group only where both systems define
+-- an entry (Wall, Refinery, Outpost, Starport, Helipad).
 CREATE TABLE building_roles (
     id   INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE
@@ -389,12 +384,12 @@ CREATE TABLE units (
     build_time                   INTEGER,
     size                         INTEGER,
     speed                        REAL,
-    mech_speed                   REAL,     -- скорость шагохода из MechSpeed, игровых координат за update
-    mech                         INTEGER,  -- bool: корпус на ногах; не наклоняется целиком по склону
+    mech_speed                   REAL,     -- walker speed from MechSpeed, in game coordinates per update
+    mech                         INTEGER,  -- bool: legged chassis; the whole body does not tilt with terrain slope
     turn_rate                    REAL,
     armour_type_id               INTEGER REFERENCES armour_types(id),
-    armour_modifier_percent      REAL,     -- напр. "Armour = None, 50, InfRock" -> 50
-    armour_modifier_terrain_id   INTEGER REFERENCES terrain_types(id), -- условие модификатора (InfRock)
+    armour_modifier_percent      REAL,     -- e.g. "Armour = None, 50, InfRock" -> 50
+    armour_modifier_terrain_id   INTEGER REFERENCES terrain_types(id), -- modifier condition (InfRock)
     health                       INTEGER,
     tech_level                   INTEGER,
     storm_damage                 INTEGER,
@@ -410,13 +405,13 @@ CREATE TABLE units (
     explosion_type_id             INTEGER REFERENCES explosion_types(id),
     can_move_any_direction         INTEGER,  -- bool
     can_be_deviated                INTEGER,  -- bool
-    can_self_repair                 INTEGER,  -- bool (базовое, не veterancy-уровень)
+    can_self_repair                 INTEGER,  -- bool (base attribute, not a veterancy level)
     can_be_repaired                 INTEGER,  -- bool
     infantry                        INTEGER,  -- bool
     crushable                       INTEGER,  -- bool
     crushes                         INTEGER,  -- bool
     starportable                    INTEGER,  -- bool
-    ai_special                      INTEGER,  -- bool (проверено: только TRUE в данных)
+    ai_special                      INTEGER,  -- bool (only TRUE occurs in source data)
     ai_tank                         INTEGER,  -- bool
     ai_foot                         INTEGER,  -- bool
     ai_air                           INTEGER,  -- bool
@@ -424,7 +419,7 @@ CREATE TABLE units (
     ai_critical                      INTEGER,  -- bool
     gets_height_advantage            INTEGER,  -- bool
     upgraded_primary_required        INTEGER,  -- bool
-    crate_gift                      INTEGER,  -- bool (проверено: только TRUE в данных)
+    crate_gift                      INTEGER,  -- bool (only TRUE occurs in source data)
     can_be_suppressed                INTEGER,  -- bool
     can_fly                          INTEGER,  -- bool
     can_die                          INTEGER,  -- bool
@@ -433,42 +428,42 @@ CREATE TABLE units (
     projectable                       INTEGER,  -- bool
     circles                           INTEGER,  -- bool
     selectable                        INTEGER,  -- bool
-    hit_slow_down_amount              INTEGER,  -- % от Speed при попадании
-    hit_slow_down_duration            INTEGER,  -- тиков
-    -- SpecialGround — ссылка на terrain_types (проверено: значения Sand,
-    -- DustBowl — реальные имена типов рельефа, не свободный текст).
+    hit_slow_down_amount              INTEGER,  -- percentage of Speed on hit
+    hit_slow_down_duration            INTEGER,  -- ticks
+    -- SpecialGround references terrain_types. Sand and DustBowl are actual
+    -- terrain type names rather than free-form text.
     special_ground_terrain_id         INTEGER REFERENCES terrain_types(id),
-    -- StealthedWhenStill встречается и как БАЗОВЫЙ атрибут юнита (не
-    -- только внутри VeterancyLevel-блока, где есть своя копия в
+    -- StealthedWhenStill also occurs as a base unit attribute, not only
+    -- inside VeterancyLevel blocks, which have their own copy in
     -- unit_veterancy_levels.stealthed_when_still).
     stealthed_when_still              INTEGER,  -- bool
-    roof_height                       INTEGER,  -- есть у части летающих юнитов
+    roof_height                       INTEGER,  -- present on some flying units
     view_range_base                  REAL,
     view_range_bonus                 REAL,
     view_range_bonus_terrain_id     INTEGER REFERENCES terrain_types(id),
     height_offset                    REAL,
     exclude_from_skirmish_lose       INTEGER,  -- bool
     can_be_engineered                INTEGER,  -- bool
-    -- часть юнитов (напр. с дымовым следом) задают MissileTrail-параметры
-    -- напрямую, а не только через Debris.
+    -- Some units (for example, those with smoke trails) define MissileTrail
+    -- parameters directly instead of only through Debris.
     missile_trail                     INTEGER,
     missile_trail_size                INTEGER,
     missile_trail_wiggle_freq         INTEGER,
     missile_trail_wiggle_scale        INTEGER,
     missile_trail_length              INTEGER,
     missile_trail_delta               REAL,
-    -- ShieldHealth — энергощит ОТДЕЛЬНО от health (проверено: ORLaserTank/
-    -- ORAPC/ORDeviator имеют оба поля одновременно с разными значениями).
+    -- ShieldHealth is an energy shield separate from health. ORLaserTank,
+    -- ORAPC, and ORDeviator define both fields with different values.
     shield_health                     REAL,
     source_line                      INTEGER
 );
 
--- TurretAttach у юнитов — НЕ всегда одно значение: у части юнитов
--- (ATKindjal, HKDevastator, HKBuzzsaw, ORKobra и т.п.) две башни/орудия
--- сразу ("ATKindjalGun, ATKindjalBigGun"). У зданий такого не встречено —
--- там TurretAttach остаётся одиночной колонкой buildings.turret_attach_id.
--- seq=0 — основное орудие, seq=1 — второе (напр. undeployed/deployed
--- пара у ORKobra, left/right у HKBuzzsaw).
+-- Unit TurretAttach is not always singular. Some units (ATKindjal,
+-- HKDevastator, HKBuzzsaw, ORKobra, etc.) attach two turrets/weapons at once
+-- ("ATKindjalGun, ATKindjalBigGun"). Buildings do not do this, so their
+-- TurretAttach remains the singular buildings.turret_attach_id column.
+-- seq=0 is the primary weapon and seq=1 the secondary weapon (for example,
+-- ORKobra undeployed/deployed or HKBuzzsaw left/right pairs).
 CREATE TABLE unit_turrets (
     id        INTEGER PRIMARY KEY,
     unit_id   INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
@@ -495,29 +490,29 @@ CREATE TABLE unit_secondary_buildings (
     PRIMARY KEY (unit_id, building_id)
 );
 
--- VeterancyLevel-блоки: в исходнике 2-3 повторения ключа VeterancyLevel
--- в одной секции, каждый со своим "хвостом" бонусов до следующего
--- VeterancyLevel/конца секции. level_order = порядковый номер (1,2,3...),
--- veterancy_score = сам порог (Score required).
+-- VeterancyLevel blocks: a source section repeats the VeterancyLevel key two
+-- or three times, each followed by bonuses up to the next VeterancyLevel or
+-- section end. level_order is the ordinal (1,2,3...), and veterancy_score is
+-- the actual required score threshold.
 --
--- Полный набор полей, реально встречающихся внутри VeterancyLevel-блоков
--- по всему файлу (проверено по всем секциям, а не по одному примеру):
+-- Complete set of fields found inside VeterancyLevel blocks across the full
+-- source (validated across all sections, not a single example):
 --   ExtraDamage (61), ExtraArmour (54), CanSelfRepair (31), ExtraRange (8),
 --   Speed (6), Elite (3), Health (2), StealthedWhenStill (1).
--- Важно: Speed и Health внутри VeterancyLevel — это АБСОЛЮТНЫЕ перезаписи
--- базового значения юнита (напр. "Speed = 20.0", как и в units.speed), а
--- НЕ проценты — в отличие от ExtraDamage/ExtraArmour/ExtraRange, которые
--- проценты. Поэтому speed_override/health_override, а не *_percent.
+-- Speed and Health inside VeterancyLevel are absolute overrides of the base
+-- unit value (e.g. "Speed = 20.0", matching units.speed), not percentages.
+-- ExtraDamage/ExtraArmour/ExtraRange are percentages, hence the names
+-- speed_override/health_override rather than *_percent.
 CREATE TABLE unit_veterancy_levels (
     id                    INTEGER PRIMARY KEY,
     unit_id               INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
     level_order           INTEGER NOT NULL,   -- 1, 2, 3...
-    veterancy_score       INTEGER NOT NULL,   -- значение VeterancyLevel=
+    veterancy_score       INTEGER NOT NULL,   -- VeterancyLevel= value
     extra_damage_percent  REAL,    -- ExtraDamage
     extra_armour_percent  REAL,    -- ExtraArmour
     extra_range_percent   REAL,    -- ExtraRange
-    speed_override        REAL,    -- Speed (абсолютное новое значение, не бонус)
-    health_override        INTEGER, -- Health (абсолютное новое значение, не бонус)
+    speed_override        REAL,    -- Speed (absolute replacement, not a bonus)
+    health_override        INTEGER, -- Health (absolute replacement, not a bonus)
     can_self_repair        INTEGER, -- bool
     elite                   INTEGER, -- bool
     stealthed_when_still     INTEGER, -- bool
@@ -581,8 +576,8 @@ CREATE TABLE spice_mound_types (
 );
 
 -- =============================================================================
--- 12. GENERAL — глобальный баланс-конфиг, секция [General] встречается
--- ровно один раз -> singleton-таблица с CHECK(id=1), а не EAV.
+-- 12. GENERAL — global balance configuration. The [General] section occurs
+-- exactly once, so this is a singleton table with CHECK(id=1), not EAV.
 -- =============================================================================
 
 CREATE TABLE general_settings (
@@ -666,12 +661,12 @@ CREATE TABLE general_settings (
 );
 
 -- =============================================================================
--- 13. ARTINI — визуальные ресурсы и глобальные UI/recolor настройки.
+-- 13. ARTINI — visual resources and global UI/recolor settings.
 --
--- ArtIni.txt покрывает разные пространства имён сразу: units, buildings,
--- bullets, explosion_types, crates, debris, splats. Поэтому art-данные
--- лежат отдельным слоем с полиморфной привязкой entity_type/entity_id, а не
--- дублируют одинаковые визуальные колонки во всех основных таблицах.
+-- ArtIni.txt spans several namespaces at once: units, buildings, bullets,
+-- explosion_types, crates, debris, and splats. Art data therefore lives in a
+-- separate layer with a polymorphic entity_type/entity_id association rather
+-- than duplicating the same visual columns across every primary table.
 -- =============================================================================
 
 CREATE TABLE art_sidebar_types (
@@ -705,12 +700,12 @@ CREATE TABLE art_configs (
 CREATE INDEX idx_art_configs_entity ON art_configs (entity_type, entity_id);
 
 -- =============================================================================
--- 14. OVERFLOW — редкие one-off поля, не получившие персональной колонки.
--- Сохраняет round-trip fidelity (парсер Rules.txt -> SQLite ничего не
--- теряет), не раздувая основные таблицы NULL-полями ради полей вида
--- "AlertString"/"AlertTimeOut", встречающихся 1 раз на весь файл.
--- entity_type — имя целевой таблицы (units/buildings/bullets/...),
--- entity_id — её id.
+-- 14. OVERFLOW — rare one-off fields without dedicated columns.
+-- This preserves round-trip fidelity (the Rules.txt -> SQLite parser loses
+-- nothing) without bloating primary tables with NULL columns for fields such
+-- as AlertString/AlertTimeOut that occur once in the entire source.
+-- entity_type is the target table name (units/buildings/bullets/...);
+-- entity_id is its row ID.
 -- =============================================================================
 
 CREATE TABLE custom_fields (
@@ -724,26 +719,25 @@ CREATE TABLE custom_fields (
 
 CREATE INDEX idx_custom_fields_entity ON custom_fields (entity_type, entity_id);
 
--- Resource = — поле без единого смысла в зависимости от типа сущности:
---   Harvester (юнит)      -> список зданий-рефайнери для сдачи спайса
---   *MCV (юнит)            -> свой ConYard, во что разворачивается
---   *ConYard (здание)      -> соответствующий ATMCV/HKMCV/ORMCV
---   ATHawkWeapon/ORBeamWeapon (здание) -> (здание-источник эффекта, пуля)
---   WormRider <-> FRADVFremen (юнит)   -> взаимная ссылка наездник/маунт
---   *Splat (сплэт)          -> связанная пуля
---   SurfaceWorm (юнит)      -> список WormSign-маркеров (не сущности с
---                              собственными атрибутами, просто FX-имена)
--- Семантика меняется от типа к типу — загонять в один типизированный FK
--- значит либо соврать о смысле связи, либо городить 5 узкоспециальных
--- колонок ради одного ключа. Поэтому — сырая упорядоченная связь "как
--- есть"; интерпретация (юнит/здание/пуля/FX-имя) — на стороне парсера/
--- GUI при разрешении target_name в конкретную таблицу.
+-- Resource= has no single meaning; its semantics depend on entity type:
+--   Harvester (unit)              -> refinery buildings that accept spice
+--   *MCV (unit)                   -> the ConYard it deploys into
+--   *ConYard (building)           -> matching ATMCV/HKMCV/ORMCV
+--   ATHawkWeapon/ORBeamWeapon     -> (effect-source building, bullet)
+--   WormRider <-> FRADVFremen     -> reciprocal rider/mount unit link
+--   *Splat                        -> associated bullet
+--   SurfaceWorm                   -> WormSign markers (plain FX names rather
+--                                    than entities with their own attributes)
+-- Forcing these changing semantics into one typed FK would either misstate
+-- the relationship or require five narrow columns for a single source key.
+-- This table therefore preserves the raw ordered links. The parser/GUI
+-- interprets unit/building/bullet/FX-name targets while resolving target_name.
 CREATE TABLE entity_resource_links (
     id           INTEGER PRIMARY KEY,
     entity_type  TEXT NOT NULL,   -- 'unit' | 'building' | 'splat_type' | ...
     entity_id    INTEGER NOT NULL,
-    seq          INTEGER NOT NULL,   -- порядок значения в исходной строке, с 0
-    target_name  TEXT NOT NULL,      -- имя как в исходнике, до резолва
+    seq          INTEGER NOT NULL,   -- zero-based value order in the source line
+    target_name  TEXT NOT NULL,      -- source name before resolution
     source_line  INTEGER,
     UNIQUE (entity_type, entity_id, seq)
 );
@@ -751,7 +745,7 @@ CREATE TABLE entity_resource_links (
 CREATE INDEX idx_entity_resource_links ON entity_resource_links (entity_type, entity_id);
 
 -- =============================================================================
--- 15. Полезные индексы под GUI-редактор (поиск/фильтрация)
+-- 15. USEFUL GUI EDITOR INDEXES (SEARCH/FILTERING)
 -- =============================================================================
 
 CREATE INDEX idx_units_house       ON units (house_id);
