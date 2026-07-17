@@ -1,6 +1,7 @@
 extends SceneTree
 
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
+const ATBarracksScene := preload("res://assets/converted/buildings/ATBarracks/ATBarracks.scn")
 
 var _assertions := 0
 var _failures := 0
@@ -43,6 +44,7 @@ func _initialize() -> void:
 	_run_case("begin validation and cancel", _test_begin_and_cancel)
 	_run_case("failed placement keeps active state", _test_failed_placement_keeps_active)
 	_run_case("footprint occupancy and single spawn handoff", _test_occupancy_and_single_spawn)
+	_run_case("construction completes only after build animation", _test_construction_waits_for_animation)
 	_run_case("placement rotation turns footprint and spawned building", _test_rotated_placement)
 	_run_case("unmaterialed preview mesh gets fallback material", _test_unmaterialed_preview_mesh_gets_fallback_material)
 	_run_case("legacy building without placement anchor", _test_legacy_building_without_placement_anchor)
@@ -175,6 +177,28 @@ func _test_occupancy_and_single_spawn(token: int) -> int:
 		placement.try_place_at_hover_cell(Vector2i(5, 7), scene, 4) == BuildingPlacementScript.PlaceResult.INACTIVE,
 		"a successful placement handoff must not spawn twice"
 	)
+	_free_pair(pair)
+	return token
+
+
+func _test_construction_waits_for_animation(token: int) -> int:
+	var pair := _new_placement()
+	var placement = pair[0]
+	var buildings_root = pair[1]
+	placement.begin(&"ATBarracks", "Barracks", _rows(["X"]))
+
+	var result = placement.try_place_at_hover_cell(Vector2i(5, 7), ATBarracksScene, 1)
+	_expect(result == BuildingPlacementScript.PlaceResult.PLACED, "the animated building must be placed")
+	var building := buildings_root.get_child(0) as Building
+	_expect(building != null and not building.is_construction_complete(), "the placed building must remain incomplete while its build clip plays")
+
+	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
+	_expect(player != null and player.current_animation == &"build", "placement must start the authored build clip")
+	if player != null:
+		player.animation_finished.emit(&"build")
+	_expect(building.is_construction_complete(), "only the build animation completion signal may make the building operational")
+	_expect(building.current_state == &"idle", "a completed build animation must transition the building to idle")
+
 	_free_pair(pair)
 	return token
 

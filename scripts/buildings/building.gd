@@ -67,6 +67,11 @@ var rally_point := Vector3.ZERO
 
 var current_state := &""
 var invulnerable := false
+## Pre-placed buildings are operational immediately. BuildingPlacement marks
+## newly placed buildings incomplete until StatePlayer actually finishes the
+## authored build clip; unit production uses this instead of mere tree/group
+## membership when deciding whether the building can accept orders.
+var _construction_complete := true
 # §1 "primary Construction Yard" / §3 "primary building": true for the one
 # instance (per player, per building group) a double-click has designated as
 # the exit point for that group's queue. Ownership of which group a building
@@ -600,6 +605,18 @@ func setup(building_id: StringName) -> void:
 
 func set_invulnerable(value: bool) -> void:
 	invulnerable = value
+
+
+func begin_construction() -> void:
+	_construction_complete = false
+
+
+func finish_construction() -> void:
+	_construction_complete = true
+
+
+func is_construction_complete() -> bool:
+	return _construction_complete
 
 
 func set_primary(value: bool) -> void:

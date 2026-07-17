@@ -698,6 +698,7 @@ func _snap_to_ground(point: Vector3) -> Vector3:
 
 
 func _play_placed_building_animation(building: Node3D) -> void:
+	_begin_building_construction(building)
 	_set_building_invulnerable(building, true)
 	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
 	if player != null and player.has_animation(&"build"):
@@ -711,12 +712,26 @@ func _play_placed_building_animation(building: Node3D) -> void:
 	# transition window to protect, so invulnerability is skipped rather than timed.
 	_play_building_state(building, &"idle")
 	_set_building_invulnerable(building, false)
+	_finish_building_construction(building)
 
 
-func _on_placed_building_animation_finished(_animation_name: StringName, building: Node3D) -> void:
+func _on_placed_building_animation_finished(animation_name: StringName, building: Node3D) -> void:
+	if animation_name != &"build":
+		return
 	if is_instance_valid(building):
 		_play_building_state(building, &"idle")
 		_set_building_invulnerable(building, false)
+		_finish_building_construction(building)
+
+
+func _begin_building_construction(building: Node3D) -> void:
+	if building.has_method("begin_construction"):
+		building.call("begin_construction")
+
+
+func _finish_building_construction(building: Node3D) -> void:
+	if building.has_method("finish_construction"):
+		building.call("finish_construction")
 
 
 func _set_building_invulnerable(building: Node3D, value: bool) -> void:

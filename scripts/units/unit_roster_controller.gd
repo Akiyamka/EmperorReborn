@@ -223,6 +223,7 @@ func _is_owned_production_building(building: Node3D, building_id: StringName, pl
 		and not building.is_queued_for_deletion()
 		and StringName(String(building.get("config_id"))) == building_id
 		and int(building.get("owner_player_id")) == player_id
+		and _is_building_construction_complete(building)
 	)
 
 
@@ -403,8 +404,19 @@ func _is_unit_available(unit_id: StringName) -> bool:
 	if player == null:
 		return false
 	var buildings: Array[Node] = []
-	buildings.assign(get_tree().get_nodes_in_group("buildings"))
+	for building in get_tree().get_nodes_in_group("buildings"):
+		if _is_building_construction_complete(building):
+			buildings.append(building)
 	return _technology_tree.is_available(config, player, buildings, max_tech_level)
+
+
+func _is_building_construction_complete(building: Node) -> bool:
+	if building == null or not is_instance_valid(building) or building.is_queued_for_deletion():
+		return false
+	# Compatibility for test doubles and legacy scene nodes that predate the
+	# explicit construction lifecycle: only Building nodes exposing the new
+	# contract can be in an incomplete state.
+	return not building.has_method("is_construction_complete") or bool(building.call("is_construction_complete"))
 
 
 func _refresh_unit_option_states() -> void:

@@ -623,6 +623,7 @@ func _test_unit_roster_availability() -> void:
 	match_instance.get_node("Buildings").add_child(barracks)
 	barracks.call("setup", &"ATBarracks")
 	barracks.call("set_owner_player_id", 1)
+	barracks.call("begin_construction")
 
 	for i in 5:
 		await process_frame
@@ -630,12 +631,28 @@ func _test_unit_roster_availability() -> void:
 	infantry_slot = side_panel._building_slot(&"ATInfantry")
 	kindjal_slot = side_panel._building_slot(&"ATKindjal")
 	_expect(
-		infantry_slot != null and infantry_slot.visible,
-		"ATInfantry must become visible once a Barracks is owned"
+		infantry_slot != null and not infantry_slot.visible,
+		"ATInfantry must stay hidden while the owned Barracks is still being built"
 	)
 	_expect(
 		kindjal_slot != null and not kindjal_slot.visible,
 		"ATKindjal has upgraded_primary_required and must stay hidden behind an unupgraded Barracks"
+	)
+	var roster = match_instance.get_node("UnitRosterController") as UnitRosterController
+	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_LEFT)
+	_expect(
+		roster._unit_queue_size(&"ATBarracks") == 0,
+		"a direct unit intent must not bypass an unfinished production building"
+	)
+
+	barracks.call("finish_construction")
+	for i in 5:
+		await process_frame
+
+	infantry_slot = side_panel._building_slot(&"ATInfantry")
+	_expect(
+		infantry_slot != null and infantry_slot.visible,
+		"ATInfantry must become visible after the Barracks construction animation completes"
 	)
 
 	barracks.call("set_upgrade_level", 1)
