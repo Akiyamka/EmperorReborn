@@ -332,7 +332,7 @@ func _test_mech_gait_speeds() -> void:
 		blended_speed > unit.mech_speed and blended_speed < unit.move_speed,
 		"a mech must blend rather than snap between MechSpeed and Speed"
 	)
-	unit.set("_mech_gait_elapsed", cycle_duration * 0.225)
+	unit.set("_mech_gait_elapsed", cycle_duration * 0.2325)
 	_expect(
 		is_equal_approx(unit.navigation_move_speed(), unit.move_speed),
 		"a mech must use ordinary Speed during the active step"

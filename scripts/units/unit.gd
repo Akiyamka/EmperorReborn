@@ -30,10 +30,10 @@ const IDLE_ANIMATION_PREFIX := "Idle"
 ## A converted Move clip contains a complete left/right gait cycle. Each half
 ## alternates an authored walking-speed phase with the slower MechSpeed pause.
 const DEFAULT_MECH_STEPS_PER_MOVE_CYCLE := 2.0
-const DEFAULT_MECH_STEP_RISE_START := 0.37
-const DEFAULT_MECH_STEP_RISE_END := 0.44
+const DEFAULT_MECH_STEP_RISE_START := 0.38
+const DEFAULT_MECH_STEP_RISE_END := 0.46
 const DEFAULT_MECH_STEP_FALL_START := 0.47
-const DEFAULT_MECH_STEP_FALL_END := 0.49
+const DEFAULT_MECH_STEP_FALL_END := 0.63
 const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
 
 ## Runtime copies are intentionally shared so the demo debug panel can tune
