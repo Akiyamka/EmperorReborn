@@ -112,6 +112,19 @@ class FakeNavigation extends RefCounted:
 		return accepted
 
 
+class FakeDeploymentController extends RefCounted:
+	var calls: Array[Node] = []
+	var result := {
+		"handled": true,
+		"started": true,
+		"message": "ATConYard deployment started",
+	}
+
+	func try_deploy(unit: Node) -> Dictionary:
+		calls.append(unit)
+		return result
+
+
 class FakeNavigationGrid extends MapNavigationGrid:
 	func is_loaded() -> bool:
 		return true
@@ -140,6 +153,7 @@ func _initialize() -> void:
 	players.set_relation(1, 2, PlayerData.Relation.ENEMY)
 
 	_run_case("selection ownership and movement", _test_selection_ownership_and_movement.bind(local_player, enemy_player))
+	_run_case("clicking the selected unit again requests deployment", _test_repeated_click_deployment.bind(local_player))
 	_run_case("rectangle unit selection", _test_rectangle_unit_selection.bind(local_player, enemy_player))
 	_run_case("J modifies movement formation", _test_formation_modifier.bind(local_player))
 	_run_case("spice click issues harvester order", _test_harvester_order.bind(local_player))
@@ -212,6 +226,33 @@ func _test_selection_ownership_and_movement(token: int, local_player, enemy_play
 	commands.queue_free()
 	local_unit.queue_free()
 	enemy_unit.queue_free()
+	return token
+
+
+func _test_repeated_click_deployment(token: int, local_player) -> int:
+	var deployment := FakeDeploymentController.new()
+	var commands := FakeUnitCommandController.new()
+	commands.setup(null, null, null, null, deployment)
+	var statuses: Array[String] = []
+	commands.status_changed.connect(func(status: String) -> void: statuses.append(status))
+	root.add_child(commands)
+
+	var mcv := _make_unit("ATMCV", local_player)
+	root.add_child(mcv)
+	var collider := Node.new()
+	mcv.add_child(collider)
+	commands.raycast_hits.append({"collider": collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+	_expect(deployment.calls.is_empty(), "the first click must only select the MCV")
+
+	commands.raycast_hits.append({"collider": collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+	_expect(deployment.calls == [mcv], "the next click on the same selected unit must request deploy")
+	_expect(mcv.selected, "the MCV must remain selected during its deployment animation")
+	_expect(statuses.back() == "ATConYard deployment started", "deployment status must reach the shared selection label")
+
+	commands.queue_free()
+	mcv.queue_free()
 	return token
 
 

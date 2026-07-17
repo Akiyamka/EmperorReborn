@@ -23,6 +23,11 @@ var world_scale := 0.0625
 # advanced per second by the fx_frame animation tracks).
 const TEXTURE_FX_FPS := 4.0
 const MIN_ANIMATION_AXIS_SCALE := 0.0001
+const MIRRORED_CONTENT_NODE_NAME := "MirroredContent"
+const LOCAL_Z_REFLECTION := Transform3D(
+	Basis(Vector3.RIGHT, Vector3.UP, Vector3.FORWARD),
+	Vector3.ZERO
+)
 const TEXTURE_PREFIX_MARKERS := "=@!%&"
 const SUPPRESSED_MISSING_TEXTURES := {
 	"at_wt_front64.tga": true,
@@ -32,7 +37,6 @@ const HIDDEN_SOURCE_MESH_COMPONENTS := {
 		"at_refinery": {3: true, 10: true},
 	},
 }
-
 var missing_textures: PackedStringArray = []
 var copied_textures: PackedStringArray = []
 var _material_cache := {}
@@ -119,6 +123,7 @@ func build(xbf_path: String) -> PackedScene:
 func _build_object_node(object: Dictionary, texture_names: PackedStringArray, node_path: String, anim: Animation) -> Node3D:
 	var node := Node3D.new()
 	var raw_name := String(object.name)
+	var uses_mirrored_content := _object_animation_is_consistently_mirrored(object)
 	node.name = _safe_node_name(raw_name)
 	node.set_meta("original_name", raw_name)
 	if raw_name == COLLISION_OBJECT_NAME:
@@ -127,6 +132,13 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		# no vertices itself: its child objects contain the actual volume.
 		node.set_meta("collision_points", _collision_points_from_hierarchy(object))
 	node.transform = _to_godot_transform(object.transform)
+	if uses_mirrored_content:
+		# Godot's editor rejects a reflected Basis in a Transform3D animation
+		# key even though Node3D and the renderer can represent it. Factor the
+		# reflection out of every animated key and into a constant child node:
+		# (T * F) * F == T. This preserves the source geometry exactly while
+		# leaving the animation track with rotation-safe, positive determinants.
+		node.transform *= LOCAL_Z_REFLECTION
 	# Selection volumes and halo anchors are authored as vertex-only XBF
 	# objects.  They have no triangles, so no MeshInstance3D is generated for
 	# them; retain the data as metadata for gameplay visuals instead.
@@ -139,7 +151,17 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		node.set_meta("halo_anchor", true)
 		node.set_meta("halo_anchor_bounds", _object_bounds(object.positions))
 	var child_path: String = "%s/%s" % [node_path, node.name] if node_path != "." else node.name
-	_add_animation_track(anim, child_path, object)
+	_add_animation_track(anim, child_path, object, uses_mirrored_content)
+
+	var content_root := node
+	var content_path := child_path
+	if uses_mirrored_content:
+		var mirrored_content := Node3D.new()
+		mirrored_content.name = MIRRORED_CONTENT_NODE_NAME
+		mirrored_content.transform = LOCAL_Z_REFLECTION
+		node.add_child(mirrored_content)
+		content_root = mirrored_content
+		content_path = "%s/%s" % [child_path, MIRRORED_CONTENT_NODE_NAME]
 
 	var meshes := _build_object_mesh_components(object, texture_names)
 	for mesh_index in meshes.size():
@@ -164,8 +186,8 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 			mesh_instance.set_meta("source_asset_quirk", "broken_geometry")
 		if raw_name == COLLISION_OBJECT_NAME:
 			mesh_instance.set_meta("collision_mesh", true)
-		node.add_child(mesh_instance)
-		var mesh_path := "%s/%s" % [child_path, mesh_instance.name]
+		content_root.add_child(mesh_instance)
+		var mesh_path := "%s/%s" % [content_path, mesh_instance.name]
 		if is_muzzle_flash:
 			_muzzle_flash_mesh_paths.append(mesh_path)
 		# Vertex-animated objects deliberately remain a single component, so
@@ -190,8 +212,8 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 			mesh_instance.set_meta("scroll_fx", true)
 
 	for child_object: Dictionary in object.children:
-		var child := _build_object_node(child_object, texture_names, child_path, anim)
-		node.add_child(child)
+		var child := _build_object_node(child_object, texture_names, content_path, anim)
+		content_root.add_child(child)
 
 	return node
 
@@ -913,7 +935,12 @@ func _is_animated_shield_texture(texture_name: String) -> bool:
 	return _is_animated_texture(texture_name) and _has_shield_fx_marker and texture_name.get_file().to_lower().contains("shield")
 
 
-func _add_animation_track(anim: Animation, node_path: String, object: Dictionary) -> void:
+func _add_animation_track(
+		anim: Animation,
+		node_path: String,
+		object: Dictionary,
+		uses_mirrored_content: bool
+	) -> void:
 	var object_animation: Dictionary = object.object_animation
 	if object_animation.is_empty():
 		return
@@ -929,8 +956,26 @@ func _add_animation_track(anim: Animation, node_path: String, object: Dictionary
 	var frame_ids := frames.keys()
 	frame_ids.sort()
 	for frame_id: int in frame_ids:
-		var transform := _sanitize_animation_transform(_to_godot_transform(frames[frame_id]))
+		var transform := _to_godot_transform(frames[frame_id])
+		if uses_mirrored_content:
+			transform *= LOCAL_Z_REFLECTION
+		transform = _sanitize_animation_transform(transform)
 		anim.track_insert_key(track, frame_id / fps, transform)
+
+
+func _object_animation_is_consistently_mirrored(object: Dictionary) -> bool:
+	var object_animation: Dictionary = object.object_animation
+	if object_animation.is_empty():
+		return false
+	var frames := _dense_object_animation_frames(object_animation)
+	var found_mirrored_frame := false
+	for frame: Transform3D in frames.values():
+		var determinant := frame.basis.determinant()
+		if determinant > MIN_ANIMATION_AXIS_SCALE:
+			return false
+		if determinant < -MIN_ANIMATION_AXIS_SCALE:
+			found_mirrored_frame = true
+	return found_mirrored_frame
 
 
 func _dense_object_animation_frames(object_animation: Dictionary) -> Dictionary:
@@ -980,6 +1025,7 @@ func _lerp_transform(a: Transform3D, b: Transform3D, weight: float) -> Transform
 
 
 func _sanitize_animation_transform(transform: Transform3D) -> Transform3D:
+	var source_determinant := transform.basis.determinant()
 	var x := transform.basis.x
 	var y := transform.basis.y
 	var z := transform.basis.z
@@ -1002,7 +1048,11 @@ func _sanitize_animation_transform(transform: Transform3D) -> Transform3D:
 	else:
 		nz = nz.normalized()
 
-	if transform.basis.determinant() < 0.0:
+	# Handedness normally remains unchanged. Consistently mirrored animation
+	# tracks have already had their reflection factored into MirroredContent;
+	# this fallback still preserves parity for an unusual mixed-parity track.
+	var sanitized_determinant := Basis(nx, ny, nz).determinant()
+	if source_determinant * sanitized_determinant < 0.0:
 		nz = -nz
 
 	transform.basis = Basis(nx * x_scale, ny * y_scale, nz * z_scale)

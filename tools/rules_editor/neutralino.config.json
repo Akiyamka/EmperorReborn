@@ -1,0 +1,47 @@
+{
+  "applicationId": "com.emperor.ruleseditor",
+  "version": "0.1.0",
+  "defaultMode": "window",
+  "port": 0,
+  "documentRoot": "/ui/",
+  "url": "/",
+  "enableServer": true,
+  "enableNativeAPI": true,
+  "enableExtensions": true,
+  "tokenSecurity": "one-time",
+  "nativeAllowList": [
+    "app.*",
+    "events.*",
+    "extensions.*"
+  ],
+  "extensions": [
+    {
+      "id": "com.emperor.ruleseditor.db",
+      "command": "node ${NL_PATH}/extensions/rules-db.mjs"
+    }
+  ],
+  "modes": {
+    "window": {
+      "title": "Emperor Rules Editor",
+      "width": 1440,
+      "height": 900,
+      "minWidth": 980,
+      "minHeight": 640,
+      "center": true,
+      "transparent": false,
+      "resizable": true,
+      "exitProcessOnClose": true,
+      "injectClientLibrary": true
+    }
+  },
+  "cli": {
+    "binaryName": "emperor-rules-editor",
+    "resourcesPath": "/ui/",
+    "extensionsPath": "/extensions/",
+    "clientLibrary": "/ui/neutralino.js",
+    "resourcesExclude": ".*\\.map$",
+    "distributionPath": "/dist",
+    "binaryVersion": "6.8.0",
+    "clientVersion": "6.8.0"
+  }
+}

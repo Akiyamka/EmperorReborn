@@ -1,6 +1,8 @@
 class_name BuildingPlacement
 extends Node3D
 
+signal building_placed(building: Node3D)
+
 enum PlaceResult {
 	PLACED,
 	INACTIVE,
@@ -8,6 +10,7 @@ enum PlaceResult {
 	CANNOT_BUILD,
 	INVALID_SCENE,
 	MISSING_BUILDINGS_ROOT,
+	AVAILABLE,
 }
 
 const NAV_CELLS_PER_OCCUPY_CELL := 2
@@ -138,6 +141,22 @@ func rotation_quarter_turns() -> int:
 	return _rotation_quarter_turns
 
 
+func set_rotation_quarter_turns(value: int) -> void:
+	_set_rotation_quarter_turns(value)
+
+
+## Performs the same terrain/footprint/occupancy check as try_place without
+## spawning anything. MCV deployment uses this before committing the unit to
+## its animation, then rechecks at the handoff in case the site changed.
+func evaluate_at_hover_cell(hover_cell: Vector2i) -> PlaceResult:
+	if not is_active():
+		return PlaceResult.INACTIVE
+	_update_for_hover_cell(hover_cell)
+	if not _has_anchor:
+		return PlaceResult.NEEDS_TERRAIN
+	return PlaceResult.AVAILABLE if _can_build else PlaceResult.CANNOT_BUILD
+
+
 func try_place(pointer_position: Vector2, building_scene: PackedScene, owner_player_id = null) -> PlaceResult:
 	if not is_active():
 		return PlaceResult.INACTIVE
@@ -149,7 +168,10 @@ func try_place(pointer_position: Vector2, building_scene: PackedScene, owner_pla
 
 
 func try_place_at_hover_cell(
-		hover_cell: Vector2i, building_scene: PackedScene, owner_player_id = null
+		hover_cell: Vector2i,
+		building_scene: PackedScene,
+		owner_player_id = null,
+		excluded_unit: Node3D = null
 	) -> PlaceResult:
 	if not is_active():
 		return PlaceResult.INACTIVE
@@ -179,7 +201,8 @@ func try_place_at_hover_cell(
 	building.set_meta(&"placement_anchor_cell", _anchor_cell)
 	if owner_player_id != null and building.has_method("set_owner_player_id"):
 		building.call("set_owner_player_id", owner_player_id)
-	_push_units_out_of_footprint(_anchor_cell)
+	_push_units_out_of_footprint(_anchor_cell, excluded_unit)
+	building_placed.emit(building)
 	_play_placed_building_animation(building)
 	_clear()
 	return PlaceResult.PLACED
@@ -214,10 +237,12 @@ func _hover_cell_from_pointer(pointer_position: Vector2):
 	return _navigation_grid.world_to_grid(hit["position"])
 
 
-func _push_units_out_of_footprint(anchor_cell: Vector2i) -> void:
+func _push_units_out_of_footprint(anchor_cell: Vector2i, excluded_unit: Node3D = null) -> void:
 	if not is_inside_tree() or _navigation_grid == null:
 		return
-	var units := get_tree().get_nodes_in_group("units")
+	var units := get_tree().get_nodes_in_group("units").filter(
+		func(unit: Node) -> bool: return unit != excluded_unit
+	)
 	if units.is_empty():
 		return
 

@@ -4,6 +4,7 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingControllerScript := preload("res://scripts/buildings/building_controller.gd")
 const BuildingUpgradeControllerScript := preload("res://scripts/buildings/building_upgrade_controller.gd")
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
+const UnitDeploymentControllerScript := preload("res://scripts/units/unit_deployment_controller.gd")
 const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const NavigationGridDebugScript := preload("res://scripts/units/navigation/navigation_grid_debug.gd")
@@ -27,6 +28,7 @@ var _fps_update_time := 0.0
 var _building_controller: BuildingController
 var _building_upgrade_controller: BuildingUpgradeController
 var _unit_command_controller: UnitCommandController
+var _unit_deployment_controller
 var _unit_navigation_system
 var _navigation_grid_debug
 ## Whole roster of the local player's house, gated by the technology tree
@@ -64,6 +66,7 @@ func _ready() -> void:
 	_unit_option_ids = _local_player_unit_option_ids()
 	_setup_unit_navigation_system()
 	_setup_navigation_grid_debug()
+	_setup_unit_deployment_controller()
 	_setup_unit_command_controller()
 	_setup_building_controller()
 	_setup_building_upgrade_controller()
@@ -154,7 +157,20 @@ func _setup_unit_command_controller() -> void:
 	_unit_command_controller.name = "UnitCommandController"
 	add_child(_unit_command_controller)
 	_unit_command_controller.status_changed.connect(_update_selection_label)
-	_unit_command_controller.setup(camera, terrain, _unit_navigation_system, selection_rectangle)
+	_unit_command_controller.setup(
+		camera,
+		terrain,
+		_unit_navigation_system,
+		selection_rectangle,
+		_unit_deployment_controller
+	)
+
+
+func _setup_unit_deployment_controller() -> void:
+	_unit_deployment_controller = UnitDeploymentControllerScript.new()
+	_unit_deployment_controller.name = "UnitDeploymentController"
+	add_child(_unit_deployment_controller)
+	_unit_deployment_controller.setup(terrain.navigation_grid, $Buildings)
 
 
 func _setup_unit_navigation_system() -> void:

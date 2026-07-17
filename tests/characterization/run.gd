@@ -35,6 +35,7 @@ func _initialize() -> void:
 	_run_case("TechnologyTree unit requirements", _test_technology_tree_unit_requirements)
 	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
 	_run_case("AT Refinery independent pads and mesh components", _test_at_refinery_partitioning)
 	_run_case("Muzzle flash clip visibility", _test_muzzle_flash_clip_visibility)
 
@@ -383,6 +384,97 @@ func _test_xbf_animation_table_variants() -> bool:
 			names.append(String(entry.get("name", "")))
 		_expect(names.has("Stationary"), "%s must expose Stationary" % file_name)
 	return true
+
+
+func _test_mirrored_object_animation_handedness() -> bool:
+	var path := "res://assets/raw_original_content/3DDATA/Buildings/AT_Conyard_HC.XBF"
+	var xbf = ModelXbfScript.load_file(path)
+	_expect(xbf != null, "AT ConYard construction model must parse")
+	if xbf == null:
+		return true
+
+	var builder = ModelBakeBuilderScript.new()
+	var scene: PackedScene = builder.build(path)
+	_expect(scene != null, "AT ConYard construction model must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate()
+	var player := root.get_node("AnimationPlayer") as AnimationPlayer
+	var construct := player.get_animation(&"Construct") if player != null else null
+	_expect(construct != null, "AT ConYard must expose its Construct clip")
+	if construct == null:
+		root.free()
+		return true
+	for track_index in construct.get_track_count():
+		if construct.track_get_type(track_index) != Animation.TYPE_VALUE:
+			continue
+		var track_path := String(construct.track_get_path(track_index))
+		if not track_path.ends_with(":transform"):
+			continue
+		var rotation_safe := true
+		for key_index in construct.track_get_key_count(track_index):
+			var key_transform := construct.track_get_key_value(track_index, key_index) as Transform3D
+			if key_transform.basis.determinant() <= 0.0:
+				rotation_safe = false
+				break
+		_expect(rotation_safe, "%s must contain only rotation-safe Transform3D keys" % track_path)
+
+	for object_name in [&"clonetread01", &"clonetread02"]:
+		var object := _find_xbf_object(xbf.objects, String(object_name))
+		_expect(not object.is_empty(), "%s must exist in the source model" % object_name)
+		if object.is_empty():
+			continue
+		var track := _animation_track_containing(construct, String(object_name))
+		_expect(track >= 0, "%s must retain its transform track" % object_name)
+		if track < 0:
+			continue
+
+		var source_center := _points_bounds(object.positions as PackedVector3Array).get_center()
+		var converted_center := Vector3(source_center.x, source_center.y, -source_center.z)
+		var track_node_path := String(construct.track_get_path(track)).trim_suffix(":transform")
+		var mirrored_content := root.get_node_or_null("%s/MirroredContent" % track_node_path) as Node3D
+		_expect(mirrored_content != null, "%s must factor its reflection into static content" % object_name)
+		if mirrored_content == null:
+			continue
+		var source_frames: Dictionary = object.object_animation.frames
+		for frame_id in [0, 77, 92, 191]:
+			var source_transform := _source_to_godot_transform(source_frames[frame_id])
+			var converted_transform: Transform3D = construct.track_get_key_value(track, frame_id)
+			_expect(
+				converted_transform.basis.determinant() > 0.0,
+				"%s frame %d animation key must be rotation-safe" % [object_name, frame_id]
+			)
+			var effective_transform := converted_transform * mirrored_content.transform
+			_expect(
+				effective_transform.basis.determinant() < 0.0,
+				"%s frame %d effective transform must remain mirrored" % [object_name, frame_id]
+			)
+			_expect(
+				(effective_transform * converted_center).distance_to(
+					source_transform * converted_center
+				) < 0.001,
+				"%s frame %d must preserve its authored Z placement" % [object_name, frame_id]
+			)
+
+	root.free()
+	return true
+
+
+func _animation_track_containing(animation: Animation, object_name: String) -> int:
+	for track_index in animation.get_track_count():
+		var path := String(animation.track_get_path(track_index))
+		if path.contains(object_name) and path.ends_with(":transform"):
+			return track_index
+	return -1
+
+
+func _source_to_godot_transform(source: Transform3D) -> Transform3D:
+	var transform := source
+	transform.basis.x = Vector3(source.basis.x.x, source.basis.x.y, -source.basis.x.z)
+	transform.basis.y = Vector3(source.basis.y.x, source.basis.y.y, -source.basis.y.z)
+	transform.basis.z = Vector3(-source.basis.z.x, -source.basis.z.y, source.basis.z.z)
+	transform.origin = Vector3(source.origin.x, source.origin.y, -source.origin.z)
+	return transform
 
 
 func _test_at_refinery_partitioning() -> bool:

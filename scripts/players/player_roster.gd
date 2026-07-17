@@ -133,9 +133,9 @@ func main_base_for_player(player_id: int) -> Node3D:
 	# Losing the primary Construction Yard just clears this (no automatic
 	# fallback to another CY the player might still own -- per
 	# docs/mechanics/production.md section 1 that requires a new double-click
-	# to re-designate). TODO: once MCV deployment lands, deploying a new
-	# Construction Yard is how a player recovers after losing all of them;
-	# that flow should call set_main_base() same as a manual double-click.
+	# to re-designate). Deploying a new MCV Construction Yard is the recovery
+	# path after losing all of them; UnitDeploymentController designates it when
+	# the authored construction animation completes.
 	return primary_building(player_id, MAIN_BASE_GROUP_KEY)
 
 

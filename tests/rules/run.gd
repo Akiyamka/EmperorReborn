@@ -171,11 +171,19 @@ func _test_unit_roster() -> bool:
 		_unit(&"FRFremen", &"Fremen", 150, [&"FRCamp"]),
 		_unit(&"ORLaserTank", &"Ordos", 900, [&"ORFactory"]),
 		_unit(&"Harvester", &"", 1000, [&"HKFactory", &"ATFactory", &"ORFactory"]),
+		_unit(&"ATMCV", &"Atreides", 2000, [&"ATFactory"]),
+		_unit(&"HKMCV", &"Harkonnen", 2000, [&"HKFactory"]),
+		_unit(&"ORMCV", &"Ordos", 2000, [&"ORFactory"]),
 	])
 
 	var roster: Array[StringName] = catalog.producible_unit_ids_for_house(&"Atreides")
 	_expect(roster.has(&"ATInfantry"), "a producible unit of the primary house must be included")
 	_expect(roster.has(&"Harvester"), "a shared house-less unit must be included for every house")
+	_expect(roster.has(&"ATMCV"), "the local factory's concrete MCV must be a roster candidate")
+	_expect(
+		roster.has(&"HKMCV") and roster.has(&"ORMCV"),
+		"foreign MCV candidates must remain discoverable after their factories are captured"
+	)
 	_expect(not roster.has(&"ATMilitia"), "a unit with no primary_buildings (survivors/crates only) must be excluded")
 	_expect(not roster.has(&"ATHawkWeapon"), "a cost-0 palace weapon must be excluded")
 	_expect(not roster.has(&"FRFremen"), "an unlisted subhouse's unit must not match")

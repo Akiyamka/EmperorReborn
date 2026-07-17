@@ -13,6 +13,7 @@ const _EXCLUDED_BUILDING_GROUPS: Array[StringName] = [&"Wall", &"RefineryDock"]
 const _EXCLUDED_ROLES: Array[StringName] = [&"Wall", &"Dockable"]
 const _WALL_BUILDING_GROUP := &"Wall"
 const _REFINERY_DOCK_BUILDING_GROUP := &"RefineryDock"
+const _MCV_UNIT_IDS: Array[StringName] = [&"ATMCV", &"HKMCV", &"ORMCV"]
 
 @export_dir var rules_root := DEFAULT_RULES_ROOT
 
@@ -155,9 +156,11 @@ func upgrade_building_ids_for_house(
 ## technology tree currently unlocks it. A producible unit is one with a
 ## production entry point (non-empty primary_buildings) and a real price --
 ## cost 0 marks palace weapons (e.g. ATHawkWeapon) that list a primary
-## building but are fired, not bought. Shared units (Harvester, MCV, Carryall)
-## carry no house field and belong to every roster; the tech tree still gates
-## them per house through their factory/hangar prerequisites.
+## building but are fired, not bought. Shared units (Harvester, Carryall)
+## carry no house field and belong to every roster. The three concrete MCV
+## entries are also present in every player's candidate roster so capturing a
+## foreign factory can expose its MCV; the tech tree still hides every variant
+## whose own factory is not currently owned.
 func producible_unit_ids_for_house(
 		house_id: StringName, subhouse_ids: Array[StringName] = []
 ) -> Array[StringName]:
@@ -168,7 +171,12 @@ func producible_unit_ids_for_house(
 	for id_key in keys:
 		var config: Resource = bucket[id_key]
 		var config_house := String(config.field(&"house", ""))
-		if not config_house.is_empty() and not _matches_house(config, house_id, subhouse_ids):
+		var is_mcv := StringName(id_key) in _MCV_UNIT_IDS
+		if (
+			not is_mcv
+			and not config_house.is_empty()
+			and not _matches_house(config, house_id, subhouse_ids)
+		):
 			continue
 		if config.list(&"primary_buildings").is_empty():
 			continue

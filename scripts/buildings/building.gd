@@ -10,6 +10,7 @@ signal owner_changed(player_id: int)
 signal health_changed(health: float, max_health: float)
 signal primary_changed(is_primary: bool)
 signal rally_point_changed(position: Vector3)
+signal construction_completed
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
@@ -612,7 +613,10 @@ func begin_construction() -> void:
 
 
 func finish_construction() -> void:
+	if _construction_complete:
+		return
 	_construction_complete = true
+	construction_completed.emit()
 
 
 func is_construction_complete() -> bool:

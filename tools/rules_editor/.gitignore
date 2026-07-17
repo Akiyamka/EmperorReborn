@@ -1,0 +1,10 @@
+node_modules/
+bin/
+dist/
+.tmp/
+__pycache__/
+resources.neu
+neutralinojs.log
+rules.db
+*.bak
+*.db.*.bak

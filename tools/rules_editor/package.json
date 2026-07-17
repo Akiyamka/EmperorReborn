@@ -1,0 +1,19 @@
+{
+  "name": "emperor-rules-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "NeutralinoJS editor for the Emperor rules SQLite database.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "neu run",
+    "neutralino:update": "neu update",
+    "check": "node --check app/db.mjs && node --check app/smoke.mjs && node --check extensions/rules-db.mjs && node --check ui/app.js",
+    "test": "node app/smoke.mjs"
+  },
+  "devDependencies": {
+    "@neutralinojs/neu": "11.7.2"
+  }
+}

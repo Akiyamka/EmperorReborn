@@ -5,6 +5,7 @@ const SpatialOrientationScript := preload("res://scripts/world/spatial_orientati
 
 signal owner_changed(player_id: int)
 signal navigation_enemy_encountered(enemies: Array[Node3D])
+signal deployment_animation_finished
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
@@ -27,6 +28,12 @@ const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
 const MOVING_ANIMATION := &"Move"
 const IDLE_ANIMATION := &"Stationary"
 const IDLE_ANIMATION_PREFIX := "Idle"
+## The original MCV model has no clip literally named Deploy. Move_Stop is its
+## authored transition from driving to a braced stationary pose and is the
+## source-backed fallback for the first phase of deployment.
+const DEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
+	&"Deploy", &"Deploying", &"Unpack", &"Move_Stop"
+]
 ## A converted Move clip contains a complete left/right gait cycle. Each half
 ## alternates an authored walking-speed phase with the slower MechSpeed pause.
 const MECH_STEPS_PER_MOVE_CYCLE := 2.0
@@ -99,6 +106,9 @@ var _visual_slope_target_basis := Basis.IDENTITY
 var _last_terrain_normal := Vector3.UP
 var _uses_mech_gait := false
 var _mech_gait_elapsed := 0.0
+var _is_deploying := false
+var _deployment_animation_player: AnimationPlayer
+var _deployment_animation_name: StringName = &""
 
 
 func _ready() -> void:
@@ -140,6 +150,9 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if _is_deploying:
+		velocity = Vector3.ZERO
+		return
 	if _navigation_managed:
 		return
 	var offset := target_position - global_position
@@ -192,7 +205,7 @@ func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 func prepare_navigation_order(
 		_world_position: Vector3, _exit_point := Vector3.INF, _move_mode := 0
 	) -> bool:
-	return true
+	return not _is_deploying
 
 
 func set_navigation_managed(active: bool) -> void:
@@ -256,6 +269,10 @@ func _navigation_collision_half_extents() -> Vector2:
 
 
 func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
+	if _is_deploying:
+		velocity = Vector3.ZERO
+		_set_navigation_debug_direction(Vector3.ZERO)
+		return
 	# Preserve the requested course before a tracked unit possibly converts its
 	# translational velocity to zero while turning in place. This is the value
 	# shown by the selected-unit navigation debug arrow.
@@ -510,6 +527,64 @@ func stop_at_current_position() -> void:
 	_set_movement_animation(false)
 
 
+## Shared unit deployment interface. Eligibility and the per-unit strategy
+## live in UnitDeploymentController; Unit owns only the common locked animation
+## phase so future deployable units can reuse the same command contract.
+func deploy() -> bool:
+	if _is_deploying:
+		return false
+	_is_deploying = true
+	stop_at_current_position()
+	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
+		_navigation_system.call("set_hold_position", self, true)
+
+	_deployment_animation_player = null
+	_deployment_animation_name = &""
+	for candidate in DEPLOYMENT_ANIMATION_CANDIDATES:
+		for player in _animation_players:
+			if not player.has_animation(candidate):
+				continue
+			_deployment_animation_player = player
+			_deployment_animation_name = candidate
+			break
+		if _deployment_animation_player != null:
+			break
+
+	if _deployment_animation_player == null:
+		call_deferred("_emit_deployment_animation_finished")
+		return true
+
+	var animation := _deployment_animation_player.get_animation(_deployment_animation_name)
+	if animation != null:
+		animation.loop_mode = Animation.LOOP_NONE
+	_deployment_animation_player.stop()
+	_deployment_animation_player.play(_deployment_animation_name)
+	return true
+
+
+func is_deploying() -> bool:
+	return _is_deploying
+
+
+func _emit_deployment_animation_finished() -> void:
+	if _is_deploying:
+		deployment_animation_finished.emit()
+
+
+## The deployment strategy calls this after the animation-to-world handoff.
+## A failed late recheck releases the unit; a successful one consumes it.
+func finish_deployment(consumed: bool) -> void:
+	if not _is_deploying:
+		return
+	_is_deploying = false
+	_deployment_animation_player = null
+	_deployment_animation_name = &""
+	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
+		_navigation_system.call("set_hold_position", self, false)
+	if not consumed:
+		_set_movement_animation(false)
+
+
 func set_selected(value: bool) -> void:
 	if is_selected == value:
 		return
@@ -713,6 +788,13 @@ func _idle_animations(player: AnimationPlayer) -> Array[StringName]:
 
 
 func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:
+	if (
+		_is_deploying
+		and player == _deployment_animation_player
+		and animation_name == _deployment_animation_name
+	):
+		deployment_animation_finished.emit()
+		return
 	if _movement_animation_active:
 		return
 	var idle_animations := _idle_animations(player)

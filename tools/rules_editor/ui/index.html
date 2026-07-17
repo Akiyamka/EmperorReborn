@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Emperor Rules Editor</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h1>Rules DB</h1>
+          <div id="databasePath" class="database-path"></div>
+        </div>
+        <label class="search-box">
+          <span>Filter tables</span>
+          <input id="tableFilter" type="search" autocomplete="off" />
+        </label>
+        <nav id="tableList" class="table-list" aria-label="Tables"></nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="toolbar">
+          <div>
+            <h2 id="tableTitle">Loading</h2>
+            <div id="tableStats" class="table-stats"></div>
+          </div>
+          <div class="toolbar-actions">
+            <label class="inline-control">
+              <span>Search</span>
+              <input id="rowSearch" type="search" autocomplete="off" />
+            </label>
+            <label class="inline-control compact">
+              <span>Rows</span>
+              <select id="pageSize">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+              </select>
+            </label>
+            <label class="toggle-control">
+              <input id="hideEmptyColumns" type="checkbox" />
+              <span>Hide empty columns</span>
+            </label>
+            <button id="backupButton" type="button">Backup</button>
+            <button id="reloadButton" type="button">Reload</button>
+            <button id="newRowButton" type="button" class="primary">New row</button>
+          </div>
+        </header>
+
+        <section class="content">
+          <section class="grid-region" aria-label="Table rows">
+            <div class="grid-wrap">
+              <table class="data-grid">
+                <thead id="gridHead"></thead>
+                <tbody id="gridBody"></tbody>
+              </table>
+              <div id="emptyState" class="empty-state" hidden>No rows</div>
+            </div>
+            <footer class="pager">
+              <button id="prevPage" type="button">Prev</button>
+              <span id="pageLabel"></span>
+              <button id="nextPage" type="button">Next</button>
+            </footer>
+          </section>
+
+          <aside class="detail-pane" aria-label="Row editor">
+            <div class="detail-header">
+              <div>
+                <h3 id="detailTitle">No row selected</h3>
+                <div id="detailMeta" class="detail-meta"></div>
+              </div>
+              <button id="clearSelection" type="button">Clear</button>
+            </div>
+            <form id="rowForm" class="row-form">
+              <div id="formFields" class="form-fields"></div>
+              <div class="form-actions">
+                <button id="deleteRowButton" type="button" class="danger">Delete</button>
+                <button id="saveRowButton" type="submit" class="primary">Save</button>
+              </div>
+            </form>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

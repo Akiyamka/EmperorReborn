@@ -1,6 +1,11 @@
 GODOT_CONTAINER := ./tools/godot-container
+RULES_EDITOR_DIR := ./tools/rules_editor
+RULES_DB ?= $(CURDIR)/assets/converted/rules.db
 
-.PHONY: rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-placement godot-convert-spice-mound godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-editor rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-placement godot-convert-spice-mound godot-export-web godot-watch-export godot-shell godot-version
+
+rules-editor:
+	cd $(RULES_EDITOR_DIR) && RULES_DB="$(RULES_DB)" npm start
 
 rules-export:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/import_rules.gd -- --db res://assets/converted/rules.db --clean
@@ -21,6 +26,7 @@ godot-test:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/upgrade_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/rules/run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/unit_command_run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/deployment_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/harvester_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/demo_boot_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/snapshot_run.gd

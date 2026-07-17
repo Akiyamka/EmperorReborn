@@ -10,6 +10,7 @@ var _camera: Camera3D
 var _terrain: MapLoader
 var _selection_rectangle = null
 var _navigation
+var _deployment_controller
 # Units and buildings are protocol-compatible group members in runtime and
 # tests, not one concrete class. Both expose ownership and selection methods.
 var _selected_entities: Array[Node] = []
@@ -22,11 +23,18 @@ const TERRAIN_COLLISION_MASK := 1
 const ENTITY_SELECTION_COLLISION_MASK := 2
 
 
-func setup(command_camera: Camera3D, command_terrain: MapLoader, navigation = null, selection_rectangle = null) -> void:
+func setup(
+		command_camera: Camera3D,
+		command_terrain: MapLoader,
+		navigation = null,
+		selection_rectangle = null,
+		deployment_controller = null
+	) -> void:
 	_camera = command_camera
 	_terrain = command_terrain
 	_navigation = navigation
 	_selection_rectangle = selection_rectangle
+	_deployment_controller = deployment_controller
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
@@ -104,9 +112,25 @@ func _select_at(screen_position: Vector2) -> void:
 	if not hit.is_empty():
 		var entity = _find_selectable_entity(hit.get("collider") as Node)
 		if entity != null and _can_control(entity):
+			if _is_repeated_single_selection(entity) and _try_deploy(entity):
+				return
 			selected.append(entity)
 	_set_selection(selected)
 	status_changed.emit("")
+
+
+func _is_repeated_single_selection(entity: Node) -> bool:
+	return _selected_entities.size() == 1 and _selected_entities.front() == entity
+
+
+func _try_deploy(entity: Node) -> bool:
+	if _deployment_controller == null or not entity.is_in_group("units"):
+		return false
+	var result: Dictionary = _deployment_controller.call("try_deploy", entity)
+	if not bool(result.get("handled", false)):
+		return false
+	status_changed.emit(String(result.get("message", "")))
+	return true
 
 
 func _select_units_in_rectangle(rectangle: Rect2) -> void:
@@ -127,15 +151,21 @@ func _command_move(screen_position: Vector2) -> void:
 
 	var movable_entities: Array[Node] = []
 	var rally_buildings: Array[Node] = []
+	var deploying_entities := 0
 	for entity in _selected_entities:
 		if not _can_control(entity):
 			status_changed.emit("Cannot command this player")
 			return
+		if entity.has_method("is_deploying") and bool(entity.call("is_deploying")):
+			deploying_entities += 1
+			continue
 		if entity.has_method("move_to"):
 			movable_entities.append(entity)
 		elif entity.has_method("set_rally_point"):
 			rally_buildings.append(entity)
 	if movable_entities.is_empty() and rally_buildings.is_empty():
+		if deploying_entities > 0:
+			status_changed.emit("MCV cannot move while deploying")
 		return
 
 	# Buildings and units expose their selectable collision on layer 2, while
@@ -234,7 +264,9 @@ func _command_move(screen_position: Vector2) -> void:
 			movement_label = "Moving %d units to %.1f, %.1f" % [moving_entities.size(), target.x, target.z]
 	var formation_status := " | formation" \
 		if not moving_entities.is_empty() and move_mode == UnitNavigationSystemScript.MoveMode.FORMATION else ""
-	status_changed.emit("%s%s%s" % [movement_label, nav_status, formation_status])
+	var deployment_status := " | %d unit(s) deploying" % deploying_entities \
+		if deploying_entities > 0 else ""
+	status_changed.emit("%s%s%s%s" % [movement_label, nav_status, formation_status, deployment_status])
 
 
 func _is_formation_modifier(event: InputEventKey) -> bool:
@@ -244,6 +276,9 @@ func _is_formation_modifier(event: InputEventKey) -> bool:
 func _clear_selection() -> void:
 	for entity in _selected_entities:
 		if is_instance_valid(entity):
+			var callback := Callable(self, "_on_selected_entity_exiting").bind(entity)
+			if entity.tree_exiting.is_connected(callback):
+				entity.tree_exiting.disconnect(callback)
 			entity.set_selected(false)
 	_selected_entities.clear()
 
@@ -255,6 +290,14 @@ func _set_selection(entities: Array[Node]) -> void:
 			continue
 		_selected_entities.append(entity)
 		entity.set_selected(true)
+		var callback := Callable(self, "_on_selected_entity_exiting").bind(entity)
+		if not entity.tree_exiting.is_connected(callback):
+			entity.tree_exiting.connect(callback, CONNECT_ONE_SHOT)
+
+
+func _on_selected_entity_exiting(entity: Node) -> void:
+	_selected_entities.erase(entity)
+	status_changed.emit("")
 
 
 func _update_hover(screen_position: Vector2) -> void:

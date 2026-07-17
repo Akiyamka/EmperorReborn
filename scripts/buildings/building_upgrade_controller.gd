@@ -205,8 +205,8 @@ func _start_global_upgrade_order(building_id: StringName) -> void:
 		return
 
 	# Global upgrades normally reuse the building's build_time. Construction
-	# Yards are deployed and therefore have no building time; their Resource=MCV
-	# rules link supplies the corresponding production time instead.
+	# Yards are deployed and therefore have no building time; their Resource
+	# link to the corresponding ATMCV/HKMCV/ORMCV supplies it instead.
 	if not _upgrade_queue.start(
 		building_id,
 		_upgrade_display_name(building_id),
