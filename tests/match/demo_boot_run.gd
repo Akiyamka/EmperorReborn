@@ -24,7 +24,6 @@ func _initialize() -> void:
 	await _run_case("entity forward directions share one world-space contract", _test_entity_orientation_contract)
 	await _run_case("units switch between stationary and movement animations", _test_unit_movement_animations)
 	await _run_case("mechs alternate smoothly between gait speeds", _test_mech_gait_speeds)
-	await _run_case("F3 toggles the temporary mech gait panel", _test_mech_gait_debug_shortcut)
 	await _run_case("test match roster is non-empty after boot", _test_match_roster_populated)
 	await _run_case("roster controls leave arrow keys to the camera", _test_roster_controls_ignore_keyboard_focus)
 	await _run_case("rules art configs resolve every test panel icon", _test_match_panel_icons)
@@ -301,7 +300,6 @@ func _test_unit_movement_animations() -> void:
 
 
 func _test_mech_gait_speeds() -> void:
-	Unit.reset_mech_gait_tuning()
 	var match_instance := MatchFixtureScene.instantiate()
 	get_root().add_child(match_instance)
 	await physics_frame
@@ -356,30 +354,6 @@ func _test_mech_gait_speeds() -> void:
 	_expect(
 		is_equal_approx(unit.navigation_move_speed(), unit.move_speed),
 		"non-mechs must retain their ordinary constant movement speed"
-	)
-	match_instance.queue_free()
-	Unit.reset_mech_gait_tuning()
-
-
-func _test_mech_gait_debug_shortcut() -> void:
-	var match_instance := MatchFixtureScene.instantiate()
-	get_root().add_child(match_instance)
-	await physics_frame
-
-	var panel := Control.new()
-	panel.name = "MechGaitDebug"
-	panel.visible = false
-	match_instance.get_node("HUD").add_child(panel)
-	var event := InputEventKey.new()
-	event.keycode = KEY_F3
-	event.pressed = true
-	_expect(
-		bool(match_instance.call("_handle_mech_gait_debug_shortcut", event)) and panel.visible,
-		"F3 must reveal the hidden mech gait panel"
-	)
-	_expect(
-		bool(match_instance.call("_handle_mech_gait_debug_shortcut", event)) and not panel.visible,
-		"a second F3 press must hide the mech gait panel"
 	)
 	match_instance.queue_free()
 

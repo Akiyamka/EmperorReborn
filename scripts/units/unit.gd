@@ -29,21 +29,12 @@ const IDLE_ANIMATION := &"Stationary"
 const IDLE_ANIMATION_PREFIX := "Idle"
 ## A converted Move clip contains a complete left/right gait cycle. Each half
 ## alternates an authored walking-speed phase with the slower MechSpeed pause.
-const DEFAULT_MECH_STEPS_PER_MOVE_CYCLE := 2.0
-const DEFAULT_MECH_STEP_RISE_START := 0.38
-const DEFAULT_MECH_STEP_RISE_END := 0.46
-const DEFAULT_MECH_STEP_FALL_START := 0.47
-const DEFAULT_MECH_STEP_FALL_END := 0.63
+const MECH_STEPS_PER_MOVE_CYCLE := 2.0
+const MECH_STEP_RISE_START := 0.38
+const MECH_STEP_RISE_END := 0.46
+const MECH_STEP_FALL_START := 0.47
+const MECH_STEP_FALL_END := 0.63
 const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
-
-## Runtime copies are intentionally shared so the demo debug panel can tune
-## every existing and newly spawned mech without rebuilding rules resources.
-static var mech_steps_per_move_cycle := DEFAULT_MECH_STEPS_PER_MOVE_CYCLE
-static var mech_step_rise_start := DEFAULT_MECH_STEP_RISE_START
-static var mech_step_rise_end := DEFAULT_MECH_STEP_RISE_END
-static var mech_step_fall_start := DEFAULT_MECH_STEP_FALL_START
-static var mech_step_fall_end := DEFAULT_MECH_STEP_FALL_END
-static var mech_move_cycle_fallback_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
 
 enum SlopeAlignmentMode {
 	AUTO,
@@ -294,11 +285,11 @@ func navigation_move_speed() -> float:
 		return move_speed
 	var cycle_duration := _mech_move_cycle_duration()
 	var cycle_phase := fposmod(_mech_gait_elapsed, cycle_duration) / cycle_duration
-	var step_phase := fposmod(cycle_phase * mech_steps_per_move_cycle, 1.0)
+	var step_phase := fposmod(cycle_phase * MECH_STEPS_PER_MOVE_CYCLE, 1.0)
 	# Smoothstep keeps the two rule-defined speeds intact away from the short
 	# transition windows while preventing an abrupt velocity change at a footfall.
-	var rise := smoothstep(mech_step_rise_start, mech_step_rise_end, step_phase)
-	var fall := 1.0 - smoothstep(mech_step_fall_start, mech_step_fall_end, step_phase)
+	var rise := smoothstep(MECH_STEP_RISE_START, MECH_STEP_RISE_END, step_phase)
+	var fall := 1.0 - smoothstep(MECH_STEP_FALL_START, MECH_STEP_FALL_END, step_phase)
 	return lerpf(mech_speed, move_speed, rise * fall)
 
 
@@ -319,43 +310,7 @@ func _mech_move_cycle_duration() -> float:
 		var animation := player.get_animation(MOVING_ANIMATION)
 		if animation != null and animation.length > 0.0:
 			return animation.length
-	return mech_move_cycle_fallback_seconds
-
-
-static func mech_gait_tuning() -> Dictionary:
-	return {
-		&"steps_per_cycle": mech_steps_per_move_cycle,
-		&"rise_start": mech_step_rise_start,
-		&"rise_end": mech_step_rise_end,
-		&"fall_start": mech_step_fall_start,
-		&"fall_end": mech_step_fall_end,
-		&"fallback_cycle_seconds": mech_move_cycle_fallback_seconds,
-	}
-
-
-static func set_mech_gait_tuning_value(key: StringName, value: float) -> void:
-	match key:
-		&"steps_per_cycle":
-			mech_steps_per_move_cycle = maxf(value, 0.1)
-		&"rise_start":
-			mech_step_rise_start = clampf(value, 0.0, mech_step_rise_end - 0.001)
-		&"rise_end":
-			mech_step_rise_end = clampf(value, mech_step_rise_start + 0.001, mech_step_fall_start)
-		&"fall_start":
-			mech_step_fall_start = clampf(value, mech_step_rise_end, mech_step_fall_end - 0.001)
-		&"fall_end":
-			mech_step_fall_end = clampf(value, mech_step_fall_start + 0.001, 1.0)
-		&"fallback_cycle_seconds":
-			mech_move_cycle_fallback_seconds = maxf(value, 0.05)
-
-
-static func reset_mech_gait_tuning() -> void:
-	mech_steps_per_move_cycle = DEFAULT_MECH_STEPS_PER_MOVE_CYCLE
-	mech_step_rise_start = DEFAULT_MECH_STEP_RISE_START
-	mech_step_rise_end = DEFAULT_MECH_STEP_RISE_END
-	mech_step_fall_start = DEFAULT_MECH_STEP_FALL_START
-	mech_step_fall_end = DEFAULT_MECH_STEP_FALL_END
-	mech_move_cycle_fallback_seconds = DEFAULT_MECH_MOVE_CYCLE_SECONDS
+	return DEFAULT_MECH_MOVE_CYCLE_SECONDS
 
 
 func navigation_blocked_by_enemy(enemies: Array[Node3D]) -> void:
