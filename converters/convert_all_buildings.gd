@@ -65,7 +65,7 @@ func _init() -> void:
 	_print_skipped("no H0 model", skipped_without_model)
 	if not failures.is_empty():
 		push_error("convert_all_buildings: failed: %s" % ", ".join(failures))
-		quit(1)
+	quit(1 if not failures.is_empty() else 0)
 
 
 func _building_ids() -> PackedStringArray:

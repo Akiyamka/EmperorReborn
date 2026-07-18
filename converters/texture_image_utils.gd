@@ -10,7 +10,32 @@ static func load_image(path: String) -> Image:
 	var err := image.load(absolute_path)
 	if err != OK:
 		return null
+	if _is_16bpp_tga(absolute_path):
+		_force_opaque_alpha(image)
 	return image
+
+
+## The attribute bit of 16bpp source TGAs is meaningless: the game's own
+## loader always reads these pixels as opaque, and transparency comes solely
+## from the magenta colour key. Godot's decoder honours the bit as per-pixel
+## alpha, which turns entire textures (e.g. "=AT_overhangwall_D_128.tga")
+## fully transparent.
+static func _is_16bpp_tga(absolute_path: String) -> bool:
+	if absolute_path.get_extension().to_lower() != "tga":
+		return false
+	var file := FileAccess.open(absolute_path, FileAccess.READ)
+	if file == null:
+		return false
+	var header := file.get_buffer(18)
+	return header.size() >= 17 and header[16] == 16
+
+
+static func _force_opaque_alpha(image: Image) -> void:
+	image.convert(Image.FORMAT_RGBA8)
+	var data := image.get_data()
+	for i in range(3, data.size(), 4):
+		data[i] = 255
+	image.set_data(image.get_width(), image.get_height(), image.has_mipmaps(), Image.FORMAT_RGBA8, data)
 
 
 static func load_image_with_magenta_alpha(path: String) -> Image:
