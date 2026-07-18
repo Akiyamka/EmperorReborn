@@ -726,22 +726,22 @@ func _play_placed_building_animation(building: Node3D) -> void:
 	_begin_building_construction(building)
 	_set_building_invulnerable(building, true)
 	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(&"build"):
-		var build_animation := player.get_animation(&"build")
-		if build_animation != null:
-			build_animation.loop_mode = Animation.LOOP_NONE
+	if player != null and player.has_animation(&"construct"):
+		var construct_animation := player.get_animation(&"construct")
+		if construct_animation != null:
+			construct_animation.loop_mode = Animation.LOOP_NONE
 		player.animation_finished.connect(_on_placed_building_animation_finished.bind(building), CONNECT_ONE_SHOT)
-		_play_building_state(building, &"build")
+		_play_building_state(building, &"construct")
 		return
-	# No build clip means the building pops in instantly - there is no vulnerable
-	# transition window to protect, so invulnerability is skipped rather than timed.
+	# No construct clip means the building pops in instantly - there is no
+	# vulnerable transition window to protect, so invulnerability is skipped.
 	_play_building_state(building, &"idle")
 	_set_building_invulnerable(building, false)
 	_finish_building_construction(building)
 
 
 func _on_placed_building_animation_finished(animation_name: StringName, building: Node3D) -> void:
-	if animation_name != &"build":
+	if animation_name != &"construct":
 		return
 	if is_instance_valid(building):
 		_play_building_state(building, &"idle")

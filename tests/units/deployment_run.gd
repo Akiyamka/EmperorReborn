@@ -2,8 +2,13 @@ extends SceneTree
 
 const UnitDeploymentControllerScript := preload("res://scripts/units/unit_deployment_controller.gd")
 const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
+const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const MCVModelScene := preload("res://assets/converted/models/G_MCV_h0/G_MCV_h0.scn")
+const ATConYardScene := preload("res://assets/converted/buildings/ATConYard/ATConYard.scn")
+const HKConYardScene := preload("res://assets/converted/buildings/HKConYard/HKConYard.scn")
+const ORConYardScene := preload("res://assets/converted/buildings/ORConYard/ORConYard.scn")
 const ORFactoryScene := preload("res://assets/converted/buildings/ORFactory/ORFactory.scn")
 
 var _assertions := 0
@@ -36,13 +41,15 @@ class FakeMCV extends Node3D:
 	var unit_config: Resource
 	var deploying := false
 	var deployment_calls := 0
+	var deployment_facing := Vector3.ZERO
 	var finished_consumed = null
 
-	func deploy() -> bool:
+	func deploy(facing_direction: Vector3 = Vector3.ZERO) -> bool:
 		if deploying:
 			return false
 		deploying = true
 		deployment_calls += 1
+		deployment_facing = facing_direction
 		return true
 
 	func is_deploying() -> bool:
@@ -56,11 +63,28 @@ class FakeMCV extends Node3D:
 		return get_node("/root/Players").player(owner_player_id)
 
 
+class FakeNavigation extends RefCounted:
+	var commands: Array[Dictionary] = []
+
+	func command_move(
+			units: Array, target: Vector3, move_mode: int, exit_position := Vector3.INF
+		) -> Array:
+		commands.append({
+			"units": units,
+			"target": target,
+			"move_mode": move_mode,
+			"exit_position": exit_position,
+		})
+		return units
+
+
 func _initialize() -> void:
 	await process_frame
 	await _run_case("rules define three concrete MCV units", _test_three_mcv_rules)
 	await _run_case("MCV uses its authored stop transition", _test_unit_deployment_animation)
 	await _run_case("each MCV deploys its directly linked Construction Yard", _test_house_construction_yards)
+	await _run_case("each Construction Yard packs into its linked MCV and preserves the move order", _test_house_construction_yard_undeployment)
+	await _run_case("an incomplete Construction Yard rejects packing", _test_incomplete_construction_yard_undeployment)
 	await _run_case("captured factory produces its own concrete MCV", _test_captured_factory_mcv)
 	await _run_case("invalid terrain rejects deployment before locking the MCV", _test_invalid_site)
 	if _failures > 0:
@@ -108,6 +132,14 @@ func _test_three_mcv_rules() -> void:
 				and StringName(String((resources[0] as Dictionary).get("target", ""))) == house_case[3],
 			"%s must deploy only %s" % [house_case[0], house_case[3]]
 		)
+		var con_yard_config: Resource = rules.building(house_case[3])
+		var con_yard_resources: Array = con_yard_config.link(&"resources", []) \
+			if con_yard_config != null else []
+		_expect(
+			con_yard_resources.size() == 1
+				and StringName(String((con_yard_resources[0] as Dictionary).get("target", ""))) == house_case[0],
+			"%s must pack only into %s" % [house_case[3], house_case[0]]
+		)
 
 
 func _test_unit_deployment_animation() -> void:
@@ -121,14 +153,31 @@ func _test_unit_deployment_animation() -> void:
 		child.free()
 	visual_root.add_child(MCVModelScene.instantiate())
 	world.add_child(unit)
+	unit.global_rotation.y = deg_to_rad(45.0)
 
 	var finished := [0]
 	unit.deployment_animation_finished.connect(func() -> void: finished[0] += 1)
-	_expect(unit.deploy(), "a stationary MCV must accept the shared deploy command")
+	_expect(unit.deploy(Vector3.FORWARD), "a stationary MCV must accept the shared deploy command")
 	_expect(unit.is_deploying(), "deploy must lock the unit until strategy handoff")
 	var player := unit.get_node("VisualRoot").find_child("AnimationPlayer", true, false) as AnimationPlayer
-	_expect(player != null and player.current_animation == &"Move_Stop", "the source-backed Move_Stop transition must play")
+	_expect(
+		player != null and player.current_animation != &"Move_Stop",
+		"the deployment transition must wait for axis alignment"
+	)
+	_expect(
+		is_equal_approx(unit.global_rotation.y, deg_to_rad(45.0)),
+		"deployment alignment must not snap the MCV rotation"
+	)
 	_expect(not unit.prepare_navigation_order(Vector3(20.0, 0.0, 20.0)), "a deploying unit must reject new movement orders")
+	for frame in 60:
+		if player != null and player.current_animation == &"Move_Stop":
+			break
+		await physics_frame
+	_expect(
+		is_zero_approx(angle_difference(unit.global_rotation.y, 0.0)),
+		"the MCV must align with the future building axis before its transition"
+	)
+	_expect(player != null and player.current_animation == &"Move_Stop", "the source-backed Move_Stop transition must play after alignment")
 	if player != null:
 		player.animation_finished.emit(&"Move_Stop")
 	_expect(finished[0] == 1, "the strategy handoff must wait for the authored transition to finish")
@@ -143,12 +192,12 @@ func _test_house_construction_yards() -> void:
 	players.reset_for_match()
 	var rules = root.get_node("Rules")
 	var cases := [
-		[1, &"Atreides", &"ATMCV", &"ATConYard", Vector3(20.0, 0.0, 20.0), deg_to_rad(20.0), PI],
-		[2, &"Harkonnen", &"HKMCV", &"HKConYard", Vector3(100.0, 0.0, 20.0), deg_to_rad(70.0), -PI * 0.5],
-		[3, &"Ordos", &"ORMCV", &"ORConYard", Vector3(180.0, 0.0, 20.0), deg_to_rad(160.0), 0.0],
+		[1, &"Atreides", &"ATMCV", &"ATConYard", Vector3(20.0, 0.0, 20.0), deg_to_rad(20.0), PI, Vector3(21.0, 0.0, 18.0)],
+		[2, &"Harkonnen", &"HKMCV", &"HKConYard", Vector3(100.0, 0.0, 20.0), deg_to_rad(70.0), -PI * 0.5, Vector3(99.0, 0.0, 21.0)],
+		[3, &"Ordos", &"ORMCV", &"ORConYard", Vector3(180.0, 0.0, 20.0), deg_to_rad(160.0), 0.0, Vector3(181.0, 0.0, 22.0)],
 		# An Atreides player can own an Ordos-produced MCV after capturing
 		# ORFactory; the unit remains ORMCV regardless of its current owner.
-		[4, &"Atreides", &"ORMCV", &"ORConYard", Vector3(260.0, 0.0, 20.0), deg_to_rad(-110.0), PI * 0.5],
+		[4, &"Atreides", &"ORMCV", &"ORConYard", Vector3(260.0, 0.0, 20.0), deg_to_rad(-110.0), PI * 0.5, Vector3(262.0, 0.0, 21.0)],
 	]
 	for house_case in cases:
 		players.create_player(house_case[0], String(house_case[1]), Color.WHITE, house_case[1])
@@ -176,6 +225,11 @@ func _test_house_construction_yards() -> void:
 
 		var result: Dictionary = controller.try_deploy(mcv)
 		_expect(bool(result.get("started", false)), "%s MCV must pass its valid site check" % house_case[1])
+		var expected_facing: Vector3 = Basis(Vector3.UP, house_case[6]) * Vector3.BACK
+		_expect(
+			mcv.deployment_facing.is_equal_approx(expected_facing),
+			"%s must align with %s before deployment" % [house_case[2], house_case[3]]
+		)
 		_expect(buildings.get_child_count() == case_index, "the building must not appear before the unit animation finishes")
 		mcv.deployment_animation_finished.emit()
 		_expect(mcv.finished_consumed == true, "the MCV must be consumed only after a successful handoff")
@@ -188,16 +242,130 @@ func _test_house_construction_yards() -> void:
 			absf(angle_difference(con_yard.global_rotation.y, house_case[6])) < 0.0001,
 			"%s must inherit %s's direction rounded to 90 degrees" % [house_case[3], house_case[2]]
 		)
+		_expect(
+			con_yard.global_position.is_equal_approx(house_case[7]),
+			"%s must deploy one footprint cell ahead of %s (expected %s, got %s)"
+				% [house_case[3], house_case[2], house_case[7], con_yard.global_position]
+		)
 		_expect(con_yard.owner_player_id == house_case[0], "the Construction Yard must preserve MCV ownership")
 		_expect(not con_yard.is_construction_complete(), "the new Construction Yard must remain under construction")
 		var state_player := con_yard.get_node("StatePlayer") as AnimationPlayer
-		_expect(state_player.current_animation == &"build", "the building handoff must start its authored build clip")
+		_expect(state_player.current_animation == &"construct", "the building handoff must start its authored construct clip")
+		var build_state := con_yard.get_node_or_null("States/Build") as Node3D
+		var idle_state := con_yard.get_node_or_null("States/Idle") as Node3D
+		_expect(
+			build_state != null and build_state.visible,
+			"%s must show its folded construct model during the handoff" % house_case[3]
+		)
+		_expect(
+			idle_state != null and not idle_state.visible,
+			"%s must hide its completed model during the handoff" % house_case[3]
+		)
 		_expect(players.main_base_for_player(house_case[0]) == null, "an incomplete Construction Yard must not become the main base")
-		state_player.animation_finished.emit(&"build")
-		_expect(con_yard.is_construction_complete(), "the authored build clip must finish construction")
+		state_player.animation_finished.emit(&"construct")
+		_expect(con_yard.is_construction_complete(), "the authored construct clip must finish construction")
 		_expect(players.main_base_for_player(house_case[0]) == con_yard, "the completed Construction Yard must become the player's main base")
 		await process_frame
 
+	world.queue_free()
+	await process_frame
+
+
+func _test_house_construction_yard_undeployment() -> void:
+	var players = root.get_node("Players")
+	players.reset_for_match()
+	var rules = root.get_node("Rules")
+	var cases := [
+		[1, &"Atreides", &"ATConYard", &"ATMCV", ATConYardScene, Vector3(20.0, 0.0, 120.0), 0.0],
+		[2, &"Harkonnen", &"HKConYard", &"HKMCV", HKConYardScene, Vector3(100.0, 0.0, 120.0), PI * 0.5],
+		[3, &"Ordos", &"ORConYard", &"ORMCV", ORConYardScene, Vector3(180.0, 0.0, 120.0), PI],
+	]
+	for house_case in cases:
+		players.create_player(house_case[0], String(house_case[1]), Color.WHITE, house_case[1])
+
+	var world := Node3D.new()
+	root.add_child(world)
+	var buildings := Node3D.new()
+	buildings.name = "Buildings"
+	world.add_child(buildings)
+	var units := Node3D.new()
+	units.name = "Units"
+	world.add_child(units)
+	var navigation := FakeNavigation.new()
+	var controller = UnitDeploymentControllerScript.new()
+	world.add_child(controller)
+	controller.setup(FakeGrid.new(), buildings, units, navigation)
+
+	for house_case in cases:
+		var building := (house_case[4] as PackedScene).instantiate() as Building
+		building.owner_player_id = house_case[0]
+		buildings.add_child(building)
+		building.global_position = house_case[5]
+		building.global_rotation.y = house_case[6]
+		var expected_facing := building.exit_direction()
+		var expected_spawn := building.global_position + expected_facing * -0.8
+		var expected_exit := building.production_exit_position()
+		var move_target: Vector3 = house_case[5] + Vector3(24.0, 0.0, 18.0)
+
+		var result: Dictionary = controller.try_undeploy(
+			building, move_target, UnitNavigationSystemScript.MoveMode.FORMATION
+		)
+		_expect(bool(result.get("handled", false)) and bool(result.get("started", false)), "%s must accept an ordinary move command as packing" % house_case[2])
+		_expect(not building.is_queued_for_deletion(), "the Construction Yard must remain until its deconstruct animation finishes")
+		var state_player := building.get_node("StatePlayer") as AnimationPlayer
+		_expect(state_player.current_animation == &"deconstruct", "%s must play its authored deconstruct clip while packing" % house_case[2])
+		_expect(units.get_child_count() == 0, "the MCV must not appear before packing finishes")
+
+		state_player.animation_finished.emit(&"deconstruct")
+		_expect(building.is_queued_for_deletion(), "the packed Construction Yard must release its world node")
+		_expect(units.get_child_count() == 1, "packing must spawn exactly one MCV")
+		if units.get_child_count() == 0:
+			continue
+		var unit := units.get_child(0) as Unit
+		_expect(unit.config_id == house_case[3], "%s must pack into its concrete %s" % [house_case[2], house_case[3]])
+		_expect(unit.unit_config == rules.unit(house_case[3]), "the packed MCV must receive its concrete rules config")
+		_expect(unit.owner_player_id == house_case[0], "the packed MCV must preserve Construction Yard ownership")
+		_expect(unit.global_position.is_equal_approx(expected_spawn), "the packed MCV must honor the runtime forward offset from the Construction Yard")
+		_expect(SpatialOrientationScript.world_forward(unit).dot(expected_facing) > 0.999, "the packed MCV must face out of the Construction Yard")
+		_expect(unit.get_node("VisualRoot").get_child(0).scene_file_path == MCVModelScene.resource_path, "the packed MCV must use the converted MCV model")
+		_expect(navigation.commands.size() == 1, "the spawned MCV must immediately receive the triggering move order")
+		if not navigation.commands.is_empty():
+			var command: Dictionary = navigation.commands[0]
+			_expect(command["units"] == [unit], "the inherited movement command must target the new MCV")
+			_expect(command["target"] == move_target, "the inherited movement command must preserve the clicked destination")
+			_expect(command["move_mode"] == UnitNavigationSystemScript.MoveMode.FORMATION, "the inherited movement command must preserve its mode")
+			_expect(command["exit_position"].is_equal_approx(expected_exit), "the MCV must first clear the old Construction Yard footprint")
+		navigation.commands.clear()
+		unit.queue_free()
+		await process_frame
+
+	world.queue_free()
+	await process_frame
+
+
+func _test_incomplete_construction_yard_undeployment() -> void:
+	var players = root.get_node("Players")
+	players.reset_for_match()
+	players.create_player(1, "Atreides", Color.BLUE, &"Atreides")
+	var world := Node3D.new()
+	root.add_child(world)
+	var buildings := Node3D.new()
+	world.add_child(buildings)
+	var units := Node3D.new()
+	world.add_child(units)
+	var navigation := FakeNavigation.new()
+	var controller = UnitDeploymentControllerScript.new()
+	world.add_child(controller)
+	controller.setup(FakeGrid.new(), buildings, units, navigation)
+	var building := ATConYardScene.instantiate() as Building
+	building.owner_player_id = 1
+	buildings.add_child(building)
+	building.begin_construction()
+
+	var result: Dictionary = controller.try_undeploy(building, Vector3(20.0, 0.0, 20.0))
+	_expect(bool(result.get("handled", false)) and not bool(result.get("started", false)), "an incomplete Construction Yard move must be handled as rejected packing")
+	_expect(not building.is_queued_for_deletion() and units.get_child_count() == 0, "rejected packing must leave the incomplete building intact")
+	_expect(navigation.commands.is_empty(), "rejected packing must not issue a movement command")
 	world.queue_free()
 	await process_frame
 

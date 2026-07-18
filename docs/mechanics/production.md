@@ -48,7 +48,9 @@ Status: **verified**.
 - **MCV** (verified):
   - built at the factory as a unit; **deploys** into a Construction Yard;
   - a Construction Yard can be **packed back up** into an MCV; it cannot construct
-    while in unit form;
+    while in unit form. In runtime this is initiated by giving the selected,
+    completed Construction Yard an ordinary move order; the resulting concrete
+    House MCV inherits that same destination and movement mode;
   - this is the **only building that appears not from a panel order but from a
     unit deployment**. Consequently, the deployment eligibility check **does not
     consider proximity to other buildings** (the build radius, §2) — an MCV can

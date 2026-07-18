@@ -278,20 +278,20 @@ func _try_sell_building(screen_position: Vector2) -> void:
 	_selling_building = building
 	_set_sell_mode(false)
 	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(&"build"):
-		var build_animation := player.get_animation(&"build")
-		if build_animation != null:
-			build_animation.loop_mode = Animation.LOOP_NONE
-			_play_building_state(building, &"build")
-			player.seek(build_animation.length, true)
+	if player != null and player.has_animation(&"sell"):
+		var sell_animation := player.get_animation(&"sell")
+		if sell_animation != null:
+			sell_animation.loop_mode = Animation.LOOP_NONE
 		player.animation_finished.connect(_on_sold_building_animation_finished.bind(building), CONNECT_ONE_SHOT)
-		player.play_backwards(&"build")
+		_play_building_state(building, &"sell")
 		return
 
 	_finish_selling_building(building)
 
 
-func _on_sold_building_animation_finished(_animation_name: StringName, building: Node3D) -> void:
+func _on_sold_building_animation_finished(animation_name: StringName, building: Node3D) -> void:
+	if animation_name != &"sell":
+		return
 	_finish_selling_building(building)
 
 

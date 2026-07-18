@@ -10,7 +10,7 @@
 - [ ] units deployment
 - [ ] units production
 - [ ] primary buildings
-- [ ] MCV building to unit and unit to building
+- [x] MCV building to unit and unit to building
 - [ ] Units spawning after building destroyed
 - [ ] Building range
 

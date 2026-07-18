@@ -4,6 +4,7 @@ const BuildingControllerScript := preload("res://scripts/buildings/building_cont
 const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
 const UpgradeEffectsScript := preload("res://scripts/buildings/upgrade_effects.gd")
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
+const ATConYardScene := preload("res://assets/converted/buildings/ATConYard/ATConYard.scn")
 
 var _assertions := 0
 var _failures := 0
@@ -36,6 +37,15 @@ class GestureController extends BuildingController:
 		placement_attempts.append(screen_position)
 
 
+class SaleController extends BuildingController:
+	var raycast_hit: Dictionary = {}
+
+	func _raycast(
+			_screen_position: Vector2, _collision_mask: int = 0xffffffff
+		) -> Dictionary:
+		return raycast_hit
+
+
 func _initialize() -> void:
 	await process_frame
 	var players = root.get_node("Players")
@@ -48,6 +58,7 @@ func _initialize() -> void:
 	_run_case("repeated setup forwards resources once", _test_repeated_setup_forwards_resources_once.bind(local_player))
 	_run_case("freed controller leaves no resource forwarding", _test_free_disconnects_resource_forwarding.bind(local_player))
 	_run_case("failed completed wall segment refunds paid credits", _test_completed_wall_refund.bind(local_player))
+	_run_case("building sale plays the authored sell transition", _test_sale_animation.bind(local_player))
 	_run_case(
 		"losing and restoring a prerequisite building toggles menu availability",
 		_test_availability_reacts_to_prerequisite_loss.bind(local_player)
@@ -167,6 +178,32 @@ func _test_completed_wall_refund(token: int, local_player: PlayerData) -> int:
 	_expect(local_player.money == money_before + 75, "a paid wall segment that cannot be placed must be fully refunded")
 	order = null
 	controller.free()
+	return token
+
+
+func _test_sale_animation(token: int, local_player: PlayerData) -> int:
+	var controller := SaleController.new()
+	root.add_child(controller)
+	_setup_without_assets(controller)
+	var building := ATConYardScene.instantiate() as Building
+	building.owner_player_id = local_player.player_id
+	root.add_child(building)
+	var collider := Node.new()
+	building.add_child(collider)
+	controller.raycast_hit = {"collider": collider}
+	var money_before := local_player.money
+
+	controller._try_sell_building(Vector2.ZERO)
+	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
+	_expect(player != null and player.current_animation == &"sell", "sale must play the authored sell clip")
+	_expect(not building.is_queued_for_deletion(), "the building must remain until sell finishes")
+	if player != null:
+		player.animation_finished.emit(&"sell")
+	_expect(building.is_queued_for_deletion(), "sell completion must remove the building")
+	_expect(local_player.money == money_before + 1000, "sell completion must retain the half-cost refund")
+
+	controller.free()
+	building.free()
 	return token
 
 

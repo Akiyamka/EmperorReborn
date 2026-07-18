@@ -11,12 +11,21 @@ const BUILDING_RULES_DIR := "res://assets/converted/rules/buildings"
 const OCCUPY_CELL_WORLD_SPAN := 2.0
 
 const STATE_DEFS: Array[Dictionary] = [
-	{"name": "build", "node": "Build", "suffix": "_hc"},
+	{"name": "construction", "node": "Build", "suffix": "_hc"},
 	{"name": "idle", "node": "Idle", "suffix": "_h0"},
 	{"name": "damage1", "node": "Damage1", "suffix": "_h1"},
 	{"name": "damage2", "node": "Damage2", "suffix": "_h2"},
 	{"name": "destroy", "node": "Destroy", "suffix": "_h3"},
 ]
+## HC contains the authored transition clips. Most buildings expose only
+## Construct; Construction Yards additionally expose Deconstruct and Sell,
+## while wall HC models also carry Sell. Runtime names are deliberately
+## lowercase and describe the action rather than the source H-state.
+const CONSTRUCTION_ACTIONS := {
+	&"construct": &"Construct",
+	&"deconstruct": &"Deconstruct",
+	&"sell": &"Sell",
+}
 
 var building_model_dir := BUILDING_MODEL_DIR
 var source_texture_dir := DEFAULT_TEXTURE_DIR
@@ -259,30 +268,79 @@ func _add_state_player(root: Node3D, states_root: Node3D, state_nodes: Array[Nod
 	var library := AnimationLibrary.new()
 	for active_node in state_nodes:
 		var state_name := String(active_node.get_meta("state", active_node.name.to_lower()))
-		var anim := Animation.new()
-		anim.resource_name = state_name
+		if state_name == "construction":
+			var added_construct := false
+			for action_name: StringName in CONSTRUCTION_ACTIONS:
+				var source_name: StringName = CONSTRUCTION_ACTIONS[action_name]
+				var action_source := _named_state_source_animation(active_node, source_name)
+				if action_source == null:
+					continue
+				library.add_animation(
+					action_name,
+					_state_animation(action_name, active_node, state_nodes, action_source, false)
+				)
+				added_construct = added_construct or action_name == &"construct"
+			# Models without a named FX table entry still retain their usable HC
+			# timeline under the construction action contract.
+			if not added_construct:
+				library.add_animation(
+					&"construct",
+					_state_animation(
+						&"construct", active_node, state_nodes,
+						_state_source_animation(active_node), false
+					)
+				)
+			continue
+
 		var source_animation := _state_source_animation(active_node)
-		anim.length = maxf(source_animation.length if source_animation != null else 0.1, 0.1)
-		var loop_mode := Animation.LOOP_NONE
-		if state_name != "build" and source_animation != null:
-			loop_mode = source_animation.loop_mode
-		anim.loop_mode = loop_mode
-
-		for node in state_nodes:
-			var track := anim.add_track(Animation.TYPE_VALUE)
-			anim.track_set_path(track, NodePath("States/%s:visible" % node.name))
-			anim.track_set_interpolation_type(track, Animation.INTERPOLATION_NEAREST)
-			anim.value_track_set_update_mode(track, Animation.UPDATE_DISCRETE)
-			anim.track_insert_key(track, 0.0, node == active_node)
-
-		if source_animation != null:
-			_copy_animation_tracks(source_animation, anim, "States/%s" % active_node.name)
-
-		library.add_animation(state_name, anim)
+		library.add_animation(
+			state_name,
+			_state_animation(
+				StringName(state_name), active_node, state_nodes, source_animation,
+				source_animation != null
+			)
+		)
 
 	player.add_animation_library("", library)
 	player.autoplay = "idle" if library.has_animation("idle") else String(state_nodes[0].get_meta("state", ""))
 	root.add_child(player)
+
+
+func _state_animation(
+		animation_name: StringName,
+		active_node: Node3D,
+		state_nodes: Array[Node3D],
+		source_animation: Animation,
+		preserve_loop_mode: bool
+	) -> Animation:
+	var animation := Animation.new()
+	animation.resource_name = String(animation_name)
+	animation.length = maxf(source_animation.length if source_animation != null else 0.1, 0.1)
+	animation.loop_mode = source_animation.loop_mode \
+		if preserve_loop_mode and source_animation != null else Animation.LOOP_NONE
+	for node in state_nodes:
+		var track := animation.add_track(Animation.TYPE_VALUE)
+		animation.track_set_path(track, NodePath("States/%s:visible" % node.name))
+		animation.track_set_interpolation_type(track, Animation.INTERPOLATION_NEAREST)
+		animation.value_track_set_update_mode(track, Animation.UPDATE_DISCRETE)
+		animation.track_insert_key(track, 0.0, node == active_node)
+	if source_animation != null:
+		_copy_animation_tracks(
+			source_animation, animation, "States/%s" % active_node.name
+		)
+	return animation
+
+
+func _named_state_source_animation(
+		state_node: Node3D, requested_name: StringName
+	) -> Animation:
+	var player := state_node.get_node_or_null("AnimationPlayer") as AnimationPlayer
+	if player == null:
+		return null
+	for animation_name in player.get_animation_list():
+		if String(animation_name).to_lower() == String(requested_name).to_lower():
+			return player.get_animation(animation_name)
+	return null
 
 
 func _state_source_animation(state_node: Node3D) -> Animation:
@@ -297,7 +355,7 @@ func _state_source_animation(state_node: Node3D) -> Animation:
 	# "timeline" is the raw, unsliced union track ModelBakeBuilder always
 	# produces as a slicing source; every other clip name comes straight from
 	# the source xbf's own FX animation table (e.g. "Stationary", "Explode",
-	# "Build", ...) and carries that table's authored duration. Any of those
+	# "Construct", ...) and carries that table's authored duration. Any of those
 	# beats "timeline" as the state's clip, so pick the longest one instead of
 	# hardcoding a couple of expected names - a model whose table entry isn't
 	# named "Stationary" (H3's "Explode", for instance) must not silently fall

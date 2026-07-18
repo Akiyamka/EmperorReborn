@@ -70,7 +70,7 @@ var current_state := &""
 var invulnerable := false
 ## Pre-placed buildings are operational immediately. BuildingPlacement marks
 ## newly placed buildings incomplete until StatePlayer actually finishes the
-## authored build clip; unit production uses this instead of mere tree/group
+## authored construct clip; unit production uses this instead of mere tree/group
 ## membership when deciding whether the building can accept orders.
 var _construction_complete := true
 # §1 "primary Construction Yard" / §3 "primary building": true for the one
@@ -387,6 +387,10 @@ func play_state(state: StringName) -> void:
 	var player := get_node_or_null("StatePlayer") as AnimationPlayer
 	if player != null and player.has_animation(state):
 		player.play(state)
+		# Apply time-zero visibility and pose tracks before the next rendered
+		# frame. Otherwise a freshly added building can briefly render its
+		# default idle state before construct starts updating.
+		player.advance(0.0)
 		return
 
 	var states := get_node_or_null("States")

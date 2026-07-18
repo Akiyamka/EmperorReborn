@@ -7,6 +7,7 @@ const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.g
 const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
 const ModelXbfScript := preload("res://converters/xbf/model_xbf.gd")
 const ModelBakeBuilderScript := preload("res://converters/model_bake_builder.gd")
+const BuildingBakeBuilderScript := preload("res://converters/building_bake_builder.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -35,6 +36,7 @@ func _initialize() -> void:
 	_run_case("TechnologyTree unit requirements", _test_technology_tree_unit_requirements)
 	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case("building transition clips retain authored action names", _test_building_transition_clips)
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
 	_run_case("XBF mirrored inside-out meshes are re-oriented", _test_mirrored_mesh_orientation)
 	_run_case("AT Refinery independent pads and mesh components", _test_at_refinery_partitioning)
@@ -384,6 +386,40 @@ func _test_xbf_animation_table_variants() -> bool:
 		for entry: Dictionary in xbf.animation_entries:
 			names.append(String(entry.get("name", "")))
 		_expect(names.has("Stationary"), "%s must expose Stationary" % file_name)
+	return true
+
+
+func _test_building_transition_clips() -> bool:
+	var builder = BuildingBakeBuilderScript.new()
+	var scene: PackedScene = builder.build(&"ATConYard")
+	_expect(scene != null, "ATConYard wrapper must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate()
+	var player := root.get_node_or_null("StatePlayer") as AnimationPlayer
+	_expect(player != null, "ATConYard wrapper must expose its state player")
+	if player != null:
+		var names := Array(player.get_animation_list())
+		_expect(names.has(&"construct"), "HC Construct must be exported as construct")
+		_expect(names.has(&"deconstruct"), "HC Deconstruct must be exported as deconstruct")
+		_expect(names.has(&"sell"), "HC Sell must be exported as sell")
+		_expect(not names.has(&"build"), "the obsolete build transition name must not be exported")
+		var source_player := root.get_node_or_null("States/Build/AnimationPlayer") as AnimationPlayer
+		_expect(source_player != null, "the HC source player must remain available")
+		if source_player != null:
+			for action_case in [
+				[&"construct", &"Construct"],
+				[&"deconstruct", &"Deconstruct"],
+				[&"sell", &"Sell"],
+			]:
+				var exported := player.get_animation(action_case[0])
+				var authored := source_player.get_animation(action_case[1])
+				_expect(
+					exported != null and authored != null
+						and is_equal_approx(exported.length, authored.length),
+					"%s must retain the authored %s duration" % action_case
+				)
+	root.free()
 	return true
 
 

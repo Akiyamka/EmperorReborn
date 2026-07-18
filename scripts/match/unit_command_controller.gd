@@ -186,20 +186,34 @@ func _command_move(screen_position: Vector2) -> void:
 		return
 
 	var target: Vector3 = hit["position"]
-	if movable_entities.is_empty():
-		for building in rally_buildings:
-			building.call("set_rally_point", target)
-		var rally_label := "Rally point set to %.1f, %.1f" % [target.x, target.z]
-		if rally_buildings.size() > 1:
-			rally_label = "Rally point set for %d buildings" % rally_buildings.size()
-		status_changed.emit(rally_label)
-		return
-
 	var move_mode := (
 		UnitNavigationSystemScript.MoveMode.FORMATION
 		if _formation_modifier_down
 		else UnitNavigationSystemScript.MoveMode.FREE
 	)
+	var ordinary_rally_buildings: Array[Node] = []
+	var undeployment_messages: Array[String] = []
+	for building in rally_buildings:
+		var undeployment := _request_undeployment(building, target, move_mode)
+		if undeployment.is_empty():
+			ordinary_rally_buildings.append(building)
+			continue
+		undeployment_messages.append(String(undeployment.get("message", "")))
+	rally_buildings = ordinary_rally_buildings
+	if movable_entities.is_empty():
+		for building in rally_buildings:
+			building.call("set_rally_point", target)
+		var labels: Array[String] = []
+		if not rally_buildings.is_empty():
+			var rally_label := "Rally point set to %.1f, %.1f" % [target.x, target.z]
+			if rally_buildings.size() > 1:
+				rally_label = "Rally point set for %d buildings" % rally_buildings.size()
+			labels.append(rally_label)
+		labels.append_array(undeployment_messages)
+		if not labels.is_empty():
+			status_changed.emit(" | ".join(labels))
+		return
+
 	var target_cell := Vector2i(-1, -1)
 	var spice_target := false
 	if _terrain != null and _terrain.navigation_grid != null and _terrain.navigation_grid.is_loaded():
@@ -266,7 +280,21 @@ func _command_move(screen_position: Vector2) -> void:
 		if not moving_entities.is_empty() and move_mode == UnitNavigationSystemScript.MoveMode.FORMATION else ""
 	var deployment_status := " | %d unit(s) deploying" % deploying_entities \
 		if deploying_entities > 0 else ""
-	status_changed.emit("%s%s%s%s" % [movement_label, nav_status, formation_status, deployment_status])
+	var undeployment_status := " | %s" % " | ".join(undeployment_messages) \
+		if not undeployment_messages.is_empty() else ""
+	status_changed.emit("%s%s%s%s%s" % [
+		movement_label, nav_status, formation_status, deployment_status, undeployment_status
+	])
+
+
+func _request_undeployment(entity: Node, target: Vector3, move_mode: int) -> Dictionary:
+	if _deployment_controller == null or not entity.is_in_group("buildings") \
+	or not _deployment_controller.has_method("try_undeploy"):
+		return {}
+	var result: Dictionary = _deployment_controller.call(
+		"try_undeploy", entity, target, move_mode
+	)
+	return result if bool(result.get("handled", false)) else {}
 
 
 func _is_formation_modifier(event: InputEventKey) -> bool:

@@ -114,15 +114,27 @@ class FakeNavigation extends RefCounted:
 
 class FakeDeploymentController extends RefCounted:
 	var calls: Array[Node] = []
+	var undeployment_calls: Array[Dictionary] = []
 	var result := {
 		"handled": true,
 		"started": true,
 		"message": "ATConYard deployment started",
 	}
+	var undeployment_result := {
+		"handled": true,
+		"started": true,
+		"message": "ATConYard packing into ATMCV",
+	}
 
 	func try_deploy(unit: Node) -> Dictionary:
 		calls.append(unit)
 		return result
+
+	func try_undeploy(building: Node, target: Vector3, move_mode: int) -> Dictionary:
+		undeployment_calls.append({
+			"building": building, "target": target, "move_mode": move_mode
+		})
+		return undeployment_result
 
 
 class FakeNavigationGrid extends MapNavigationGrid:
@@ -159,6 +171,7 @@ func _initialize() -> void:
 	_run_case("spice click issues harvester order", _test_harvester_order.bind(local_player))
 	_run_case("owned refinery click issues unload order", _test_unload_order.bind(local_player, enemy_player))
 	_run_case("building selection", _test_building_selection.bind(local_player))
+	_run_case("Construction Yard move command requests undeployment", _test_building_move_undeployment.bind(local_player))
 	players.reset_for_match()
 	if _failures > 0:
 		printerr("UnitCommandController tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -281,6 +294,41 @@ func _test_building_selection(token: int, local_player) -> int:
 
 	commands.queue_free()
 	building.queue_free()
+	return token
+
+
+func _test_building_move_undeployment(token: int, local_player) -> int:
+	var deployment := FakeDeploymentController.new()
+	var commands := FakeUnitCommandController.new()
+	commands.setup(null, null, null, null, deployment)
+	var statuses: Array[String] = []
+	commands.status_changed.connect(func(status: String) -> void: statuses.append(status))
+	root.add_child(commands)
+
+	var con_yard := FakeBuilding.new()
+	con_yard.name = "ATConYard"
+	con_yard.player = local_player
+	con_yard.add_to_group("buildings")
+	root.add_child(con_yard)
+	var collider := Node.new()
+	con_yard.add_child(collider)
+
+	commands.raycast_hits.append({"collider": collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+	commands.raycast_hits.append({"position": Vector3(24.0, 0.0, 30.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+
+	_expect(deployment.undeployment_calls.size() == 1, "a selected Construction Yard must route its move command through undeployment")
+	if not deployment.undeployment_calls.is_empty():
+		var request: Dictionary = deployment.undeployment_calls[0]
+		_expect(request["building"] == con_yard, "the undeployment request must retain the selected building")
+		_expect(request["target"] == Vector3(24.0, 0.0, 30.0), "the undeployment request must retain the clicked move target")
+		_expect(request["move_mode"] == UnitNavigationSystemScript.MoveMode.FREE, "the undeployment request must retain the movement mode")
+	_expect(con_yard.rally_points.is_empty(), "a handled Construction Yard move must not become a rally point")
+	_expect(statuses.back() == "ATConYard packing into ATMCV", "the packing status must reach the shared selection label")
+
+	commands.queue_free()
+	con_yard.queue_free()
 	return token
 
 

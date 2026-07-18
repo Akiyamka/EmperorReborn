@@ -107,6 +107,8 @@ var _last_terrain_normal := Vector3.UP
 var _uses_mech_gait := false
 var _mech_gait_elapsed := 0.0
 var _is_deploying := false
+var _deployment_aligning := false
+var _deployment_alignment_direction := Vector3.ZERO
 var _deployment_animation_player: AnimationPlayer
 var _deployment_animation_name: StringName = &""
 
@@ -152,6 +154,11 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	if _is_deploying:
 		velocity = Vector3.ZERO
+		if _deployment_aligning:
+			if _turn_toward(_deployment_alignment_direction, delta):
+				_deployment_aligning = false
+				_set_visual_slope_target(_last_terrain_normal)
+				_start_deployment_animation()
 		return
 	if _navigation_managed:
 		return
@@ -528,9 +535,9 @@ func stop_at_current_position() -> void:
 
 
 ## Shared unit deployment interface. Eligibility and the per-unit strategy
-## live in UnitDeploymentController; Unit owns only the common locked animation
-## phase so future deployable units can reuse the same command contract.
-func deploy() -> bool:
+## live in UnitDeploymentController; Unit owns the common locked alignment and
+## animation phases so future deployable units can reuse the same contract.
+func deploy(facing_direction: Vector3 = Vector3.ZERO) -> bool:
 	if _is_deploying:
 		return false
 	_is_deploying = true
@@ -538,6 +545,28 @@ func deploy() -> bool:
 	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
 		_navigation_system.call("set_hold_position", self, true)
 
+	_deployment_alignment_direction = Vector3(
+		facing_direction.x, 0.0, facing_direction.z
+	)
+	_deployment_aligning = (
+		_deployment_alignment_direction.length_squared()
+			> SpatialOrientationScript.DIRECTION_EPSILON
+		and not _turn_toward(_deployment_alignment_direction, 0.0)
+	)
+	if _deployment_aligning and turn_rate > 0.0:
+		_deployment_alignment_direction = _deployment_alignment_direction.normalized()
+		return true
+	if _deployment_aligning:
+		# A deployable unit without an authored turn rate cannot complete a
+		# gradual alignment, so preserve the generic deployment contract.
+		face_direction(_deployment_alignment_direction)
+		_deployment_aligning = false
+
+	_start_deployment_animation()
+	return true
+
+
+func _start_deployment_animation() -> void:
 	_deployment_animation_player = null
 	_deployment_animation_name = &""
 	for candidate in DEPLOYMENT_ANIMATION_CANDIDATES:
@@ -552,14 +581,13 @@ func deploy() -> bool:
 
 	if _deployment_animation_player == null:
 		call_deferred("_emit_deployment_animation_finished")
-		return true
+		return
 
 	var animation := _deployment_animation_player.get_animation(_deployment_animation_name)
 	if animation != null:
 		animation.loop_mode = Animation.LOOP_NONE
 	_deployment_animation_player.stop()
 	_deployment_animation_player.play(_deployment_animation_name)
-	return true
 
 
 func is_deploying() -> bool:
@@ -577,6 +605,8 @@ func finish_deployment(consumed: bool) -> void:
 	if not _is_deploying:
 		return
 	_is_deploying = false
+	_deployment_aligning = false
+	_deployment_alignment_direction = Vector3.ZERO
 	_deployment_animation_player = null
 	_deployment_animation_name = &""
 	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):

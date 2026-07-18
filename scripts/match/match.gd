@@ -170,7 +170,9 @@ func _setup_unit_deployment_controller() -> void:
 	_unit_deployment_controller = UnitDeploymentControllerScript.new()
 	_unit_deployment_controller.name = "UnitDeploymentController"
 	add_child(_unit_deployment_controller)
-	_unit_deployment_controller.setup(terrain.navigation_grid, $Buildings)
+	_unit_deployment_controller.setup(
+		terrain.navigation_grid, $Buildings, $Units, _unit_navigation_system
+	)
 
 
 func _setup_unit_navigation_system() -> void:
