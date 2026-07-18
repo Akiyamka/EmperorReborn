@@ -23,6 +23,10 @@ var world_scale := 0.0625
 # advanced per second by the fx_frame animation tracks).
 const TEXTURE_FX_FPS := 4.0
 const MIN_ANIMATION_AXIS_SCALE := 0.0001
+# Normalized signed-volume threshold below which a mesh counts as authored
+# inside-out (see _mesh_is_inside_out). Nearly flat or open meshes fall inside
+# the +-threshold band and are never flipped.
+const INSIDE_OUT_VOLUME_THRESHOLD := 0.001
 const MIRRORED_CONTENT_NODE_NAME := "MirroredContent"
 const LOCAL_Z_REFLECTION := Transform3D(
 	Basis(Vector3.RIGHT, Vector3.UP, Vector3.FORWARD),
@@ -120,10 +124,11 @@ func build(xbf_path: String) -> PackedScene:
 	return scene
 
 
-func _build_object_node(object: Dictionary, texture_names: PackedStringArray, node_path: String, anim: Animation) -> Node3D:
+func _build_object_node(object: Dictionary, texture_names: PackedStringArray, node_path: String, anim: Animation, parent_parity := 1) -> Node3D:
 	var node := Node3D.new()
 	var raw_name := String(object.name)
 	var uses_mirrored_content := _object_animation_is_consistently_mirrored(object)
+	var parity := parent_parity * _object_parity(object, uses_mirrored_content)
 	node.name = _safe_node_name(raw_name)
 	node.set_meta("original_name", raw_name)
 	if raw_name == COLLISION_OBJECT_NAME:
@@ -163,7 +168,8 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		content_root = mirrored_content
 		content_path = "%s/%s" % [child_path, MIRRORED_CONTENT_NODE_NAME]
 
-	var meshes := _build_object_mesh_components(object, texture_names)
+	var flip_orientation := parity < 0 and _mesh_is_inside_out(object)
+	var meshes := _build_object_mesh_components(object, texture_names, flip_orientation)
 	for mesh_index in meshes.size():
 		var mesh: ArrayMesh = meshes[mesh_index]
 		if mesh.get_surface_count() == 0:
@@ -192,7 +198,7 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 			_muzzle_flash_mesh_paths.append(mesh_path)
 		# Vertex-animated objects deliberately remain a single component, so
 		# each animation frame can still replace one complete ArrayMesh.
-		_add_vertex_animation_track(anim, mesh_path, object, texture_names)
+		_add_vertex_animation_track(anim, mesh_path, object, texture_names, flip_orientation)
 		var atlas_frames := _mesh_animated_frame_count(mesh)
 		if atlas_frames > 1:
 			_pending_frame_tracks.append({"path": mesh_path, "frames": atlas_frames})
@@ -212,10 +218,62 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 			mesh_instance.set_meta("scroll_fx", true)
 
 	for child_object: Dictionary in object.children:
-		var child := _build_object_node(child_object, texture_names, content_path, anim)
+		var child := _build_object_node(child_object, texture_names, content_path, anim, parity)
 		content_root.add_child(child)
 
 	return node
+
+
+## Sign of the object's own runtime transform: -1 when it mirrors its content.
+## Consistently mirrored animations override the static basis because their
+## keys replace it as soon as any clip plays.
+func _object_parity(object: Dictionary, uses_mirrored_content: bool) -> int:
+	if uses_mirrored_content:
+		return -1
+	return -1 if (object.transform as Transform3D).basis.determinant() < 0.0 else 1
+
+
+## Objects placed under a net-mirrored transform are frequently authored
+## inside-out - vertex normals and winding both point into the volume - so the
+## mirror turns them right side out (AT/OR ConYard treads, girderboxes,
+## Imperial Barracks left legs). The source engine renders without back-face
+## culling, so only their lighting was ever wrong. Godot flips culling for
+## negative-determinant instances, which turns exactly these pre-compensated
+## meshes inside out on screen, while correctly authored mirrored meshes
+## (e.g. AT ConYard girderbox06) need no help. Detect the pre-compensated ones
+## by normalized signed volume so the bake can restore true outward
+## orientation. Callers must only apply this inside mirrored subtrees: an
+## unrestricted sweep also flags concave debris meshes.
+func _mesh_is_inside_out(object: Dictionary) -> bool:
+	var positions: PackedVector3Array = object.positions
+	var indices: PackedInt32Array = object.triangle_indices
+	var triangle_textures: PackedInt32Array = object.triangle_textures
+	if positions.is_empty():
+		return false
+	var rendered_triangles := 0
+	for texture_index in triangle_textures:
+		if texture_index != -1:
+			rendered_triangles += 1
+	if rendered_triangles < 4:
+		return false
+	var diagonal := _object_bounds(positions).size.length()
+	if diagonal <= 0.0:
+		return false
+
+	var centroid := Vector3.ZERO
+	for position in positions:
+		centroid += position
+	centroid /= positions.size()
+
+	var volume := 0.0
+	for i in triangle_textures.size():
+		if triangle_textures[i] == -1:
+			continue
+		var a := positions[indices[i * 3]] - centroid
+		var b := positions[indices[i * 3 + 1]] - centroid
+		var c := positions[indices[i * 3 + 2]] - centroid
+		volume += a.dot(b.cross(c)) / 6.0
+	return volume / (diagonal ** 3) < -INSIDE_OUT_VOLUME_THRESHOLD
 
 
 func _is_hidden_source_mesh_component(object_name: String, mesh_index: int) -> bool:
@@ -224,13 +282,13 @@ func _is_hidden_source_mesh_component(object_name: String, mesh_index: int) -> b
 	return bool(hidden_components.get(mesh_index, false))
 
 
-func _build_object_mesh_components(object: Dictionary, texture_names: PackedStringArray) -> Array[ArrayMesh]:
+func _build_object_mesh_components(object: Dictionary, texture_names: PackedStringArray, flip_orientation := false) -> Array[ArrayMesh]:
 	# A number of building H0 files collapse otherwise independent authored
 	# parts into one XBF object. AT Refinery's shell is the prominent case: 25
 	# disconnected pieces became one 16-surface MeshInstance. Keep animated
 	# vertex layouts intact, but restore static disconnected parts as separate
 	# meshes while retaining every material surface within its own part.
-	var unsplit: Array[ArrayMesh] = [_build_object_mesh(object, texture_names)]
+	var unsplit: Array[ArrayMesh] = [_build_object_mesh(object, texture_names, PackedVector3Array(), PackedInt32Array(), flip_orientation)]
 	var raw_name := String(object.name)
 	if (
 		not (object.vertex_animation as Dictionary).is_empty()
@@ -246,7 +304,7 @@ func _build_object_mesh_components(object: Dictionary, texture_names: PackedStri
 
 	var meshes: Array[ArrayMesh] = []
 	for triangle_ids: PackedInt32Array in components:
-		meshes.append(_build_object_mesh(object, texture_names, PackedVector3Array(), triangle_ids))
+		meshes.append(_build_object_mesh(object, texture_names, PackedVector3Array(), triangle_ids, flip_orientation))
 	return meshes
 
 
@@ -331,7 +389,8 @@ func _build_object_mesh(
 		object: Dictionary,
 		texture_names: PackedStringArray,
 		animated_positions := PackedVector3Array(),
-		triangle_ids := PackedInt32Array()
+		triangle_ids := PackedInt32Array(),
+		flip_orientation := false
 	) -> ArrayMesh:
 	var surfaces := {}
 	var positions: PackedVector3Array = animated_positions if not animated_positions.is_empty() else object.positions
@@ -384,6 +443,8 @@ func _build_object_mesh(
 	texture_indices.sort()
 	for texture_index: int in texture_indices:
 		var surface: Dictionary = surfaces[texture_index]
+		if flip_orientation:
+			_flip_surface_orientation(surface)
 		var arrays := []
 		arrays.resize(Mesh.ARRAY_MAX)
 		arrays[Mesh.ARRAY_VERTEX] = surface.positions
@@ -396,6 +457,17 @@ func _build_object_mesh(
 		mesh.surface_set_name(surface_index, texture_name)
 		mesh.surface_set_material(surface_index, _model_material(texture_name))
 	return mesh
+
+
+func _flip_surface_orientation(surface: Dictionary) -> void:
+	var indices: PackedInt32Array = surface.indices
+	for i in range(0, indices.size(), 3):
+		var swap := indices[i + 1]
+		indices[i + 1] = indices[i + 2]
+		indices[i + 2] = swap
+	var normals: PackedVector3Array = surface.normals
+	for i in normals.size():
+		normals[i] = -normals[i]
 
 
 func _model_material(texture_name: String) -> Material:
@@ -1064,7 +1136,7 @@ func _perpendicular_axis(axis: Vector3) -> Vector3:
 	return (reference - axis * axis.dot(reference)).normalized()
 
 
-func _add_vertex_animation_track(anim: Animation, mesh_path: String, object: Dictionary, texture_names: PackedStringArray) -> void:
+func _add_vertex_animation_track(anim: Animation, mesh_path: String, object: Dictionary, texture_names: PackedStringArray, flip_orientation := false) -> void:
 	var vertex_animation: Dictionary = object.vertex_animation
 	if vertex_animation.is_empty():
 		return
@@ -1088,7 +1160,7 @@ func _add_vertex_animation_track(anim: Animation, mesh_path: String, object: Dic
 		# Identical poses share one baked mesh instead of duplicating it per frame.
 		var mesh: ArrayMesh = mesh_cache.get(positions)
 		if mesh == null:
-			mesh = _build_object_mesh(object, texture_names, positions)
+			mesh = _build_object_mesh(object, texture_names, positions, PackedInt32Array(), flip_orientation)
 			mesh_cache[positions] = mesh
 		anim.track_insert_key(track, frame_id / fps, mesh)
 

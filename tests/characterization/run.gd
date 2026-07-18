@@ -36,6 +36,7 @@ func _initialize() -> void:
 	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
+	_run_case("XBF mirrored inside-out meshes are re-oriented", _test_mirrored_mesh_orientation)
 	_run_case("AT Refinery independent pads and mesh components", _test_at_refinery_partitioning)
 	_run_case("Muzzle flash clip visibility", _test_muzzle_flash_clip_visibility)
 
@@ -458,6 +459,77 @@ func _test_mirrored_object_animation_handedness() -> bool:
 
 	root.free()
 	return true
+
+
+## clonetread01/02 are authored inside-out for their always-mirrored placement
+## and must be re-oriented at bake; girderbox06 is equally mirrored but
+## authored outward and must keep its authored orientation.
+func _test_mirrored_mesh_orientation() -> bool:
+	var builder = ModelBakeBuilderScript.new()
+	var scene: PackedScene = builder.build("res://assets/raw_original_content/3DDATA/Buildings/AT_Conyard_HC.XBF")
+	_expect(scene != null, "AT ConYard construction model must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate()
+	for object_name in ["clonetread01", "clonetread02", "girderbox06"]:
+		var node := root.find_child(object_name, true, false) as Node3D
+		_expect(node != null, "%s must exist in the converted scene" % object_name)
+		if node == null:
+			continue
+		var content: Node = node.get_node_or_null("MirroredContent")
+		if content == null:
+			content = node
+		var checked := 0
+		# Flat split-off components are direction-neutral around their own
+		# centroid, so outwardness is judged once per object as a magnitude-
+		# weighted sum instead of per triangle.
+		var outward_sum := 0.0
+		for child in content.get_children():
+			if child is MeshInstance3D:
+				var mesh := (child as MeshInstance3D).mesh as ArrayMesh
+				if mesh != null:
+					outward_sum += _expect_outward_mesh(mesh, object_name)
+					checked += 1
+		_expect(checked > 0, "%s must carry mesh geometry" % object_name)
+		_expect(outward_sum > 0.0, "%s normals must point outward (weighted sum %f)" % [object_name, outward_sum])
+	root.free()
+	return true
+
+
+func _expect_outward_mesh(mesh: ArrayMesh, object_name: String) -> float:
+	var centroid := Vector3.ZERO
+	var vertex_count := 0
+	for surface_index in mesh.get_surface_count():
+		var arrays := mesh.surface_get_arrays(surface_index)
+		for vertex: Vector3 in arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array:
+			centroid += vertex
+			vertex_count += 1
+	if vertex_count == 0:
+		return 0.0
+	centroid /= vertex_count
+	var outward_sum := 0.0
+	for surface_index in mesh.get_surface_count():
+		var arrays := mesh.surface_get_arrays(surface_index)
+		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		var triangle_count := indices.size() / 3
+		var winding_front := 0
+		for i in range(0, indices.size(), 3):
+			var v0 := vertices[indices[i]]
+			var v1 := vertices[indices[i + 1]]
+			var v2 := vertices[indices[i + 2]]
+			var normal_sum := normals[indices[i]] + normals[indices[i + 1]] + normals[indices[i + 2]]
+			outward_sum += ((v0 + v1 + v2) / 3.0 - centroid).dot(normal_sum)
+			# Godot treats clockwise-wound faces as front, so a front face's
+			# right-handed winding normal points against the shading normal.
+			if (v1 - v0).cross(v2 - v0).dot(normal_sum) < 0.0:
+				winding_front += 1
+		_expect(
+			winding_front == triangle_count,
+			"%s surface %d winding must face outward (%d/%d)" % [object_name, surface_index, winding_front, triangle_count]
+		)
+	return outward_sum
 
 
 func _animation_track_containing(animation: Animation, object_name: String) -> int:
