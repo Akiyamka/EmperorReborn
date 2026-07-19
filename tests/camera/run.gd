@@ -38,6 +38,8 @@ func _test_pitched_camera_view_stays_inside_map_bounds() -> void:
 		_view_center(camera).is_equal_approx(Vector3(expected_bounds.end.x, 0.0, expected_bounds.end.y)),
 		"the ground-plane view center must clamp to the maximum map corner"
 	)
+	_expect(not rig._can_scroll(Vector2.RIGHT), "east edge scrolling must report blocked at the east map bound")
+	_expect(rig._can_scroll(Vector2.LEFT), "west edge scrolling must remain available at the east map bound")
 
 	rig.rotate_y(1.1)
 	rig.set_target(Vector3(-1000.0, 0.0, -1000.0))

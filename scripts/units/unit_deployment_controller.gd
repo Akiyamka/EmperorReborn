@@ -122,6 +122,13 @@ func can_handle(unit: Node3D) -> bool:
 	)
 
 
+## Cursor-facing capability check. Spatial deployment validation still runs
+## when the order is issued, while this answers whether the unit can currently
+## accept that kind of order at all.
+func can_issue_deploy(unit: Node3D) -> bool:
+	return can_handle(unit) and not bool(unit.call("is_deploying"))
+
+
 ## A Construction Yard receives this through the ordinary terrain move-command
 ## path. Result keys mirror try_deploy: handled, started, and message.
 func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dictionary:

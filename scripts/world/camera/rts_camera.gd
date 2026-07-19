@@ -2,6 +2,7 @@ class_name RTSCamera
 extends Node3D
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
 
 const RTSCameraConfigScript := preload("res://scripts/world/camera/rts_camera_config.gd")
 
@@ -25,8 +26,10 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	var input_direction := _keyboard_direction()
+	var edge_scroll_direction := Vector2.ZERO
 	if config.edge_scroll_enabled:
-		input_direction += _edge_scroll_direction()
+		edge_scroll_direction = _edge_scroll_direction()
+		input_direction += edge_scroll_direction
 
 	if input_direction.length_squared() > 1.0:
 		input_direction = input_direction.normalized()
@@ -40,6 +43,7 @@ func _process(delta: float) -> void:
 
 	global_position += (right * input_direction.x + forward * input_direction.y) * speed * delta
 	_clamp_view_to_bounds()
+	_update_edge_scroll_cursor(edge_scroll_direction)
 
 	var rotation_input := 0.0
 	if Input.is_key_pressed(KEY_Q):
@@ -63,6 +67,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_WHEEL_DOWN:
 				_set_zoom(_zoom + config.zoom_speed)
 				get_viewport().set_input_as_handled()
+
+
+func _exit_tree() -> void:
+	var cursors: Variant = _cursor_manager()
+	if cursors != null:
+		cursors.clear_override(CursorManagerScript.EDGE_SCROLL_OVERRIDE)
 
 
 func set_map_view(center: Vector3, bounds: Rect2) -> void:
@@ -120,6 +130,41 @@ func _edge_scroll_direction() -> Vector2:
 		direction.y -= 1.0
 
 	return direction
+
+
+func _update_edge_scroll_cursor(direction: Vector2) -> void:
+	var cursors: Variant = _cursor_manager()
+	if cursors == null:
+		return
+	cursors.set_edge_scroll_cursor(direction, _can_scroll(direction))
+
+
+func _can_scroll(direction: Vector2) -> bool:
+	if direction.is_zero_approx() or not target_bounds.has_area():
+		return not direction.is_zero_approx()
+	var view_center_value: Variant = _ground_view_center()
+	if view_center_value == null:
+		return true
+	var view_center: Vector3 = view_center_value
+	var world_direction := (
+		SpatialOrientationScript.world_right(self) * direction.x
+		+ SpatialOrientationScript.world_forward(self) * direction.y
+	)
+	if world_direction.is_zero_approx():
+		return false
+	world_direction = world_direction.normalized()
+	var requested := Vector2(view_center.x + world_direction.x, view_center.z + world_direction.z)
+	var clamped := Vector2(
+		clampf(requested.x, target_bounds.position.x, target_bounds.end.x),
+		clampf(requested.y, target_bounds.position.y, target_bounds.end.y)
+	)
+	return not clamped.is_equal_approx(Vector2(view_center.x, view_center.z))
+
+
+func _cursor_manager() -> Variant:
+	if not is_inside_tree():
+		return null
+	return get_node_or_null("/root/Cursors")
 
 
 ## Clamps the point the camera actually looks at (center ray projected onto

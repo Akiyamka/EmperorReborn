@@ -221,6 +221,8 @@ func _snap_to_ground(point: Vector3) -> Vector3:
 func _process(delta: float) -> void:
 	if _building_controller != null:
 		_building_controller.process(delta)
+	if _unit_command_controller != null:
+		_unit_command_controller.process()
 	if _building_upgrade_controller != null:
 		_building_upgrade_controller.process(delta)
 	if _unit_roster_controller != null:

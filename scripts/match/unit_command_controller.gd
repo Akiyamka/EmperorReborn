@@ -5,6 +5,7 @@ signal status_changed(status: String)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
 
 var _camera: Camera3D
 var _terrain: MapLoader
@@ -21,6 +22,9 @@ var _formation_modifier_down := false
 const DRAG_SELECTION_THRESHOLD := 8.0
 const TERRAIN_COLLISION_MASK := 1
 const ENTITY_SELECTION_COLLISION_MASK := 2
+const COMMAND_CURSOR_OVERRIDE := &"unit_command"
+const COMMAND_CURSOR_PRIORITY := 25
+const NO_CURSOR_OVERRIDE := -1
 
 
 func setup(
@@ -35,6 +39,20 @@ func setup(
 	_navigation = navigation
 	_selection_rectangle = selection_rectangle
 	_deployment_controller = deployment_controller
+
+
+func process() -> void:
+	var hovered_control := get_viewport().gui_get_hovered_control()
+	if hovered_control != null and hovered_control.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		_clear_command_cursor()
+		return
+	_update_command_cursor(get_viewport().get_mouse_position())
+
+
+func _exit_tree() -> void:
+	var cursors: Variant = _cursor_manager()
+	if cursors != null:
+		cursors.clear_override(COMMAND_CURSOR_OVERRIDE)
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
@@ -186,6 +204,9 @@ func _command_move(screen_position: Vector2) -> void:
 		return
 
 	var target: Vector3 = hit["position"]
+	if not _can_interact_with(target_entity) and not _can_issue_movement_order(target):
+		status_changed.emit("Cannot move to %.1f, %.1f" % [target.x, target.z])
+		return
 	var move_mode := (
 		UnitNavigationSystemScript.MoveMode.FORMATION
 		if _formation_modifier_down
@@ -342,6 +363,110 @@ func _update_hover(screen_position: Vector2) -> void:
 		_hovered_entity.set_hovered(true)
 
 
+func _update_command_cursor(screen_position: Vector2) -> void:
+	var cursors: Variant = _cursor_manager()
+	if cursors == null:
+		return
+	var cursor := _command_cursor_at(screen_position)
+	if cursor == NO_CURSOR_OVERRIDE:
+		_clear_command_cursor()
+	else:
+		cursors.set_override(COMMAND_CURSOR_OVERRIDE, cursor, COMMAND_CURSOR_PRIORITY)
+
+
+func _clear_command_cursor() -> void:
+	var cursors: Variant = _cursor_manager()
+	if cursors != null:
+		cursors.clear_override(COMMAND_CURSOR_OVERRIDE)
+
+
+func _command_cursor_at(screen_position: Vector2) -> int:
+	if _is_dragging():
+		return NO_CURSOR_OVERRIDE
+	var entity_hit := _raycast(screen_position, ENTITY_SELECTION_COLLISION_MASK)
+	var entity = _find_selectable_entity(entity_hit.get("collider") as Node)
+	if _can_deploy_entity(entity):
+		return CursorManagerScript.CursorType.DEPLOY
+	if _can_interact_with(entity):
+		return CursorManagerScript.CursorType.ENTER
+	if entity != null and not _selected_entities.has(entity) and _can_control(entity):
+		return CursorManagerScript.CursorType.OVER_UNIT
+	if _selected_entities.is_empty():
+		return NO_CURSOR_OVERRIDE
+
+	var terrain_hit := _raycast(screen_position, TERRAIN_COLLISION_MASK)
+	if terrain_hit.is_empty():
+		return CursorManagerScript.CursorType.CANT_MOVE
+	var target: Vector3 = terrain_hit["position"]
+	if not _can_issue_movement_order(target):
+		return CursorManagerScript.CursorType.CANT_MOVE
+	if _can_apply_targeted_ability_at(target):
+		return CursorManagerScript.CursorType.TARGET_ABILITY
+	return CursorManagerScript.CursorType.MOVE
+
+
+func _can_interact_with(target) -> bool:
+	if target == null or not target.is_in_group("buildings"):
+		return false
+	for entity in _selected_entities:
+		if not is_instance_valid(entity) or not _can_control(entity):
+			continue
+		if entity.has_method("can_unload_at") and entity.has_method("command_unload") \
+		and bool(entity.call("can_unload_at", target)):
+			return true
+	return false
+
+
+func _can_deploy_entity(entity) -> bool:
+	return (
+		entity is Node3D
+		and _can_control(entity)
+		and _deployment_controller != null
+		and _deployment_controller.has_method("can_issue_deploy")
+		and bool(_deployment_controller.call("can_issue_deploy", entity))
+	)
+
+
+## Extension point for commands that apply an ability to a world target.
+## Harvesting spice is the first such command; future targeted abilities can
+## join this predicate without changing cursor precedence.
+func _can_apply_targeted_ability_at(target: Vector3) -> bool:
+	if _terrain == null or _terrain.navigation_grid == null \
+	or not _terrain.navigation_grid.is_loaded() or _terrain.spice_layer == null:
+		return false
+	var target_cell: Vector2i = _terrain.navigation_grid.world_to_grid(target)
+	if not bool(_terrain.spice_layer.call("has_spice", target_cell)):
+		return false
+	for entity in _selected_entities:
+		if not is_instance_valid(entity) or not _can_control(entity):
+			continue
+		if entity.has_method("can_harvest_spice") and entity.has_method("command_harvest") \
+		and bool(entity.call("can_harvest_spice")):
+			return true
+	return false
+
+
+func _can_issue_movement_order(target: Vector3) -> bool:
+	var movable_entities: Array[Node] = []
+	var has_rally_building := false
+	for entity in _selected_entities:
+		if not is_instance_valid(entity) or not _can_control(entity):
+			continue
+		if entity.has_method("is_deploying") and bool(entity.call("is_deploying")):
+			continue
+		if entity.has_method("move_to"):
+			movable_entities.append(entity)
+		elif entity.has_method("set_rally_point"):
+			has_rally_building = true
+	if has_rally_building:
+		return true
+	if movable_entities.is_empty():
+		return false
+	if _navigation != null and _navigation.has_method("can_move_to"):
+		return bool(_navigation.call("can_move_to", movable_entities, target))
+	return true
+
+
 func _find_selectable_entity(node: Node):
 	var current := node
 	while current != null:
@@ -407,3 +532,9 @@ func _players():
 	if not is_inside_tree():
 		return null
 	return get_node_or_null("/root/Players")
+
+
+func _cursor_manager() -> Variant:
+	if not is_inside_tree():
+		return null
+	return get_node_or_null("/root/Cursors")

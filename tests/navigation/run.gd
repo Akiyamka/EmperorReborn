@@ -154,6 +154,20 @@ func _test_unit_navigation_order_api(grid: MapNavigationGrid) -> void:
 	var unit := FakeUnit.new()
 	root.add_child(unit)
 	unit.global_position = Vector3(90.5, 0.0, 100.5)
+	var blocked_target := Vector3(110.5, 0.0, 100.5)
+	navigation.runtime_map.replace_blocked_cells({grid.world_to_grid(blocked_target): true})
+	_expect(
+		navigation.can_move_to([unit], Vector3(100.5, 0.0, 100.5)),
+		"movement cursor query must accept an exact stoppable destination"
+	)
+	_expect(
+		not navigation.can_move_to([unit], blocked_target),
+		"movement cursor query must reject an exact blocked destination"
+	)
+	_expect(
+		unit.prepared_navigation_targets.is_empty() and unit.destination == Vector3.ZERO,
+		"movement cursor queries must not prepare or mutate a unit order"
+	)
 	unit.defer_navigation_orders = true
 	var target := Vector3(100.5, 0.0, 100.5)
 	var deferred := navigation.command_move([unit], target)

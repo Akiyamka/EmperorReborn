@@ -2,6 +2,7 @@ extends SceneTree
 
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -99,6 +100,12 @@ class FakeUnitCommandController extends UnitCommandController:
 
 class FakeNavigation extends RefCounted:
 	var commands: Array[Dictionary] = []
+	var move_allowed := true
+	var move_queries: Array[Dictionary] = []
+
+	func can_move_to(units: Array, target: Vector3) -> bool:
+		move_queries.append({"units": units.duplicate(), "target": target})
+		return move_allowed
 
 	func command_move(units: Array, target: Vector3, mode: int, exit_point := Vector3.INF) -> Array:
 		var accepted := []
@@ -115,6 +122,7 @@ class FakeNavigation extends RefCounted:
 class FakeDeploymentController extends RefCounted:
 	var calls: Array[Node] = []
 	var undeployment_calls: Array[Dictionary] = []
+	var deployable_entities: Array[Node] = []
 	var result := {
 		"handled": true,
 		"started": true,
@@ -129,6 +137,9 @@ class FakeDeploymentController extends RefCounted:
 	func try_deploy(unit: Node) -> Dictionary:
 		calls.append(unit)
 		return result
+
+	func can_issue_deploy(unit: Node3D) -> bool:
+		return unit in deployable_entities
 
 	func try_undeploy(building: Node, target: Vector3, move_mode: int) -> Dictionary:
 		undeployment_calls.append({
@@ -172,6 +183,7 @@ func _initialize() -> void:
 	_run_case("owned refinery click issues unload order", _test_unload_order.bind(local_player, enemy_player))
 	_run_case("building selection", _test_building_selection.bind(local_player))
 	_run_case("Construction Yard move command requests undeployment", _test_building_move_undeployment.bind(local_player))
+	_run_case("command and selection cursors follow pointer context", _test_context_cursors.bind(local_player, enemy_player))
 	players.reset_for_match()
 	if _failures > 0:
 		printerr("UnitCommandController tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -329,6 +341,145 @@ func _test_building_move_undeployment(token: int, local_player) -> int:
 
 	commands.queue_free()
 	con_yard.queue_free()
+	return token
+
+
+func _test_context_cursors(token: int, local_player, enemy_player) -> int:
+	var navigation := FakeNavigation.new()
+	var deployment := FakeDeploymentController.new()
+	var terrain := MapLoader.new()
+	terrain.navigation_grid = FakeNavigationGrid.new()
+	terrain.spice_layer = FakeSpiceLayer.new()
+	var commands := FakeUnitCommandController.new()
+	commands.setup(null, terrain, navigation, null, deployment)
+	root.add_child(commands)
+
+	var scout := _make_unit("Scout", local_player)
+	var tank := _make_unit("Tank", local_player)
+	var mcv := _make_unit("ATMCV", local_player)
+	var enemy := _make_unit("Raider", enemy_player)
+	root.add_child(scout)
+	root.add_child(tank)
+	root.add_child(mcv)
+	root.add_child(enemy)
+	var scout_collider := Node.new()
+	var tank_collider := Node.new()
+	var mcv_collider := Node.new()
+	var enemy_collider := Node.new()
+	scout.add_child(scout_collider)
+	tank.add_child(tank_collider)
+	mcv.add_child(mcv_collider)
+	enemy.add_child(enemy_collider)
+
+	commands.raycast_hits.append({"collider": scout_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.OVER_UNIT,
+		"an unselected owned unit must use the row-six selection cursor"
+	)
+	deployment.deployable_entities.append(mcv)
+	commands.raycast_hits.append({"collider": mcv_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.DEPLOY,
+		"a deploy-capable MCV must use the row-twelve cursor before selection"
+	)
+	commands._set_selection([mcv])
+	commands.raycast_hits.append({"collider": mcv_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.DEPLOY,
+		"a selected deploy-capable MCV must retain the row-twelve cursor"
+	)
+	commands._set_selection([scout])
+	commands.raycast_hits.append({"collider": scout_collider})
+	commands.raycast_hits.append({"position": Vector3(12.0, 0.0, 14.0)})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.MOVE,
+		"the selected unit itself must not use the row-six cursor"
+	)
+
+	commands.raycast_hits.append({"collider": tank_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.OVER_UNIT,
+		"another selectable unit must keep the row-six cursor"
+	)
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({"position": Vector3(20.0, 0.0, 22.0)})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.MOVE,
+		"a valid movement point must use the row-two cursor"
+	)
+	_expect(
+		navigation.move_queries.back()["units"] == [scout],
+		"movement cursor validation must use the selected movable units"
+	)
+	navigation.move_allowed = false
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({"position": Vector3(30.0, 0.0, 32.0)})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.CANT_MOVE,
+		"an invalid movement point must use the row-four cursor"
+	)
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.CANT_MOVE,
+		"missing terrain must use the row-four cursor while a movable unit is selected"
+	)
+
+	var harvester := FakeHarvester.new()
+	harvester.name = "Harvester"
+	harvester.player = local_player
+	harvester.add_to_group("units")
+	root.add_child(harvester)
+	var refinery := FakeBuilding.new()
+	refinery.name = "ATRefinery"
+	refinery.player = local_player
+	refinery.refinery = true
+	refinery.add_to_group("buildings")
+	root.add_child(refinery)
+	var refinery_collider := Node.new()
+	refinery.add_child(refinery_collider)
+	commands._set_selection([harvester])
+	commands.raycast_hits.append({"collider": refinery_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.ENTER,
+		"a selected harvester over its refinery must use the row-five interaction cursor"
+	)
+	navigation.move_allowed = true
+	terrain.spice_layer.spice_cells[Vector2i(50, 52)] = 100
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({"position": Vector3(50.2, 0.0, 52.7)})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.TARGET_ABILITY,
+		"a harvestable spice target must use the row-nine targeted-ability cursor"
+	)
+
+	commands._set_selection([])
+	commands.raycast_hits.append({"collider": enemy_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == UnitCommandControllerScript.NO_CURSOR_OVERRIDE,
+		"an entity that cannot be selected must leave the pointer cursor unchanged"
+	)
+	navigation.move_allowed = false
+	commands._set_selection([scout])
+	commands.raycast_hits.append({"position": Vector3(40.0, 0.0, 42.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(
+		navigation.commands.is_empty(),
+		"a row-four destination must reject the movement order itself"
+	)
+	_expect(
+		commands.raycast_masks == [2, 2, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 1],
+		"cursor context must keep entity and terrain raycasts on their dedicated layers"
+	)
+
+	commands.queue_free()
+	scout.queue_free()
+	tank.queue_free()
+	mcv.queue_free()
+	enemy.queue_free()
+	harvester.queue_free()
+	refinery.queue_free()
+	terrain.free()
 	return token
 
 

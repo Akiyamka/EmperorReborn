@@ -14,11 +14,13 @@ const BuildingOptionStateScript := preload("res://scripts/buildings/building_opt
 const WallChainScript := preload("res://scripts/buildings/wall_chain.gd")
 const WallLineScript := preload("res://scripts/buildings/wall_line.gd")
 const DoubleClickTrackerScript := preload("res://scripts/buildings/double_click_tracker.gd")
+const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
 
 const DEFAULT_BUILD_RADIUS_TILES := 6
 const WALL_BUILDING_GROUP := "Wall"
 const DOUBLE_CLICK_THRESHOLD_MS := 350
 const PLACEMENT_ROTATION_DRAG_THRESHOLD := 8.0
+const BUILDING_MODE_CURSOR_OVERRIDE := &"building_mode"
 
 var camera: Camera3D
 ## docs/mechanics/production.md section 5 "map tech level": extension point
@@ -86,6 +88,7 @@ func setup(
 
 
 func process(delta: float) -> void:
+	_update_mode_cursor()
 	for building_id in _building_ids:
 		var building_available := _is_building_available(building_id)
 		if building_available != _building_availability.get(building_id, false):
@@ -220,6 +223,7 @@ func handle_building_intent(building_id: StringName, button_index: int) -> bool:
 
 func _set_sell_mode(active: bool) -> void:
 	_sell_mode = active
+	_update_mode_cursor()
 	sell_mode_changed.emit(active)
 	if active:
 		_set_wall_line_mode(false)
@@ -287,6 +291,50 @@ func _try_sell_building(screen_position: Vector2) -> void:
 		return
 
 	_finish_selling_building(building)
+
+
+func _exit_tree() -> void:
+	var cursors: Variant = _cursor_manager()
+	if cursors != null:
+		cursors.clear_override(BUILDING_MODE_CURSOR_OVERRIDE)
+
+
+func _update_mode_cursor() -> void:
+	var cursors: Variant = _cursor_manager()
+	if cursors == null:
+		return
+	if _sell_mode:
+		var hit := _raycast(get_viewport().get_mouse_position(), 2)
+		var building := _find_building(hit.get("collider") as Node)
+		var cursor := (
+			CursorManagerScript.CursorType.SELL
+			if _can_sell_building(building)
+			else CursorManagerScript.CursorType.CANT_SELL
+		)
+		cursors.set_override(BUILDING_MODE_CURSOR_OVERRIDE, cursor, 50)
+		return
+	if _building_placement.is_active() or _wall_line_mode or _wall_chain != null:
+		cursors.set_override(
+			BUILDING_MODE_CURSOR_OVERRIDE, CursorManagerScript.CursorType.POINTER, 50
+		)
+		return
+	cursors.clear_override(BUILDING_MODE_CURSOR_OVERRIDE)
+
+
+func _can_sell_building(building: Node3D) -> bool:
+	var players = _players()
+	return (
+		building != null
+		and players != null
+		and building.has_method("is_owned_by")
+		and building.call("is_owned_by", players.local_player_id)
+	)
+
+
+func _cursor_manager() -> Variant:
+	if not is_inside_tree():
+		return null
+	return get_node_or_null("/root/Cursors")
 
 
 func _on_sold_building_animation_finished(animation_name: StringName, building: Node3D) -> void:

@@ -172,6 +172,29 @@ func set_hold_position(unit: Node3D, active: bool) -> void:
 	_agents[unit.get_instance_id()] = agent
 
 
+## Read-only counterpart of an ordinary move order. It checks the exact
+## clicked destination against each unit's movement profile without preparing
+## the unit, changing its route, or reserving a parking slot.
+func can_move_to(units: Array, world_target: Vector3) -> bool:
+	if runtime_map.grid == null:
+		return false
+	var target_cell: Vector2i = runtime_map.grid.world_to_grid(world_target)
+	var allow_no_stop: bool = runtime_map.is_no_stop(target_cell)
+	for value in units:
+		var unit := value as Node3D
+		if unit == null:
+			continue
+		var agent: Dictionary = _movement_probe_for(unit)
+		var span: int = int(agent["footprint"])
+		var anchor: Vector2i = _parking_anchor(world_target, span)
+		if allow_no_stop:
+			if _block_passable(anchor, span, agent):
+				return true
+		elif _block_stoppable(anchor, span, agent):
+			return true
+	return false
+
+
 ## `exit_point` is a mandatory first waypoint for every unit in the command: a
 ## production building's front exit that the unit walks straight to before
 ## regular routing takes over (local steering may cross the building's own
@@ -1554,6 +1577,26 @@ func _agent_for(unit: Node3D) -> Dictionary:
 	if unit == null:
 		return {}
 	return _agents.get(unit.get_instance_id(), {})
+
+
+func _movement_probe_for(unit: Node3D) -> Dictionary:
+	var registered := _agent_for(unit)
+	if not registered.is_empty():
+		return {
+			"clearance": registered["rotation_clearance"],
+			"pass_mask": registered["pass_mask"],
+			"terrain_mask": registered["terrain_mask"],
+			"footprint": registered["footprint"],
+			"allowed_cells": {},
+		}
+	var profile := _profile_for(unit)
+	return {
+		"clearance": profile["clearance"],
+		"pass_mask": profile["pass_mask"],
+		"terrain_mask": profile["terrain_mask"],
+		"footprint": profile["footprint"],
+		"allowed_cells": {},
+	}
 
 
 func _profile_for(unit: Node3D) -> Dictionary:

@@ -2,7 +2,7 @@ GODOT_CONTAINER := ./tools/godot-container
 RULES_EDITOR_DIR := ./tools/rules_editor
 RULES_DB ?= $(CURDIR)/assets/converted/rules.db
 
-.PHONY: rules-editor rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-placement godot-convert-spice-mound godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-editor rules-export godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-placement godot-convert-cursors godot-convert-spice-mound godot-export-web godot-watch-export godot-shell godot-version
 
 rules-editor:
 	cd $(RULES_EDITOR_DIR) && RULES_DB="$(RULES_DB)" npm start
@@ -19,6 +19,7 @@ godot-check:
 godot-test:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/characterization/run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/camera/run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/ui/cursor_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/placement_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/controller_run.gd
@@ -47,6 +48,9 @@ godot-convert-all-units:
 
 godot-convert-placement:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_placement.gd
+
+godot-convert-cursors:
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_cursors.gd
 
 godot-convert-spice-mound:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_model.gd -- --source res://assets/raw_original_content/3DDATA/spice/Spicemound.xbf --output res://assets/converted/models/Spicemound/Spicemound.scn
