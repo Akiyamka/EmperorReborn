@@ -26,6 +26,14 @@ func _initialize() -> void:
 func _test_sprite_sheet(cursors) -> void:
 	_expect(cursors.cursor_count() == 33, "all 33 original cursor rows must be exposed")
 	_expect(cursors.frames_per_cursor() == 8, "every original cursor must have eight frames")
+	_expect(
+		CursorManagerScript.CursorType.REPAIR == 11,
+		"the twelfth cursor row must be reserved for repair commands"
+	)
+	_expect(
+		CursorManagerScript.CursorType.DEPLOY == 12,
+		"the thirteenth cursor row must be used for deploy commands"
+	)
 	for cursor in cursors.cursor_count():
 		for frame in cursors.frames_per_cursor():
 			var texture: Texture2D = cursors.frame_texture(cursor, frame)
