@@ -1,6 +1,7 @@
 extends SceneTree
 
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
+const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitScript := preload("res://scripts/units/unit.gd")
@@ -29,6 +30,10 @@ class CombatTarget extends RefCounted:
 	var position := Vector3.ZERO
 	var alive := true
 	var hit_radius := 0.25
+	var owner_player_id := 2
+	var accepted_effects: Array[StringName] = []
+	var received_effects: Array[StringName] = []
+	var received_effect_contexts: Array[Dictionary] = []
 
 	func _init(target_armour: StringName, target_airborne := false) -> void:
 		armour_type = target_armour
@@ -52,13 +57,25 @@ class CombatTarget extends RefCounted:
 	func take_damage(amount: float) -> void:
 		damage_taken += amount
 
+	func combat_owner_player_id() -> int:
+		return owner_player_id
+
+	func combat_apply_bullet_effect(effect: StringName, context: Dictionary) -> bool:
+		received_effects.append(effect)
+		received_effect_contexts.append(context)
+		return effect in accepted_effects
+
 
 class PhysicsCombatTarget extends StaticBody3D:
 	var armour_type: StringName = &"None"
 	var damage_taken := 0.0
+	var owner_player_id := 2
+	var alive := true
+	var hit_radius := 0.5
 
 	func _init(world_position: Vector3, radius := 0.5) -> void:
 		position = world_position
+		hit_radius = radius
 		collision_layer = 2
 		collision_mask = 0
 		var collision := CollisionShape3D.new()
@@ -77,10 +94,23 @@ class PhysicsCombatTarget extends StaticBody3D:
 		return global_position
 
 	func combat_is_alive() -> bool:
-		return true
+		return alive
+
+	func combat_hit_radius() -> float:
+		return hit_radius
+
+	func combat_owner_player_id() -> int:
+		return owner_player_id
 
 	func take_damage(amount: float) -> void:
 		damage_taken += amount
+
+
+class CombatSource extends RefCounted:
+	var owner_player_id := 1
+
+	func combat_owner_player_id() -> int:
+		return owner_player_id
 
 
 func _initialize() -> void:
@@ -88,11 +118,13 @@ func _initialize() -> void:
 	_run_case("warhead matrix scales bullet damage by target armour", _test_armour_matrix)
 	_run_case("bullet targeting distinguishes ground and aircraft", _test_target_domains)
 	_run_case("bullet rules expose physical delivery parameters", _test_bullet_delivery_rules)
+	_run_case("impact effects use typed acceptance and fallback damage", _test_impact_effect_contract)
 	_run_case("hitscan resolves at launch without travel", _test_hitscan_projectile)
 	_run_case("non-homing bullets keep the sampled aim point", _test_linear_projectile_no_lead)
 	_run_case("homing respects delay, turn rate and target lifetime", _test_homing_projectile)
 	_run_case("trajectory bullets follow a gravity arc", _test_trajectory_projectile)
 	await _run_async_case("projectiles collide and Sonic pierces in 3D", _test_projectile_world_collision)
+	await _run_async_case("impact resolution applies splash falloff and friendly fire", _test_impact_resolution)
 	_run_case("turret emits bursts and reloads in rule ticks", _test_turret_reload)
 	_run_case("turret launches projectiles from its authored muzzle", _test_turret_projectile_launch)
 	_run_case("compound turret binds authored pivots and muzzle", _test_compound_turret)
@@ -149,15 +181,30 @@ func _test_armour_matrix() -> void:
 		is_equal_approx(bullet.damage_against(&"Heavy"), 87.6),
 		"LMG_W must deal 40% damage to Heavy armour"
 	)
+	_expect(bullet.warhead.id() == &"LMG_W", "the runtime Warhead must retain its rules id")
+	var copied_matrix: Dictionary = bullet.warhead.armour_damage_matrix()
+	copied_matrix["Heavy"] = 0.0
+	_expect(
+		is_equal_approx(bullet.warhead.damage_percent_for(&"Heavy"), 40.0),
+		"callers must receive a copy rather than mutate the immutable armour matrix"
+	)
+	_expect(
+		is_zero_approx(bullet.warhead.damage_percent_for(&"UnknownArmour")),
+		"a missing warhead/armour pair must resolve to zero"
+	)
 	_expect(
 		is_zero_approx(bullet.damage_against(&"Invulnerable")),
 		"the zero matrix pair must deal no damage"
 	)
 
 	var heavy_target := CombatTarget.new(&"Heavy")
+	var resolver = CombatImpactResolverScript.new()
+	var results: Array[Dictionary] = resolver.resolve(
+		bullet, null, Vector3.ZERO, heavy_target
+	)
 	_expect(
-		is_equal_approx(bullet.impact(heavy_target), 87.6),
-		"impact must report resolved post-armour damage"
+		results.size() == 1 and is_equal_approx(float(results[0]["damage"]), 87.6),
+		"the impact resolver must report resolved post-armour damage"
 	)
 	_expect(
 		is_equal_approx(heavy_target.damage_taken, 87.6),
@@ -176,7 +223,10 @@ func _test_target_domains() -> void:
 	var lmg = CombatBulletScript.new(rules.bullet(&"LMG_B"), rules.warhead(&"LMG_W"))
 	var aircraft := CombatTarget.new(&"Aircraft", true)
 	_expect(not lmg.can_hit(aircraft), "a bullet without AntiAircraft must reject aircraft")
-	_expect(is_zero_approx(lmg.impact(aircraft)), "a rejected aircraft hit must deal no damage")
+	_expect(
+		CombatImpactResolverScript.new().resolve(lmg, null, Vector3.ZERO, aircraft).is_empty(),
+		"a rejected aircraft impact must resolve no target"
+	)
 
 	var adp_config: Resource = rules.bullet(&"ATHEATADP_B")
 	var adp = CombatBulletScript.new(
@@ -229,6 +279,47 @@ func _test_bullet_delivery_rules() -> void:
 	_expect(mortar.explosion_type() == &"ShellHit", "the bullet must retain its explosion presentation id")
 	_expect(mortar.explosion_effects() == ["ShellHit"], "all normalized explosion effects must stay available")
 	_expect(_runtime_bullet(rules, &"Leech_B").effect_flags().has("leech"), "special delivery flags must remain owned by Bullet")
+	_expect(
+		_runtime_bullet(rules, &"BarrelBomb").reduces_damage_with_distance(),
+		"omitted ReduceDamageWithDistance must keep the source default falloff"
+	)
+	_expect(
+		not mortar.reduces_damage_with_distance(),
+		"an explicit ReduceDamageWithDistance=False must disable falloff"
+	)
+
+
+func _test_impact_effect_contract() -> void:
+	var rules = root.get_node("Rules")
+	var leech = _runtime_bullet(rules, &"Leech_B")
+	var resolver = CombatImpactResolverScript.new()
+	var vehicle := CombatTarget.new(&"Heavy")
+	vehicle.accepted_effects.append(&"leech")
+	var accepted: Array[Dictionary] = resolver.resolve(
+		leech, null, Vector3.ZERO, vehicle, CombatSource.new()
+	)
+	_expect(accepted.size() == 1, "an effect-capable direct target must resolve")
+	_expect(&"leech" in accepted[0]["effects"], "the target must acknowledge its typed effect")
+	_expect(
+		is_zero_approx(vehicle.damage_taken),
+		"an accepted infection must suppress the no-warhead fallback damage"
+	)
+	_expect(
+		vehicle.received_effect_contexts.size() == 1
+		and is_equal_approx(float(vehicle.received_effect_contexts[0]["effect_health"]), 200.0)
+		and is_equal_approx(float(vehicle.received_effect_contexts[0]["effect_damage_per_tick"]), 2.0),
+		"the resolver must pass infection parameters to the typed effect receiver"
+	)
+
+	var rejected := CombatTarget.new(&"Heavy")
+	var fallback: Array[Dictionary] = resolver.resolve(
+		leech, null, Vector3.ZERO, rejected, CombatSource.new()
+	)
+	_expect(fallback.size() == 1 and fallback[0]["effects"].is_empty(), "a rejected effect must be reported")
+	_expect(
+		is_equal_approx(rejected.damage_taken, 100.0),
+		"Leech_B Damage must be used when the target cannot receive infection"
+	)
 
 
 func _test_hitscan_projectile() -> void:
@@ -372,6 +463,64 @@ func _test_projectile_world_collision() -> void:
 	wave.free()
 	blocker.free()
 	target.free()
+
+
+func _test_impact_resolution() -> void:
+	var rules = root.get_node("Rules")
+	var source := CombatSource.new()
+	var direct := PhysicsCombatTarget.new(Vector3.ZERO)
+	var ally := PhysicsCombatTarget.new(Vector3(2.0, 0.0, 0.0))
+	ally.owner_player_id = source.owner_player_id
+	var enemy := PhysicsCombatTarget.new(Vector3(3.5, 0.0, 0.0))
+	var outside := PhysicsCombatTarget.new(Vector3(5.0, 0.0, 0.0))
+	root.add_child(direct)
+	root.add_child(ally)
+	root.add_child(enemy)
+	root.add_child(outside)
+	await physics_frame
+
+	var resolver = CombatImpactResolverScript.new()
+	var mortar = _runtime_bullet(rules, &"Mortar_B")
+	var results: Array[Dictionary] = resolver.resolve(
+		mortar, direct, Vector3.ZERO, direct, source
+	)
+	_expect(results.size() == 3, "the direct target and two colliders inside four world units must resolve")
+	_expect(
+		is_equal_approx(direct.damage_taken, mortar.damage_against(&"None")),
+		"a direct target must receive full post-armour damage exactly once"
+	)
+	_expect(
+		is_equal_approx(ally.damage_taken, mortar.damage_against(&"None") * 0.5),
+		"FriendlyDamageAmount=50 must halve allied splash"
+	)
+	_expect(
+		is_equal_approx(enemy.damage_taken, mortar.damage_against(&"None")),
+		"explicitly disabled distance reduction must keep enemy splash at full damage"
+	)
+	_expect(is_zero_approx(outside.damage_taken), "a collider outside BlastRadius must remain untouched")
+
+	direct.damage_taken = 0.0
+	ally.damage_taken = 0.0
+	enemy.damage_taken = 0.0
+	outside.damage_taken = 0.0
+	var barrel_bomb = _runtime_bullet(rules, &"BarrelBomb")
+	resolver.resolve(barrel_bomb, direct, Vector3.ZERO, null, null)
+	var enemy_surface_distance: float = enemy.global_position.length() - enemy.hit_radius
+	var expected_falloff: float = (
+		1.0 - enemy_surface_distance / float(barrel_bomb.blast_radius_world())
+	)
+	_expect(
+		is_equal_approx(
+			enemy.damage_taken,
+			barrel_bomb.damage_against(&"None") * expected_falloff
+		),
+		"default radial damage must fall linearly from collider surface to blast edge"
+	)
+
+	direct.free()
+	ally.free()
+	enemy.free()
+	outside.free()
 
 
 func _test_turret_reload() -> void:

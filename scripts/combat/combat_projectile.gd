@@ -1,11 +1,18 @@
 class_name CombatProjectile
 extends Node3D
 
+const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
+
 ## A physical, world-space delivery instance for one CombatBullet payload.
 ## CombatBullet remains the immutable Rules.txt view; this node owns flight,
 ## homing, collision and lifetime state for one emitted shot.
 
 signal impacted(target: Object, damage: float, world_position: Vector3)
+signal impact_resolved(results: Array[Dictionary], world_position: Vector3)
+signal impact_effect_applied(target: Object, effect: StringName, world_position: Vector3)
+signal explosion_requested(
+	explosion_type: StringName, explosion_effects: Array, world_position: Vector3
+)
 signal finished(reason: StringName, world_position: Vector3)
 
 enum State {
@@ -40,6 +47,7 @@ var _excluded_rids: Array[RID] = []
 var _gravity_world := 0.0
 var _trajectory_duration := 0.0
 var _trajectory_initial_velocity := Vector3.ZERO
+var _impact_resolver = CombatImpactResolverScript.new()
 
 
 func _init() -> void:
@@ -156,7 +164,7 @@ func _resolve_hitscan() -> void:
 	if intended_target != null and _target_is_alive() and bullet.can_hit(intended_target):
 		_impact_target(intended_target, _aim_position, true)
 	else:
-		_finish_impact(&"impact_ground", _aim_position)
+		_impact_ground(_aim_position)
 
 
 func _configure_trajectory() -> void:
@@ -256,7 +264,7 @@ func _resolve_arrival(world_position: Vector3) -> void:
 		and target_position.distance_to(world_position) <= _target_hit_radius(intended_target):
 			_impact_target(intended_target, world_position, true)
 			return
-	_finish_impact(&"impact_ground", world_position)
+	_impact_ground(world_position)
 
 
 func _fallback_target_collision(from: Vector3, to: Vector3) -> bool:
@@ -286,17 +294,38 @@ func _handle_collisions(collisions: Array[Dictionary]) -> bool:
 				return true
 			continue
 		if not bullet.is_piercing():
-			_finish_impact(&"impact_ground", Vector3(collision["position"]))
+			_impact_ground(Vector3(collision["position"]))
 			return true
 	return false
 
 
 func _impact_target(entity: Object, world_position: Vector3, stop: bool) -> void:
 	global_position = world_position
-	var damage: float = float(bullet.impact(entity))
-	impacted.emit(entity, damage, world_position)
+	_resolve_impact(entity, world_position)
 	if stop:
 		_finish_impact(&"impact_target", world_position)
+
+
+func _impact_ground(world_position: Vector3) -> void:
+	global_position = world_position
+	_resolve_impact(null, world_position)
+	_finish_impact(&"impact_ground", world_position)
+
+
+func _resolve_impact(direct_target: Object, world_position: Vector3) -> void:
+	var results: Array[Dictionary] = _impact_resolver.resolve(
+		bullet, self, world_position, direct_target, _source()
+	)
+	for result in results:
+		var resolved_target: Object = result["target"] as Object
+		impacted.emit(resolved_target, float(result["damage"]), world_position)
+		for effect in result["effects"]:
+			impact_effect_applied.emit(resolved_target, StringName(effect), world_position)
+	impact_resolved.emit(results, world_position)
+	var explosion_type: StringName = bullet.explosion_type()
+	var explosion_effects: Array = bullet.explosion_effects()
+	if explosion_type != &"" or not explosion_effects.is_empty():
+		explosion_requested.emit(explosion_type, explosion_effects, world_position)
 
 
 func _finish_impact(reason: StringName, world_position: Vector3) -> void:
