@@ -58,7 +58,11 @@ func _resolve_target(
 	var distance_multiplier := 1.0
 	if not direct and radius > 0.0 and bullet.reduces_damage_with_distance():
 		distance_multiplier = clampf(1.0 - distance / radius, 0.0, 1.0)
-	var friendly_multiplier := _friendly_multiplier(bullet, source, target)
+	# FriendlyDamageAmount governs incidental friendly fire (splash/piercing
+	# intersections). A deliberately selected direct target still receives the
+	# weapon payload; otherwise Ctrl-force-fire with ordinary bullets such as
+	# HEAT_B successfully launches and hits but can never damage its target.
+	var friendly_multiplier := 1.0 if direct else _friendly_multiplier(bullet, source, target)
 	var total_multiplier := distance_multiplier * friendly_multiplier
 
 	var effect_context := {

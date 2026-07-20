@@ -33,13 +33,22 @@ Weapons in `Rules.txt` are a pipeline of three entities (verified):
 - **Turret** — the projectile-emission point on a unit:
   - may be **fixed** (rigidly aligned with heading — firing requires turning the
     hull) or **rotating**;
+  - a rotating turret may have a limited yaw sector. If the target lies outside
+    that sector, the turret turns to its authored limit while the unit turns its
+    hull until the weapon can finish aiming (verified with the Minotaurus);
+  - when an attack order ends, a rotated turret returns to its authored forward
+    pose at the same rule-defined rotation speed; movement/idle animations do
+    not snap it to rest or preserve a hidden previous aiming angle (verified);
   - **turrets on turrets** are supported — nesting for aiming along different
     axes, where different model parts rotate independently (for example, the
     mount horizontally and the barrel vertically);
 - **Bullet** — the shot emitted by a turret. It owns **base damage, range, speed,
   trajectory, target-domain flags, special-effect flags, and explosion visuals**
-  `[Rules]`. A conceptual/hitscan shot is still a Bullet entry, marked by
-  `Speed = -1`; this is used by ordinary guns and knives as well as lasers;
+  `[Rules]`. A physical bullet's visible model comes from its `ArtIni` `Xaf`
+  mapping (for example, `KobraHowitzer_B -> shell.xaf`), independently of its
+  impact effect and debris. A conceptual/hitscan shot is still a Bullet entry,
+  marked by `Speed = -1`; this is used by ordinary guns and knives as well as
+  lasers;
 - **Warhead** — the bullet's reference to the §1 percentage matrix. Warhead
   entries contain only armor percentages; they do not own damage, effects, or
   visuals `[Rules]`.
@@ -55,7 +64,16 @@ Other weapon properties on a unit:
 - a unit carries **one or more weapons** `[← 5: Sardaukar, Devastator]` `[Rules]`;
   selection logic when several are present: by **target type** `[?]`; can two
   weapons operate **simultaneously against different targets** `[?]`;
-- reload/rate of fire is per weapon `[Rules]`; suppression slows attacks `[← 5 §1]`.
+- reload/rate of fire is per weapon `[Rules]`. A firing cycle consists of the
+  complete authored `Fire N` XBF clip followed by `ReloadCount`; the reload
+  value uses the model's 20 Hz frame domain and starts only after the clip ends
+  (verified). Projectile events inside the clip follow the animated barrel
+  recoils: the Minotaurus emits four sequential shells from its four muzzles
+  during one 31-frame `Fire 0` clip, then reloads. `TurretBulletCount` remains a
+  separate rule for several projectiles emitted by one event. Once the firing
+  clip has started, its authored salvo events are committed; the next barrel
+  does not have to pass a fresh one-frame aim-tolerance check;
+- suppression slows attacks `[← 5 §1]`.
 
 ## 3. Projectiles and trajectories
 
@@ -63,10 +81,12 @@ Projectiles (“bullets” from §2) are **physical 3D objects** with speed and
 trajectory parameters `[← 1 §1: collisions]` `[Rules]`. Trajectory behavior
 (verified):
 
-- **almost all bullets travel in an arc** — “direct vs. indirect” is not two
-  types, but an **arc-height parameter**: a low arc collides with a cliff wall
-  or wall (3D collision — section 1 §1), while a high arc (artillery) flies over
-  obstacles `[Rules: arc parameters]`;
+- trajectory bullets use the global `BulletGravity` together with their
+  `MaxRange` and the firing joint's elevation limits. There is no separate
+  per-bullet `ArcHeight` field in `Rules.txt`: `Trajectory=true` enables the
+  ballistic delivery, while a weapon that permits both solutions uses the
+  flatter low arc and a minimum-elevation weapon (such as the deployed mortar)
+  selects the high arc. The barrel follows the same solution as the projectile;
 - **conceptual bullets** (`Speed = -1`) hit instantly; there are 19 such entries
   in the normalized rules, including ordinary firearms, knives, heavy guns, and
   both lasers. `IsLaser` is a separate bullet flag rather than the definition of
@@ -108,6 +128,10 @@ Summary of how different bullets miss (follows from the verified behavior above)
 
 ## 4. Range, elevation, visibility
 
+- `MinRange`/`MaxRange` are measured from the stable gameplay origin of the
+  firing entity. The animated muzzle is the projectile spawn point, but moving,
+  elevating, or entering a `Fire` pose cannot move the weapon itself into or out
+  of gameplay range (verified);
 - **downhill range bonus**, increasing with height difference `[← 1 §2]`;
 - firing uphill is possible only with indirect fire `[← 1 §2]`;
 - the **target must be visible** (by the player's scouting/vision) to issue an

@@ -28,6 +28,9 @@ const MAX_SIMULATION_STEP := 1.0 / RULE_UPDATES_PER_SECOND
 const COMBAT_COLLISION_MASK := 3
 const DEFAULT_TARGET_HIT_RADIUS := 0.25
 const MAX_PIERCING_COLLISIONS_PER_STEP := 64
+const DIRECT_PROJECTILE_SIZE := 0.12
+const HOMING_PROJECTILE_SIZE := 0.16
+const TRAJECTORY_PROJECTILE_SIZE := 0.18
 
 var bullet
 var state := State.READY
@@ -47,6 +50,7 @@ var _excluded_rids: Array[RID] = []
 var _gravity_world := 0.0
 var _trajectory_duration := 0.0
 var _trajectory_initial_velocity := Vector3.ZERO
+var _maximum_flight_distance := 0.0
 var _impact_resolver = CombatImpactResolverScript.new()
 
 
@@ -60,7 +64,8 @@ func launch(
 		target_or_position: Variant,
 		source: Object = null,
 		bullet_gravity := 1.0,
-		aim_offset := Vector3.ZERO
+		aim_offset := Vector3.ZERO,
+		range_origin := Vector3.INF
 	) -> bool:
 	if not is_inside_tree() \
 	or state != State.READY or bullet_payload == null or bullet_payload.config == null:
@@ -74,11 +79,16 @@ func launch(
 
 	bullet = bullet_payload
 	name = "Bullet_%s" % String(bullet.id())
+	_create_visual()
 	if get_parent() is Node3D:
 		top_level = true
 	global_position = Vector3(emission["position"])
 	_launch_position = global_position
 	_aim_position = Vector3(resolved_target["position"]) + aim_offset
+	var gameplay_range_origin := range_origin \
+		if range_origin.is_finite() else _launch_position
+	_maximum_flight_distance = bullet.maximum_range_world() \
+		+ gameplay_range_origin.distance_to(_launch_position)
 	if target_or_position is Object:
 		_target_ref = weakref(target_or_position as Object)
 		_tracks_live_target = true
@@ -96,14 +106,13 @@ func launch(
 	if _direction.is_zero_approx():
 		_direction = Vector3.FORWARD
 	_aim_travel_distance = _launch_position.distance_to(_aim_position)
-	_gravity_world = maxf(float(bullet_gravity), 0.0) \
-		* SOURCE_MODEL_WORLD_SCALE * RULE_UPDATES_PER_SECOND * RULE_UPDATES_PER_SECOND
+	_gravity_world = trajectory_gravity_world(bullet_gravity)
 
 	state = State.FLYING
 	set_physics_process(true)
 	_face_direction(_direction)
 
-	if not bullet.can_reach(_launch_position, _aim_position):
+	if not bullet.can_reach(gameplay_range_origin, _aim_position):
 		_expire(&"out_of_range")
 		return false
 	if bullet.is_hitscan():
@@ -115,6 +124,44 @@ func launch(
 	else:
 		velocity = _direction * bullet.speed()
 	return true
+
+
+func _create_visual() -> void:
+	# Hitscan bullets resolve during launch and have no flight interval to draw.
+	if bullet == null or bullet.is_hitscan():
+		return
+	if bullet.visual_scene != null:
+		var authored_visual := bullet.visual_scene.instantiate() as Node3D
+		if authored_visual != null:
+			authored_visual.name = "Visual"
+			add_child(authored_visual)
+			return
+	# Keep an unmistakable fallback for bullets whose ArtIni XAF has not yet
+	# been converted. Rules-backed weapons with a converted scene never use it.
+	var size := DIRECT_PROJECTILE_SIZE
+	var color := Color(1.0, 0.82, 0.32)
+	if bullet.is_homing():
+		size = HOMING_PROJECTILE_SIZE
+		color = Color(1.0, 0.58, 0.18)
+	elif bullet.has_trajectory():
+		size = TRAJECTORY_PROJECTILE_SIZE
+		color = Color(1.0, 0.72, 0.28)
+
+	var bolt_mesh := BoxMesh.new()
+	bolt_mesh.size = Vector3(size, size, size * 2.5)
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = color
+	material.emission_enabled = true
+	material.emission = color
+	material.emission_energy_multiplier = 2.0
+	bolt_mesh.material = material
+
+	var visual := MeshInstance3D.new()
+	visual.name = "Visual"
+	visual.mesh = bolt_mesh
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(visual)
 
 
 func advance(delta: float) -> void:
@@ -171,12 +218,28 @@ func _configure_trajectory() -> void:
 	var offset := _aim_position - _launch_position
 	var horizontal := Vector3(offset.x, 0.0, offset.z)
 	var horizontal_distance := horizontal.length()
+	var ballistic_velocities: Array[Vector3] = trajectory_launch_velocities(
+		bullet, _launch_position, _aim_position, _gravity_world,
+		_maximum_flight_distance
+	)
+	if not ballistic_velocities.is_empty():
+		_trajectory_initial_velocity = _closest_velocity(
+			ballistic_velocities, _direction
+		)
+		var horizontal_speed := Vector2(
+			_trajectory_initial_velocity.x, _trajectory_initial_velocity.z
+		).length()
+		_trajectory_duration = maxf(
+			horizontal_distance / horizontal_speed, MAX_SIMULATION_STEP
+		) if horizontal_speed > 0.0 else MAX_SIMULATION_STEP
+		velocity = _trajectory_initial_velocity
+		_direction = velocity.normalized()
+		_face_direction(_direction)
+		return
 	if bullet.speed() > 0.0:
 		_trajectory_duration = maxf(horizontal_distance / bullet.speed(), MAX_SIMULATION_STEP)
 	elif _gravity_world > 0.0 and horizontal_distance > 0.0:
-		# With no per-bullet Speed in Rules.txt, use the source gravity to solve
-		# a 45-degree arc. This makes Trajectory the high-arc delivery described
-		# by the rules without introducing a fabricated per-weapon speed.
+		# Degenerate fallback for an unreachable ballistic solution.
 		_trajectory_duration = sqrt(2.0 * horizontal_distance / _gravity_world)
 	else:
 		_trajectory_duration = MAX_SIMULATION_STEP
@@ -189,6 +252,78 @@ func _configure_trajectory() -> void:
 	velocity = _trajectory_initial_velocity
 	_direction = velocity.normalized() if not velocity.is_zero_approx() else _direction
 	_face_direction(_direction)
+
+
+## Returns the low and high ballistic solutions for a trajectory bullet whose
+## Rules.txt entry omits Speed. MaxRange defines the distance reached at 45
+## degrees under the global BulletGravity; nearer targets therefore get a
+## flatter low solution unless the weapon's elevation limits require the high
+## one. `_gravity_world` is already converted to Godot units per second².
+static func trajectory_launch_velocities(
+		bullet_payload,
+		launch_position: Vector3,
+		aim_position: Vector3,
+		gravity_world: float,
+		maximum_range_override := -1.0
+	) -> Array[Vector3]:
+	var result: Array[Vector3] = []
+	if (
+		bullet_payload == null
+		or not bullet_payload.has_trajectory()
+		or bullet_payload.speed() > 0.0
+		or gravity_world <= 0.0
+	):
+		return result
+	var offset := aim_position - launch_position
+	var horizontal := Vector3(offset.x, 0.0, offset.z)
+	var horizontal_distance := horizontal.length()
+	var maximum_range: float = maximum_range_override \
+		if maximum_range_override > 0.0 \
+		else float(bullet_payload.maximum_range_world())
+	if horizontal_distance <= 0.000001 or maximum_range <= 0.0:
+		return result
+
+	var speed_squared: float = gravity_world * maximum_range
+	var discriminant: float = speed_squared * speed_squared - gravity_world * (
+		gravity_world * horizontal_distance * horizontal_distance
+		+ 2.0 * offset.y * speed_squared
+	)
+	if discriminant < -0.000001:
+		return result
+	var root: float = sqrt(maxf(discriminant, 0.0))
+	var launch_speed: float = sqrt(speed_squared)
+	var horizontal_direction := horizontal / horizontal_distance
+	var numerators: Array[float] = [speed_squared - root, speed_squared + root]
+	for numerator in numerators:
+		var tangent := numerator / (gravity_world * horizontal_distance)
+		var cosine := 1.0 / sqrt(1.0 + tangent * tangent)
+		var sine := tangent * cosine
+		var candidate := (
+			horizontal_direction * (launch_speed * cosine)
+			+ Vector3.UP * (launch_speed * sine)
+		)
+		if result.is_empty() or result.front().angle_to(candidate) > 0.0001:
+			result.append(candidate)
+	return result
+
+
+static func trajectory_gravity_world(rule_gravity: float) -> float:
+	return maxf(rule_gravity, 0.0) \
+		* SOURCE_MODEL_WORLD_SCALE * RULE_UPDATES_PER_SECOND * RULE_UPDATES_PER_SECOND
+
+
+static func _closest_velocity(candidates: Array[Vector3], direction: Vector3) -> Vector3:
+	var result: Vector3 = candidates.front()
+	if direction.is_zero_approx():
+		return result
+	var normalized_direction := direction.normalized()
+	var best_dot: float = -INF
+	for candidate in candidates:
+		var score := normalized_direction.dot(candidate.normalized())
+		if score > best_dot:
+			best_dot = score
+			result = candidate
+	return result
 
 
 func _advance_trajectory(_previous_elapsed: float, current_elapsed: float) -> void:
@@ -217,7 +352,7 @@ func _advance_direct(delta: float, previous_elapsed: float) -> void:
 		>= bullet.homing_delay_ticks():
 		_update_homing(delta)
 
-	var remaining_range := maxf(bullet.maximum_range_world() - traveled_distance, 0.0)
+	var remaining_range := maxf(_maximum_flight_distance - traveled_distance, 0.0)
 	if remaining_range <= 0.000001:
 		_expire(&"range_exhausted")
 		return
@@ -236,7 +371,7 @@ func _advance_direct(delta: float, previous_elapsed: float) -> void:
 	if not (bullet.is_homing() and _tracks_live_target) \
 	and traveled_distance + 0.000001 >= _aim_travel_distance:
 		_resolve_arrival(global_position)
-	elif traveled_distance + 0.000001 >= bullet.maximum_range_world():
+	elif traveled_distance + 0.000001 >= _maximum_flight_distance:
 		_expire(&"range_exhausted")
 
 
@@ -442,7 +577,10 @@ func _face_direction(new_direction: Vector3) -> void:
 		return
 	var up := Vector3.FORWARD if absf(new_direction.normalized().dot(Vector3.UP)) > 0.999 \
 		else Vector3.UP
-	global_basis = Basis.looking_at(new_direction.normalized(), up)
+	# XBF conversion mirrors source Z, so the authored projectile nose that was
+	# local -Z becomes local +Z in the baked scene. `use_model_front=true`
+	# aligns that converted +Z nose with flight instead of pointing it backward.
+	global_basis = Basis.looking_at(new_direction.normalized(), up, true)
 
 
 func _distance_to_segment(point: Vector3, from: Vector3, to: Vector3) -> float:

@@ -18,10 +18,18 @@ const TURRET_MARKER := "::"
 const MUZZLE_MARKER := ">>"
 const AUTHORED_MUZZLE_FORWARD := Vector3.BACK
 
+enum TargetRange {
+	INVALID,
+	TOO_CLOSE,
+	IN_RANGE,
+	TOO_FAR,
+}
+
 var config: Resource
 var firing_config: Resource
 var bullet_config: Resource
 var warhead_config: Resource
+var projectile_visual_scene: PackedScene
 var joint_configs: Array[Resource] = []
 var reload_ticks_remaining := 0.0
 var bullet_gravity := 1.0
@@ -49,6 +57,7 @@ func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
 	firing_config = _last_firing_joint(joint_configs)
 	bullet_config = null
 	warhead_config = null
+	projectile_visual_scene = null
 	reload_ticks_remaining = 0.0
 	bullet_gravity = 1.0
 	if firing_config == null or rules == null:
@@ -64,6 +73,7 @@ func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
 	bullet_config = rules.call("bullet", bullet_id)
 	if bullet_config == null:
 		return false
+	projectile_visual_scene = _resolve_projectile_visual_scene(rules, bullet_id)
 
 	var warhead_id := StringName(String(bullet_config.field(&"warhead", "")))
 	if warhead_id != &"":
@@ -155,6 +165,22 @@ func requires_hull_turn() -> bool:
 	return _yaw_pivot == null
 
 
+func requires_hull_turn_for(world_position: Vector3) -> bool:
+	if _yaw_pivot == null:
+		return true
+	var yaw_config := _yaw_config()
+	if yaw_config == null:
+		return true
+	_apply_aim_transforms()
+	var desired_yaw := _desired_yaw(world_position)
+	var reachable_yaw := _clamp_rule_angle(
+		desired_yaw, yaw_config,
+		&"turret_min_y_rotation", &"turret_max_y_rotation"
+	)
+	return absf(angle_difference(desired_yaw, reachable_yaw)) \
+		> deg_to_rad(_acceptable_yaw_degrees())
+
+
 func joint_count() -> int:
 	return joint_configs.size()
 
@@ -171,9 +197,22 @@ func current_pitch_degrees() -> float:
 	return rad_to_deg(current_pitch)
 
 
+## Reapplies the combat-owned yaw and pitch after an AnimationPlayer changes
+## clips. Converted animations key the authored turret pivots as part of the
+## full model pose, so stop()/play() can otherwise expose their straight-ahead
+## transform for one rendered frame without changing the logical aim angles.
+func restore_aim_pose() -> void:
+	_apply_aim_transforms()
+
+
 func aim_at(world_position: Vector3, delta: float) -> bool:
 	if not is_bound():
 		return false
+	# Authored Stationary/Move tracks can key a turret ancestor back to its
+	# animation pose before Unit combat runs. Restore the combat-owned angles
+	# first, otherwise the muzzle servo observes the rest direction every frame
+	# while current_yaw/current_pitch drift independently without converging.
+	_apply_aim_transforms()
 	if _yaw_pivot != null:
 		var yaw_config := _yaw_config()
 		var desired_yaw := _clamp_rule_angle(
@@ -190,7 +229,7 @@ func aim_at(world_position: Vector3, delta: float) -> bool:
 	if _pitch_pivot != null:
 		var pitch_config := _pitch_config()
 		var desired_pitch := _clamp_rule_angle(
-			_desired_pitch(world_position), pitch_config,
+			_desired_firing_pitch(world_position), pitch_config,
 			&"turret_min_x_rotation", &"turret_max_x_rotation"
 		)
 		current_pitch = _turn_axis(
@@ -218,7 +257,9 @@ func is_aimed_at(world_position: Vector3) -> bool:
 	if offset.length_squared() <= 0.000001:
 		return true
 	var direction: Vector3 = emission["direction"]
-	var target_direction := offset.normalized()
+	var target_direction := _desired_firing_direction(world_position)
+	if target_direction.is_zero_approx():
+		target_direction = offset.normalized()
 	var horizontal_direction := Vector2(direction.x, direction.z)
 	var horizontal_target := Vector2(target_direction.x, target_direction.z)
 	var yaw_error := 0.0
@@ -230,7 +271,8 @@ func is_aimed_at(world_position: Vector3) -> bool:
 	var target_pitch := atan2(target_direction.y, horizontal_target.length())
 	var pitch_error := absf(angle_difference(direction_pitch, target_pitch))
 	return yaw_error <= deg_to_rad(_acceptable_yaw_degrees()) \
-		and pitch_error <= deg_to_rad(_acceptable_pitch_degrees())
+		and (_pitch_pivot == null \
+			or pitch_error <= deg_to_rad(_acceptable_pitch_degrees()))
 
 
 func emission_points() -> Array[Dictionary]:
@@ -293,13 +335,53 @@ func reload_count() -> float:
 		if firing_config != null else 0.0
 
 
+func begin_reload() -> void:
+	reload_ticks_remaining = reload_count()
+
+
 func advance_ticks(ticks: float) -> void:
 	if ticks <= 0.0 or reload_ticks_remaining <= 0.0:
 		return
 	reload_ticks_remaining = maxf(reload_ticks_remaining - ticks, 0.0)
 
 
-func try_fire() -> Array:
+func can_target(target_or_position: Variant) -> bool:
+	if not is_configured() or not is_bound():
+		return false
+	var target_position := _bullet_target_position(target_or_position)
+	if not target_position.is_finite() or peek_emission().is_empty():
+		return false
+	var bullet = CombatBulletScript.new(
+		bullet_config, warhead_config, projectile_visual_scene
+	)
+	if target_or_position is Vector3:
+		return bullet.can_hit_ground()
+	if not target_or_position is Object:
+		return false
+	return _bullet_target_is_alive(target_or_position as Object) \
+		and bullet.can_hit(target_or_position as Object)
+
+
+func target_range(target_or_position: Variant, aim_offset := Vector3.ZERO) -> int:
+	if not can_target(target_or_position):
+		return TargetRange.INVALID
+	var target_position := _bullet_target_position(target_or_position) + aim_offset
+	var range_origin := _range_origin()
+	if not range_origin.is_finite():
+		return TargetRange.INVALID
+	var offset: Vector3 = target_position - range_origin
+	var horizontal_distance := Vector2(offset.x, offset.z).length()
+	var bullet = CombatBulletScript.new(
+		bullet_config, warhead_config, projectile_visual_scene
+	)
+	if horizontal_distance + 0.0001 < bullet.minimum_range_world():
+		return TargetRange.TOO_CLOSE
+	if horizontal_distance > bullet.maximum_range_world() + 0.0001:
+		return TargetRange.TOO_FAR
+	return TargetRange.IN_RANGE
+
+
+func try_fire(begin_reload_after_shot := true) -> Array:
 	var result: Array = []
 	if not is_ready():
 		return result
@@ -307,9 +389,12 @@ func try_fire() -> Array:
 	_last_emissions.clear()
 	var bullet_count := maxi(int(firing_config.field(&"turret_bullet_count", 1)), 1)
 	for index in bullet_count:
-		result.append(CombatBulletScript.new(bullet_config, warhead_config))
+		result.append(CombatBulletScript.new(
+			bullet_config, warhead_config, projectile_visual_scene
+		))
 		_last_emissions.append(next_emission())
-	reload_ticks_remaining = reload_count()
+	if begin_reload_after_shot:
+		begin_reload()
 	return result
 
 
@@ -320,7 +405,9 @@ func try_fire_at(
 		target_or_position: Variant,
 		source: Object = null,
 		projectile_parent: Node = null,
-		aim_offset := Vector3.ZERO
+		aim_offset := Vector3.ZERO,
+		begin_reload_after_shot := true,
+		require_aim := true
 	) -> Array:
 	var result: Array = []
 	if not is_ready() or not is_bound():
@@ -329,22 +416,28 @@ func try_fire_at(
 	var preview_emission := peek_emission()
 	if not target_position.is_finite() or preview_emission.is_empty():
 		return result
-	if not is_aimed_at(target_position + aim_offset):
+	if require_aim and not is_aimed_at(target_position + aim_offset):
 		return result
-	var preview_bullet = CombatBulletScript.new(bullet_config, warhead_config)
+	var preview_bullet = CombatBulletScript.new(
+		bullet_config, warhead_config, projectile_visual_scene
+	)
+	if target_or_position is Vector3 and not preview_bullet.can_hit_ground():
+		return result
 	if target_or_position is Object \
 	and not preview_bullet.can_hit(target_or_position as Object):
 		return result
 	if target_or_position is Object \
 	and not _bullet_target_is_alive(target_or_position as Object):
 		return result
-	if not preview_bullet.can_reach(Vector3(preview_emission["position"]), target_position + aim_offset):
+	var range_origin := _range_origin()
+	if not range_origin.is_finite() \
+	or not preview_bullet.can_reach(range_origin, target_position + aim_offset):
 		return result
 
 	var parent := projectile_parent if projectile_parent != null else _default_projectile_parent()
 	if parent == null or not parent.is_inside_tree():
 		return result
-	var payloads := try_fire()
+	var payloads := try_fire(begin_reload_after_shot)
 	for index in payloads.size():
 		var projectile = CombatProjectileScript.new()
 		parent.add_child(projectile)
@@ -352,7 +445,8 @@ func try_fire_at(
 			if index < _last_emissions.size() else preview_emission
 		if not projectile.launch(
 			payloads[index], emission, target_or_position,
-			source if source != null else _model_root, bullet_gravity, aim_offset
+			source if source != null else _model_root, bullet_gravity, aim_offset,
+			range_origin
 		):
 			projectile.free()
 			continue
@@ -524,33 +618,121 @@ func _apply_pivot_rotation(pivot: Node3D, yaw: float, pitch: float) -> void:
 
 
 func _desired_yaw(world_position: Vector3) -> float:
-	var pivot := _yaw_pivot if _yaw_pivot != null else _reference_pivot
-	var local_direction := _direction_in_rest_frame(pivot, world_position, false)
-	return atan2(local_direction.x, local_direction.z)
+	var emission := peek_emission()
+	if emission.is_empty():
+		return current_yaw
+	var direction: Vector3 = emission["direction"]
+	var target_direction: Vector3 = world_position - Vector3(emission["position"])
+	var horizontal_direction := Vector2(direction.x, direction.z)
+	var horizontal_target := Vector2(target_direction.x, target_direction.z)
+	if horizontal_direction.is_zero_approx() or horizontal_target.is_zero_approx():
+		return current_yaw
+	var direction_heading := atan2(horizontal_direction.x, horizontal_direction.y)
+	var target_heading := atan2(horizontal_target.x, horizontal_target.y)
+	return current_yaw + angle_difference(direction_heading, target_heading)
 
 
-func _desired_pitch(world_position: Vector3) -> float:
-	var pivot := _pitch_pivot if _pitch_pivot != null else _reference_pivot
-	var include_current_yaw := pivot != null and pivot == _yaw_pivot
-	var local_direction := _direction_in_rest_frame(pivot, world_position, include_current_yaw)
-	var horizontal := Vector2(local_direction.x, local_direction.z).length()
-	return -atan2(local_direction.y, horizontal)
+func _desired_firing_pitch(world_position: Vector3) -> float:
+	return _desired_pitch_for_direction(_desired_firing_direction(world_position))
 
 
-func _direction_in_rest_frame(
-		pivot: Node3D, world_position: Vector3, include_current_yaw: bool
-	) -> Vector3:
-	if pivot == null or not _pivot_rest_transforms.has(pivot):
+func _desired_firing_direction(world_position: Vector3) -> Vector3:
+	var emission := peek_emission()
+	if emission.is_empty():
 		return Vector3.ZERO
-	var rest: Transform3D = _pivot_rest_transforms[pivot]
-	var parent_basis := Basis.IDENTITY
-	var parent := pivot.get_parent() as Node3D
-	if parent != null:
-		parent_basis = parent.global_transform.basis
-	var basis := parent_basis * rest.basis
-	if include_current_yaw:
-		basis *= Basis(Vector3.UP, current_yaw)
-	return basis.inverse() * (world_position - pivot.global_position)
+	var target_direction: Vector3 = world_position - Vector3(emission["position"])
+	if target_direction.is_zero_approx():
+		return Vector3(emission["direction"]).normalized()
+	var bullet = CombatBulletScript.new(
+		bullet_config, warhead_config, projectile_visual_scene
+	)
+	if not bullet.has_trajectory():
+		return target_direction.normalized()
+	var velocities: Array[Vector3] = CombatProjectileScript.trajectory_launch_velocities(
+		bullet,
+		Vector3(emission["position"]),
+		world_position,
+		CombatProjectileScript.trajectory_gravity_world(bullet_gravity),
+		_projectile_flight_range(Vector3(emission["position"]), bullet)
+	)
+	if velocities.is_empty():
+		return target_direction.normalized()
+
+	var directions: Array[Vector3] = []
+	for velocity in velocities:
+		directions.append(velocity.normalized())
+	if _pitch_pivot == null or directions.size() == 1:
+		return directions.front()
+
+	# Prefer the low ballistic solution when both arcs fit. Weapons whose rule
+	# limits impose a minimum elevation (for example the deployed mortar) select
+	# the high solution because its joint angle is the reachable one.
+	var pitch_config := _pitch_config()
+	var best_direction: Vector3 = directions.front()
+	var best_limit_error: float = INF
+	for candidate in directions:
+		var candidate_pitch := _desired_pitch_for_direction(candidate)
+		var reachable_pitch := _clamp_rule_angle(
+			candidate_pitch, pitch_config,
+			&"turret_min_x_rotation", &"turret_max_x_rotation"
+		)
+		var limit_error := absf(angle_difference(candidate_pitch, reachable_pitch))
+		if limit_error < best_limit_error:
+			best_limit_error = limit_error
+			best_direction = candidate
+	return best_direction
+
+
+func _desired_pitch_for_direction(target_direction: Vector3) -> float:
+	var emission := peek_emission()
+	if emission.is_empty() or target_direction.is_zero_approx():
+		return current_pitch
+	var direction: Vector3 = emission["direction"]
+	var direction_pitch := atan2(direction.y, Vector2(direction.x, direction.z).length())
+	var target_pitch := atan2(
+		target_direction.y, Vector2(target_direction.x, target_direction.z).length()
+	)
+	# Positive authored X rotation lowers a BACK-facing muzzle, hence the
+	# subtraction when converting world-space pitch error into joint rotation.
+	return current_pitch - angle_difference(direction_pitch, target_pitch)
+
+
+func _resolve_projectile_visual_scene(rules: Object, bullet_id: StringName) -> PackedScene:
+	if rules == null or not rules.has_method("get_entity"):
+		return null
+	var art_config := rules.call("get_entity", &"art_config", bullet_id) as Resource
+	if art_config == null:
+		return null
+	var xaf := String(art_config.field(&"xaf", ""))
+	if xaf.is_empty():
+		return null
+	var visual_name := xaf.get_file().get_basename().to_lower()
+	var scene_path := "res://assets/converted/projectiles/%s/%s.scn" % [
+		visual_name, visual_name,
+	]
+	if not ResourceLoader.exists(scene_path, "PackedScene"):
+		return null
+	return load(scene_path) as PackedScene
+
+
+## Rules ranges belong to the gameplay entity, not to an animated muzzle.
+## Using a muzzle here makes entering range depend on whether Move, Fire or an
+## elevated trajectory pose happened to run on that frame.
+func _range_origin() -> Vector3:
+	if _model_root == null or not is_instance_valid(_model_root):
+		return Vector3.INF
+	return _model_root.global_position
+
+
+func _projectile_flight_range(emission_position: Vector3, bullet) -> float:
+	var range_origin := _range_origin()
+	if not range_origin.is_finite():
+		return bullet.maximum_range_world()
+	var muzzle_offset := Vector2(
+		emission_position.x - range_origin.x,
+		emission_position.z - range_origin.z
+	).length()
+	return bullet.maximum_range_world() + muzzle_offset
 
 
 func _turn_axis(current: float, target: float, speed_degrees: float, delta: float) -> float:

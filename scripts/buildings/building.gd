@@ -23,7 +23,7 @@ const OCCUPY_CELL_WORLD_SPAN := 2.0
 const REFINERY_ROLE := "Refinery"
 const REFINERY_DOCK_RELEASE_DELAY_SECONDS := 3.0
 const INVALID_REFINERY_DOCK := -1
-const RULE_COMBAT_TICKS_PER_SECOND := 60.0
+const RULE_COMBAT_TICKS_PER_SECOND := 20.0
 
 ## Refinery dock upgrades are visual states of the refinery itself, not
 ## separate Building nodes. The first/left upgrade unfolds ~~3SmallPad01 and

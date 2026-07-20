@@ -13,11 +13,17 @@ const PIERCING_BULLET_IDS: Array[StringName] = [&"Sound_B", &"SoundInf_B"]
 
 var config: Resource
 var warhead
+var visual_scene: PackedScene
 
 
-func _init(bullet_config: Resource = null, warhead_config: Resource = null) -> void:
+func _init(
+		bullet_config: Resource = null,
+		warhead_config: Resource = null,
+		projectile_visual_scene: PackedScene = null
+	) -> void:
 	config = bullet_config
 	warhead = CombatWarheadScript.new(warhead_config)
+	visual_scene = projectile_visual_scene
 
 
 func base_damage() -> float:
@@ -179,6 +185,12 @@ func can_hit(target: Object) -> bool:
 	# AntiGround is opt-out in Rules.txt: almost every bullet omits it, while
 	# ATHEATADP_B explicitly sets it to false for an air-only weapon.
 	return bool(config.field(&"anti_ground", true))
+
+
+func can_hit_ground() -> bool:
+	# Attack-ground has no target object from which can_hit() could infer the
+	# domain. Preserve the same opt-out semantics for coordinate targets.
+	return config != null and bool(config.field(&"anti_ground", true))
 
 
 func damage_against(armour_type: StringName) -> float:

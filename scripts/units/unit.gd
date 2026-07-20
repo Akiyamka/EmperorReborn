@@ -7,6 +7,8 @@ const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 signal owner_changed(player_id: int)
 signal navigation_enemy_encountered(enemies: Array[Node3D])
 signal deployment_animation_finished
+signal attack_order_changed(active: bool, target: Variant)
+signal weapon_fired(projectiles: Array, target: Variant, weapon_index: int)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
@@ -26,10 +28,11 @@ const LEGACY_WALKER_UNIT_IDS: Array[StringName] = [&"INTLWalker"]
 ## 20 fixed updates per second, so use the same cadence for the unmanaged
 ## fallback to keep turning independent of the caller's frame rate.
 const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
-## ReloadCount is authored in animation/model ticks (the knife entry even
-## labels it as its exact animation frame count), matching the rules' 60 Hz
-## production timing rather than the lower-frequency navigation solver.
-const RULE_COMBAT_TICKS_PER_SECOND := 60.0
+## ReloadCount is authored in the same 20 Hz frame domain as the XBF model
+## animations. Reload starts after an authored Fire clip completes.
+const RULE_COMBAT_TICKS_PER_SECOND := 20.0
+const FIRE_ANIMATION_PREFIX := "Fire_"
+const FIRE_EVENT_EPSILON := 0.0001
 const MOVING_ANIMATION := &"Move"
 const IDLE_ANIMATION := &"Stationary"
 const IDLE_ANIMATION_PREFIX := "Idle"
@@ -47,6 +50,8 @@ const MECH_STEP_RISE_END := 0.46
 const MECH_STEP_FALL_START := 0.47
 const MECH_STEP_FALL_END := 0.63
 const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
+const ATTACK_REPATH_INTERVAL_SECONDS := 0.25
+const ATTACK_REPATH_DISTANCE := 0.5
 
 enum SlopeAlignmentMode {
 	AUTO,
@@ -118,6 +123,23 @@ var _deployment_aligning := false
 var _deployment_alignment_direction := Vector3.ZERO
 var _deployment_animation_player: AnimationPlayer
 var _deployment_animation_name: StringName = &""
+var _has_attack_order := false
+var _attack_ground_position := Vector3.INF
+var _attack_target_ref: WeakRef
+var _attack_is_ground := false
+var _attack_is_pursuing := false
+var _attack_repath_remaining := 0.0
+var _attack_last_path_position := Vector3.INF
+var _issuing_attack_move := false
+var _fire_sequence_active := false
+var _fire_sequence_turret
+var _fire_sequence_player: AnimationPlayer
+var _fire_sequence_animation: StringName = &""
+var _fire_sequence_duration := 0.0
+var _fire_sequence_elapsed := 0.0
+var _fire_sequence_shot_times: Array[float] = []
+var _fire_sequence_next_shot := 0
+var _fire_sequence_shots_emitted := 0
 
 
 func _ready() -> void:
@@ -135,6 +157,7 @@ func _ready() -> void:
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_animation_players = _collect_animation_players()
+	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
 	health = max_health
@@ -146,6 +169,15 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	for turret in combat_turrets:
 		turret.advance_ticks(delta * RULE_COMBAT_TICKS_PER_SECOND)
+	_advance_attack_order(delta)
+	if not _has_attack_order:
+		# Movement/idle animations key some of the same model pivots as combat.
+		# Keep the combat angle authoritative after an order ends and return it
+		# to the authored forward pose through the normal turret servo. Without
+		# this, the animation snaps the visible pivot to rest while current_yaw
+		# stays cached, and the stale angle reappears on the next attack order.
+		for turret in combat_turrets:
+			turret.recenter(delta)
 	_advance_visual_slope_alignment(delta)
 	# These shaders take their scroll/pulse phase from here: a continuous
 	# phase cannot come from animation tracks (it would snap on clip loops),
@@ -221,6 +253,8 @@ func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 func prepare_navigation_order(
 		_world_position: Vector3, _exit_point := Vector3.INF, _move_mode := 0
 	) -> bool:
+	if not _issuing_attack_move:
+		cancel_attack_order()
 	return not _is_deploying
 
 
@@ -483,6 +517,7 @@ func _terrain_hit_at(position: Vector3) -> Dictionary:
 
 
 func setup(unit_id: StringName) -> void:
+	_cancel_fire_sequence(true, false)
 	config_id = unit_id
 	if not is_inside_tree():
 		return
@@ -498,6 +533,7 @@ func setup(unit_id: StringName) -> void:
 func replace_visual_scene(model_scene: PackedScene) -> void:
 	if model_scene == null or visual_root == null:
 		return
+	_cancel_fire_sequence(true, false)
 	for child in visual_root.get_children():
 		visual_root.remove_child(child)
 		child.free()
@@ -506,6 +542,7 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_animation_players = _collect_animation_players()
+	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
 	# Packed model scenes keep gameplay-controlled effect meshes hidden and
@@ -551,7 +588,12 @@ func combat_is_airborne() -> bool:
 
 
 func combat_aim_position() -> Vector3:
-	return global_position
+	# The gameplay root sits on the terrain. A projectile aimed there forces
+	# horizontal-only weapons to compare their muzzle direction with a point
+	# below the target, so they can turn in yaw forever without ever satisfying
+	# the pitch tolerance. The converted selection volume follows the visible
+	# body and gives combat a stable centre point after runtime model swaps.
+	return to_global(_selection_bounds().get_center())
 
 
 func combat_is_alive() -> bool:
@@ -619,6 +661,371 @@ func _combat_turret_for_weapon(weapon_index: int):
 		if turret.weapon_index() == weapon_index:
 			return turret
 	return null
+
+
+func can_attack(target_or_position: Variant) -> bool:
+	if _is_deploying:
+		return false
+	for turret in combat_turrets:
+		if turret.can_target(target_or_position):
+			return true
+	return false
+
+
+## Installs an explicit player attack order. A Node target is tracked until it
+## dies; a Vector3 remains a fixed attack-ground coordinate. Relation checks
+## belong to UnitCommandController so Ctrl can deliberately force friendly or
+## neutral fire through this same combat-facing API.
+func command_attack(target_or_position: Variant) -> bool:
+	if not can_attack(target_or_position):
+		return false
+	_cancel_fire_sequence(true)
+	stop_at_current_position()
+	_has_attack_order = true
+	_attack_is_ground = target_or_position is Vector3
+	_attack_ground_position = target_or_position if _attack_is_ground else Vector3.INF
+	_attack_target_ref = null if _attack_is_ground else weakref(target_or_position as Object)
+	_attack_is_pursuing = false
+	_attack_repath_remaining = 0.0
+	_attack_last_path_position = Vector3.INF
+	attack_order_changed.emit(true, target_or_position)
+	return true
+
+
+func cancel_attack_order() -> void:
+	_cancel_fire_sequence(true)
+	if not _has_attack_order:
+		return
+	_has_attack_order = false
+	_attack_is_ground = false
+	_attack_ground_position = Vector3.INF
+	_attack_target_ref = null
+	_attack_is_pursuing = false
+	_attack_repath_remaining = 0.0
+	_attack_last_path_position = Vector3.INF
+	attack_order_changed.emit(false, null)
+
+
+func has_attack_order() -> bool:
+	return _has_attack_order
+
+
+func attack_order_target() -> Variant:
+	if not _has_attack_order:
+		return null
+	if _attack_is_ground:
+		return _attack_ground_position
+	return _attack_target_ref.get_ref() if _attack_target_ref != null else null
+
+
+func _advance_attack_order(delta: float) -> void:
+	if not _has_attack_order or combat_turrets.is_empty() or _is_deploying:
+		return
+	var attack_target: Variant = attack_order_target()
+	if _fire_sequence_active:
+		var firing_turret = _fire_sequence_turret
+		var sequence_target_alive := _attack_is_ground \
+			or _combat_target_is_alive(attack_target)
+		var sequence_target_position := _combat_target_position(attack_target) \
+			if sequence_target_alive else Vector3.INF
+		if firing_turret == null or not sequence_target_position.is_finite():
+			# Losing a target does not truncate recoil/recovery frames from an
+			# already-started attack. Remaining projectile events are skipped.
+			_advance_fire_sequence(delta, attack_target)
+			return
+		if firing_turret.requires_hull_turn_for(sequence_target_position):
+			_turn_toward(
+				sequence_target_position - global_position, delta
+			)
+		firing_turret.aim_at(sequence_target_position, delta)
+		# The authored salvo continues as one action. Individual shot validation
+		# still rejects a projectile if its target has moved outside legal range.
+		_advance_fire_sequence(delta, attack_target)
+		return
+	if not _attack_is_ground and not _combat_target_is_alive(attack_target):
+		cancel_attack_order()
+		stop_at_current_position()
+		return
+	var target_world_position := _combat_target_position(attack_target)
+	if not target_world_position.is_finite():
+		cancel_attack_order()
+		stop_at_current_position()
+		return
+	var primary_turret = _primary_attack_turret(attack_target)
+	if primary_turret == null:
+		cancel_attack_order()
+		stop_at_current_position()
+		return
+	var in_range_turrets: Array = []
+	for turret in combat_turrets:
+		if turret.target_range(attack_target) == CombatTurretScript.TargetRange.IN_RANGE:
+			in_range_turrets.append(turret)
+	if in_range_turrets.is_empty():
+		if primary_turret.target_range(attack_target) == CombatTurretScript.TargetRange.TOO_FAR:
+			_advance_attack_pursuit(target_world_position, delta)
+			return
+		# A minimum-range violation is not solved by moving closer. Keep the
+		# explicit order active so a moving target can re-enter weapon range.
+		if _attack_is_pursuing:
+			stop_at_current_position()
+			_attack_is_pursuing = false
+		return
+	if _attack_is_pursuing:
+		stop_at_current_position()
+		_attack_is_pursuing = false
+
+	var hull_aimed := true
+	for turret in in_range_turrets:
+		if turret.requires_hull_turn_for(target_world_position):
+			hull_aimed = _turn_toward(target_world_position - global_position, delta)
+			break
+	for turret in in_range_turrets:
+		var aimed: bool = bool(turret.aim_at(target_world_position, delta))
+		if turret.requires_hull_turn():
+			aimed = aimed and hull_aimed
+		if not aimed:
+			continue
+		if turret.is_ready() and _start_authored_fire_sequence(turret):
+			return
+		var projectiles: Array = turret.try_fire_at(attack_target, self)
+		if not projectiles.is_empty():
+			weapon_fired.emit(projectiles, attack_target, turret.weapon_index())
+
+
+func _start_authored_fire_sequence(turret) -> bool:
+	var binding := _fire_animation_binding(turret.weapon_index())
+	if binding.is_empty():
+		return false
+	var player := binding["player"] as AnimationPlayer
+	var animation_name := StringName(binding["name"])
+	var animation := player.get_animation(animation_name)
+	if animation == null or animation.length <= 0.0:
+		return false
+
+	stop_at_current_position()
+	_fire_sequence_active = true
+	_fire_sequence_turret = turret
+	_fire_sequence_player = player
+	_fire_sequence_animation = animation_name
+	_fire_sequence_duration = animation.length
+	_fire_sequence_elapsed = 0.0
+	_fire_sequence_shot_times = _authored_fire_shot_times(player, animation, turret)
+	_fire_sequence_next_shot = 0
+	_fire_sequence_shots_emitted = 0
+	player.speed_scale = 1.0
+	_play_animation_from_start(player, animation_name)
+	return true
+
+
+func _advance_fire_sequence(delta: float, attack_target: Variant) -> void:
+	if not _fire_sequence_active:
+		return
+	_fire_sequence_elapsed = minf(
+		_fire_sequence_elapsed + maxf(delta, 0.0), _fire_sequence_duration
+	)
+	while (
+		_fire_sequence_next_shot < _fire_sequence_shot_times.size()
+		and _fire_sequence_shot_times[_fire_sequence_next_shot]
+			<= _fire_sequence_elapsed + FIRE_EVENT_EPSILON
+	):
+		_fire_sequence_next_shot += 1
+		var projectiles: Array = _fire_sequence_turret.try_fire_at(
+			attack_target, self, null, Vector3.ZERO, false, false
+		)
+		if projectiles.is_empty():
+			continue
+		_fire_sequence_shots_emitted += projectiles.size()
+		weapon_fired.emit(
+			projectiles, attack_target, _fire_sequence_turret.weapon_index()
+		)
+	if _fire_sequence_elapsed + FIRE_EVENT_EPSILON >= _fire_sequence_duration:
+		_finish_fire_sequence()
+
+
+func _finish_fire_sequence() -> void:
+	if not _fire_sequence_active:
+		return
+	var turret = _fire_sequence_turret
+	var emitted := _fire_sequence_shots_emitted
+	_clear_fire_sequence()
+	if emitted > 0 and turret != null:
+		turret.begin_reload()
+	_set_movement_animation(false)
+
+
+func _cancel_fire_sequence(begin_reload_if_fired: bool, restore_idle := true) -> void:
+	if not _fire_sequence_active:
+		return
+	var turret = _fire_sequence_turret
+	var emitted := _fire_sequence_shots_emitted
+	_clear_fire_sequence()
+	if begin_reload_if_fired and emitted > 0 and turret != null:
+		turret.begin_reload()
+	if restore_idle:
+		_set_movement_animation(false)
+
+
+func _clear_fire_sequence() -> void:
+	if _fire_sequence_player != null and is_instance_valid(_fire_sequence_player):
+		_fire_sequence_player.stop()
+	_fire_sequence_active = false
+	_fire_sequence_turret = null
+	_fire_sequence_player = null
+	_fire_sequence_animation = &""
+	_fire_sequence_duration = 0.0
+	_fire_sequence_elapsed = 0.0
+	_fire_sequence_shot_times.clear()
+	_fire_sequence_next_shot = 0
+	_fire_sequence_shots_emitted = 0
+
+
+func _fire_animation_binding(weapon_index: int) -> Dictionary:
+	var candidates: Array[StringName] = [
+		StringName("%s%d" % [FIRE_ANIMATION_PREFIX, weapon_index]),
+		&"Fire",
+	]
+	if weapon_index != 0:
+		candidates.append(&"Fire_0")
+	for player in _animation_players:
+		for animation_name in candidates:
+			if player.has_animation(animation_name):
+				return {"player": player, "name": animation_name}
+	return {}
+
+
+func _authored_fire_shot_times(
+		player: AnimationPlayer, animation: Animation, turret
+	) -> Array[float]:
+	var fallback: Array[float] = [
+		minf(1.0 / RULE_COMBAT_TICKS_PER_SECOND, animation.length)
+	]
+	if turret.muzzle_count() <= 1:
+		return fallback
+	var animation_root := player.get_node_or_null(player.root_node)
+	if animation_root == null:
+		return fallback
+
+	var events: Array[Dictionary] = []
+	var used_tracks: Dictionary = {}
+	for emission: Dictionary in turret.emission_points():
+		var muzzle := emission.get("node") as Node
+		if muzzle == null:
+			return fallback
+		var current := muzzle.get_parent()
+		var found := false
+		while current != null and (
+			current == animation_root or animation_root.is_ancestor_of(current)
+		):
+			var relative_path := animation_root.get_path_to(current)
+			var track_path := NodePath("%s:transform" % String(relative_path))
+			var track := animation.find_track(track_path, Animation.TYPE_VALUE)
+			if track >= 0:
+				var peak := _animation_transform_peak(animation, track)
+				if float(peak.get("score", 0.0)) > FIRE_EVENT_EPSILON:
+					var track_key := String(track_path)
+					if used_tracks.has(track_key):
+						return fallback
+					used_tracks[track_key] = true
+					events.append({
+						"muzzle": int(emission.get("index", events.size())),
+						"time": clampf(float(peak["time"]), 0.0, animation.length),
+					})
+					found = true
+					break
+			if current == animation_root:
+				break
+			current = current.get_parent()
+		if not found:
+			return fallback
+	if events.size() != turret.muzzle_count():
+		return fallback
+	events.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return float(a["time"]) < float(b["time"])
+	)
+	var result: Array[float] = []
+	for event in events:
+		result.append(float(event["time"]))
+	return result
+
+
+func _animation_transform_peak(animation: Animation, track: int) -> Dictionary:
+	if animation.track_get_key_count(track) <= 1:
+		return {}
+	var rest: Variant = animation.track_get_key_value(track, 0)
+	if not rest is Transform3D:
+		return {}
+	var peak_score := 0.0
+	var peak_time := 0.0
+	for key_index in animation.track_get_key_count(track):
+		var value: Variant = animation.track_get_key_value(track, key_index)
+		if not value is Transform3D:
+			continue
+		var score := _transform_difference(rest as Transform3D, value as Transform3D)
+		if score > peak_score:
+			peak_score = score
+			peak_time = animation.track_get_key_time(track, key_index)
+	return {"score": peak_score, "time": peak_time}
+
+
+func _transform_difference(a: Transform3D, b: Transform3D) -> float:
+	var result := a.origin.distance_to(b.origin)
+	result += a.basis.get_scale().distance_to(b.basis.get_scale())
+	var relative_basis := a.basis.orthonormalized().inverse() * b.basis.orthonormalized()
+	result += absf(relative_basis.get_rotation_quaternion().get_angle())
+	return result
+
+
+func _primary_attack_turret(attack_target: Variant):
+	for turret in combat_turrets:
+		if turret.can_target(attack_target):
+			return turret
+	return null
+
+
+func _advance_attack_pursuit(target_world_position: Vector3, delta: float) -> void:
+	_attack_repath_remaining = maxf(_attack_repath_remaining - delta, 0.0)
+	var target_moved := not _attack_last_path_position.is_finite() \
+		or _attack_last_path_position.distance_to(target_world_position) >= ATTACK_REPATH_DISTANCE
+	if _attack_repath_remaining > 0.0 \
+	or (_attack_is_pursuing and not target_moved):
+		return
+	_attack_is_pursuing = true
+	_attack_last_path_position = target_world_position
+	_attack_repath_remaining = ATTACK_REPATH_INTERVAL_SECONDS
+	_issuing_attack_move = true
+	var move_issued := true
+	if _navigation_managed and _navigation_system != null:
+		var assignments: Array = _navigation_system.command_move(
+			[self], target_world_position, UnitNavigationSystem.MoveMode.FREE
+		)
+		move_issued = not assignments.is_empty()
+	else:
+		move_to(target_world_position)
+	_issuing_attack_move = false
+	_attack_is_pursuing = move_issued
+
+
+func _combat_target_position(attack_target: Variant) -> Vector3:
+	if attack_target is Vector3:
+		return attack_target
+	if not attack_target is Object or not is_instance_valid(attack_target):
+		return Vector3.INF
+	var target_object := attack_target as Object
+	if target_object.has_method("combat_aim_position"):
+		var value: Variant = target_object.call("combat_aim_position")
+		if value is Vector3:
+			return value
+	return (target_object as Node3D).global_position if target_object is Node3D else Vector3.INF
+
+
+func _combat_target_is_alive(attack_target: Variant) -> bool:
+	if not attack_target is Object or not is_instance_valid(attack_target):
+		return false
+	var target_object := attack_target as Object
+	if target_object is Node and (target_object as Node).is_queued_for_deletion():
+		return false
+	return not target_object.has_method("combat_is_alive") \
+		or bool(target_object.call("combat_is_alive"))
 
 
 func stop_at_current_position() -> void:
@@ -844,6 +1251,17 @@ func _collect_animation_players() -> Array[AnimationPlayer]:
 	return result
 
 
+func _prioritize_animations_before_unit_logic() -> void:
+	# AnimationPlayer uses internal frame processing. Converted Stationary/Move
+	# tracks may key the same authored pivots that combat rotates; if they run
+	# after Unit._process(), they erase the turret transform while its logical
+	# yaw/pitch continue advancing. Apply authored animation first so combat aim
+	# is the final transform for the frame and remains the feedback state used by
+	# the next frame's muzzle-to-target servo.
+	for player in _animation_players:
+		player.process_priority = mini(player.process_priority, process_priority - 1)
+
+
 func _prepare_idle_animations() -> void:
 	_stationary_repeats_remaining.clear()
 	for player in _animation_players:
@@ -861,6 +1279,10 @@ func _prepare_idle_animations() -> void:
 
 
 func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
+	if _fire_sequence_active:
+		if not is_moving:
+			return
+		_cancel_fire_sequence(true, false)
 	if not is_moving:
 		_mech_gait_elapsed = 0.0
 	_movement_animation_active = is_moving
@@ -873,6 +1295,7 @@ func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
 				continue
 		player.speed_scale = 1.0
 		_play_idle_sequence(player)
+	_restore_combat_turret_poses()
 
 
 func _play_idle_sequence(player: AnimationPlayer) -> void:
@@ -924,6 +1347,13 @@ func _idle_animation_weight(animation_name: StringName) -> float:
 func _play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
 	player.stop()
 	player.play(animation_name)
+	_restore_combat_turret_poses()
+
+
+func _restore_combat_turret_poses() -> void:
+	for turret in combat_turrets:
+		if turret != null:
+			turret.restore_aim_pose()
 
 
 func _idle_animations(player: AnimationPlayer) -> Array[StringName]:
@@ -935,6 +1365,29 @@ func _idle_animations(player: AnimationPlayer) -> Array[StringName]:
 
 
 func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:
+	if (
+		_fire_sequence_active
+		and player == _fire_sequence_player
+		and animation_name == _fire_sequence_animation
+	):
+		# A long render frame may jump directly past the last authored shot.
+		# Complete the animation timeline before starting post-animation reload.
+		var attack_target: Variant = attack_order_target()
+		if attack_target != null:
+			_fire_sequence_elapsed = _fire_sequence_duration
+			while _fire_sequence_next_shot < _fire_sequence_shot_times.size():
+				_fire_sequence_next_shot += 1
+				var projectiles: Array = _fire_sequence_turret.try_fire_at(
+					attack_target, self, null, Vector3.ZERO, false, false
+				)
+				if projectiles.is_empty():
+					continue
+				_fire_sequence_shots_emitted += projectiles.size()
+				weapon_fired.emit(
+					projectiles, attack_target, _fire_sequence_turret.weapon_index()
+				)
+		_finish_fire_sequence()
+		return
 	if (
 		_is_deploying
 		and player == _deployment_animation_player

@@ -8,6 +8,9 @@ const UnitScript := preload("res://scripts/units/unit.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const ATAPCModelScene := preload("res://assets/converted/models/AT_APC_H0/AT_APC_H0.scn")
 const ATInfantryModelScene := preload("res://assets/converted/models/AT_inf_H0/AT_inf_H0.scn")
+const ATMongooseModelScene := preload(
+	"res://assets/converted/models/AT_mongoose_H0/AT_mongoose_H0.scn"
+)
 const ATMinotaurusModelScene := preload(
 	"res://assets/converted/models/AT_minotaurus_H0/AT_minotaurus_H0.scn"
 )
@@ -131,7 +134,11 @@ func _initialize() -> void:
 	_run_case("single-axis turret turns without changing pitch", _test_single_axis_turret)
 	_run_case("fixed weapon keeps its authored direction", _test_fixed_turret)
 	_run_case("multi-barrel turret cycles authored muzzles", _test_multi_barrel_turret)
+	_run_case("limited turret turns its hull toward rear targets", _test_limited_turret_hull_turn)
+	_run_case("turret recenters smoothly after attack is replaced by move", _test_turret_recenter_after_move)
 	_run_case("unit model replacement rebinds its turret", _test_unit_turret_rebind)
+	_run_case("unit attack orders validate targets, fire, and pursue", _test_unit_attack_order)
+	_run_case("pursuit enters a stable firing range", _test_far_attack_pursuit)
 	_run_case("building state replacement rebinds its turret", _test_building_turret_rebind)
 	_run_case("units and buildings expose rules-backed combat armour", _test_combat_targets)
 	_run_case("shields absorb resolved combat damage before health", _test_shield_absorption)
@@ -158,6 +165,14 @@ func _run_async_case(case_name: String, test: Callable) -> void:
 	await test.call()
 	if _failures == failures_before:
 		print("PASS: %s" % case_name)
+
+
+func _horizontal_angle_between(a: Vector3, b: Vector3) -> float:
+	var a_horizontal := Vector2(a.x, a.z)
+	var b_horizontal := Vector2(b.x, b.z)
+	if a_horizontal.is_zero_approx() or b_horizontal.is_zero_approx():
+		return 0.0
+	return absf(angle_difference(a_horizontal.angle(), b_horizontal.angle()))
 
 
 func _expect(condition: bool, message: String) -> void:
@@ -223,6 +238,7 @@ func _test_target_domains() -> void:
 	var lmg = CombatBulletScript.new(rules.bullet(&"LMG_B"), rules.warhead(&"LMG_W"))
 	var aircraft := CombatTarget.new(&"Aircraft", true)
 	_expect(not lmg.can_hit(aircraft), "a bullet without AntiAircraft must reject aircraft")
+	_expect(lmg.can_hit_ground(), "an ordinary ground weapon must accept attack-ground")
 	_expect(
 		CombatImpactResolverScript.new().resolve(lmg, null, Vector3.ZERO, aircraft).is_empty(),
 		"a rejected aircraft impact must resolve no target"
@@ -238,6 +254,7 @@ func _test_target_domains() -> void:
 		not adp.can_hit(CombatTarget.new(&"Heavy")),
 		"ATHEATADP_B's explicit AntiGround=false must reject ground targets"
 	)
+	_expect(not adp.can_hit_ground(), "an air-only weapon must reject attack-ground coordinates")
 	var rejected_projectile = CombatProjectileScript.new()
 	root.add_child(rejected_projectile)
 	_expect(
@@ -414,6 +431,14 @@ func _test_trajectory_projectile() -> void:
 		),
 		"a trajectory bullet without Speed must derive a gravity arc"
 	)
+	var launch_direction: Vector3 = projectile.direction()
+	var launch_pitch := rad_to_deg(atan2(
+		launch_direction.y, Vector2(launch_direction.x, launch_direction.z).length()
+	))
+	_expect(
+		launch_pitch > 15.0 and launch_pitch < 30.0,
+		"a target below MaxRange must use the flatter low ballistic solution instead of a fixed 45-degree arc"
+	)
 	projectile.advance(0.5)
 	_expect(projectile.global_position.y > 1.0, "the mortar shell must rise above the direct line")
 	_expect(projectile.state == CombatProjectileScript.State.FLYING, "the shell must remain alive before its arc completes")
@@ -499,6 +524,21 @@ func _test_impact_resolution() -> void:
 	)
 	_expect(is_zero_approx(outside.damage_taken), "a collider outside BlastRadius must remain untouched")
 
+	ally.damage_taken = 0.0
+	var heat = _runtime_bullet(rules, &"HEAT_B")
+	var direct_friendly_results: Array[Dictionary] = resolver.resolve(
+		heat, ally, ally.global_position, ally, source
+	)
+	_expect(
+		is_equal_approx(ally.damage_taken, heat.damage_against(&"None")),
+		"an explicitly selected allied direct target must receive full weapon damage"
+	)
+	_expect(
+		direct_friendly_results.size() == 1 \
+			and is_equal_approx(float(direct_friendly_results[0]["friendly_multiplier"]), 1.0),
+		"FriendlyDamageAmount must not suppress a deliberate direct hit"
+	)
+
 	direct.damage_taken = 0.0
 	ally.damage_taken = 0.0
 	enemy.damage_taken = 0.0
@@ -564,20 +604,49 @@ func _test_turret_projectile_launch() -> void:
 		"an out-of-range request must not emit a projectile"
 	)
 	_expect(is_zero_approx(turret.reload_ticks_remaining), "a rejected request must not consume reload")
-	var projectiles: Array = turret.try_fire_at(
-		Vector3(emission["position"]) + direction * 10.0, model, root
+	var target_position: Vector3 = Vector3(emission["position"]) + direction * 10.0
+	_expect(
+		turret.try_fire_at(target_position, model, root).is_empty(),
+		"a trajectory weapon must not fire while its barrel still points along the direct line"
 	)
+	var trajectory_aimed := false
+	for frame in 120:
+		trajectory_aimed = turret.aim_at(target_position, 1.0 / 60.0)
+		if trajectory_aimed:
+			break
+	_expect(trajectory_aimed, "the Minotaurus gun must elevate to its ballistic solution")
+	_expect(
+		turret.current_pitch_degrees() < -1.0,
+		"the Minotaurus pitch joint must visibly raise the barrels for trajectory fire"
+	)
+	var aimed_emission := turret.peek_emission()
+	var projectiles: Array = turret.try_fire_at(target_position, model, root)
 	_expect(projectiles.size() == 1, "an in-range request must create one physical projectile")
 	if not projectiles.is_empty():
 		var projectile = projectiles[0]
 		_expect(projectile.bullet.id() == &"KobraHowitzer_B", "the projectile must carry the turret's configured bullet")
 		_expect(
-			projectile.global_position.is_equal_approx(Vector3(emission["position"])),
+			projectile.global_position.is_equal_approx(Vector3(aimed_emission["position"])),
 			"the projectile must start at the authored >> muzzle"
+		)
+		_expect(
+			projectile.direction().angle_to(Vector3(aimed_emission["direction"]))
+				<= deg_to_rad(1.1),
+			"the shell trajectory must leave along the elevated barrel direction"
+		)
+		_expect(
+			projectile.global_basis.z.normalized().dot(projectile.direction()) > 0.999,
+			"the converted projectile model's +Z nose must face along its flight direction"
 		)
 		_expect(
 			projectile.state == CombatProjectileScript.State.FLYING,
 			"a non-hitscan turret shot must remain as a world-space node"
+		)
+		var visual := projectile.get_node_or_null("Visual") as Node3D
+		_expect(visual != null, "a physical projectile must expose visible runtime geometry")
+		_expect(
+			visual != null and visual.find_child("shell_0", true, false) != null,
+			"KobraHowitzer_B must instantiate the original ArtIni shell.xaf model"
 		)
 		projectile.free()
 	model.free()
@@ -682,6 +751,110 @@ func _test_multi_barrel_turret() -> void:
 	model.free()
 
 
+func _test_limited_turret_hull_turn() -> void:
+	var unit = UnitScene.instantiate()
+	unit.config_id = &"ATMinotaurus"
+	root.add_child(unit)
+	unit.replace_visual_scene(ATMinotaurusModelScene)
+	var turret = unit.combat_turrets[0]
+	var emission: Dictionary = turret.peek_emission()
+	var initial_hull_yaw: float = unit.global_rotation.y
+	var initial_forward: Vector3 = unit.facing_direction()
+	var target := CombatTarget.new(&"None")
+	target.position = unit.global_position - initial_forward * 10.0
+	target.position.y = Vector3(emission["position"]).y
+	_expect(
+		turret.requires_hull_turn_for(target.position),
+		"a rear target must be outside the Minotaurus +/-45 degree turret sector"
+	)
+
+	var fired: Array = []
+	unit.weapon_fired.connect(func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+		fired.append_array(projectiles)
+	)
+	_expect(unit.command_attack(target), "the Minotaurus must accept an in-range rear target")
+	for frame in 360:
+		unit._process(1.0 / 60.0)
+		if not fired.is_empty():
+			break
+	var hull_turn := absf(angle_difference(initial_hull_yaw, unit.global_rotation.y))
+	_expect(
+		hull_turn > deg_to_rad(90.0),
+		"the Minotaurus hull must keep turning after its turret reaches the sector limit"
+	)
+	_expect(
+		absf(turret.current_yaw_degrees()) <= 45.01,
+		"supplemental hull rotation must not push the turret beyond its authored limits"
+	)
+	_expect(not fired.is_empty(), "the Minotaurus must fire after hull-assisted aiming")
+	for projectile in fired:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	unit.free()
+
+
+func _test_turret_recenter_after_move() -> void:
+	var unit = UnitScene.instantiate()
+	unit.config_id = &"ATMinotaurus"
+	root.add_child(unit)
+	unit.replace_visual_scene(ATMinotaurusModelScene)
+	var turret = unit.combat_turrets[0]
+	var rest_emission: Dictionary = turret.peek_emission()
+	var rest_direction: Vector3 = rest_emission["direction"]
+	rest_direction.y = 0.0
+	rest_direction = rest_direction.normalized()
+	var target := CombatTarget.new(&"None")
+	target.position = Vector3(rest_emission["position"]) \
+		+ rest_direction.rotated(Vector3.UP, deg_to_rad(30.0)) * 10.0
+
+	_expect(unit.command_attack(target), "the Minotaurus must accept the side target")
+	for frame in 4:
+		unit._process(1.0 / 20.0)
+	var attack_yaw := absf(turret.current_yaw_degrees())
+	_expect(
+		is_equal_approx(attack_yaw, 20.0),
+		"four rule updates must turn the Minotaurus turret by four 5-degree steps"
+	)
+
+	unit.move_to(unit.global_position + rest_direction * 10.0)
+	_expect(not unit.has_attack_order(), "a move order must replace the attack order")
+	var player := unit.get_node("VisualRoot").find_child(
+		"AnimationPlayer", true, false
+	) as AnimationPlayer
+	if player != null:
+		# Reproduce the normal frame order: authored Move pose first, then Unit
+		# combat logic restores its continuously changing servo pose.
+		player.advance(1.0 / 60.0)
+	unit._process(1.0 / 60.0)
+	var returning_yaw := absf(turret.current_yaw_degrees())
+	_expect(
+		returning_yaw < attack_yaw and returning_yaw > 0.0,
+		"the first movement frame must begin returning the turret instead of snapping or caching it"
+	)
+	_expect(
+		absf(returning_yaw - (attack_yaw - 5.0 / 3.0)) < 0.01,
+		"recentring must use the Minotaurus authored 5 degrees per 20 Hz update"
+	)
+	var returning_direction: Vector3 = turret.peek_emission()["direction"]
+	_expect(
+		absf(
+			rad_to_deg(_horizontal_angle_between(rest_direction, returning_direction))
+			- returning_yaw
+		) < 0.1,
+		"the visible turret pose and its logical servo angle must remain synchronized"
+	)
+
+	_expect(unit.command_attack(target), "the side target must remain attackable after moving")
+	unit._process(1.0 / 60.0)
+	var reacquired_direction: Vector3 = turret.peek_emission()["direction"]
+	_expect(
+		rad_to_deg(_horizontal_angle_between(returning_direction, reacquired_direction))
+			<= 5.0 / 3.0 + 0.1,
+		"a repeated attack order must resume from the visible pose without restoring a cached yaw"
+	)
+	unit.free()
+
+
 func _test_unit_turret_rebind() -> void:
 	var unit = UnitScene.instantiate()
 	unit.config_id = &"ATAPC"
@@ -706,6 +879,237 @@ func _test_unit_turret_rebind() -> void:
 		_expect(projectiles[0].bullet.id() == &"LMG_B", "the APC Unit API must emit LMG_B")
 		projectiles[0].free()
 	unit.free()
+
+
+func _test_unit_attack_order() -> void:
+	var unit = UnitScene.instantiate()
+	unit.config_id = &"ATAPC"
+	root.add_child(unit)
+	unit.replace_visual_scene(ATAPCModelScene)
+	var emission: Dictionary = unit.turret_emission_points()[0]
+	var direction: Vector3 = emission["direction"]
+	var target := CombatTarget.new(&"None")
+	target.position = Vector3(emission["position"]) + direction * 5.0
+	var aircraft := CombatTarget.new(&"Aircraft", true)
+	aircraft.position = target.position
+	_expect(unit.can_attack(target), "an armed APC must accept a compatible ground target")
+	_expect(not unit.can_attack(aircraft), "the APC must reject a target its bullet cannot hit")
+	_expect(not unit.command_attack(aircraft), "an incompatible target must not create an attack order")
+	_expect(
+		unit.combat_turrets[0].target_range(target) == CombatTurretScript.TargetRange.IN_RANGE,
+		"the compatible target must start inside the APC weapon range"
+	)
+
+	var fired_batches: Array = []
+	unit.weapon_fired.connect(func(projectiles: Array, fired_target: Variant, weapon_index: int) -> void:
+		fired_batches.append({
+			"projectiles": projectiles,
+			"target": fired_target,
+			"weapon_index": weapon_index,
+		})
+	)
+	_expect(unit.command_attack(target), "a compatible target must create an attack order")
+	_expect(unit.has_attack_order() and unit.attack_order_target() == target, "the live target must remain attached to the order")
+	for frame in 240:
+		unit._process(1.0 / 60.0)
+		if not fired_batches.is_empty():
+			break
+	_expect(fired_batches.size() == 1, "an aimed in-range order must fire the compatible weapon")
+	if not fired_batches.is_empty():
+		_expect(fired_batches[0]["target"] == target, "the fired batch must retain the ordered target")
+		_expect(fired_batches[0]["weapon_index"] == 0, "the primary APC weapon must execute the order")
+
+	unit.cancel_attack_order()
+	var far_ground := Vector3(emission["position"]) + direction * 30.0
+	_expect(unit.command_attack(far_ground), "attack-ground validity must not depend on current range")
+	unit._process(0.01)
+	_expect(
+		Vector2(unit.target_position.x, unit.target_position.z).is_equal_approx(
+			Vector2(far_ground.x, far_ground.z)
+		),
+		"an out-of-range attack order must pursue its target coordinate"
+	)
+	unit.move_to(unit.global_position + Vector3.RIGHT)
+	_expect(not unit.has_attack_order(), "a later ordinary movement order must cancel attack")
+
+	var mongoose = UnitScene.instantiate()
+	mongoose.config_id = &"ATMongoose"
+	root.add_child(mongoose)
+	mongoose.replace_visual_scene(ATMongooseModelScene)
+	var mongoose_emission: Dictionary = mongoose.turret_emission_points()[0]
+	var mongoose_forward: Vector3 = Vector3(mongoose_emission["direction"])
+	mongoose_forward.y = 0.0
+	var mongoose_side := mongoose_forward.normalized().rotated(Vector3.UP, PI * 0.5)
+	unit.global_position = mongoose.global_position + mongoose_side * 25.0
+	_expect(
+		unit.combat_aim_position().y > unit.global_position.y,
+		"a real unit target must expose an aim point inside its body rather than at ground level"
+	)
+	var mongoose_fired: Array = []
+	mongoose.weapon_fired.connect(func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+		mongoose_fired.append_array(projectiles)
+	)
+	_expect(mongoose.command_attack(unit), "a Mongoose must accept a real allied ground unit as a forced target")
+	_expect(
+		mongoose.combat_turrets[0].target_range(unit) == CombatTurretScript.TargetRange.TOO_FAR,
+		"the real-unit regression must begin outside the Mongoose weapon range"
+	)
+	for frame in 240:
+		mongoose._process(1.0 / 60.0)
+		mongoose._physics_process(1.0 / 60.0)
+		if not mongoose_fired.is_empty():
+			break
+	_expect(
+		not mongoose_fired.is_empty(),
+		"a pursuing Mongoose must stop at range and fire its yaw-only turret at a real unit"
+	)
+	var mongoose_player := mongoose.get_node("VisualRoot").find_child(
+		"AnimationPlayer", true, false
+	) as AnimationPlayer
+	_expect(
+		mongoose_player != null and mongoose_player.current_animation == &"Fire_0",
+		"the Mongoose shot must occur inside its authored Fire_0 animation"
+	)
+	_expect(
+		is_zero_approx(mongoose.combat_turrets[0].reload_ticks_remaining),
+		"Mongoose reload must not begin until Fire_0 completes"
+	)
+	for frame in 60:
+		mongoose._process(1.0 / 60.0)
+	_expect(
+		mongoose_fired.size() == 1,
+		"the Mongoose must not fire again while its first Fire_0 animation is active"
+	)
+
+	var minotaurus = UnitScene.instantiate()
+	minotaurus.config_id = &"ATMinotaurus"
+	root.add_child(minotaurus)
+	minotaurus.replace_visual_scene(ATMinotaurusModelScene)
+	var minotaurus_emission: Dictionary = minotaurus.turret_emission_points()[0]
+	var minotaurus_forward: Vector3 = Vector3(minotaurus_emission["direction"])
+	minotaurus_forward.y = 0.0
+	unit.global_position = minotaurus.global_position \
+		+ minotaurus_forward.normalized().rotated(Vector3.UP, deg_to_rad(30.0)) * 10.0
+	var minotaurus_fired: Array = []
+	var minotaurus_fire_animations: Array[StringName] = []
+	var minotaurus_player := minotaurus.get_node("VisualRoot").find_child(
+		"AnimationPlayer", true, false
+	) as AnimationPlayer
+	minotaurus.weapon_fired.connect(func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+		minotaurus_fired.append_array(projectiles)
+		minotaurus_fire_animations.append(minotaurus_player.current_animation)
+	)
+	_expect(
+		minotaurus.command_attack(unit),
+		"a Minotaurus must accept a real allied ground unit as a forced target"
+	)
+	for frame in 240:
+		minotaurus._process(1.0 / 60.0)
+		if not minotaurus_fired.is_empty():
+			break
+	_expect(
+		absf(minotaurus.combat_turrets[0].current_yaw_degrees()) > 1.0,
+		"a Minotaurus attack order against a real unit must turn its compound turret"
+	)
+	_expect(
+		not minotaurus_fired.is_empty(),
+		"a compound Minotaurus turret must fire at a real unit after completing its aim"
+	)
+	var minotaurus_visible_yaw := rad_to_deg(_horizontal_angle_between(
+		minotaurus_forward,
+		Vector3(minotaurus.combat_turrets[0].peek_emission()["direction"])
+	))
+	_expect(
+		absf(minotaurus_visible_yaw - absf(
+			minotaurus.combat_turrets[0].current_yaw_degrees()
+		)) < 0.1,
+		"starting Fire_0 must preserve the Minotaurus visual turret yaw"
+	)
+	_expect(
+		is_zero_approx(minotaurus.combat_turrets[0].reload_ticks_remaining),
+		"Minotaurus reload must stay stopped during its four-shot Fire_0 animation"
+	)
+	for frame in 120:
+		minotaurus._process(1.0 / 60.0)
+		if minotaurus.combat_turrets[0].reload_ticks_remaining > 0.0:
+			break
+	_expect(
+		minotaurus_fired.size() == 4,
+		"the Minotaurus Fire_0 animation must emit one shell from each of its four muzzles"
+	)
+	_expect(
+		minotaurus_fire_animations == [&"Fire_0", &"Fire_0", &"Fire_0", &"Fire_0"],
+		"all four Minotaurus shells must belong to one authored firing animation"
+	)
+	_expect(
+		is_equal_approx(minotaurus.combat_turrets[0].reload_ticks_remaining, 120.0),
+		"the Minotaurus ReloadCount must begin only after its salvo animation completes"
+	)
+	minotaurus_visible_yaw = rad_to_deg(_horizontal_angle_between(
+		minotaurus_forward,
+		Vector3(minotaurus.combat_turrets[0].peek_emission()["direction"])
+	))
+	_expect(
+		absf(minotaurus_visible_yaw - absf(
+			minotaurus.combat_turrets[0].current_yaw_degrees()
+		)) < 0.1,
+		"returning to Stationary after Fire_0 must preserve the Minotaurus visual turret yaw"
+	)
+
+	for batch in fired_batches:
+		for projectile in batch["projectiles"]:
+			if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+				projectile.free()
+	for projectile in mongoose_fired:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	for projectile in minotaurus_fired:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	mongoose.free()
+	minotaurus.free()
+	unit.free()
+
+
+func _test_far_attack_pursuit() -> void:
+	var attacker = UnitScene.instantiate()
+	attacker.config_id = &"ATMinotaurus"
+	root.add_child(attacker)
+	attacker.replace_visual_scene(ATMinotaurusModelScene)
+	var target = UnitScene.instantiate()
+	target.config_id = &"ATAPC"
+	root.add_child(target)
+	target.replace_visual_scene(ATAPCModelScene)
+	var emission: Dictionary = attacker.combat_turrets[0].peek_emission()
+	var forward: Vector3 = Vector3(emission["direction"])
+	forward.y = 0.0
+	target.global_position = attacker.global_position + forward.normalized() * 45.0
+
+	var fired: Array = []
+	attacker.weapon_fired.connect(func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+		fired.append_array(projectiles)
+	)
+	_expect(
+		attacker.combat_turrets[0].target_range(target)
+			== CombatTurretScript.TargetRange.TOO_FAR,
+		"the pursuit regression must begin beyond the Minotaurus maximum range"
+	)
+	_expect(attacker.command_attack(target), "the Minotaurus must accept the distant target")
+	for frame in 1200:
+		attacker._process(1.0 / 60.0)
+		attacker._physics_process(1.0 / 60.0)
+		if not fired.is_empty():
+			break
+	_expect(
+		not fired.is_empty(),
+		"a Minotaurus that pursued a distant target must eventually emit its salvo"
+	)
+
+	for projectile in fired:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	attacker.free()
+	target.free()
 
 
 func _test_building_turret_rebind() -> void:

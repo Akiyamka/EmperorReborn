@@ -12,14 +12,27 @@ var _completion_token := 1000
 
 class FakeUnit extends Node3D:
 	var player = null
+	var config_id: StringName
 	var selected := false
 	var move_targets: Array[Vector3] = []
+	var attack_targets: Array = []
+	var rejected_attack_targets: Array = []
+	var attack_capable := true
 
 	func set_selected(active: bool) -> void:
 		selected = active
 
 	func move_to(target: Vector3) -> void:
 		move_targets.append(target)
+
+	func can_attack(target_or_position: Variant) -> bool:
+		return attack_capable and target_or_position not in rejected_attack_targets
+
+	func command_attack(target_or_position: Variant) -> bool:
+		if not can_attack(target_or_position):
+			return false
+		attack_targets.append(target_or_position)
+		return true
 
 	func is_owned_by(player_id: int) -> bool:
 		return player != null and player.player_id == player_id
@@ -34,6 +47,9 @@ class FakeHarvester extends FakeUnit:
 	var cancelled_harvest_orders := 0
 	var defer_navigation_orders := false
 	var prepared_move_targets: Array[Vector3] = []
+
+	func _init() -> void:
+		attack_capable = false
 
 	func can_harvest_spice() -> bool:
 		return true
@@ -182,10 +198,12 @@ func _initialize() -> void:
 	players.reset_for_match()
 	var local_player = players.create_player(1, "Atreides Commander", Color.BLUE, &"Atreides", [&"Fremen"])
 	var enemy_player = players.create_player(2, "Ordos Rival", Color.GREEN, &"Ordos")
+	var neutral_player = players.neutral_player()
 	players.local_player_id = 1
 	players.set_relation(1, 2, PlayerData.Relation.ENEMY)
 
 	_run_case("selection ownership and movement", _test_selection_ownership_and_movement.bind(local_player, enemy_player))
+	_run_case("right click and Ctrl route target-specific attack orders", _test_attack_orders.bind(local_player, enemy_player, neutral_player))
 	_run_case("clicking the selected unit again requests deployment", _test_repeated_click_deployment.bind(local_player))
 	_run_case("rectangle unit selection", _test_rectangle_unit_selection.bind(local_player, enemy_player))
 	_run_case("J modifies movement formation", _test_formation_modifier.bind(local_player))
@@ -247,6 +265,7 @@ func _test_selection_ownership_and_movement(token: int, local_player, enemy_play
 
 	commands.raycast_hits.append({"collider": local_collider})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(3.0, 7.0, 4.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(enemy_unit.selected == false and local_unit.move_targets == [Vector3(3.0, 7.0, 4.0)], "owned unit moves to terrain hit")
@@ -261,6 +280,101 @@ func _test_selection_ownership_and_movement(token: int, local_player, enemy_play
 	commands.queue_free()
 	local_unit.queue_free()
 	enemy_unit.queue_free()
+	return token
+
+
+func _test_attack_orders(token: int, local_player, enemy_player, neutral_player) -> int:
+	var commands := FakeUnitCommandController.new()
+	var statuses: Array[String] = []
+	commands.status_changed.connect(func(status: String) -> void: statuses.append(status))
+	root.add_child(commands)
+
+	var attacker := _make_unit("Trooper", local_player)
+	var unable := _make_unit("Harvester", local_player)
+	unable.attack_capable = false
+	var ally := _make_unit("Ally", local_player)
+	ally.config_id = &"ATAPC"
+	var enemy := _make_unit("Enemy", enemy_player)
+	var neutral := _make_unit("Neutral", neutral_player)
+	for unit in [attacker, unable, ally, enemy, neutral]:
+		root.add_child(unit)
+	var ally_collider := Node.new()
+	var enemy_collider := Node.new()
+	var neutral_collider := Node.new()
+	ally.add_child(ally_collider)
+	enemy.add_child(enemy_collider)
+	neutral.add_child(neutral_collider)
+	commands._set_selection([attacker, unable])
+
+	commands.raycast_hits.append({"collider": enemy_collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(attacker.attack_targets == [enemy], "ordinary right click must attack an enemy entity")
+	_expect(unable.attack_targets.is_empty(), "a mixed selection must omit units unable to attack the target")
+	_expect(attacker.move_targets.is_empty(), "an enemy attack click must not also become movement")
+	_expect(statuses.back() == "Attacking Enemy", "a single capable unit must produce an attack status")
+
+	commands.raycast_hits.append({"collider": ally_collider})
+	commands.raycast_hits.append({"position": Vector3(4.0, 0.0, 6.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(attacker.attack_targets == [enemy], "ordinary right click must not attack an allied entity")
+	_expect(attacker.move_targets.back() == Vector3(4.0, 0.0, 6.0), "an allied click without Ctrl remains movement")
+
+	commands.raycast_hits.append({"collider": neutral_collider})
+	commands.raycast_hits.append({"position": Vector3(8.0, 0.0, 10.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(attacker.attack_targets == [enemy], "ordinary right click must not attack a neutral entity")
+	_expect(attacker.move_targets.back() == Vector3(8.0, 0.0, 10.0), "a neutral click without Ctrl remains movement")
+
+	commands.raycast_hits.append({"collider": ally_collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT, true, Vector2.ZERO, true))
+	_expect(
+		statuses.back() == "Attacking ATAPC",
+		"attack status must prefer the rules id over an autogenerated node name"
+	)
+	commands.raycast_hits.append({"collider": neutral_collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT, true, Vector2.ZERO, true))
+	var ground_target := Vector3(12.0, 0.0, 14.0)
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({"position": ground_target})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT, true, Vector2.ZERO, true))
+	_expect(
+		attacker.attack_targets == [enemy, ally, neutral, ground_target],
+		"Ctrl+right click must force allied, neutral, and attack-ground targets"
+	)
+
+	attacker.rejected_attack_targets.append(enemy)
+	commands.raycast_hits.append({"collider": enemy_collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(attacker.attack_targets.size() == 4, "an incompatible target must not receive an attack order")
+	_expect(statuses.back() == "Selected units cannot attack this target", "an incompatible attack click must explain the rejection")
+	commands.raycast_hits.append({"collider": enemy_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == UnitCommandControllerScript.NO_CURSOR_OVERRIDE,
+		"an enemy that no selected unit can attack must not show the attack cursor"
+	)
+	attacker.rejected_attack_targets.erase(enemy)
+	commands.raycast_hits.append({"collider": enemy_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.ATTACK,
+		"an attackable enemy must use the dedicated attack cursor"
+	)
+	commands.handle_unhandled_input(_key_event(KEY_CTRL, true))
+	commands.raycast_hits.append({"collider": ally_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.ATTACK,
+		"held Ctrl must show the attack cursor over an attackable ally"
+	)
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({"position": ground_target})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.ATTACK,
+		"held Ctrl must show the attack cursor over attackable ground"
+	)
+	commands.handle_unhandled_input(_key_event(KEY_CTRL, false))
+
+	commands.queue_free()
+	for unit in [attacker, unable, ally, enemy, neutral]:
+		unit.queue_free()
 	return token
 
 
@@ -308,11 +422,12 @@ func _test_building_selection(token: int, local_player) -> int:
 	_expect(building.selected, "owned building must use the shared selection flow")
 	_expect(commands.selection_text() == "Construction Yard selected | owner: Atreides Commander (Atreides/Fremen, ally)", "building selection must include ownership")
 
+	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(6.0, 0.0, 9.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(building.selected, "right click must not clear a stationary building selection")
 	_expect(building.rally_points == [Vector3(6.0, 0.0, 9.0)], "right click on a building must set its rally point")
-	_expect(commands.raycast_masks == [0xffffffff, 1], "building rally points must use the terrain raycast")
+	_expect(commands.raycast_masks == [0xffffffff, 2, 1], "building rally points must separate entity and terrain raycasts")
 
 	commands.queue_free()
 	building.queue_free()
@@ -337,6 +452,7 @@ func _test_building_move_undeployment(token: int, local_player) -> int:
 
 	commands.raycast_hits.append({"collider": collider})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(24.0, 0.0, 30.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 
@@ -495,6 +611,7 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 	)
 	navigation.move_allowed = false
 	commands._set_selection([scout])
+	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(40.0, 0.0, 42.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(
@@ -502,7 +619,7 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 		"a row-four destination must reject the movement order itself"
 	)
 	_expect(
-		commands.raycast_masks == [2, 2, 2, 2, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 1],
+		commands.raycast_masks == [2, 2, 2, 2, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 2, 1],
 		"cursor context must keep entity and terrain raycasts on their dedicated layers"
 	)
 
@@ -537,6 +654,7 @@ func _test_rectangle_unit_selection(token: int, local_player, enemy_player) -> i
 	_expect(scout.selected and tank.selected and not enemy.selected, "rectangle selects only owned units inside it")
 	_expect(commands.selection_text() == "2 units selected", "rectangle selection must describe the group")
 
+	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(4.0, 5.0, 6.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(scout.move_targets == [Vector3(4.0, 5.0, 6.0)] and tank.move_targets == [Vector3(4.0, 5.0, 6.0)], "right click commands every selected unit")
@@ -561,12 +679,14 @@ func _test_formation_modifier(token: int, local_player) -> int:
 	commands.raycast_hits.append({"collider": collider})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
 	_expect(not commands.handle_unhandled_input(_key_event(KEY_J, true)), "J press must not consume unrelated input")
+	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(12.0, 0.0, 14.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(navigation.commands.size() == 1, "J plus right click must issue one navigation command")
 	_expect(navigation.commands[0]["mode"] == UnitNavigationSystemScript.MoveMode.FORMATION, "held J must select formation movement")
 
 	commands.handle_unhandled_input(_key_event(KEY_J, false))
+	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(16.0, 0.0, 18.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(navigation.commands[1]["mode"] == UnitNavigationSystemScript.MoveMode.FREE, "releasing J must restore free movement")
@@ -674,10 +794,9 @@ func _test_unload_order(token: int, local_player, enemy_player) -> int:
 	var enemy_collider := Node.new()
 	enemy_refinery.add_child(enemy_collider)
 	commands.raycast_hits.append({"collider": enemy_collider})
-	commands.raycast_hits.append({"position": Vector3(18.0, 0.0, 19.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(harvester.unload_commands.size() == 1, "an enemy refinery must not accept an unloading order")
-	_expect(navigation.commands.size() == 1, "an enemy refinery click must retain ordinary movement")
+	_expect(navigation.commands.is_empty(), "an unarmed harvester must not turn an enemy attack click into movement")
 
 	commands.queue_free()
 	harvester.queue_free()
@@ -695,11 +814,17 @@ func _make_unit(unit_name: String, player) -> FakeUnit:
 	return unit
 
 
-func _mouse_event(button_index: int, pressed := true, position := Vector2(10.0, 10.0)) -> InputEventMouseButton:
+func _mouse_event(
+		button_index: int,
+		pressed := true,
+		position := Vector2(10.0, 10.0),
+		ctrl_pressed := false
+	) -> InputEventMouseButton:
 	var event := InputEventMouseButton.new()
 	event.button_index = button_index
 	event.pressed = pressed
 	event.position = position
+	event.ctrl_pressed = ctrl_pressed
 	return event
 
 
