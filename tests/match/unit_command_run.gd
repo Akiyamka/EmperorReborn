@@ -89,6 +89,7 @@ class FakeUnitCommandController extends UnitCommandController:
 	var raycast_hits: Array[Dictionary] = []
 	var raycast_masks: Array[int] = []
 	var screen_positions: Dictionary = {}
+	var cursor_time_msec := 0
 
 	func _raycast(_screen_position: Vector2, collision_mask: int = 0xffffffff) -> Dictionary:
 		raycast_masks.append(collision_mask)
@@ -96,6 +97,9 @@ class FakeUnitCommandController extends UnitCommandController:
 
 	func _screen_position_for_entity(entity):
 		return screen_positions.get(entity, null)
+
+	func _cursor_time_msec() -> int:
+		return cursor_time_msec
 
 
 class FakeNavigation extends RefCounted:
@@ -124,6 +128,7 @@ class FakeDeploymentController extends RefCounted:
 	var undeployment_calls: Array[Dictionary] = []
 	var deployment_entities: Array[Node] = []
 	var deployable_entities: Array[Node] = []
+	var availability_queries := 0
 	var result := {
 		"handled": true,
 		"started": true,
@@ -140,6 +145,7 @@ class FakeDeploymentController extends RefCounted:
 		return result
 
 	func can_issue_deploy(unit: Node3D) -> bool:
+		availability_queries += 1
 		return unit in deployable_entities
 
 	func can_handle(unit: Node3D) -> bool:
@@ -387,18 +393,35 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.OVER_UNIT,
 		"an unselected deploy-capable MCV must still use the selection cursor"
 	)
+	_expect(
+		deployment.availability_queries == 0,
+		"deployment availability must not be checked before the selected MCV is hovered"
+	)
 	commands._set_selection([mcv])
 	commands.raycast_hits.append({"collider": mcv_collider})
 	_expect(
 		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.DEPLOY,
 		"a selected MCV at a valid site must use the deploy cursor"
 	)
+	_expect(deployment.availability_queries == 1, "the first selected-MCV hover must check deployment")
 	deployment.deployable_entities.erase(mcv)
+	mcv.position.x += 4.0
+	commands.raycast_hits.append({"collider": mcv_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.DEPLOY,
+		"deployment cursor checks must retain their result during the one-second interval"
+	)
+	_expect(
+		deployment.availability_queries == 1,
+		"a moving selected MCV must not trigger another deployment check in the same second"
+	)
+	commands.cursor_time_msec += UnitCommandControllerScript.DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC
 	commands.raycast_hits.append({"collider": mcv_collider})
 	_expect(
 		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.CANT_DEPLOY,
-		"a selected MCV at an invalid site must use the Cant Deploy cursor"
+		"an invalid site must use Cant Deploy at the next one-second check"
 	)
+	_expect(deployment.availability_queries == 2, "deployment availability must update once per second")
 	commands._set_selection([scout])
 	commands.raycast_hits.append({"collider": scout_collider})
 	commands.raycast_hits.append({"position": Vector3(12.0, 0.0, 14.0)})
@@ -479,7 +502,7 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 		"a row-four destination must reject the movement order itself"
 	)
 	_expect(
-		commands.raycast_masks == [2, 2, 2, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 1],
+		commands.raycast_masks == [2, 2, 2, 2, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 1],
 		"cursor context must keep entity and terrain raycasts on their dedicated layers"
 	)
 

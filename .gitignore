@@ -28,3 +28,6 @@ assets/converted/*
 
 # Debug
 scenes/debug
+
+# Godot writes importer sidecars next to the tracked cursor Blender sources.
+cursors_bend_files/*.blend.import

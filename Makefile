@@ -50,7 +50,7 @@ godot-convert-placement:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_placement.gd
 
 godot-convert-cursors:
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_cursors.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_cursor_models.gd
 
 godot-convert-spice-mound:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_model.gd -- --source res://assets/raw_original_content/3DDATA/spice/Spicemound.xbf --output res://assets/converted/models/Spicemound/Spicemound.scn

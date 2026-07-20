@@ -25,6 +25,11 @@ const ENTITY_SELECTION_COLLISION_MASK := 2
 const COMMAND_CURSOR_OVERRIDE := &"unit_command"
 const COMMAND_CURSOR_PRIORITY := 25
 const NO_CURSOR_OVERRIDE := -1
+const DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC := 1000
+
+var _deployment_cursor_entity_id := 0
+var _deployment_cursor_last_check_msec := -DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC
+var _deployment_cursor_result := NO_CURSOR_OVERRIDE
 
 
 func setup(
@@ -427,10 +432,28 @@ func _deployment_cursor_for(entity) -> int:
 	or not _deployment_controller.has_method("can_handle") \
 	or not bool(_deployment_controller.call("can_handle", entity)):
 		return NO_CURSOR_OVERRIDE
-	if _deployment_controller.has_method("can_issue_deploy") \
-	and bool(_deployment_controller.call("can_issue_deploy", entity)):
-		return CursorManagerScript.CursorType.DEPLOY
-	return CursorManagerScript.CursorType.CANT_DEPLOY
+
+	# A full Construction Yard footprint check is expensive. It is only needed
+	# while the pointer is over the one selected MCV, and its cursor result does
+	# not need frame-rate resolution while that unit moves across the grid.
+	var entity_id: int = entity.get_instance_id()
+	var now_msec: int = _cursor_time_msec()
+	if entity_id != _deployment_cursor_entity_id \
+	or _deployment_cursor_result == NO_CURSOR_OVERRIDE \
+	or now_msec - _deployment_cursor_last_check_msec >= DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC:
+		_deployment_cursor_entity_id = entity_id
+		_deployment_cursor_last_check_msec = now_msec
+		_deployment_cursor_result = (
+			CursorManagerScript.CursorType.DEPLOY
+			if _deployment_controller.has_method("can_issue_deploy")
+			and bool(_deployment_controller.call("can_issue_deploy", entity))
+			else CursorManagerScript.CursorType.CANT_DEPLOY
+		)
+	return _deployment_cursor_result
+
+
+func _cursor_time_msec() -> int:
+	return Time.get_ticks_msec()
 
 
 func _can_gather_at(target: Vector3) -> bool:

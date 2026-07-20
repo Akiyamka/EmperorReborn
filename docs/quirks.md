@@ -172,6 +172,27 @@ down or edge-on in the Inspector while being correct in the scene.
 
 ## Textures
 
+### Move and Deploy cursor blue rings omit their screen marker
+
+**Observed data:** Most cursor surfaces that require screen composition mark
+their texture name with the original `!` prefix. The blue-ring surface in
+`CU_Move_H0.xbf` and `CU_Deploy_H0.xbf` instead references the unmarked shared
+texture `whitering2.tga`, even though the ring is rendered as a screen effect
+in the original cursor appearance. The same texture is also used as an
+ordinary surface by other cursor models, so the texture itself cannot be
+classified globally as a screen texture.
+
+**Original-engine quirk:** For these two surfaces, the shipped texture-name
+marker does not fully describe the render mode. The additional state used by
+the original renderer has not been identified in the converted material
+data.
+
+**EmperorReborn compatibility decision:** `convert_cursor_models.gd` records
+source-specific `SCREEN_SURFACE_QUIRKS` for `cu_move_h0.xbf` and
+`cu_deploy_h0.xbf`: only their `whitering2.tga` surfaces are moved to the
+Screen pass. Other uses of this shared texture retain ordinary alpha
+composition.
+
 ### 16-bit TGAs carry a garbage alpha bit
 
 **Observed data:** 323 of 2462 TGA files in `3DDATA/Textures` are 16bpp

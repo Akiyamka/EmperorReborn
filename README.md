@@ -46,6 +46,7 @@ with these commands:
 ```sh
 make rules-export
 make godot-convert-placement
+make godot-convert-cursors
 make godot-convert-building BUILDING=ATConYard
 make godot-convert-building BUILDING=ATSmWindtrap
 make godot-convert-building BUILDING=ATBarracks
@@ -66,6 +67,12 @@ The tracked demo unit wrappers require these per-model conversions:
 There is deliberately no one-command bootstrap for every original asset or for
 the complete demo. A fresh clone needs the legal raw inputs and the applicable
 individual conversions above before generated scene references can load.
+
+`make godot-convert-cursors` converts the original `UI0001/CURSORS/CU_*.xbf`
+models used at runtime. Every cursor state uses a model scene; there is no
+rendered-PNG cursor pipeline or raster fallback. The isolated 3D viewport is
+composited normally, while only XBF surfaces whose texture names carry the
+original `!` marker use screen blending over the game.
 
 ## Verify and run
 
