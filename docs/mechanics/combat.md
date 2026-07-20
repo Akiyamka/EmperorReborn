@@ -15,16 +15,16 @@ Status: **draft pending verification**.
 
 ## 1. Damage model: weapon × armor
 
-- Basic scheme: a weapon has a **warhead** with a type (§2), and a target has an
-  **armor type**; final damage = base damage × the **modifier for the “warhead
-  type × armor” pair** from the matrix in `Rules.txt` `[Rules]` `[?]` — verify
-  that the model is in fact matrix-based (percentage modifiers), rather than another model;
+- Basic scheme: a **bullet** references a **warhead** (§2), and a target has an
+  **armor type**; final damage = bullet damage × the **percentage for the
+  “warhead × armor” pair** from the matrix in `Rules.txt` `[Rules]`;
 - the matrix expresses specializations: anti-infantry, anti-vehicle, and anti-air
   weapons are matrix rows rather than separate mechanics `[?]`;
-- **zero pairs**: some combinations deal no damage at all (Inkvine chemical does
-  not harm vehicles `[← 5]`; direct-fire weapons cannot reach air — §7) `[?]` —
-  how zero is represented: a zero in the matrix or separate flags;
-- building damage uses the same matrix (buildings have their own armor type) `[?]`.
+- **zero pairs** are represented directly by zeroes in the matrix (for example,
+  every normal warhead has a zero entry for `Invulnerable`) `[Rules]`; target-domain
+  restrictions such as air-only fire are separate bullet flags (§7);
+- buildings use the same armor-type namespace and matrix: `Armour` is present on
+  building entries as well as units (`Building`, `CY`, `Heavy`, etc.) `[Rules]`.
 
 ## 2. Weapon model: turret → bullet → warhead
 
@@ -36,17 +36,19 @@ Weapons in `Rules.txt` are a pipeline of three entities (verified):
   - **turrets on turrets** are supported — nesting for aiming along different
     axes, where different model parts rotate independently (for example, the
     mount horizontally and the barrel vertically);
-- **Bullet** — what exits a turret: it has its own parameters — **speed,
-  trajectory**, etc. `[Rules]`. It **may be absent** — then the hit is instant
-  (this answers the hitscan question: not a separate weapon type, but the
-  degenerate case of “a weapon without a bullet”);
-- **Warhead** — damage delivery: **type** (for the §1 matrix), **applied negative
-  effects**, and the projectile's **burst visual effect**.
+- **Bullet** — the shot emitted by a turret. It owns **base damage, range, speed,
+  trajectory, target-domain flags, special-effect flags, and explosion visuals**
+  `[Rules]`. A conceptual/hitscan shot is still a Bullet entry, marked by
+  `Speed = -1`; this is used by ordinary guns and knives as well as lasers;
+- **Warhead** — the bullet's reference to the §1 percentage matrix. Warhead
+  entries contain only armor percentages; they do not own damage, effects, or
+  visuals `[Rules]`.
 
-Consequence for §1: negative effects (suppression, Deviator gas, Leech infection,
-Inkvine chemical) are **warhead properties**; that is, “damage” and “effect” are
-delivered by one mechanism `[?]` — confirm that the listed effects are indeed
-implemented by warheads.
+Consequently, Deviator gas, Leech/Contaminator infection, ignition and related
+effects are **bullet properties**, not warhead properties. `Leech_B` and
+`Contaminator_B` intentionally have damage and effect fields but no warhead;
+their `Damage` is the direct fallback for targets that cannot receive the effect
+`[Rules]`.
 
 Other weapon properties on a unit:
 
@@ -65,8 +67,10 @@ trajectory parameters `[← 1 §1: collisions]` `[Rules]`. Trajectory behavior
   types, but an **arc-height parameter**: a low arc collides with a cliff wall
   or wall (3D collision — section 1 §1), while a high arc (artillery) flies over
   obstacles `[Rules: arc parameters]`;
-- **laser is the only exception**: it has **no travel speed** (an instant hit, the
-  “no bullet” case from §2) and **never misses**;
+- **conceptual bullets** (`Speed = -1`) hit instantly; there are 19 such entries
+  in the normalized rules, including ordinary firearms, knives, heavy guns, and
+  both lasers. `IsLaser` is a separate bullet flag rather than the definition of
+  hitscan `[Rules]`; lasers never miss (verified);
 - **piercing** (Sonic Tank): a slow wave passing through units/buildings/walls
   `[← 5 §7.1]`;
 - **homing (missiles)**: pursue a target **until they hit or bullet lifetime
@@ -135,10 +139,11 @@ Summary of how different bullets miss (follows from the verified behavior above)
 
 ## 7. Anti-air capability
 
-- The ability to hit air is a **weapon property** (AA flag or warhead) `[Rules]` `[?]`;
+- The ability to hit air is the Bullet `AntiAircraft` flag `[Rules]`;
 - air is unreachable by non-AA weapons `[← 5 §3]`, except for a landed plane
   (a ground unit `[← 5 §3]`);
-- are there “air-only” weapons (unable to hit ground) `[?]`.
+- air-only weapons exist: `ATHEATADP_B` combines `AntiAircraft = true` with
+  `AntiGround = false` `[Rules]`.
 
 ## 8. Residual-effect areas
 
@@ -164,8 +169,8 @@ buildings; does Harkonnen flame weaponry create an ignition area by itself.
 
 ## 10. Open questions pending verification
 
-Consolidated by section: §1 (whether the model is matrix-based, zeroes, building
-armor), §2 (weapon selection, simultaneity, turrets), §3 (hitscan; misses/overshoots/
+Consolidated by section: §1 (whether specialization is entirely matrix-driven),
+§2 (weapon selection, simultaneity, runtime turret aiming), §3 (misses/overshoots/
 overdamage), §4 (attack ground, weapons beyond vision), §5 (priorities, pursuit,
-guard), §6 (burning: does it burn to death; building stages), §7 (AA model),
-§8 (whether area mechanisms are shared), §9 (friendly fire, falloff).
+guard), §6 (burning: does it burn to death; building stages), §8 (whether area
+mechanisms are shared), §9 (friendly fire, falloff).

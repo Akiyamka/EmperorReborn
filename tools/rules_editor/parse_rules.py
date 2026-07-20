@@ -1211,6 +1211,24 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
             if k_low == 'terrain':
                 building_terrain[bid] = parse_terrain_list(v)
                 used.add(i)
+            elif k_low == 'armour':
+                # Armour is globally marked as a composite/special field
+                # because unit entries may add a terrain modifier. Building
+                # entries use the same key but always contain a single armour
+                # type, so consume it here before apply_fields skips it.
+                armour_name, modifier, terrain = parse_armour(v)
+                row['armour_type_id'] = (
+                    ('__RESOLVE__', 'armour_types', armour_name)
+                    if armour_name else None
+                )
+                if modifier is not None or terrain is not None:
+                    overflow.append((
+                        'building',
+                        'Armour(modifier)',
+                        v.strip(),
+                        line_no,
+                    ))
+                used.add(i)
             elif k_low == 'primarybuilding':
                 building_primary[bid] = parse_name_list(v)
                 used.add(i)

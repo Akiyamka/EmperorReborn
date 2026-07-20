@@ -2,6 +2,7 @@ extends CharacterBody3D
 class_name Unit
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 
 signal owner_changed(player_id: int)
 signal navigation_enemy_encountered(enemies: Array[Node3D])
@@ -25,6 +26,10 @@ const LEGACY_WALKER_UNIT_IDS: Array[StringName] = [&"INTLWalker"]
 ## 20 fixed updates per second, so use the same cadence for the unmanaged
 ## fallback to keep turning independent of the caller's frame rate.
 const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
+## ReloadCount is authored in animation/model ticks (the knife entry even
+## labels it as its exact animation frame count), matching the rules' 60 Hz
+## production timing rather than the lower-frequency navigation solver.
+const RULE_COMBAT_TICKS_PER_SECOND := 60.0
 const MOVING_ANIMATION := &"Move"
 const IDLE_ANIMATION := &"Stationary"
 const IDLE_ANIMATION_PREFIX := "Idle"
@@ -71,6 +76,7 @@ enum SlopeAlignmentMode {
 @export var max_health := 0.0
 @export var max_shields := 0.0
 @export var max_passengers := 0.0
+@export var armour_type: StringName = &""
 
 @onready var visual_root: Node3D = get_node_or_null(visual_root_path)
 
@@ -87,6 +93,7 @@ var shields := 0.0:
 		shields = clampf(value, 0.0, max_shields)
 		_refresh_shield_visibility()
 var passengers := 0.0
+var combat_turrets: Array = []
 var _shield_meshes: Array[MeshInstance3D] = []
 var _shield_time := 0.0
 var _scroll_fx_meshes: Array[MeshInstance3D] = []
@@ -137,6 +144,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	for turret in combat_turrets:
+		turret.advance_ticks(delta * RULE_COMBAT_TICKS_PER_SECOND)
 	_advance_visual_slope_alignment(delta)
 	# These shaders take their scroll/pulse phase from here: a continuous
 	# phase cannot come from animation tracks (it would snap on clip loops),
@@ -493,6 +502,7 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 		visual_root.remove_child(child)
 		child.free()
 	visual_root.add_child(model_scene.instantiate())
+	_bind_combat_turrets()
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_animation_players = _collect_animation_players()
@@ -520,9 +530,52 @@ func take_damage(amount: float) -> void:
 	if invulnerable or amount <= 0.0 or health <= 0.0:
 		return
 
-	health -= amount
+	var remaining_damage := amount
+	if shields > 0.0:
+		var absorbed := minf(shields, remaining_damage)
+		shields -= absorbed
+		remaining_damage -= absorbed
+	if remaining_damage <= 0.0:
+		return
+	health -= remaining_damage
 	if health <= 0.0:
 		queue_free()
+
+
+func combat_armour_type() -> StringName:
+	return armour_type
+
+
+func combat_is_airborne() -> bool:
+	return unit_config != null and bool(unit_config.field(&"can_fly", false))
+
+
+## Rotates every authored weapon joint toward a world-space point. The return
+## value becomes true only when every configured weapon is inside its own
+## acceptable-aim tolerance from Rules.txt.
+func aim_turrets_at(world_position: Vector3, delta: float) -> bool:
+	if combat_turrets.is_empty():
+		return false
+	var all_aimed := true
+	for turret in combat_turrets:
+		all_aimed = turret.aim_at(world_position, delta) and all_aimed
+	return all_aimed
+
+
+## Returns world transforms/positions/directions for every authored muzzle of
+## one weapon. Multi-barrel weapons expose all >> markers beneath their ::N
+## pivot instead of confusing muzzle numbers with weapon numbers.
+func turret_emission_points(weapon_index: int = 0) -> Array[Dictionary]:
+	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+		return []
+	return combat_turrets[weapon_index].emission_points()
+
+
+## Selects the next muzzle in authored marker order and advances the sequence.
+func next_turret_emission(weapon_index: int = 0) -> Dictionary:
+	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+		return {}
+	return combat_turrets[weapon_index].next_emission()
 
 
 func stop_at_current_position() -> void:
@@ -700,6 +753,27 @@ func _apply_rules_config() -> void:
 	can_move_any_direction = bool(unit_config.field(&"can_move_any_direction", false))
 	max_health = float(unit_config.field(&"health", max_health))
 	max_shields = float(unit_config.field(&"shield_health", 0.0))
+	armour_type = StringName(String(unit_config.field(&"armour_type", "")))
+	_configure_combat_turrets(rules)
+
+
+func _configure_combat_turrets(rules: Object) -> void:
+	combat_turrets.clear()
+	var turret_values: Array = unit_config.list(&"turrets")
+	for weapon_index in turret_values.size():
+		var turret_value: Variant = turret_values[weapon_index]
+		var turret_config: Resource = rules.call("turret", StringName(String(turret_value)))
+		if turret_config == null:
+			continue
+		var turret = CombatTurretScript.new()
+		if turret.configure_from_rules(turret_config, rules):
+			turret.bind_model(visual_root, weapon_index)
+			combat_turrets.append(turret)
+
+
+func _bind_combat_turrets() -> void:
+	for turret in combat_turrets:
+		turret.bind_model(visual_root, turret.weapon_index())
 
 
 func _collect_shield_meshes() -> Array[MeshInstance3D]:
