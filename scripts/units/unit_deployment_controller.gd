@@ -29,6 +29,7 @@ var _navigation
 var _deployments: Dictionary = {}
 var _undeployments: Dictionary = {}
 var _unit_model_scene_paths: Dictionary = {}
+var _building_scene_cache: Dictionary = {}
 
 
 func setup(
@@ -125,19 +126,12 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 			"message": "MCV cannot deploy: its rules have no Construction Yard",
 		}
 
-	var scene_path := _building_scene_path(building_id)
-	if not ResourceLoader.exists(scene_path):
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: %s scene is unavailable" % String(building_id),
-		}
-	var building_scene := load(scene_path) as PackedScene
+	var building_scene := _cached_building_scene(building_id)
 	if building_scene == null:
 		return {
 			"handled": true,
 			"available": false,
-			"message": "MCV cannot deploy: %s scene is invalid" % String(building_id),
+			"message": "MCV cannot deploy: %s scene is unavailable" % String(building_id),
 		}
 
 	var placement: BuildingPlacement = BuildingPlacementScript.new()
@@ -576,6 +570,22 @@ func _occupy_rows_for_existing_building(building: Node3D) -> Array[String]:
 func _building_scene_path(building_id: StringName) -> String:
 	var id_text := String(building_id)
 	return BUILDING_SCENE_ROOT.path_join(id_text).path_join("%s.scn" % id_text)
+
+
+## The deploy-cursor check re-resolves this every second while an MCV stays
+## selected and hovered; building_id only ever spans MCV_IDS's three concrete
+## Construction Yards, so caching sidesteps a repeated ResourceLoader hit for
+## a scene path that cannot change at runtime.
+func _cached_building_scene(building_id: StringName) -> PackedScene:
+	if _building_scene_cache.has(building_id):
+		return _building_scene_cache[building_id]
+	var scene_path := _building_scene_path(building_id)
+	if not ResourceLoader.exists(scene_path):
+		return null
+	var scene := load(scene_path) as PackedScene
+	if scene != null:
+		_building_scene_cache[building_id] = scene
+	return scene
 
 
 func _result(started: bool, message: String) -> Dictionary:

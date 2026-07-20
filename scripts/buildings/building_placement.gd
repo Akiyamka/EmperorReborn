@@ -46,6 +46,17 @@ var _can_build := false
 var _is_wall_candidate := false
 var _skip_build_radius_check := false
 
+# _occupied_building_nav_cells() answers from map-wide building state, not
+# per-instance state, and the deploy-cursor check throws its BuildingPlacement
+# away every call (once a second per selected MCV) -- a per-instance cache
+# would never survive between checks. Shared static state does, invalidated
+# only when a Building actually enters/exits the tree (see
+# _ensure_occupied_cells_tracking), which is far rarer than the per-second
+# poll that reads it.
+static var _occupied_cells_cache: Dictionary = {}
+static var _occupied_cells_cache_valid := false
+static var _occupied_cells_tracking_started := false
+
 
 func setup(
 		placement_camera: Camera3D,
@@ -652,9 +663,23 @@ func _is_occupy_cell_unoccupied(nav_cell: Vector2i, occupied_cells: Dictionary) 
 
 
 func _occupied_building_nav_cells() -> Dictionary:
-	var cells := {}
 	if _navigation_grid == null or not _navigation_grid.is_loaded():
-		return cells
+		return {}
+	# Only the in-tree path can observe every Building via the global group (see
+	# _scan_occupied_building_nav_cells), which is the only path the tracked
+	# enter/exit-tree invalidation below actually covers. The out-of-tree
+	# fallback is test-only scaffolding and stays uncached.
+	if not is_inside_tree():
+		return _scan_occupied_building_nav_cells()
+	_ensure_occupied_cells_tracking()
+	if not _occupied_cells_cache_valid:
+		_occupied_cells_cache = _scan_occupied_building_nav_cells()
+		_occupied_cells_cache_valid = true
+	return _occupied_cells_cache
+
+
+func _scan_occupied_building_nav_cells() -> Dictionary:
+	var cells := {}
 	var buildings: Array = []
 	if is_inside_tree():
 		buildings = get_tree().get_nodes_in_group("buildings")
@@ -674,6 +699,31 @@ func _occupied_building_nav_cells() -> Dictionary:
 		):
 			cells[cell] = true
 	return cells
+
+
+## Connected once per process (guarded by _occupied_cells_tracking_started).
+## Building's own group membership is only set inside its _ready(), which
+## SceneTree.node_added fires before -- checking `is Building` instead of the
+## group sidesteps that ordering gap for both enter and exit.
+static func _ensure_occupied_cells_tracking() -> void:
+	if _occupied_cells_tracking_started:
+		return
+	_occupied_cells_tracking_started = true
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return
+	tree.node_added.connect(_on_occupied_cells_tracked_node_added)
+	tree.node_removed.connect(_on_occupied_cells_tracked_node_removed)
+
+
+static func _on_occupied_cells_tracked_node_added(node: Node) -> void:
+	if node is Building:
+		_occupied_cells_cache_valid = false
+
+
+static func _on_occupied_cells_tracked_node_removed(node: Node) -> void:
+	if node is Building:
+		_occupied_cells_cache_valid = false
 
 
 func _is_nav_cell_buildable(grid_cell: Vector2i) -> bool:
