@@ -1,6 +1,7 @@
 extends SceneTree
 
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
+const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitScript := preload("res://scripts/units/unit.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
@@ -25,6 +26,9 @@ class CombatTarget extends RefCounted:
 	var armour_type: StringName
 	var airborne := false
 	var damage_taken := 0.0
+	var position := Vector3.ZERO
+	var alive := true
+	var hit_radius := 0.25
 
 	func _init(target_armour: StringName, target_airborne := false) -> void:
 		armour_type = target_armour
@@ -36,6 +40,45 @@ class CombatTarget extends RefCounted:
 	func combat_is_airborne() -> bool:
 		return airborne
 
+	func combat_aim_position() -> Vector3:
+		return position
+
+	func combat_is_alive() -> bool:
+		return alive
+
+	func combat_hit_radius() -> float:
+		return hit_radius
+
+	func take_damage(amount: float) -> void:
+		damage_taken += amount
+
+
+class PhysicsCombatTarget extends StaticBody3D:
+	var armour_type: StringName = &"None"
+	var damage_taken := 0.0
+
+	func _init(world_position: Vector3, radius := 0.5) -> void:
+		position = world_position
+		collision_layer = 2
+		collision_mask = 0
+		var collision := CollisionShape3D.new()
+		var sphere := SphereShape3D.new()
+		sphere.radius = radius
+		collision.shape = sphere
+		add_child(collision)
+
+	func combat_armour_type() -> StringName:
+		return armour_type
+
+	func combat_is_airborne() -> bool:
+		return false
+
+	func combat_aim_position() -> Vector3:
+		return global_position
+
+	func combat_is_alive() -> bool:
+		return true
+
 	func take_damage(amount: float) -> void:
 		damage_taken += amount
 
@@ -44,7 +87,14 @@ func _initialize() -> void:
 	await process_frame
 	_run_case("warhead matrix scales bullet damage by target armour", _test_armour_matrix)
 	_run_case("bullet targeting distinguishes ground and aircraft", _test_target_domains)
+	_run_case("bullet rules expose physical delivery parameters", _test_bullet_delivery_rules)
+	_run_case("hitscan resolves at launch without travel", _test_hitscan_projectile)
+	_run_case("non-homing bullets keep the sampled aim point", _test_linear_projectile_no_lead)
+	_run_case("homing respects delay, turn rate and target lifetime", _test_homing_projectile)
+	_run_case("trajectory bullets follow a gravity arc", _test_trajectory_projectile)
+	await _run_async_case("projectiles collide and Sonic pierces in 3D", _test_projectile_world_collision)
 	_run_case("turret emits bursts and reloads in rule ticks", _test_turret_reload)
+	_run_case("turret launches projectiles from its authored muzzle", _test_turret_projectile_launch)
 	_run_case("compound turret binds authored pivots and muzzle", _test_compound_turret)
 	_run_case("single-axis turret turns without changing pitch", _test_single_axis_turret)
 	_run_case("fixed weapon keeps its authored direction", _test_fixed_turret)
@@ -66,6 +116,14 @@ func _run_case(case_name: String, test: Callable) -> void:
 	_current_case = case_name
 	var failures_before := _failures
 	test.call()
+	if _failures == failures_before:
+		print("PASS: %s" % case_name)
+
+
+func _run_async_case(case_name: String, test: Callable) -> void:
+	_current_case = case_name
+	var failures_before := _failures
+	await test.call()
 	if _failures == failures_before:
 		print("PASS: %s" % case_name)
 
@@ -130,6 +188,190 @@ func _test_target_domains() -> void:
 		not adp.can_hit(CombatTarget.new(&"Heavy")),
 		"ATHEATADP_B's explicit AntiGround=false must reject ground targets"
 	)
+	var rejected_projectile = CombatProjectileScript.new()
+	root.add_child(rejected_projectile)
+	_expect(
+		not rejected_projectile.launch(
+			lmg, _emission(Vector3.ZERO, Vector3.FORWARD), aircraft
+		),
+		"a projectile must reject an incompatible target before entering flight"
+	)
+	rejected_projectile.free()
+
+
+func _test_bullet_delivery_rules() -> void:
+	var rules = root.get_node("Rules")
+	var lmg = _runtime_bullet(rules, &"LMG_B")
+	_expect(is_equal_approx(lmg.maximum_range(), 5.0), "LMG_B must retain its five-tile rule range")
+	_expect(
+		is_equal_approx(lmg.maximum_range_world(), 10.0),
+		"five source range tiles must convert to ten world units"
+	)
+	_expect(lmg.is_hitscan(), "negative Speed, rather than IsLaser, must define hitscan")
+	_expect(not lmg.is_laser(), "an ordinary conceptual firearm must not become a laser")
+
+	var adp = _runtime_bullet(rules, &"HEATADP_B")
+	_expect(adp.is_homing(), "HEATADP_B must expose its Homing flag")
+	_expect(is_equal_approx(adp.homing_delay_ticks(), 5.0), "HomingDelay must remain in rule ticks")
+	_expect(is_equal_approx(adp.turn_rate(), 0.9), "TurnRate must remain radians per update")
+	_expect(not adp.can_reach(Vector3.ZERO, Vector3.FORWARD * 19.9), "MinRange=10 tiles must reject a nearer launch")
+	_expect(adp.can_reach(Vector3.ZERO, Vector3.FORWARD * 20.0), "the exact minimum range must be accepted")
+	_expect(adp.can_reach(Vector3.ZERO, Vector3.FORWARD * 30.0), "the exact maximum range must be accepted")
+	_expect(not adp.can_reach(Vector3.ZERO, Vector3.FORWARD * 30.1), "a target beyond MaxRange must be rejected")
+
+	var sonic = _runtime_bullet(rules, &"Sound_B")
+	var flame = _runtime_bullet(rules, &"Flame_B")
+	_expect(sonic.is_continuous() and sonic.is_piercing(), "the Sonic wave must retain continuous piercing delivery")
+	_expect(flame.is_continuous() and not flame.is_piercing(), "Continuous alone must not make flame pass through walls")
+	var mortar = _runtime_bullet(rules, &"Mortar_B")
+	_expect(is_equal_approx(mortar.blast_radius_world(), 4.0), "BlastRadius=64 must convert from XBF to four world units")
+	_expect(is_equal_approx(mortar.friendly_damage_amount(), 50.0), "friendly splash amount must remain a percentage")
+	_expect(mortar.explosion_type() == &"ShellHit", "the bullet must retain its explosion presentation id")
+	_expect(mortar.explosion_effects() == ["ShellHit"], "all normalized explosion effects must stay available")
+	_expect(_runtime_bullet(rules, &"Leech_B").effect_flags().has("leech"), "special delivery flags must remain owned by Bullet")
+
+
+func _test_hitscan_projectile() -> void:
+	var rules = root.get_node("Rules")
+	var target := CombatTarget.new(&"None")
+	target.position = Vector3(0.0, 0.0, -5.0)
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	var launched: bool = projectile.launch(
+		_runtime_bullet(rules, &"LMG_B"),
+		_emission(Vector3.ZERO, Vector3.FORWARD),
+		target
+	)
+	_expect(launched, "an in-range conceptual bullet must launch")
+	_expect(projectile.is_finished(), "hitscan must finish in the launch call")
+	_expect(projectile.finish_reason == &"impact_target", "hitscan must resolve against its live target")
+	_expect(is_zero_approx(projectile.traveled_distance), "hitscan must accumulate no physical travel")
+	_expect(is_equal_approx(target.damage_taken, 219.0), "hitscan must deliver its payload exactly once")
+	projectile.free()
+
+
+func _test_linear_projectile_no_lead() -> void:
+	var rules = root.get_node("Rules")
+	var target := CombatTarget.new(&"Heavy")
+	target.position = Vector3(0.0, 0.0, -12.0)
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	_expect(
+		projectile.launch(
+			_runtime_bullet(rules, &"StraightBomb"),
+			_emission(Vector3.ZERO, Vector3.FORWARD),
+			target
+		),
+		"StraightBomb must launch toward an in-range target"
+	)
+	target.position = Vector3(5.0, 0.0, -12.0)
+	projectile.advance(0.25)
+	_expect(
+		projectile.state == CombatProjectileScript.State.FLYING,
+		"a 24-unit/s bullet must still be flying halfway to a point twelve units away"
+	)
+	_expect(
+		projectile.global_position.is_equal_approx(Vector3(0.0, 0.0, -6.0)),
+		"linear movement must use Speed in world units per second"
+	)
+	projectile.advance(0.25)
+	_expect(projectile.finish_reason == &"impact_ground", "a sidestepping target must escape a non-homing shot")
+	_expect(is_zero_approx(target.damage_taken), "a missed non-homing shot must not damage its former target")
+	projectile.free()
+
+
+func _test_homing_projectile() -> void:
+	var rules = root.get_node("Rules")
+	var target := CombatTarget.new(&"Aircraft", true)
+	target.position = Vector3(0.0, 0.0, -20.0)
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	_expect(
+		projectile.launch(
+			_runtime_bullet(rules, &"HEATADP_B"),
+			_emission(Vector3.ZERO, Vector3.FORWARD),
+			target
+		),
+		"the AA missile must launch at its exact minimum range"
+	)
+	target.position = Vector3(20.0, 0.0, 0.0)
+	projectile.advance(0.25)
+	_expect(
+		projectile.direction().is_equal_approx(Vector3.FORWARD),
+		"the missile must keep its launch heading for five HomingDelay ticks"
+	)
+	projectile.advance(0.05)
+	_expect(projectile.direction().x > 0.5, "after the delay, TurnRate must bend the missile toward the live target")
+	target.alive = false
+	projectile.advance(0.05)
+	_expect(projectile.finish_reason == &"target_lost", "a homing missile must self-destruct when its target dies")
+	_expect(is_zero_approx(target.damage_taken), "target loss must not apply an impact payload")
+	projectile.free()
+
+
+func _test_trajectory_projectile() -> void:
+	var rules = root.get_node("Rules")
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	_expect(
+		projectile.launch(
+			_runtime_bullet(rules, &"Mortar_B"),
+			_emission(Vector3.ZERO, Vector3.FORWARD),
+			Vector3(0.0, 0.0, -20.0),
+			null,
+			float(rules.general_rules().field(&"bullet_gravity", 1.0))
+		),
+		"a trajectory bullet without Speed must derive a gravity arc"
+	)
+	projectile.advance(0.5)
+	_expect(projectile.global_position.y > 1.0, "the mortar shell must rise above the direct line")
+	_expect(projectile.state == CombatProjectileScript.State.FLYING, "the shell must remain alive before its arc completes")
+	projectile.advance(2.0)
+	_expect(projectile.finish_reason == &"impact_ground", "an attack-ground arc must burst at its sampled point")
+	_expect(
+		projectile.global_position.is_equal_approx(Vector3(0.0, 0.0, -20.0)),
+		"the analytic arc must finish exactly at its aim position"
+	)
+	projectile.free()
+
+
+func _test_projectile_world_collision() -> void:
+	var rules = root.get_node("Rules")
+	var blocker := PhysicsCombatTarget.new(Vector3(0.0, 0.0, -4.0), 0.75)
+	var target := PhysicsCombatTarget.new(Vector3(0.0, 0.0, -8.0), 0.75)
+	root.add_child(blocker)
+	root.add_child(target)
+	await physics_frame
+
+	var shell = CombatProjectileScript.new()
+	root.add_child(shell)
+	shell.launch(
+		_runtime_bullet(rules, &"StraightBomb"),
+		_emission(Vector3.ZERO, Vector3.FORWARD),
+		target
+	)
+	shell.advance(0.5)
+	_expect(shell.finish_reason == &"impact_target", "a direct shell must stop at the first combat collider")
+	_expect(blocker.damage_taken > 0.0, "the first entity on the ray must receive the shell payload")
+	_expect(is_zero_approx(target.damage_taken), "an intercepted non-piercing shell must not reach its intended target")
+	shell.free()
+
+	blocker.damage_taken = 0.0
+	target.damage_taken = 0.0
+	var wave = CombatProjectileScript.new()
+	root.add_child(wave)
+	wave.launch(
+		_runtime_bullet(rules, &"Sound_B"),
+		_emission(Vector3.ZERO, Vector3.FORWARD),
+		target
+	)
+	wave.advance(0.5)
+	_expect(blocker.damage_taken > 0.0, "the Sonic wave must damage the first intersected entity")
+	_expect(target.damage_taken > 0.0, "the Sonic wave must continue through to the entity behind it")
+	_expect(wave.traveled_distance >= 8.0, "piercing must not end the wave at the first collision")
+	wave.free()
+	blocker.free()
+	target.free()
 
 
 func _test_turret_reload() -> void:
@@ -157,6 +399,39 @@ func _test_turret_reload() -> void:
 		burst_turret.try_fire().size() == 10,
 		"TurretBulletCount=10 must emit a ten-bullet burst"
 	)
+
+
+func _test_turret_projectile_launch() -> void:
+	var rules = root.get_node("Rules")
+	var model := ATMinotaurusModelScene.instantiate() as Node3D
+	root.add_child(model)
+	var turret = CombatTurretScript.new()
+	turret.configure_from_rules(rules.turret(&"ATMinotaurusBase"), rules)
+	turret.bind_model(model, 0)
+	var emission := turret.peek_emission()
+	var direction: Vector3 = emission["direction"]
+	_expect(
+		turret.try_fire_at(Vector3(emission["position"]) + direction * 100.0, model, root).is_empty(),
+		"an out-of-range request must not emit a projectile"
+	)
+	_expect(is_zero_approx(turret.reload_ticks_remaining), "a rejected request must not consume reload")
+	var projectiles: Array = turret.try_fire_at(
+		Vector3(emission["position"]) + direction * 10.0, model, root
+	)
+	_expect(projectiles.size() == 1, "an in-range request must create one physical projectile")
+	if not projectiles.is_empty():
+		var projectile = projectiles[0]
+		_expect(projectile.bullet.id() == &"KobraHowitzer_B", "the projectile must carry the turret's configured bullet")
+		_expect(
+			projectile.global_position.is_equal_approx(Vector3(emission["position"])),
+			"the projectile must start at the authored >> muzzle"
+		)
+		_expect(
+			projectile.state == CombatProjectileScript.State.FLYING,
+			"a non-hitscan turret shot must remain as a world-space node"
+		)
+		projectile.free()
+	model.free()
 
 
 func _test_compound_turret() -> void:
@@ -271,6 +546,16 @@ func _test_unit_turret_rebind() -> void:
 		unit.aim_turrets_at(Vector3(emission["position"]) + Vector3.RIGHT * 100.0, 0.05) == false,
 		"Unit must forward incremental aiming before the target is reached"
 	)
+	var launch_emission: Dictionary = unit.turret_emission_points()[0]
+	var projectiles: Array = unit.fire_weapon_at(
+		Vector3(launch_emission["position"]) + Vector3(launch_emission["direction"]) * 5.0,
+		0,
+		root
+	)
+	_expect(projectiles.size() == 1, "Unit must launch its configured weapon through the turret")
+	if not projectiles.is_empty():
+		_expect(projectiles[0].bullet.id() == &"LMG_B", "the APC Unit API must emit LMG_B")
+		projectiles[0].free()
 	unit.free()
 
 
@@ -291,6 +576,15 @@ func _test_building_turret_rebind() -> void:
 		String((damage_emission.get("node") as Node).get_path()).contains("/Damage1/"),
 		"state changes must rebind the turret to the visible Damage1 copy"
 	)
+	var projectiles: Array = building.fire_weapon_at(
+		Vector3(damage_emission["position"]) + Vector3(damage_emission["direction"]) * 5.0,
+		0,
+		root
+	)
+	_expect(projectiles.size() == 1, "Building must launch from the active damage-state muzzle")
+	if not projectiles.is_empty():
+		_expect(projectiles[0].bullet.id() == &"HKGunTurret_B", "the building API must use its rules bullet")
+		projectiles[0].free()
 	building.free()
 
 
@@ -328,3 +622,17 @@ func _test_shield_absorption() -> void:
 	_expect(is_zero_approx(unit.shields), "a larger hit must deplete the remaining shield")
 	_expect(is_equal_approx(unit.health, 440.0), "only spillover damage must reduce health")
 	unit.free()
+
+
+func _runtime_bullet(rules: Object, bullet_id: StringName):
+	var config: Resource = rules.call("bullet", bullet_id)
+	var warhead_id := StringName(String(config.field(&"warhead", ""))) if config != null else &""
+	var warhead_config: Resource = rules.call("warhead", warhead_id) if warhead_id != &"" else null
+	return CombatBulletScript.new(config, warhead_config)
+
+
+func _emission(position: Vector3, direction: Vector3) -> Dictionary:
+	return {
+		"position": position,
+		"direction": direction.normalized(),
+	}
