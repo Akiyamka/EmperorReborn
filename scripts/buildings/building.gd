@@ -694,6 +694,22 @@ func combat_is_airborne() -> bool:
 	return false
 
 
+func combat_aim_position() -> Vector3:
+	return global_position
+
+
+func combat_is_alive() -> bool:
+	return health > 0.0 and not is_queued_for_deletion()
+
+
+func combat_hit_radius() -> float:
+	var collision_body := get_node_or_null("SelectionCollision") as StaticBody3D
+	if collision_body != null and collision_body.has_meta("collision_bounds"):
+		var bounds: AABB = collision_body.get_meta("collision_bounds")
+		return maxf(minf(bounds.size.x, bounds.size.z) * 0.5, 0.5)
+	return 0.5
+
+
 func aim_turrets_at(world_position: Vector3, delta: float) -> bool:
 	if combat_turrets.is_empty():
 		return false
@@ -704,15 +720,38 @@ func aim_turrets_at(world_position: Vector3, delta: float) -> bool:
 
 
 func turret_emission_points(weapon_index: int = 0) -> Array[Dictionary]:
-	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+	var turret = _combat_turret_for_weapon(weapon_index)
+	if turret == null:
 		return []
-	return combat_turrets[weapon_index].emission_points()
+	return turret.emission_points()
 
 
 func next_turret_emission(weapon_index: int = 0) -> Dictionary:
-	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+	var turret = _combat_turret_for_weapon(weapon_index)
+	if turret == null:
 		return {}
-	return combat_turrets[weapon_index].next_emission()
+	return turret.next_emission()
+
+
+func fire_weapon_at(
+		target_or_position: Variant,
+		weapon_index: int = 0,
+		projectile_parent: Node = null,
+		aim_offset := Vector3.ZERO
+	) -> Array:
+	var turret = _combat_turret_for_weapon(weapon_index)
+	if turret == null:
+		return []
+	return turret.try_fire_at(target_or_position, self, projectile_parent, aim_offset)
+
+
+func _combat_turret_for_weapon(weapon_index: int):
+	if weapon_index < 0:
+		return null
+	for turret in combat_turrets:
+		if turret.weapon_index() == weapon_index:
+			return turret
+	return null
 
 
 func owner_player():

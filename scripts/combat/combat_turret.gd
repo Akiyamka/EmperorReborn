@@ -2,6 +2,7 @@ class_name CombatTurret
 extends RefCounted
 
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
+const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 
 ## Converted XBF models preserve the original Emperor attachment markers:
 ##   ::N...  pivot of weapon/turret N
@@ -23,6 +24,7 @@ var bullet_config: Resource
 var warhead_config: Resource
 var joint_configs: Array[Resource] = []
 var reload_ticks_remaining := 0.0
+var bullet_gravity := 1.0
 
 var current_yaw := 0.0
 var current_pitch := 0.0
@@ -48,8 +50,13 @@ func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
 	bullet_config = null
 	warhead_config = null
 	reload_ticks_remaining = 0.0
+	bullet_gravity = 1.0
 	if firing_config == null or rules == null:
 		return false
+	var general_config: Resource = rules.call("general_rules") \
+		if rules.has_method("general_rules") else null
+	if general_config != null:
+		bullet_gravity = maxf(float(general_config.field(&"bullet_gravity", 1.0)), 0.0)
 
 	var bullet_id := StringName(String(firing_config.field(&"bullet", "")))
 	if bullet_id == &"":
@@ -304,6 +311,82 @@ func try_fire() -> Array:
 		_last_emissions.append(next_emission())
 	reload_ticks_remaining = reload_count()
 	return result
+
+
+## Emits fully configured world-space projectile nodes toward either a live
+## target or an attack-ground position. Range is checked before reload/muzzle
+## state is consumed; the target position is sampled now (there is no lead).
+func try_fire_at(
+		target_or_position: Variant,
+		source: Object = null,
+		projectile_parent: Node = null,
+		aim_offset := Vector3.ZERO
+	) -> Array:
+	var result: Array = []
+	if not is_ready() or not is_bound():
+		return result
+	var target_position := _bullet_target_position(target_or_position)
+	var preview_emission := peek_emission()
+	if not target_position.is_finite() or preview_emission.is_empty():
+		return result
+	if not is_aimed_at(target_position + aim_offset):
+		return result
+	var preview_bullet = CombatBulletScript.new(bullet_config, warhead_config)
+	if target_or_position is Object \
+	and not preview_bullet.can_hit(target_or_position as Object):
+		return result
+	if target_or_position is Object \
+	and not _bullet_target_is_alive(target_or_position as Object):
+		return result
+	if not preview_bullet.can_reach(Vector3(preview_emission["position"]), target_position + aim_offset):
+		return result
+
+	var parent := projectile_parent if projectile_parent != null else _default_projectile_parent()
+	if parent == null or not parent.is_inside_tree():
+		return result
+	var payloads := try_fire()
+	for index in payloads.size():
+		var projectile = CombatProjectileScript.new()
+		parent.add_child(projectile)
+		var emission: Dictionary = _last_emissions[index] \
+			if index < _last_emissions.size() else preview_emission
+		if not projectile.launch(
+			payloads[index], emission, target_or_position,
+			source if source != null else _model_root, bullet_gravity, aim_offset
+		):
+			projectile.free()
+			continue
+		result.append(projectile)
+	return result
+
+
+func _bullet_target_position(target_or_position: Variant) -> Vector3:
+	if target_or_position is Vector3:
+		return target_or_position
+	if target_or_position is Object and is_instance_valid(target_or_position):
+		var target_object := target_or_position as Object
+		if target_object.has_method("combat_aim_position"):
+			var value: Variant = target_object.call("combat_aim_position")
+			if value is Vector3:
+				return value
+		if target_object is Node3D:
+			return (target_object as Node3D).global_position
+	return Vector3.INF
+
+
+func _bullet_target_is_alive(target: Object) -> bool:
+	if target == null or not is_instance_valid(target):
+		return false
+	if target is Node and (target as Node).is_queued_for_deletion():
+		return false
+	return not target.has_method("combat_is_alive") or bool(target.call("combat_is_alive"))
+
+
+func _default_projectile_parent() -> Node:
+	if _model_root == null or not is_instance_valid(_model_root) or not _model_root.is_inside_tree():
+		return null
+	var tree := _model_root.get_tree()
+	return tree.current_scene if tree.current_scene != null else tree.root
 
 
 func _joint_chain(turret_config: Resource, rules: Object) -> Array[Resource]:

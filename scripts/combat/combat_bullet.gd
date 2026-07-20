@@ -3,6 +3,11 @@ extends RefCounted
 
 const CombatWarheadScript := preload("res://scripts/combat/combat_warhead.gd")
 
+## One Rules.txt map tile is 32 source-model units. Converted models/maps use
+## the repository-wide 1/16 scale, making a combat range tile 2 world units.
+const RULE_TILE_WORLD_SPAN := 2.0
+const PIERCING_BULLET_IDS: Array[StringName] = [&"Sound_B", &"SoundInf_B"]
+
 ## BulletConfig describes delivery (range, speed, targeting flags and damage),
 ## while CombatWarhead resolves that damage against the target's armour.
 
@@ -23,10 +28,109 @@ func maximum_range() -> float:
 	return maxf(float(config.field(&"max_range", 0.0)), 0.0) if config != null else 0.0
 
 
+func minimum_range() -> float:
+	return maxf(float(config.field(&"min_range", 0.0)), 0.0) if config != null else 0.0
+
+
+func maximum_range_world() -> float:
+	return maximum_range() * RULE_TILE_WORLD_SPAN
+
+
+func minimum_range_world() -> float:
+	return minimum_range() * RULE_TILE_WORLD_SPAN
+
+
+func speed() -> float:
+	return float(config.field(&"speed", 0.0)) if config != null else 0.0
+
+
+func blast_radius() -> float:
+	return maxf(float(config.field(&"blast_radius", 0.0)), 0.0) if config != null else 0.0
+
+
+func blast_radius_world() -> float:
+	# BlastRadius is authored in source XBF units (32 is one tile), unlike
+	# MaxRange/MinRange which are already expressed as tile counts.
+	return blast_radius() / 16.0
+
+
+func explosion_type() -> StringName:
+	return StringName(String(config.field(&"explosion_type", ""))) \
+		if config != null else &""
+
+
+func explosion_effects() -> Array:
+	return config.list(&"explosion_effects") if config != null else []
+
+
+func friendly_damage_amount() -> float:
+	return clampf(float(config.field(&"friendly_damage_amount", 0.0)), 0.0, 100.0) \
+		if config != null else 0.0
+
+
+func reduces_damage_with_distance() -> bool:
+	return config != null and bool(config.field(&"reduce_damage_with_distance", false))
+
+
 func is_hitscan() -> bool:
+	# IsLaser controls presentation/accuracy; Speed=-1 is the actual source
+	# representation of every conceptual (instant) bullet.
+	return config != null and speed() < 0.0
+
+
+func is_laser() -> bool:
+	return config != null and bool(config.field(&"is_laser", false))
+
+
+func is_homing() -> bool:
+	return config != null and bool(config.field(&"homing", false))
+
+
+func homing_delay_ticks() -> float:
+	return maxf(float(config.field(&"homing_delay", 0.0)), 0.0) if config != null else 0.0
+
+
+func turn_rate() -> float:
+	return maxf(float(config.field(&"turn_rate", 0.0)), 0.0) if config != null else 0.0
+
+
+func has_trajectory() -> bool:
+	return config != null and bool(config.field(&"trajectory", false))
+
+
+func is_continuous() -> bool:
+	return config != null and bool(config.field(&"continuous", false))
+
+
+func is_piercing() -> bool:
+	# Rules.txt has no generic Piercing flag. Its two Sonic Tank wave entries
+	# are the verified projectiles that pass through units/buildings/walls.
+	return id() in PIERCING_BULLET_IDS
+
+
+func effect_flags() -> Dictionary:
+	var result := {}
 	if config == null:
-		return false
-	return bool(config.field(&"is_laser", false)) or float(config.field(&"speed", 0.0)) < 0.0
+		return result
+	for field_name in [
+		&"burnt", &"ignites", &"gassed", &"leech", &"infantry",
+		&"damage_column", &"deviate", &"beserk", &"retreat",
+	]:
+		var value: Variant = config.field(field_name, null)
+		if value != null:
+			result[String(field_name)] = bool(value)
+	return result
+
+
+func id() -> StringName:
+	return StringName(String(config.get("id"))) if config != null else &""
+
+
+func can_reach(from: Vector3, to: Vector3) -> bool:
+	var offset := to - from
+	var horizontal_distance := Vector2(offset.x, offset.z).length()
+	return horizontal_distance + 0.0001 >= minimum_range_world() \
+		and horizontal_distance <= maximum_range_world() + 0.0001
 
 
 func can_hit(target: Object) -> bool:

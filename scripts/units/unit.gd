@@ -550,6 +550,18 @@ func combat_is_airborne() -> bool:
 	return unit_config != null and bool(unit_config.field(&"can_fly", false))
 
 
+func combat_aim_position() -> Vector3:
+	return global_position
+
+
+func combat_is_alive() -> bool:
+	return health > 0.0 and not is_queued_for_deletion()
+
+
+func combat_hit_radius() -> float:
+	return maxf(arrival_radius, 0.25)
+
+
 ## Rotates every authored weapon joint toward a world-space point. The return
 ## value becomes true only when every configured weapon is inside its own
 ## acceptable-aim tolerance from Rules.txt.
@@ -566,16 +578,42 @@ func aim_turrets_at(world_position: Vector3, delta: float) -> bool:
 ## one weapon. Multi-barrel weapons expose all >> markers beneath their ::N
 ## pivot instead of confusing muzzle numbers with weapon numbers.
 func turret_emission_points(weapon_index: int = 0) -> Array[Dictionary]:
-	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+	var turret = _combat_turret_for_weapon(weapon_index)
+	if turret == null:
 		return []
-	return combat_turrets[weapon_index].emission_points()
+	return turret.emission_points()
 
 
 ## Selects the next muzzle in authored marker order and advances the sequence.
 func next_turret_emission(weapon_index: int = 0) -> Dictionary:
-	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+	var turret = _combat_turret_for_weapon(weapon_index)
+	if turret == null:
 		return {}
-	return combat_turrets[weapon_index].next_emission()
+	return turret.next_emission()
+
+
+## Fires one rules-backed weapon from its next authored muzzle. A live target
+## remains attached only for homing; ordinary projectiles keep this frame's
+## position, matching the original no-lead behavior.
+func fire_weapon_at(
+		target_or_position: Variant,
+		weapon_index: int = 0,
+		projectile_parent: Node = null,
+		aim_offset := Vector3.ZERO
+	) -> Array:
+	var turret = _combat_turret_for_weapon(weapon_index)
+	if turret == null:
+		return []
+	return turret.try_fire_at(target_or_position, self, projectile_parent, aim_offset)
+
+
+func _combat_turret_for_weapon(weapon_index: int):
+	if weapon_index < 0:
+		return null
+	for turret in combat_turrets:
+		if turret.weapon_index() == weapon_index:
+			return turret
+	return null
 
 
 func stop_at_current_position() -> void:
