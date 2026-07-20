@@ -69,7 +69,9 @@ func friendly_damage_amount() -> float:
 
 
 func reduces_damage_with_distance() -> bool:
-	return config != null and bool(config.field(&"reduce_damage_with_distance", false))
+	# Rules.txt only spells this field out to opt out (`False`). Its absence is
+	# the engine default: radial damage falls off toward the blast edge.
+	return config != null and bool(config.field(&"reduce_damage_with_distance", true))
 
 
 func is_hitscan() -> bool:
@@ -122,6 +124,40 @@ func effect_flags() -> Dictionary:
 	return result
 
 
+func active_effect_flags() -> Array[StringName]:
+	var result: Array[StringName] = []
+	var flags := effect_flags()
+	for field_name in flags:
+		if bool(flags[field_name]):
+			result.append(StringName(field_name))
+	return result
+
+
+func effect_targets_infantry() -> bool:
+	return config != null and bool(config.field(&"infantry", false))
+
+
+func effect_health() -> float:
+	return maxf(float(config.field(&"health", 0.0)), 0.0) if config != null else 0.0
+
+
+func effect_damage_per_tick() -> float:
+	# Leech_B/Contaminator_B call this source field ShieldHealth. It is not the
+	# projectile's shield; Rules.txt documents it as damage to the infected unit.
+	return maxf(float(config.field(&"shield_health", 0.0)), 0.0) \
+		if config != null else 0.0
+
+
+func linger_duration_ticks() -> float:
+	return maxf(float(config.field(&"linger_duration", 0.0)), 0.0) \
+		if config != null else 0.0
+
+
+func linger_damage() -> float:
+	return maxf(float(config.field(&"linger_damage", 0.0)), 0.0) \
+		if config != null else 0.0
+
+
 func id() -> StringName:
 	return StringName(String(config.get("id"))) if config != null else &""
 
@@ -152,16 +188,3 @@ func damage_against(armour_type: StringName) -> float:
 	if warhead == null or warhead.config == null:
 		return base_damage()
 	return warhead.damage_for(base_damage(), armour_type)
-
-
-func impact(target: Object) -> float:
-	if not can_hit(target):
-		return 0.0
-	if not target.has_method("combat_armour_type") or not target.has_method("take_damage"):
-		return 0.0
-	var armour_type := StringName(String(target.call("combat_armour_type")))
-	var damage := damage_against(armour_type)
-	if damage <= 0.0:
-		return 0.0
-	target.call("take_damage", damage)
-	return damage

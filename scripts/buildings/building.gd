@@ -710,6 +710,11 @@ func combat_hit_radius() -> float:
 	return 0.5
 
 
+func combat_owner_player_id() -> int:
+	# Stable combat-facing ownership contract used for friendly-fire scaling.
+	return owner_player_id
+
+
 func aim_turrets_at(world_position: Vector3, delta: float) -> bool:
 	if combat_turrets.is_empty():
 		return false

@@ -562,6 +562,11 @@ func combat_hit_radius() -> float:
 	return maxf(arrival_radius, 0.25)
 
 
+func combat_owner_player_id() -> int:
+	# Stable combat-facing ownership contract used for friendly-fire scaling.
+	return owner_player_id
+
+
 ## Rotates every authored weapon joint toward a world-space point. The return
 ## value becomes true only when every configured weapon is inside its own
 ## acceptable-aim tolerance from Rules.txt.
