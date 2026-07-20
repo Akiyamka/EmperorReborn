@@ -1,5 +1,10 @@
 # EmperorReborn
 
+[![YouTube](https://github.com/user-attachments/assets/fec4164b-53c1-42d0-aa93-70f831997e1d
+)](https://www.youtube.com/embed/LaDFqT5M1Qs?si=5mcVpGYw0ymfJIeK)
+
+
+
 EmperorReborn is a Godot 4 project whose goal is to make a native and browser-playable version
 of *Emperor: Battle for Dune*.
 
