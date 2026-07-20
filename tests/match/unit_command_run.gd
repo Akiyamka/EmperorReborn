@@ -122,6 +122,7 @@ class FakeNavigation extends RefCounted:
 class FakeDeploymentController extends RefCounted:
 	var calls: Array[Node] = []
 	var undeployment_calls: Array[Dictionary] = []
+	var deployment_entities: Array[Node] = []
 	var deployable_entities: Array[Node] = []
 	var result := {
 		"handled": true,
@@ -140,6 +141,9 @@ class FakeDeploymentController extends RefCounted:
 
 	func can_issue_deploy(unit: Node3D) -> bool:
 		return unit in deployable_entities
+
+	func can_handle(unit: Node3D) -> bool:
+		return unit in deployment_entities
 
 	func try_undeploy(building: Node, target: Vector3, move_mode: int) -> Dictionary:
 		undeployment_calls.append({
@@ -376,17 +380,24 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.OVER_UNIT,
 		"an unselected owned unit must use the row-six selection cursor"
 	)
+	deployment.deployment_entities.append(mcv)
 	deployment.deployable_entities.append(mcv)
 	commands.raycast_hits.append({"collider": mcv_collider})
 	_expect(
-		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.DEPLOY,
-		"a deploy-capable MCV must use the row-twelve cursor before selection"
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.OVER_UNIT,
+		"an unselected deploy-capable MCV must still use the selection cursor"
 	)
 	commands._set_selection([mcv])
 	commands.raycast_hits.append({"collider": mcv_collider})
 	_expect(
 		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.DEPLOY,
-		"a selected deploy-capable MCV must retain the row-twelve cursor"
+		"a selected MCV at a valid site must use the deploy cursor"
+	)
+	deployment.deployable_entities.erase(mcv)
+	commands.raycast_hits.append({"collider": mcv_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.CANT_DEPLOY,
+		"a selected MCV at an invalid site must use the Cant Deploy cursor"
 	)
 	commands._set_selection([scout])
 	commands.raycast_hits.append({"collider": scout_collider})
@@ -449,8 +460,8 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(50.2, 0.0, 52.7)})
 	_expect(
-		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.TARGET_ABILITY,
-		"a harvestable spice target must use the row-nine targeted-ability cursor"
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.GATHER,
+		"a harvestable spice target must use the separate Gather cursor"
 	)
 
 	commands._set_selection([])
@@ -468,7 +479,7 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 		"a row-four destination must reject the movement order itself"
 	)
 	_expect(
-		commands.raycast_masks == [2, 2, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 1],
+		commands.raycast_masks == [2, 2, 2, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 1],
 		"cursor context must keep entity and terrain raycasts on their dedicated layers"
 	)
 

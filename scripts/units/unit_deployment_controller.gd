@@ -45,52 +45,16 @@ func setup(
 
 ## Result keys: handled (this is an MCV command), started, and message.
 func try_deploy(unit: Node3D) -> Dictionary:
-	if not can_handle(unit):
+	var candidate := _deployment_candidate(unit)
+	if not bool(candidate.get("handled", false)):
 		return {"handled": false, "started": false, "message": ""}
-	if bool(unit.call("is_deploying")):
-		return _result(false, "MCV is already deploying")
-	if _navigation_grid == null or not _navigation_grid.is_loaded():
-		return _result(false, "MCV cannot deploy: navigation grid is unavailable")
-	if _buildings_root == null:
-		return _result(false, "MCV cannot deploy: buildings root is unavailable")
+	if not bool(candidate.get("available", false)):
+		return _result(false, String(candidate.get("message", "")))
 
-	var con_yard := _construction_yard_for(unit)
-	var building_id: StringName = con_yard.get("id", &"")
-	var config: Resource = con_yard.get("config")
-	if building_id == &"" or config == null:
-		return _result(false, "MCV cannot deploy: its rules have no Construction Yard")
-
-	var scene_path := _building_scene_path(building_id)
-	if not ResourceLoader.exists(scene_path):
-		return _result(false, "MCV cannot deploy: %s scene is unavailable" % String(building_id))
-	var building_scene := load(scene_path) as PackedScene
-	if building_scene == null:
-		return _result(false, "MCV cannot deploy: %s scene is invalid" % String(building_id))
-
-	var placement: BuildingPlacement = BuildingPlacementScript.new()
-	add_child(placement)
-	placement.setup(
-		null,
-		_navigation_grid,
-		_buildings_root,
-		null,
-		null,
-		null,
-		null,
-		Callable(self, "_occupy_rows_for_existing_building")
-	)
-	var occupy_rows: Array[String] = []
-	occupy_rows.assign(config.list(&"occupy_rows"))
-	if not placement.begin(building_id, String(building_id), occupy_rows, false, true):
-		placement.queue_free()
-		return _result(false, "MCV cannot deploy: %s has no valid footprint" % String(building_id))
-
-	placement.set_rotation_quarter_turns(_deployment_quarter_turns(unit))
-	var hover_cell := _deployment_hover_cell(unit)
-	var evaluation: int = placement.evaluate_at_hover_cell(hover_cell)
-	if evaluation != BuildingPlacement.PlaceResult.AVAILABLE:
-		placement.queue_free()
-		return _result(false, "MCV cannot deploy at this location")
+	var placement := candidate.get("placement") as BuildingPlacement
+	var building_id: StringName = candidate.get("building_id", &"")
+	var building_scene := candidate.get("building_scene") as PackedScene
+	var hover_cell: Vector2i = candidate.get("hover_cell", Vector2i.ZERO)
 
 	var deployment_id := unit.get_instance_id()
 	_deployments[deployment_id] = {
@@ -122,11 +86,102 @@ func can_handle(unit: Node3D) -> bool:
 	)
 
 
-## Cursor-facing capability check. Spatial deployment validation still runs
-## when the order is issued, while this answers whether the unit can currently
-## accept that kind of order at all.
 func can_issue_deploy(unit: Node3D) -> bool:
-	return can_handle(unit) and not bool(unit.call("is_deploying"))
+	var candidate := _deployment_candidate(unit)
+	var available := bool(candidate.get("available", false))
+	var placement := candidate.get("placement") as BuildingPlacement
+	if placement != null and is_instance_valid(placement):
+		placement.free()
+	return available
+
+
+## Builds the exact placement candidate used by both cursor validation and the
+## real command. A successful caller owns the returned placement node.
+func _deployment_candidate(unit: Node3D) -> Dictionary:
+	if not can_handle(unit):
+		return {"handled": false, "available": false, "message": ""}
+	if bool(unit.call("is_deploying")):
+		return {"handled": true, "available": false, "message": "MCV is already deploying"}
+	if _navigation_grid == null or not _navigation_grid.is_loaded():
+		return {
+			"handled": true,
+			"available": false,
+			"message": "MCV cannot deploy: navigation grid is unavailable",
+		}
+	if _buildings_root == null:
+		return {
+			"handled": true,
+			"available": false,
+			"message": "MCV cannot deploy: buildings root is unavailable",
+		}
+
+	var con_yard := _construction_yard_for(unit)
+	var building_id: StringName = con_yard.get("id", &"")
+	var config: Resource = con_yard.get("config")
+	if building_id == &"" or config == null:
+		return {
+			"handled": true,
+			"available": false,
+			"message": "MCV cannot deploy: its rules have no Construction Yard",
+		}
+
+	var scene_path := _building_scene_path(building_id)
+	if not ResourceLoader.exists(scene_path):
+		return {
+			"handled": true,
+			"available": false,
+			"message": "MCV cannot deploy: %s scene is unavailable" % String(building_id),
+		}
+	var building_scene := load(scene_path) as PackedScene
+	if building_scene == null:
+		return {
+			"handled": true,
+			"available": false,
+			"message": "MCV cannot deploy: %s scene is invalid" % String(building_id),
+		}
+
+	var placement: BuildingPlacement = BuildingPlacementScript.new()
+	add_child(placement)
+	placement.setup(
+		null,
+		_navigation_grid,
+		_buildings_root,
+		null,
+		null,
+		null,
+		null,
+		Callable(self, "_occupy_rows_for_existing_building")
+	)
+	var occupy_rows: Array[String] = []
+	occupy_rows.assign(config.list(&"occupy_rows"))
+	if not placement.begin(building_id, String(building_id), occupy_rows, false, true):
+		placement.free()
+		return {
+			"handled": true,
+			"available": false,
+			"message": "MCV cannot deploy: %s has no valid footprint" % String(building_id),
+		}
+
+	placement.set_rotation_quarter_turns(_deployment_quarter_turns(unit))
+	var hover_cell := _deployment_hover_cell(unit)
+	var evaluation: int = placement.evaluate_at_hover_cell(hover_cell)
+	if evaluation != BuildingPlacement.PlaceResult.AVAILABLE:
+		placement.free()
+		return {
+			"handled": true,
+			"available": false,
+			"message": "MCV cannot deploy at this location",
+		}
+
+	return {
+		"handled": true,
+		"available": true,
+		"message": "",
+		"placement": placement,
+		"hover_cell": hover_cell,
+		"building_id": building_id,
+		"building_scene": building_scene,
+	}
 
 
 ## A Construction Yard receives this through the ordinary terrain move-command

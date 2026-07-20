@@ -223,6 +223,10 @@ func _test_house_construction_yards() -> void:
 		mcv.add_to_group("units")
 		world.add_child(mcv)
 
+		_expect(
+			controller.can_issue_deploy(mcv),
+			"%s MCV must expose deployment availability at its valid site" % house_case[1]
+		)
 		var result: Dictionary = controller.try_deploy(mcv)
 		_expect(bool(result.get("started", false)), "%s MCV must pass its valid site check" % house_case[1])
 		var expected_facing: Vector3 = Basis(Vector3.UP, house_case[6]) * Vector3.BACK
@@ -452,6 +456,10 @@ func _test_invalid_site() -> void:
 	mcv.add_to_group("units")
 	world.add_child(mcv)
 
+	_expect(
+		not controller.can_issue_deploy(mcv),
+		"an invalid MCV site must be rejected by cursor-facing validation"
+	)
 	var result: Dictionary = controller.try_deploy(mcv)
 	_expect(bool(result.get("handled", false)) and not bool(result.get("started", false)), "an invalid MCV site must be handled as a rejected deployment")
 	_expect(mcv.deployment_calls == 0 and not mcv.deploying, "site validation must happen before the MCV is locked")

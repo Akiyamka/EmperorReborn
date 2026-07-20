@@ -24,8 +24,210 @@ func _initialize() -> void:
 
 
 func _test_sprite_sheet(cursors) -> void:
-	_expect(cursors.cursor_count() == 33, "all 33 original cursor rows must be exposed")
+	_expect(
+		CursorManagerScript.ORIGINAL_CURSOR_COUNT == 33,
+		"all 33 original cursor rows must remain exposed"
+	)
+	_expect(cursors.cursor_count() == 35, "the two additional semantic cursor types must be exposed")
 	_expect(cursors.frames_per_cursor() == 8, "every original cursor must have eight frames")
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.POINTER) == 1,
+		"the custom Pointer cursor must use its single rendered frame"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.POINTER) == Vector2i(64, 64),
+		"the custom Pointer cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.POINTER) == Vector2(32, 32),
+		"the custom Pointer cursor hotspot must remain centered"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.POINTER, 0) != null,
+		"the custom Pointer cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.POINTER, 1) == null,
+		"the custom Pointer cursor must not duplicate its static frame"
+	)
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.MOVE) == 13,
+		"the custom Move cursor must expose all thirteen rendered frames"
+	)
+	_expect(
+		is_equal_approx(
+			cursors.frame_duration(CursorManagerScript.CursorType.MOVE),
+			CursorManagerScript.MOVE_FRAME_DURATION
+		),
+		"the custom Move cursor must use its faster frame timing"
+	)
+	_expect(
+		is_equal_approx(
+			cursors.frame_duration(CursorManagerScript.CursorType.POINTER),
+			CursorManagerScript.FRAME_DURATION
+		),
+		"original cursors must retain their frame timing"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.MOVE)
+		== CursorManagerScript.MOVE_DISPLAY_SIZE,
+		"the custom Move cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.MOVE) == Vector2(32, 32),
+		"the custom Move cursor hotspot must remain centered after resizing"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.MOVE, 12) != null,
+		"the thirteenth custom Move cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.ATTACK) == 13,
+		"the custom Attack cursor must expose all thirteen rendered frames"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.ATTACK) == Vector2i(64, 64),
+		"the custom Attack cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.ATTACK) == Vector2(32, 32),
+		"the custom Attack cursor hotspot must remain centered"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.ATTACK, 12) != null,
+		"the thirteenth custom Attack cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.ENTER) == 4,
+		"the custom Enter cursor must expose all four rendered frames"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.ENTER) == Vector2i(64, 64),
+		"the custom Enter cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.ENTER) == Vector2(32, 32),
+		"the custom Enter cursor hotspot must remain centered"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.ENTER, 3) != null,
+		"the fourth custom Enter cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.OVER_UNIT) == 24,
+		"the custom Selectable cursor must expose all twenty-four rendered frames"
+	)
+	_expect(
+		is_equal_approx(
+			cursors.frame_duration(CursorManagerScript.CursorType.OVER_UNIT),
+			CursorManagerScript.SELECTABLE_FRAME_DURATION
+		),
+		"the custom Selectable cursor must play at twice the original frame rate"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.OVER_UNIT) == Vector2i(64, 64),
+		"the custom Selectable cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.OVER_UNIT) == Vector2(32, 32),
+		"the custom Selectable cursor hotspot must remain centered"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.OVER_UNIT, 23) != null,
+		"the twenty-fourth custom Selectable cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.DEPLOY) == 13,
+		"the custom Deploy cursor must expose all thirteen rendered frames"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.DEPLOY) == Vector2i(64, 64),
+		"the custom Deploy cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.DEPLOY) == Vector2(32, 32),
+		"the custom Deploy cursor hotspot must remain centered"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.DEPLOY, 12) != null,
+		"the thirteenth custom Deploy cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.CANT_DEPLOY) == 1,
+		"the custom Cant Deploy cursor must use its single rendered frame"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.CANT_DEPLOY) == Vector2i(64, 64),
+		"the custom Cant Deploy cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.CANT_DEPLOY) == Vector2(32, 32),
+		"the custom Cant Deploy cursor hotspot must remain centered"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.CANT_DEPLOY, 0) != null,
+		"the custom Cant Deploy cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.CANT_DEPLOY, 1) == null,
+		"the custom Cant Deploy cursor must not duplicate its static frame"
+	)
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.GATHER) == 13,
+		"the custom Gather cursor must expose all thirteen rendered frames"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.GATHER) == Vector2i(64, 64),
+		"the custom Gather cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.GATHER) == Vector2(32, 32),
+		"the custom Gather cursor hotspot must remain centered"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.GATHER, 12) != null,
+		"the thirteenth custom Gather cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.TARGET_ABILITY) == 13,
+		"the custom Target Ability cursor must expose all thirteen rendered frames"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.TARGET_ABILITY) == Vector2i(64, 64),
+		"the custom Target Ability cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.TARGET_ABILITY) == Vector2(32, 32),
+		"the custom Target Ability cursor hotspot must remain centered"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.TARGET_ABILITY, 12) != null,
+		"the thirteenth custom Target Ability cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_count(CursorManagerScript.CursorType.CANT_MOVE) == 1,
+		"the custom Cant Move cursor must use its single rendered frame"
+	)
+	_expect(
+		cursors.frame_size(CursorManagerScript.CursorType.CANT_MOVE) == Vector2i(64, 64),
+		"the custom Cant Move cursor must retain its rendered size"
+	)
+	_expect(
+		cursors.hotspot(CursorManagerScript.CursorType.CANT_MOVE) == Vector2(32, 32),
+		"the custom Cant Move cursor hotspot must remain centered"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.CANT_MOVE, 0) != null,
+		"the custom Cant Move cursor frame must be available"
+	)
+	_expect(
+		cursors.frame_texture(CursorManagerScript.CursorType.CANT_MOVE, 1) == null,
+		"the custom Cant Move cursor must not duplicate its static frame"
+	)
+	_expect(
+		CursorManagerScript.CursorType.TARGET_ABILITY == 8,
+		"the ninth original row must remain the generic targeted-ability cursor"
+	)
 	_expect(
 		CursorManagerScript.CursorType.REPAIR == 11,
 		"the twelfth cursor row must be reserved for repair commands"
@@ -34,22 +236,70 @@ func _test_sprite_sheet(cursors) -> void:
 		CursorManagerScript.CursorType.DEPLOY == 12,
 		"the thirteenth cursor row must be used for deploy commands"
 	)
+	for scroll_cursor in CursorManagerScript.SCROLL_CURSOR_ASSETS:
+		_expect(
+			cursors.frame_count(scroll_cursor) == 1,
+			"each custom Scroll cursor must use its single rendered frame"
+		)
+		_expect(
+			cursors.frame_size(scroll_cursor) == Vector2i(64, 64),
+			"each custom Scroll cursor must retain its rendered size"
+		)
+		_expect(
+			cursors.hotspot(scroll_cursor) == Vector2(32, 32),
+			"each custom Scroll cursor hotspot must remain centered"
+		)
+		_expect(
+			cursors.frame_texture(scroll_cursor, 0) != null,
+			"each custom Scroll cursor frame must be available"
+		)
+		_expect(
+			cursors.frame_texture(scroll_cursor, 1) == null,
+			"custom Scroll cursors must not duplicate their static frame"
+		)
+	for cant_scroll_cursor in CursorManagerScript.CANT_SCROLL_CURSOR_ASSETS:
+		_expect(
+			cursors.frame_count(cant_scroll_cursor) == 1,
+			"each custom Cant Scroll cursor must use its single rendered frame"
+		)
+		_expect(
+			cursors.frame_size(cant_scroll_cursor) == Vector2i(64, 64),
+			"each custom Cant Scroll cursor must retain its rendered size"
+		)
+		_expect(
+			cursors.hotspot(cant_scroll_cursor) == Vector2(32, 32),
+			"each custom Cant Scroll cursor hotspot must remain centered"
+		)
+		_expect(
+			cursors.frame_texture(cant_scroll_cursor, 0) != null,
+			"each custom Cant Scroll cursor frame must be available"
+		)
+		_expect(
+			cursors.frame_texture(cant_scroll_cursor, 1) == null,
+			"custom Cant Scroll cursors must not duplicate their static frame"
+		)
 	for cursor in cursors.cursor_count():
-		for frame in cursors.frames_per_cursor():
+		for frame in cursors.frame_count(cursor):
 			var texture: Texture2D = cursors.frame_texture(cursor, frame)
 			var shadow_texture: Texture2D = cursors.shadow_frame_texture(cursor, frame)
 			_expect(texture != null, "cursor %d frame %d must exist" % [cursor, frame])
 			_expect(shadow_texture != null, "cursor %d shadow frame %d must exist" % [cursor, frame])
 			if texture != null:
-				_expect(texture.get_size() == Vector2(cursors.frame_size()), "cursor frames must use the source scale")
+				_expect(
+					texture.get_size() == Vector2(cursors.frame_size(cursor)),
+					"cursor frames must use their configured scale"
+				)
 
-	var pointer_image: Image = cursors.frame_texture(CursorManagerScript.CursorType.POINTER, 0).get_image()
-	_expect(pointer_image.get_pixel(0, 0).a == 0.0, "magenta sheet pixels must become transparent")
-	_expect(pointer_image.get_used_rect().has_area(), "the visible cursor pixels must remain opaque")
-	_test_multiply_shadow(cursors, pointer_image)
+	var original_image: Image = cursors.frame_texture(
+		CursorManagerScript.CursorType.INFANTRY_ROCK, 0
+	).get_image()
+	_expect(original_image.get_pixel(0, 0).a == 0.0, "magenta sheet pixels must become transparent")
+	_expect(original_image.get_used_rect().has_area(), "the visible cursor pixels must remain opaque")
+	_test_multiply_shadow(cursors, original_image)
 	_expect(
-		cursors.hotspot(CursorManagerScript.CursorType.SCROLL_E) == Vector2(43, 33),
-		"original per-cursor hotspots must be retained"
+		CursorManagerScript.HOTSPOTS[CursorManagerScript.CursorType.SCROLL_E]
+		== Vector2(43, 33),
+		"original per-cursor hotspot data must be retained"
 	)
 	var shadow_sprite := cursors.get_node_or_null("CursorLayer/Shadow") as Sprite2D
 	_expect(shadow_sprite != null, "the software cursor must expose a separate shadow layer")
@@ -63,7 +313,7 @@ func _test_sprite_sheet(cursors) -> void:
 
 func _test_multiply_shadow(cursors, color_image: Image) -> void:
 	var shadow_image: Image = cursors.shadow_frame_texture(
-		CursorManagerScript.CursorType.POINTER, 0
+		CursorManagerScript.CursorType.INFANTRY_ROCK, 0
 	).get_image()
 	var shadow_pixel := Vector2i(-1, -1)
 	for y in shadow_image.get_height():
@@ -112,13 +362,17 @@ func _test_cursor_selection(cursors) -> void:
 
 
 func _test_animation(cursors) -> void:
-	cursors.set_cursor(CursorManagerScript.CursorType.POINTER)
+	cursors.set_cursor(CursorManagerScript.CursorType.MOVE)
 	var initial_frame: int = cursors.current_frame()
-	cursors._process(CursorManagerScript.FRAME_DURATION)
+	cursors._process(CursorManagerScript.MOVE_FRAME_DURATION)
 	_expect(
-		cursors.current_frame() == (initial_frame + 1) % cursors.frames_per_cursor(),
-		"cursor animation must advance after six 60 Hz updates"
+		cursors.current_frame()
+		== (initial_frame + 1) % cursors.frame_count(CursorManagerScript.CursorType.MOVE),
+		"the animated Move cursor must advance after its configured frame duration"
 	)
+	cursors.set_cursor(CursorManagerScript.CursorType.POINTER)
+	cursors._process(CursorManagerScript.FRAME_DURATION * 2.0)
+	_expect(cursors.current_frame() == 0, "the static Pointer cursor must remain on its only frame")
 
 
 func _expect(condition: bool, message: String) -> void:

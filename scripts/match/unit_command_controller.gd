@@ -385,8 +385,9 @@ func _command_cursor_at(screen_position: Vector2) -> int:
 		return NO_CURSOR_OVERRIDE
 	var entity_hit := _raycast(screen_position, ENTITY_SELECTION_COLLISION_MASK)
 	var entity = _find_selectable_entity(entity_hit.get("collider") as Node)
-	if _can_deploy_entity(entity):
-		return CursorManagerScript.CursorType.DEPLOY
+	var deployment_cursor := _deployment_cursor_for(entity)
+	if deployment_cursor != NO_CURSOR_OVERRIDE:
+		return deployment_cursor
 	if _can_interact_with(entity):
 		return CursorManagerScript.CursorType.ENTER
 	if entity != null and not _selected_entities.has(entity) and _can_control(entity):
@@ -400,8 +401,8 @@ func _command_cursor_at(screen_position: Vector2) -> int:
 	var target: Vector3 = terrain_hit["position"]
 	if not _can_issue_movement_order(target):
 		return CursorManagerScript.CursorType.CANT_MOVE
-	if _can_apply_targeted_ability_at(target):
-		return CursorManagerScript.CursorType.TARGET_ABILITY
+	if _can_gather_at(target):
+		return CursorManagerScript.CursorType.GATHER
 	return CursorManagerScript.CursorType.MOVE
 
 
@@ -417,20 +418,22 @@ func _can_interact_with(target) -> bool:
 	return false
 
 
-func _can_deploy_entity(entity) -> bool:
-	return (
-		entity is Node3D
-		and _can_control(entity)
-		and _deployment_controller != null
-		and _deployment_controller.has_method("can_issue_deploy")
-		and bool(_deployment_controller.call("can_issue_deploy", entity))
-	)
+func _deployment_cursor_for(entity) -> int:
+	if not entity is Node3D \
+	or _selected_entities.size() != 1 \
+	or _selected_entities.front() != entity \
+	or not _can_control(entity) \
+	or _deployment_controller == null \
+	or not _deployment_controller.has_method("can_handle") \
+	or not bool(_deployment_controller.call("can_handle", entity)):
+		return NO_CURSOR_OVERRIDE
+	if _deployment_controller.has_method("can_issue_deploy") \
+	and bool(_deployment_controller.call("can_issue_deploy", entity)):
+		return CursorManagerScript.CursorType.DEPLOY
+	return CursorManagerScript.CursorType.CANT_DEPLOY
 
 
-## Extension point for commands that apply an ability to a world target.
-## Harvesting spice is the first such command; future targeted abilities can
-## join this predicate without changing cursor precedence.
-func _can_apply_targeted_ability_at(target: Vector3) -> bool:
+func _can_gather_at(target: Vector3) -> bool:
 	if _terrain == null or _terrain.navigation_grid == null \
 	or not _terrain.navigation_grid.is_loaded() or _terrain.spice_layer == null:
 		return false
