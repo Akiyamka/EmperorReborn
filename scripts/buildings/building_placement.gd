@@ -482,11 +482,13 @@ func _restore_arrow_fill_materials(mesh_instance: MeshInstance3D) -> void:
 		return
 	for surface_index in mesh_instance.mesh.get_surface_count():
 		var material := _surface_material(mesh_instance, surface_index)
-		if _is_fully_transparent_albedo_material(material):
+		var surface_name := String(mesh_instance.mesh.surface_get_name(surface_index)).to_lower()
+		if surface_name == "white.tga" or _is_fully_transparent_albedo_material(material):
 			var fill_material := StandardMaterial3D.new()
 			fill_material.albedo_color = Color.WHITE
 			fill_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 			fill_material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+			fill_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 			fill_material.disable_receive_shadows = true
 			fill_material.emission_enabled = true
 			fill_material.emission = Color.WHITE

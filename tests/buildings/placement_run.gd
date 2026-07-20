@@ -2,6 +2,7 @@ extends SceneTree
 
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
 const ATBarracksScene := preload("res://assets/converted/buildings/ATBarracks/ATBarracks.scn")
+const PlacementArrowScene := preload("res://assets/converted/placement/build_arrow.scn")
 
 var _assertions := 0
 var _failures := 0
@@ -47,6 +48,7 @@ func _initialize() -> void:
 	_run_case("construction completes only after construct animation", _test_construction_waits_for_animation)
 	_run_case("placement rotation turns footprint and spawned building", _test_rotated_placement)
 	_run_case("unmaterialed preview mesh gets fallback material", _test_unmaterialed_preview_mesh_gets_fallback_material)
+	_run_case("placement arrow keeps its white fill from either camera side", _test_arrow_white_fill)
 	_run_case("legacy building without placement anchor", _test_legacy_building_without_placement_anchor)
 	_run_case("rotated existing footprint follows building transform", _test_rotated_existing_footprint)
 	_run_case("resolver fallback occupancy", _test_resolver_fallback_occupancy)
@@ -285,6 +287,39 @@ func _test_unmaterialed_preview_mesh_gets_fallback_material(token: int) -> int:
 	placement.cancel()
 	placement.queue_free()
 	buildings_root.queue_free()
+	return token
+
+
+func _test_arrow_white_fill(token: int) -> int:
+	var placement = BuildingPlacementScript.new()
+	var arrow := PlacementArrowScene.instantiate() as Node3D
+	placement._configure_arrow_visuals(arrow)
+	var white_material: StandardMaterial3D
+	var blue_override_found := false
+	for node in arrow.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance := node as MeshInstance3D
+		for surface in mesh_instance.mesh.get_surface_count():
+			var surface_name := String(mesh_instance.mesh.surface_get_name(surface)).to_lower()
+			var override := mesh_instance.get_surface_override_material(surface)
+			if surface_name == "white.tga":
+				white_material = override as StandardMaterial3D
+			elif surface_name.contains("blue") and override != null:
+				blue_override_found = true
+	_expect(white_material != null, "the authored white.tga arrow surface must receive a white override")
+	_expect(
+		white_material != null
+		and white_material.albedo_color == Color.WHITE
+		and white_material.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED
+		and white_material.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
+		"the placement arrow fill must remain opaque unshaded white"
+	)
+	_expect(
+		white_material != null and white_material.cull_mode == BaseMaterial3D.CULL_DISABLED,
+		"the white fill must remain visible from the gameplay camera side"
+	)
+	_expect(not blue_override_found, "the arrow fix must not replace its authored blue screen surface")
+	arrow.free()
+	placement.free()
 	return token
 
 
