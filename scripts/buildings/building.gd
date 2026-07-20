@@ -397,6 +397,7 @@ func play_state(state: StringName) -> void:
 		# frame. Otherwise a freshly added building can briefly render its
 		# default idle state before construct starts updating.
 		player.advance(0.0)
+		_bind_combat_turrets(_state_root(state))
 		return
 
 	var states := get_node_or_null("States")
@@ -406,6 +407,18 @@ func play_state(state: StringName) -> void:
 	for child in states.get_children():
 		var child_state := StringName(String(child.get_meta("state", child.name.to_lower())))
 		child.visible = child_state == state
+	_bind_combat_turrets(_state_root(state))
+
+
+func _state_root(state: StringName) -> Node3D:
+	var states := get_node_or_null("States")
+	if states == null:
+		return null
+	for child in states.get_children():
+		var child_state := StringName(String(child.get_meta("state", child.name.to_lower())))
+		if child_state == state and child is Node3D:
+			return child as Node3D
+	return null
 
 
 func set_owner_player_id(player_id: int) -> void:
@@ -681,6 +694,27 @@ func combat_is_airborne() -> bool:
 	return false
 
 
+func aim_turrets_at(world_position: Vector3, delta: float) -> bool:
+	if combat_turrets.is_empty():
+		return false
+	var all_aimed := true
+	for turret in combat_turrets:
+		all_aimed = turret.aim_at(world_position, delta) and all_aimed
+	return all_aimed
+
+
+func turret_emission_points(weapon_index: int = 0) -> Array[Dictionary]:
+	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+		return []
+	return combat_turrets[weapon_index].emission_points()
+
+
+func next_turret_emission(weapon_index: int = 0) -> Dictionary:
+	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+		return {}
+	return combat_turrets[weapon_index].next_emission()
+
+
 func owner_player():
 	var players = _players()
 	if players == null:
@@ -740,7 +774,13 @@ func _configure_combat_turret(rules: Object) -> void:
 		return
 	var turret = CombatTurretScript.new()
 	if turret.configure_from_rules(turret_config, rules):
+		turret.bind_model(_state_root(current_state), 0)
 		combat_turrets.append(turret)
+
+
+func _bind_combat_turrets(model_root: Node3D) -> void:
+	for turret in combat_turrets:
+		turret.bind_model(model_root, turret.weapon_index())
 
 
 func _refresh_generated_energy() -> void:

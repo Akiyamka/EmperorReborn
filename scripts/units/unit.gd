@@ -502,6 +502,7 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 		visual_root.remove_child(child)
 		child.free()
 	visual_root.add_child(model_scene.instantiate())
+	_bind_combat_turrets()
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_animation_players = _collect_animation_players()
@@ -547,6 +548,34 @@ func combat_armour_type() -> StringName:
 
 func combat_is_airborne() -> bool:
 	return unit_config != null and bool(unit_config.field(&"can_fly", false))
+
+
+## Rotates every authored weapon joint toward a world-space point. The return
+## value becomes true only when every configured weapon is inside its own
+## acceptable-aim tolerance from Rules.txt.
+func aim_turrets_at(world_position: Vector3, delta: float) -> bool:
+	if combat_turrets.is_empty():
+		return false
+	var all_aimed := true
+	for turret in combat_turrets:
+		all_aimed = turret.aim_at(world_position, delta) and all_aimed
+	return all_aimed
+
+
+## Returns world transforms/positions/directions for every authored muzzle of
+## one weapon. Multi-barrel weapons expose all >> markers beneath their ::N
+## pivot instead of confusing muzzle numbers with weapon numbers.
+func turret_emission_points(weapon_index: int = 0) -> Array[Dictionary]:
+	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+		return []
+	return combat_turrets[weapon_index].emission_points()
+
+
+## Selects the next muzzle in authored marker order and advances the sequence.
+func next_turret_emission(weapon_index: int = 0) -> Dictionary:
+	if weapon_index < 0 or weapon_index >= combat_turrets.size():
+		return {}
+	return combat_turrets[weapon_index].next_emission()
 
 
 func stop_at_current_position() -> void:
@@ -730,13 +759,21 @@ func _apply_rules_config() -> void:
 
 func _configure_combat_turrets(rules: Object) -> void:
 	combat_turrets.clear()
-	for turret_value in unit_config.list(&"turrets"):
+	var turret_values: Array = unit_config.list(&"turrets")
+	for weapon_index in turret_values.size():
+		var turret_value: Variant = turret_values[weapon_index]
 		var turret_config: Resource = rules.call("turret", StringName(String(turret_value)))
 		if turret_config == null:
 			continue
 		var turret = CombatTurretScript.new()
 		if turret.configure_from_rules(turret_config, rules):
+			turret.bind_model(visual_root, weapon_index)
 			combat_turrets.append(turret)
+
+
+func _bind_combat_turrets() -> void:
+	for turret in combat_turrets:
+		turret.bind_model(visual_root, turret.weapon_index())
 
 
 func _collect_shield_meshes() -> Array[MeshInstance3D]:
