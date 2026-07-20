@@ -1,6 +1,6 @@
 # EmperorReborn
 
-EmperorReborn is a Godot 4 project whose goal is to make a browser-playable version
+EmperorReborn is a Godot 4 project whose goal is to make a native and browser-playable version
 of *Emperor: Battle for Dune*.
 
 This repository does not include original game assets. Shipping those files
@@ -10,8 +10,10 @@ Godot-native formats that can be loaded by the game.
 
 ## Development prerequisites
 
-The authoritative engine version is **Godot 4.7**. Use Podman and the included
-container wrapper; it mounts this checkout at `/workspace` and includes Godot
+The authoritative engine version is **Godot 4.7**.
+You can download it from original page [godotengine.org](https://godotengine.org/download/) then open this project from it.
+
+If you are an AI agent, use Podman and the included container wrapper; it mounts this checkout at `/workspace` and includes Godot
 and Web export templates:
 
 ```sh
@@ -93,3 +95,9 @@ stale editor cache paths are not source-of-truth.
 Export the browser build with `make godot-export-web`; use
 `make godot-watch-export` for repeated exports. Serve `exports/web/` through a
 web server rather than opening `index.html` directly.
+
+## Credits
+- Thanks to the [CorrinoEngine](https://github.com/cookgreen/CorrinoEngine) project, I didn’t have to figure out from scratch how the format of models and animations in the game works. 
+- Many thanks to Westwood studio for creating this legendary game
+
+
