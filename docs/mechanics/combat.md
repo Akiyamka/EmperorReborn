@@ -113,15 +113,25 @@ Additional bullet properties (verified):
   position**, not a calculated intercept point — a target moving sideways escapes
   non-homing bullets. Compensation is left to the player as a micro-management
   element: the **attack ground** order (§4) allows manual leading;
-- **indirect-fire spread** (verified): indirect bullets land with dispersion
-  around the aim point `[Rules: amount]` — artillery is inherently inaccurate
-  against mobile targets.
+- **indirect-fire spread** is expected for artillery such as the Minotaurus,
+  but `Rules.txt` contains no explicit spread/accuracy amount. It is deferred
+  until the original engine behavior can be characterized without inventing a
+  per-weapon rule value;
+
+Projectile presentation is also rules-backed: `MissileTrail`,
+`MissileTrailSize`, `MissileTrailLength`, and `MissileTrailDelta` produce the
+fading wake behind a physical bullet. For example, the Minotaurus uses the dark
+`shell.xaf` projectile with a long pale trail; the source model's helper flash
+is not persistent rocket exhaust. A separate `TurretMuzzleFlash` field selects
+the short effect spawned at the active muzzle when a shot is emitted. The
+Minotaurus maps `Muzzle3` through ArtIni to the original
+`3DDATA/Explosion/Muzzle3.xbf` visual.
 
 Summary of how different bullets miss (follows from the verified behavior above):
 
-- **non-homing arc bullets**: no lead + spread → the bullet lands at a ground
-  point near the target's former position and bursts there with a warhead — splash
-  may hit neighbors `[?: confirm bursting at the impact point]`;
+- **non-homing arc bullets**: no lead means the bullet lands at the target's
+  sampled former position; the deferred artillery spread will offset that
+  point, after which the warhead's splash may hit neighbors;
 - **missiles**: a miss means the target dodged beyond the turn-rate limit or the
   bullet outlived its lifetime; target death in flight → self-destruction;
 - **laser**: never misses.

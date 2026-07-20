@@ -31,6 +31,10 @@ const MAX_PIERCING_COLLISIONS_PER_STEP := 64
 const DIRECT_PROJECTILE_SIZE := 0.12
 const HOMING_PROJECTILE_SIZE := 0.16
 const TRAJECTORY_PROJECTILE_SIZE := 0.18
+const MISSILE_TRAIL_SIDES := 6
+const MAX_MISSILE_TRAIL_POINTS := 128
+const MISSILE_TRAIL_RADIUS_SCALE := SOURCE_MODEL_WORLD_SCALE * 0.65
+const NO_PROPULSION_FLASH_BULLETS: Array[StringName] = [&"KobraHowitzer_B"]
 
 var bullet
 var state := State.READY
@@ -51,6 +55,10 @@ var _gravity_world := 0.0
 var _trajectory_duration := 0.0
 var _trajectory_initial_velocity := Vector3.ZERO
 var _maximum_flight_distance := 0.0
+var _missile_trail_mesh: ImmediateMesh
+var _missile_trail_material: StandardMaterial3D
+var _missile_trail_points: Array[Dictionary] = []
+var _missile_trail_duration := 0.0
 var _impact_resolver = CombatImpactResolverScript.new()
 
 
@@ -111,6 +119,7 @@ func launch(
 	state = State.FLYING
 	set_physics_process(true)
 	_face_direction(_direction)
+	_create_missile_trail()
 
 	if not bullet.can_reach(gameplay_range_origin, _aim_position):
 		_expire(&"out_of_range")
@@ -135,6 +144,8 @@ func _create_visual() -> void:
 		if authored_visual != null:
 			authored_visual.name = "Visual"
 			add_child(authored_visual)
+			if bullet.id() in NO_PROPULSION_FLASH_BULLETS:
+				_hide_authored_propulsion_flash(authored_visual)
 			return
 	# Keep an unmistakable fallback for bullets whose ArtIni XAF has not yet
 	# been converted. Rules-backed weapons with a converted scene never use it.
@@ -164,6 +175,150 @@ func _create_visual() -> void:
 	add_child(visual)
 
 
+func _hide_authored_propulsion_flash(node: Node) -> void:
+	# shell.xbf contains `_flashl02`, a gameplay-controlled helper mesh. The
+	# original Minotaurus shot renders as a dark shell with a MissileTrail, not
+	# as a rocket with this helper burning continuously.
+	if node is Node3D and String(node.name).to_lower().contains("flashl"):
+		(node as Node3D).visible = false
+	for child in node.get_children():
+		_hide_authored_propulsion_flash(child)
+
+
+func _create_missile_trail() -> void:
+	if (
+		bullet == null
+		or bullet.is_hitscan()
+		or not bullet.has_missile_trail()
+		or bullet.missile_trail_size() <= 0.0
+		or bullet.missile_trail_length() <= 0
+	):
+		return
+
+	# Treat Length as the authored history count and Delta as its fractional
+	# rule-tick spacing. Keeping that history in seconds lets the wake follow the
+	# projectile's actual past positions along a ballistic arc.
+	_missile_trail_duration = maxf(
+		float(bullet.missile_trail_length())
+			* maxf(bullet.missile_trail_delta(), 0.05)
+			/ RULE_UPDATES_PER_SECOND,
+		1.0 / RULE_UPDATES_PER_SECOND
+	)
+	_missile_trail_mesh = ImmediateMesh.new()
+	_missile_trail_material = StandardMaterial3D.new()
+	_missile_trail_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_missile_trail_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_missile_trail_material.vertex_color_use_as_albedo = true
+	_missile_trail_material.albedo_color = Color.WHITE
+	_missile_trail_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	var trail_visual := MeshInstance3D.new()
+	trail_visual.name = "MissileTrail"
+	trail_visual.mesh = _missile_trail_mesh
+	trail_visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(trail_visual)
+	_missile_trail_points.append({
+		"position": global_position,
+		"time": elapsed_seconds,
+	})
+
+
+func _sample_missile_trail() -> void:
+	if _missile_trail_mesh == null:
+		return
+	var point := {
+		"position": global_position,
+		"time": elapsed_seconds,
+	}
+	if _missile_trail_points.is_empty():
+		_missile_trail_points.append(point)
+	else:
+		var previous_position := Vector3(_missile_trail_points.back()["position"])
+		if previous_position.distance_squared_to(global_position) > 0.000001:
+			_missile_trail_points.append(point)
+
+	var oldest_time := elapsed_seconds - _missile_trail_duration
+	while (
+		_missile_trail_points.size() > 2
+		and float(_missile_trail_points[1]["time"]) < oldest_time
+	):
+		_missile_trail_points.pop_front()
+	while _missile_trail_points.size() > MAX_MISSILE_TRAIL_POINTS:
+		_missile_trail_points.pop_front()
+	_rebuild_missile_trail()
+
+
+func _rebuild_missile_trail() -> void:
+	_missile_trail_mesh.clear_surfaces()
+	if _missile_trail_points.size() < 2 or _missile_trail_duration <= 0.0:
+		return
+
+	var trail_color := _missile_trail_color(bullet.missile_trail_style())
+	var base_radius: float = bullet.missile_trail_size() * MISSILE_TRAIL_RADIUS_SCALE
+	_missile_trail_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, _missile_trail_material)
+	for point_index in _missile_trail_points.size() - 1:
+		var first_ring := _missile_trail_ring(point_index, base_radius, trail_color)
+		var second_ring := _missile_trail_ring(point_index + 1, base_radius, trail_color)
+		for side in MISSILE_TRAIL_SIDES:
+			var next_side := (side + 1) % MISSILE_TRAIL_SIDES
+			_add_missile_trail_vertex(first_ring[side])
+			_add_missile_trail_vertex(second_ring[side])
+			_add_missile_trail_vertex(second_ring[next_side])
+			_add_missile_trail_vertex(first_ring[side])
+			_add_missile_trail_vertex(second_ring[next_side])
+			_add_missile_trail_vertex(first_ring[next_side])
+	_missile_trail_mesh.surface_end()
+
+
+func _missile_trail_ring(
+		point_index: int,
+		base_radius: float,
+		trail_color: Color
+	) -> Array[Dictionary]:
+	var world_position := Vector3(_missile_trail_points[point_index]["position"])
+	var previous_position := Vector3(
+		_missile_trail_points[maxi(point_index - 1, 0)]["position"]
+	)
+	var next_position := Vector3(
+		_missile_trail_points[mini(point_index + 1, _missile_trail_points.size() - 1)]["position"]
+	)
+	var tangent := previous_position.direction_to(next_position)
+	if tangent.is_zero_approx():
+		tangent = _direction if not _direction.is_zero_approx() else Vector3.FORWARD
+	var reference := Vector3.RIGHT if absf(tangent.dot(Vector3.UP)) > 0.9 else Vector3.UP
+	var axis_a := tangent.cross(reference).normalized()
+	var axis_b := tangent.cross(axis_a).normalized()
+	var age := maxf(elapsed_seconds - float(_missile_trail_points[point_index]["time"]), 0.0)
+	var remaining := clampf(1.0 - age / _missile_trail_duration, 0.0, 1.0)
+	var radius := base_radius * lerpf(0.08, 1.0, remaining)
+	var color := trail_color
+	color.a *= remaining * remaining
+
+	var ring: Array[Dictionary] = []
+	for side in MISSILE_TRAIL_SIDES:
+		var angle := TAU * float(side) / float(MISSILE_TRAIL_SIDES)
+		var offset := (axis_a * cos(angle) + axis_b * sin(angle)) * radius
+		ring.append({
+			"position": to_local(world_position + offset),
+			"color": color,
+		})
+	return ring
+
+
+func _add_missile_trail_vertex(vertex: Dictionary) -> void:
+	_missile_trail_mesh.surface_set_color(Color(vertex["color"]))
+	_missile_trail_mesh.surface_add_vertex(Vector3(vertex["position"]))
+
+
+func _missile_trail_color(style: int) -> Color:
+	# Style 6 is KobraHowitzer_B's pale aerodynamic wake. The remaining styles
+	# retain a neutral smoke presentation until their original palettes are
+	# characterized independently.
+	if style == 6:
+		return Color(0.58, 0.65, 0.68, 0.48)
+	return Color(0.62, 0.62, 0.60, 0.56)
+
+
 func advance(delta: float) -> void:
 	if state != State.FLYING or delta <= 0.0:
 		return
@@ -179,6 +334,7 @@ func advance(delta: float) -> void:
 			_advance_trajectory(previous_elapsed, elapsed_seconds)
 		else:
 			_advance_direct(step, previous_elapsed)
+		_sample_missile_trail()
 		remaining -= step
 
 

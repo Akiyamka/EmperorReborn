@@ -14,6 +14,7 @@ const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.
 ## rules cadence as unit movement while keeping interpolation frame-rate safe.
 const AIM_UPDATES_PER_SECOND := 20.0
 const DEFAULT_ACCEPTABLE_AIM_DEGREES := 1.0
+const DEFAULT_MUZZLE_FLASH_DURATION := 0.2
 const TURRET_MARKER := "::"
 const MUZZLE_MARKER := ">>"
 const AUTHORED_MUZZLE_FORWARD := Vector3.BACK
@@ -30,6 +31,8 @@ var firing_config: Resource
 var bullet_config: Resource
 var warhead_config: Resource
 var projectile_visual_scene: PackedScene
+var muzzle_flash_id: StringName = &""
+var muzzle_flash_scene: PackedScene
 var joint_configs: Array[Resource] = []
 var reload_ticks_remaining := 0.0
 var bullet_gravity := 1.0
@@ -58,6 +61,8 @@ func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
 	bullet_config = null
 	warhead_config = null
 	projectile_visual_scene = null
+	muzzle_flash_id = &""
+	muzzle_flash_scene = null
 	reload_ticks_remaining = 0.0
 	bullet_gravity = 1.0
 	if firing_config == null or rules == null:
@@ -74,6 +79,9 @@ func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
 	if bullet_config == null:
 		return false
 	projectile_visual_scene = _resolve_projectile_visual_scene(rules, bullet_id)
+	muzzle_flash_id = StringName(String(firing_config.field(&"turret_muzzle_flash", "")))
+	if muzzle_flash_id != &"":
+		muzzle_flash_scene = _resolve_muzzle_flash_scene(rules, muzzle_flash_id)
 
 	var warhead_id := StringName(String(bullet_config.field(&"warhead", "")))
 	if warhead_id != &"":
@@ -450,6 +458,7 @@ func try_fire_at(
 		):
 			projectile.free()
 			continue
+		_spawn_muzzle_flash(parent, emission)
 		result.append(projectile)
 	return result
 
@@ -698,21 +707,85 @@ func _desired_pitch_for_direction(target_direction: Vector3) -> float:
 
 
 func _resolve_projectile_visual_scene(rules: Object, bullet_id: StringName) -> PackedScene:
+	return _resolve_art_visual_scene(
+		rules, bullet_id, "res://assets/converted/projectiles"
+	)
+
+
+func _resolve_muzzle_flash_scene(rules: Object, flash_id: StringName) -> PackedScene:
+	return _resolve_art_visual_scene(
+		rules, flash_id, "res://assets/converted/muzzle_flashes"
+	)
+
+
+func _resolve_art_visual_scene(
+		rules: Object,
+		art_id: StringName,
+		output_root: String
+	) -> PackedScene:
 	if rules == null or not rules.has_method("get_entity"):
 		return null
-	var art_config := rules.call("get_entity", &"art_config", bullet_id) as Resource
+	var art_config := rules.call("get_entity", &"art_config", art_id) as Resource
+	if art_config == null and rules.has_method("all"):
+		for candidate: Resource in rules.call("all", &"art_config"):
+			if String(candidate.id).nocasecmp_to(String(art_id)) == 0:
+				art_config = candidate
+				break
 	if art_config == null:
 		return null
 	var xaf := String(art_config.field(&"xaf", ""))
 	if xaf.is_empty():
 		return null
 	var visual_name := xaf.get_file().get_basename().to_lower()
-	var scene_path := "res://assets/converted/projectiles/%s/%s.scn" % [
-		visual_name, visual_name,
+	var scene_path := "%s/%s/%s.scn" % [
+		output_root, visual_name, visual_name,
 	]
 	if not ResourceLoader.exists(scene_path, "PackedScene"):
 		return null
 	return load(scene_path) as PackedScene
+
+
+func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
+	if muzzle_flash_scene == null or parent == null or not parent.is_inside_tree():
+		return
+	var authored_visual := muzzle_flash_scene.instantiate() as Node3D
+	if authored_visual == null:
+		return
+	var effect := Node3D.new()
+	effect.name = "MuzzleFlash_%s" % String(muzzle_flash_id)
+	parent.add_child(effect)
+	effect.top_level = true
+	effect.global_position = Vector3(emission.get("position", Vector3.ZERO))
+	var direction := Vector3(emission.get("direction", Vector3.FORWARD)).normalized()
+	if direction.is_zero_approx():
+		direction = Vector3.FORWARD
+	var up := Vector3.FORWARD if absf(direction.dot(Vector3.UP)) > 0.999 \
+		else Vector3.UP
+	effect.global_basis = Basis.looking_at(direction, up, true)
+	authored_visual.name = "Visual"
+	effect.add_child(authored_visual)
+
+	var lifetime := DEFAULT_MUZZLE_FLASH_DURATION
+	var player := authored_visual.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	if player != null:
+		var animation_name := &"Stationary" if player.has_animation(&"Stationary") \
+			else &"timeline"
+		if player.has_animation(animation_name):
+			player.play(animation_name)
+			var animation := player.get_animation(animation_name)
+			if animation != null:
+				# Standalone muzzle effects use a source clip named Stationary, but
+				# unlike a unit idle it is a one-shot. Prevent a last-frame wrap to
+				# the bright first frame before the cleanup timer removes the effect.
+				animation.loop_mode = Animation.LOOP_NONE
+				lifetime = maxf(animation.length, 1.0 / AIM_UPDATES_PER_SECOND)
+	var cleanup := Timer.new()
+	cleanup.name = "Cleanup"
+	cleanup.one_shot = true
+	cleanup.wait_time = lifetime
+	effect.add_child(cleanup)
+	cleanup.timeout.connect(effect.queue_free)
+	cleanup.start()
 
 
 ## Rules ranges belong to the gameplay entity, not to an animated muzzle.

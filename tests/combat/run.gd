@@ -295,6 +295,15 @@ func _test_bullet_delivery_rules() -> void:
 	_expect(is_equal_approx(mortar.friendly_damage_amount(), 50.0), "friendly splash amount must remain a percentage")
 	_expect(mortar.explosion_type() == &"ShellHit", "the bullet must retain its explosion presentation id")
 	_expect(mortar.explosion_effects() == ["ShellHit"], "all normalized explosion effects must stay available")
+	var kobra_shell = _runtime_bullet(rules, &"KobraHowitzer_B")
+	_expect(
+		kobra_shell.has_missile_trail()
+		and kobra_shell.missile_trail_style() == 6
+		and is_equal_approx(kobra_shell.missile_trail_size(), 2.0)
+		and kobra_shell.missile_trail_length() == 8
+		and is_equal_approx(kobra_shell.missile_trail_delta(), 0.7),
+		"KobraHowitzer_B must expose its complete authored trail dimensions"
+	)
 	_expect(_runtime_bullet(rules, &"Leech_B").effect_flags().has("leech"), "special delivery flags must remain owned by Bullet")
 	_expect(
 		_runtime_bullet(rules, &"BarrelBomb").reduces_damage_with_distance(),
@@ -597,6 +606,10 @@ func _test_turret_projectile_launch() -> void:
 	var turret = CombatTurretScript.new()
 	turret.configure_from_rules(rules.turret(&"ATMinotaurusBase"), rules)
 	turret.bind_model(model, 0)
+	_expect(
+		turret.muzzle_flash_id == &"Muzzle3" and turret.muzzle_flash_scene != null,
+		"ATMinotaurusGun must resolve TurretMuzzleFlash=Muzzle3 through ArtIni"
+	)
 	var emission := turret.peek_emission()
 	var direction: Vector3 = emission["direction"]
 	_expect(
@@ -624,6 +637,27 @@ func _test_turret_projectile_launch() -> void:
 	_expect(projectiles.size() == 1, "an in-range request must create one physical projectile")
 	if not projectiles.is_empty():
 		var projectile = projectiles[0]
+		var muzzle_flash := root.get_node_or_null("MuzzleFlash_Muzzle3") as Node3D
+		_expect(
+			muzzle_flash != null
+			and muzzle_flash.global_position.is_equal_approx(
+				Vector3(aimed_emission["position"])
+			),
+			"the authored Muzzle3 effect must spawn on the active >> muzzle"
+		)
+		_expect(
+			muzzle_flash != null
+			and muzzle_flash.find_child("_flashl_0", true, false) != null,
+			"the runtime muzzle flash must use the original Explosion/Muzzle3.xbf model"
+		)
+		var flash_player := muzzle_flash.find_child(
+			"AnimationPlayer", true, false
+		) as AnimationPlayer if muzzle_flash != null else null
+		_expect(
+			flash_player != null
+			and flash_player.get_animation(&"Stationary").loop_mode == Animation.LOOP_NONE,
+			"one projectile event must play exactly one muzzle flash without wrapping"
+		)
 		_expect(projectile.bullet.id() == &"KobraHowitzer_B", "the projectile must carry the turret's configured bullet")
 		_expect(
 			projectile.global_position.is_equal_approx(Vector3(aimed_emission["position"])),
@@ -648,7 +682,23 @@ func _test_turret_projectile_launch() -> void:
 			visual != null and visual.find_child("shell_0", true, false) != null,
 			"KobraHowitzer_B must instantiate the original ArtIni shell.xaf model"
 		)
+		var source_flash := visual.find_child("*flashl*", true, false) as Node3D \
+			if visual != null else null
+		_expect(
+			source_flash != null and not source_flash.visible,
+			"the shell helper flash must not render as permanent rocket exhaust"
+		)
+		projectile.advance(0.1)
+		var trail := projectile.get_node_or_null("MissileTrail") as MeshInstance3D
+		_expect(
+			trail != null
+			and trail.mesh is ImmediateMesh
+			and (trail.mesh as ImmediateMesh).get_surface_count() == 1,
+			"KobraHowitzer_B must draw a rules-sized fading aerodynamic trail"
+		)
 		projectile.free()
+		if muzzle_flash != null:
+			muzzle_flash.free()
 	model.free()
 
 

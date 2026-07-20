@@ -106,6 +106,41 @@ func has_trajectory() -> bool:
 	return config != null and bool(config.field(&"trajectory", false))
 
 
+func has_missile_trail() -> bool:
+	# Trail style zero is a valid authored value, so presence rather than
+	# truthiness decides whether the engine-generated trail exists.
+	return config != null and config.field(&"missile_trail", null) != null
+
+
+func missile_trail_style() -> int:
+	return int(config.field(&"missile_trail", 0)) if config != null else 0
+
+
+func missile_trail_size() -> float:
+	return maxf(float(config.field(&"missile_trail_size", 0.0)), 0.0) \
+		if config != null else 0.0
+
+
+func missile_trail_length() -> int:
+	return maxi(int(config.field(&"missile_trail_length", 0)), 0) \
+		if config != null else 0
+
+
+func missile_trail_delta() -> float:
+	return maxf(float(config.field(&"missile_trail_delta", 0.0)), 0.0) \
+		if config != null else 0.0
+
+
+func missile_trail_wiggle_frequency() -> float:
+	return maxf(float(config.field(&"missile_trail_wiggle_freq", 0.0)), 0.0) \
+		if config != null else 0.0
+
+
+func missile_trail_wiggle_scale() -> float:
+	return maxf(float(config.field(&"missile_trail_wiggle_scale", 0.0)), 0.0) \
+		if config != null else 0.0
+
+
 func is_continuous() -> bool:
 	return config != null and bool(config.field(&"continuous", false))
 
