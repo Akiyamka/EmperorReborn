@@ -135,7 +135,18 @@ the short effect spawned at the active muzzle when a shot is emitted. The
 Minotaurus maps `Muzzle3` through ArtIni to the original
 `3DDATA/Explosion/Muzzle3.xbf` visual. The oversized primary `Mesh_00` element
 is rendered at half scale for every turret that selects `Muzzle3`; its authored
-animation continues to drive the surrounding transform. The Minotaurus model
+animation continues to drive the surrounding transform. The muzzle-flash XBF
+also carries its own particle timeline: both `Muzzle1` and `Muzzle3` emit the
+21-frame `!%Bru` fire/smoke sequence twice between their type-3/type-4 control
+frames. `Muzzle1` authors size 8 (0.5 world units) and signed gravity -0.3
+(-7.5 world units/s²); `Muzzle3` authors size 10 (0.625 world units) and -0.2
+(-5 world units/s²). Positive bank gravity makes casings and sand fall, so the
+negative values are the source of the smoke's upward buoyancy. Runtime reads
+the bank selected through `TurretMuzzleFlash`, emits at its authored attachment,
+applies the bank colour/fade, and lets each billboard continue rising after the
+short flash model disappears. Consequently Trike/APC receive this smoke from
+`Muzzle1`, while Mongoose/Minotaurus receive it from `Muzzle3`, without a unit
+allowlist. The Minotaurus model
 also pairs every front
 `>>...#muzzle01–04` marker with a sibling rear `#muzzle05–08` marker. The XBF
 FX bank assigns the original `!cexp` rear cannon flash and a `!%shel` tumbling

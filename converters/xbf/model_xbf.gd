@@ -150,6 +150,7 @@ func _parse_fx_banks(bytes: PackedByteArray) -> void:
 		var float_parameters_12_14 := PackedFloat32Array()
 		for parameter_index in range(12, 15):
 			float_parameters_12_14.append(_f32_le(bytes, offset + parameter_index * 4))
+		var gravity := _f32_le(bytes, offset + 5 * 4)
 		var particle_size := _f32_le(bytes, offset + 6 * 4)
 		var texture_frame_count := parameter_words[15]
 		offset += parameter_size
@@ -181,6 +182,11 @@ func _parse_fx_banks(bytes: PackedByteArray) -> void:
 			"float_parameters_4_6": float_parameters_4_6,
 			"int_parameters_7_11": int_parameters_7_11,
 			"float_parameters_12_14": float_parameters_12_14,
+			# Parameter 05 is signed particle gravity per source update squared. Positive
+			# values make casings and sand fall; the negative values used by smoke
+			# banks provide buoyancy. Parameter 14 commonly mirrors this value but
+			# remains preserved independently above.
+			"gravity": gravity,
 			# Parameter 06 is particle size in source model coordinates. For
 			# example ShellHit's !%Bru value 32 becomes 2 world units at 1/16.
 			"particle_size": particle_size,

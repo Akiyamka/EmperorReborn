@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" path="res://scripts/units/unit.gd" id="1_unit"]
 [ext_resource type="PackedScene" path="res://assets/converted/models/AT_inf_H0/AT_inf_H0.scn" id="2_at_inf"]
+[ext_resource type="Script" path="res://scripts/units/unit_editor_preview.gd" id="3_preview"]
 
 [node name="Unit" type="CharacterBody3D" groups=["units"]]
 collision_layer = 2
@@ -13,3 +14,5 @@ config_id = &"ATInfantry"
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0)
 
 [node name="AT_inf_H0" parent="VisualRoot" instance=ExtResource("2_at_inf")]
+[node name="EditorPreview" type="Node" parent="."]
+script = ExtResource("3_preview")

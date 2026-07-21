@@ -93,6 +93,10 @@ func build(xbf_path: String) -> PackedScene:
 	for bank_value: Variant in baked_fx_banks:
 		var bank := bank_value as Dictionary
 		bank["world_particle_size"] = float(bank.get("particle_size", 0.0)) * world_scale
+		# Source gravity is authored per squared 20 Hz update. Keep the signed
+		# positive-down convention; runtime applies it along world DOWN.
+		bank["world_gravity"] = float(bank.get("gravity", 0.0)) \
+			* world_scale * 20.0 * 20.0
 	root.set_meta("xbf_world_scale", world_scale)
 	root.set_meta("xbf_fx_format_version", xbf.fx_format_version)
 	root.set_meta("xbf_fx_bank_table_version", xbf.fx_bank_table_version)

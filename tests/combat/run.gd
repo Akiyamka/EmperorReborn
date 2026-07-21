@@ -131,6 +131,10 @@ func _initialize() -> void:
 	await _run_async_case("impact resolution applies splash falloff and friendly fire", _test_impact_resolution)
 	_run_case("turret emits bursts and reloads in rule ticks", _test_turret_reload)
 	await _run_async_case(
+		"muzzle FX banks emit authored rising barrel smoke",
+		_test_muzzle_fx_bank_smoke
+	)
+	await _run_async_case(
 		"turret launches projectiles and composes the authored impact FX",
 		_test_turret_projectile_launch
 	)
@@ -670,6 +674,82 @@ func _test_turret_reload() -> void:
 		burst_turret.try_fire().size() == 10,
 		"TurretBulletCount=10 must emit a ten-bullet burst"
 	)
+
+
+func _test_muzzle_fx_bank_smoke() -> void:
+	var rules = root.get_node("Rules")
+	var cases := [
+		[&"ATTrikeGun", &"Muzzle1", 0.5, 7.5],
+		[&"ATAPCBase", &"Muzzle1", 0.5, 7.5],
+		[&"ATMongooseMissile", &"Muzzle3", 0.625, 5.0],
+		[&"ATMinotaurusBase", &"Muzzle3", 0.625, 5.0],
+	]
+	for case_index in cases.size():
+		var smoke_case: Array = cases[case_index]
+		var turret = CombatTurretScript.new()
+		_expect(
+			turret.configure_from_rules(rules.turret(smoke_case[0]), rules),
+			"%s must configure for muzzle-bank smoke" % String(smoke_case[0])
+		)
+		_expect(
+			turret.muzzle_flash_id == smoke_case[1]
+			and turret.muzzle_flash_scene != null,
+			"%s must resolve %s" % [smoke_case[0], smoke_case[1]]
+		)
+		var emission_index := 10 + case_index
+		turret._spawn_muzzle_flash(root, {
+			"index": emission_index,
+			"position": Vector3(4.0 + case_index, 1.0, 3.0),
+			"direction": Vector3.FORWARD,
+		})
+		await create_timer(0.28).timeout
+		var smoke_particles := _muzzle_effects(&"barrel_smoke", emission_index)
+		_expect(
+			smoke_particles.size() == 2,
+			"%s must emit two particles between its authored start/stop frames"
+				% String(smoke_case[1])
+		)
+		var bank_driven := smoke_particles.size() == 2
+		for particle in smoke_particles:
+			var visual := particle.get_node_or_null("Visual") as MeshInstance3D
+			var quad := visual.mesh as QuadMesh if visual != null else null
+			var start := Vector3(particle.get_meta(
+				"combat_muzzle_start_position", particle.global_position
+			))
+			var acceleration := Vector3(particle.get_meta(
+				"combat_muzzle_acceleration", Vector3.ZERO
+			))
+			bank_driven = bank_driven \
+				and particle.get_meta("combat_fx_texture", &"") == &"!%Bru" \
+				and quad != null \
+				and quad.size.is_equal_approx(
+					Vector2.ONE * float(smoke_case[2])
+				) \
+				and is_equal_approx(acceleration.y, float(smoke_case[3])) \
+				and particle.global_position.y > start.y
+		_expect(
+			bank_driven,
+			"%s smoke must use bank texture, size, and negative-gravity buoyancy"
+				% String(smoke_case[1])
+		)
+		_free_muzzle_effects()
+
+	var no_smoke_turret = CombatTurretScript.new()
+	_expect(
+		no_smoke_turret.configure_from_rules(rules.turret(&"ATSniperGun"), rules),
+		"the Sniper muzzle flash must configure for the negative smoke case"
+	)
+	no_smoke_turret._spawn_muzzle_flash(root, {
+		"index": 20,
+		"position": Vector3.ZERO,
+		"direction": Vector3.FORWARD,
+	})
+	await create_timer(0.28).timeout
+	_expect(
+		_muzzle_effects(&"barrel_smoke", 20).is_empty(),
+		"Smuzz2 without an !%Bru bank must not acquire barrel smoke"
+	)
+	_free_muzzle_effects()
 
 
 func _test_turret_projectile_launch() -> void:

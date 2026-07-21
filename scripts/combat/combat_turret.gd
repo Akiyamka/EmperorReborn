@@ -25,6 +25,7 @@ const REAR_MUZZLE_MARKER := "#muzzle"
 const AUTHORED_MUZZLE_FORWARD := Vector3.BACK
 const INLINE_FX_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
 const INLINE_FX_FRAME_SECONDS := 1.0 / AIM_UPDATES_PER_SECOND
+const BARREL_SMOKE_SEQUENCE := "!%Bru"
 const REAR_FLASH_FRAME_COUNT := 16
 const REAR_FLASH_SIZE := 2.2
 const SHOT_LIGHT_COLOR := Color(1.0, 0.34, 0.08)
@@ -81,6 +82,8 @@ var _last_emissions: Array[Dictionary] = []
 var _rear_flash_textures: Array[Texture2D] = []
 var _casing_textures: Array[Texture2D] = []
 var _launch_smoke_textures: Array[Texture2D] = []
+static var _muzzle_bank_texture_cache: Dictionary = {}
+var _muzzle_bank_particle_index := 0
 
 
 func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
@@ -921,6 +924,9 @@ func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 	effect.global_basis = Basis.looking_at(direction, up, true)
 	authored_visual.name = "Visual"
 	effect.add_child(authored_visual)
+	var bank_emission_lifetime := _start_barrel_smoke_bank(
+		parent, effect, authored_visual, emission
+	)
 
 	var lifetime := DEFAULT_MUZZLE_FLASH_DURATION
 	var player := authored_visual.find_child("AnimationPlayer", true, false) as AnimationPlayer
@@ -936,6 +942,7 @@ func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 				# the bright first frame before the cleanup timer removes the effect.
 				animation.loop_mode = Animation.LOOP_NONE
 				lifetime = maxf(animation.length, 1.0 / AIM_UPDATES_PER_SECOND)
+	lifetime = maxf(lifetime, bank_emission_lifetime)
 	var cleanup := Timer.new()
 	cleanup.name = "Cleanup"
 	cleanup.one_shot = true
@@ -943,6 +950,247 @@ func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 	effect.add_child(cleanup)
 	cleanup.timeout.connect(effect.queue_free)
 	cleanup.start()
+
+
+func _start_barrel_smoke_bank(
+		parent: Node,
+		effect: Node3D,
+		authored_visual: Node3D,
+		emission: Dictionary
+	) -> float:
+	if not bool(authored_visual.get_meta("xbf_fx_events_complete", false)):
+		return 0.0
+	var banks := authored_visual.get_meta("xbf_fx_banks", []) as Array
+	var smoke_bank := _fx_bank_by_texture(banks, BARREL_SMOKE_SEQUENCE)
+	if smoke_bank.is_empty():
+		return 0.0
+	var frame_count := int(smoke_bank.get("texture_frame_count", 0))
+	var textures := _muzzle_bank_textures(BARREL_SMOKE_SEQUENCE, frame_count)
+	if textures.size() != frame_count:
+		return 0.0
+
+	var bank_id := String(smoke_bank.get("id", ""))
+	var active_frames := {}
+	var scheduled: Array[Dictionary] = []
+	var events := authored_visual.get_meta("xbf_fx_events", []) as Array
+	for event_value: Variant in events:
+		var event := event_value as Dictionary
+		if String(event.get("bank_id", "")) != bank_id:
+			continue
+		var attachment := String(event.get("attachment", ""))
+		var action := String(event.get("action", ""))
+		var frame := int(event.get("frame", -1))
+		if action == "start":
+			active_frames[attachment] = frame
+		elif action == "stop" and active_frames.has(attachment):
+			var start_frame := int(active_frames[attachment])
+			# Start/stop are control frames. Emit on each intervening frame;
+			# adjacent controls still represent one authored particle pulse.
+			var first_particle_frame := start_frame + 1 \
+				if frame - start_frame > 1 else start_frame
+			var particle_count := maxi(frame - start_frame - 1, 1)
+			for particle_offset in particle_count:
+				scheduled.append({
+					"frame": first_particle_frame + particle_offset,
+					"attachment": attachment,
+				})
+			active_frames.erase(attachment)
+	if scheduled.is_empty():
+		return 0.0
+
+	var world_scale := float(authored_visual.get_meta("xbf_world_scale", 1.0))
+	var timeline := effect.create_tween()
+	var previous_time := 0.0
+	var emitted_index := int(emission.get("index", 0))
+	for scheduled_value: Dictionary in scheduled:
+		var marker := _find_original_node(
+			authored_visual, String(scheduled_value["attachment"])
+		)
+		if marker == null:
+			continue
+		var emission_time := float(scheduled_value["frame"]) \
+			* INLINE_FX_FRAME_SECONDS
+		if emission_time > previous_time:
+			timeline.tween_interval(emission_time - previous_time)
+		timeline.tween_callback(
+			_emit_barrel_smoke_particle.bind(
+				parent, marker, smoke_bank, textures, world_scale, emitted_index
+			)
+		)
+		previous_time = emission_time
+	return previous_time + INLINE_FX_FRAME_SECONDS
+
+
+func _emit_barrel_smoke_particle(
+		parent: Node,
+		marker: Node3D,
+		bank: Dictionary,
+		textures: Array[Texture2D],
+		world_scale: float,
+		emission_index: int
+	) -> void:
+	if parent == null or not parent.is_inside_tree() \
+	or marker == null or not is_instance_valid(marker) or textures.is_empty():
+		return
+	var particle := Node3D.new()
+	particle.name = "BarrelSmoke_%d_%d" % [
+		emission_index, _muzzle_bank_particle_index,
+	]
+	particle.set_meta("combat_muzzle_fx", &"barrel_smoke")
+	particle.set_meta("emission_index", emission_index)
+	particle.set_meta("combat_fx_bank_id", StringName(String(bank.get("id", ""))))
+	particle.set_meta("combat_fx_texture", StringName(String(bank.get("texture", ""))))
+	_muzzle_bank_particle_index += 1
+	parent.add_child(particle)
+	particle.top_level = true
+	var start := marker.global_position
+	particle.global_position = start
+	particle.set_meta("combat_muzzle_start_position", start)
+
+	var particle_size := float(bank.get(
+		"world_particle_size",
+		float(bank.get("particle_size", 0.0)) * world_scale
+	))
+	var material := _barrel_smoke_material(bank, textures.front())
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE * particle_size
+	quad.material = material
+	var visual := MeshInstance3D.new()
+	visual.name = "Visual"
+	visual.mesh = quad
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	particle.add_child(visual)
+	particle.set_meta("combat_fx_particle_size", particle_size)
+
+	var source_gravity := float(bank.get("gravity", _fx_bank_gravity(bank)))
+	var world_gravity := float(bank.get(
+		"world_gravity",
+		source_gravity * world_scale \
+			* AIM_UPDATES_PER_SECOND * AIM_UPDATES_PER_SECOND
+	))
+	var acceleration := Vector3.DOWN * world_gravity
+	particle.set_meta("combat_fx_source_gravity", source_gravity)
+	particle.set_meta("combat_muzzle_acceleration", acceleration)
+	var duration := float(textures.size()) * INLINE_FX_FRAME_SECONDS
+	if not is_zero_approx(world_gravity):
+		var motion := particle.create_tween().set_process_mode(
+			Tween.TWEEN_PROCESS_PHYSICS
+		)
+		motion.tween_method(
+			_update_fx_bank_particle.bind(particle, start, acceleration),
+			0.0, duration, duration
+		)
+
+	var tint := material.albedo_color
+	var frame_animation := particle.create_tween()
+	for frame_index in textures.size():
+		frame_animation.tween_callback(
+			_set_fx_bank_frame.bind(
+				material, textures[frame_index], tint,
+				_fx_bank_frame_opacity(bank, frame_index)
+			)
+		)
+		frame_animation.tween_interval(INLINE_FX_FRAME_SECONDS)
+	frame_animation.finished.connect(particle.queue_free)
+
+
+func _fx_bank_by_texture(banks: Array, texture_name: String) -> Dictionary:
+	for bank_value: Variant in banks:
+		var bank := bank_value as Dictionary
+		if String(bank.get("texture", "")).nocasecmp_to(texture_name) == 0:
+			return bank
+	return {}
+
+
+func _find_original_node(node: Node, original_name: String) -> Node3D:
+	if node is Node3D \
+	and String(node.get_meta("original_name", "")) == original_name:
+		return node as Node3D
+	for child in node.get_children():
+		var result := _find_original_node(child, original_name)
+		if result != null:
+			return result
+	return null
+
+
+func _muzzle_bank_textures(base_name: String, count: int) -> Array[Texture2D]:
+	if count <= 0:
+		return []
+	var cache_key := "%s:%d" % [base_name, count]
+	if _muzzle_bank_texture_cache.has(cache_key):
+		var cached: Array[Texture2D] = []
+		cached.assign(_muzzle_bank_texture_cache[cache_key])
+		return cached
+	var textures := _load_fx_texture_sequence(base_name, count)
+	if textures.size() == count:
+		_muzzle_bank_texture_cache[cache_key] = textures
+	return textures
+
+
+func _barrel_smoke_material(
+		bank: Dictionary, texture: Texture2D
+	) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.albedo_texture = texture
+	var colors := bank.get("int_parameters_7_11", PackedInt32Array()) \
+		as PackedInt32Array
+	if colors.size() >= 3:
+		material.albedo_color = Color(
+			clampf(float(colors[0]) / 255.0, 0.0, 1.0),
+			clampf(float(colors[1]) / 255.0, 0.0, 1.0),
+			clampf(float(colors[2]) / 255.0, 0.0, 1.0),
+			_fx_bank_frame_opacity(bank, 0)
+		)
+	return material
+
+
+func _fx_bank_gravity(bank: Dictionary) -> float:
+	var parameters := bank.get("float_parameters_4_6", PackedFloat32Array()) \
+		as PackedFloat32Array
+	if parameters.size() < 2:
+		return 0.0
+	return parameters[1]
+
+
+func _fx_bank_frame_opacity(bank: Dictionary, frame_index: int) -> float:
+	var trailing := bank.get("trailing_words", PackedInt32Array()) \
+		as PackedInt32Array
+	if trailing.size() < 2:
+		return 1.0
+	return clampf(
+		float(trailing[0] + trailing[1] * frame_index) / 255.0,
+		0.0, 1.0
+	)
+
+
+func _set_fx_bank_frame(
+		material: StandardMaterial3D,
+		texture: Texture2D,
+		tint: Color,
+		opacity: float
+	) -> void:
+	if material == null:
+		return
+	material.albedo_texture = texture
+	var color := tint
+	color.a = opacity
+	material.albedo_color = color
+
+
+func _update_fx_bank_particle(
+		elapsed: float,
+		particle: Node3D,
+		start: Vector3,
+		acceleration: Vector3
+	) -> void:
+	if particle == null or not is_instance_valid(particle):
+		return
+	particle.global_position = start + 0.5 * acceleration * elapsed * elapsed
 
 
 func _scale_muzzle3_primary_mesh(authored_visual: Node3D) -> void:

@@ -4,7 +4,10 @@
 [ext_resource type="Script" uid="uid://xoynnrvxuq2p" path="res://scripts/world/camera/rts_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" path="res://assets/converted/maps/#M25 GM Aprit Chard S 2/terrain.tscn" id="4_map"]
 [ext_resource type="Resource" uid="uid://nj40xd0p0abq" path="res://configs/camera/rts_camera_config.tres" id="6_camera_config"]
-[ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="7_nxa0e"]
+[ext_resource type="PackedScene" path="res://scenes/units/hkmcv.tscn" id="7_6wlgg"]
+[ext_resource type="PackedScene" path="res://scenes/units/atmcv.tscn" id="8_5xq1e"]
+[ext_resource type="PackedScene" path="res://scenes/units/ormcv.tscn" id="9_8lv3e"]
+[ext_resource type="PackedScene" path="res://scenes/units/at_trike.tscn" id="10_4gthw"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="10_side_panel"]
 [ext_resource type="Script" uid="uid://c3sursjoim88" path="res://scripts/ui/selection_rectangle.gd" id="12_selection_rectangle"]
 
@@ -85,6 +88,14 @@ horizontal_alignment = 2
 [node name="SidePanel" parent="HUD" unique_id=1902101368 instance=ExtResource("10_side_panel")]
 layout_mode = 3
 
-[node name="Unit" parent="." unique_id=1844996278 instance=ExtResource("7_nxa0e")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 237.4714, 7.9346795, 156.98572)
-config_id = &"ATMVC"
+[node name="HKMCV" parent="." unique_id=1630633391 instance=ExtResource("7_6wlgg")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 239.10095, 9.115711, 159.1507)
+
+[node name="ATMCV" parent="." unique_id=653559468 instance=ExtResource("8_5xq1e")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 248.06923, 9.115608, 157.88763)
+
+[node name="ORMCV" parent="." unique_id=817835893 instance=ExtResource("9_8lv3e")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 230.29004, 9.113937, 157.56609)
+
+[node name="ATTrike" parent="." unique_id=1469551875 instance=ExtResource("10_4gthw")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 241.32938, 8.493374, 150.57489)

@@ -449,6 +449,53 @@ func _test_xbf_fx_banks() -> bool:
 		"the Mongoose must not acquire a casing bank from its !cexp backblast"
 	)
 
+	var muzzle_cases := [
+		["Muzzle1.xbf", 8.0, -0.3, [2], [5]],
+		["Muzzle3.xbf", 10.0, -0.2, [3], [6]],
+	]
+	for muzzle_case: Array in muzzle_cases:
+		var file_name := String(muzzle_case[0])
+		var muzzle = ModelXbfScript.load_file(
+			"res://assets/raw_original_content/3DDATA/Explosion".path_join(file_name)
+		)
+		_expect(muzzle != null, "%s must parse for muzzle smoke" % file_name)
+		if muzzle == null:
+			continue
+		var smoke_bank := _fx_bank_by_texture(muzzle.fx_banks, "!%Bru")
+		_expect(not smoke_bank.is_empty(), "%s must retain its !%%Bru bank" % file_name)
+		if smoke_bank.is_empty():
+			continue
+		_expect(
+			is_equal_approx(float(smoke_bank.particle_size), float(muzzle_case[1]))
+			and is_equal_approx(float(smoke_bank.gravity), float(muzzle_case[2]))
+			and int(smoke_bank.texture_frame_count) == 21,
+			"%s must retain smoke size, signed gravity, and texture lifetime" % file_name
+		)
+		var smoke_bank_id := String(smoke_bank.id)
+		_expect(
+			_fx_event_frames(muzzle.fx_events, smoke_bank_id, "start") == muzzle_case[3]
+			and _fx_event_frames(muzzle.fx_events, smoke_bank_id, "stop") == muzzle_case[4],
+			"%s must retain its authored smoke emission interval" % file_name
+		)
+
+	var muzzle_builder = ModelBakeBuilderScript.new()
+	var muzzle_scene: PackedScene = muzzle_builder.build(
+		"res://assets/raw_original_content/3DDATA/Explosion/Muzzle1.xbf"
+	)
+	_expect(muzzle_scene != null, "Muzzle1 with FX metadata must build")
+	if muzzle_scene != null:
+		var muzzle_root := muzzle_scene.instantiate()
+		var baked_smoke := _fx_bank_by_texture(
+			muzzle_root.get_meta("xbf_fx_banks", []) as Array, "!%Bru"
+		)
+		_expect(
+			not baked_smoke.is_empty()
+			and is_equal_approx(float(baked_smoke.world_particle_size), 0.5)
+			and is_equal_approx(float(baked_smoke.world_gravity), -7.5),
+			"Muzzle1 must bake source smoke size and signed gravity into world units"
+		)
+		muzzle_root.free()
+
 	var builder = ModelBakeBuilderScript.new()
 	var scene: PackedScene = builder.build(
 		"res://assets/raw_original_content/3DDATA/Units/AT_inf_H0.xbf"
