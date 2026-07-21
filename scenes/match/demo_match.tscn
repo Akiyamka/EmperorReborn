@@ -4,7 +4,9 @@
 [ext_resource type="Script" uid="uid://xoynnrvxuq2p" path="res://scripts/world/camera/rts_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" path="res://assets/converted/maps/#M25 GM Aprit Chard S 2/terrain.tscn" id="4_map"]
 [ext_resource type="Resource" uid="uid://nj40xd0p0abq" path="res://configs/camera/rts_camera_config.tres" id="6_camera_config"]
-[ext_resource type="PackedScene" path="res://scenes/units/at_mongoose.tscn" id="7_nxa0e"]
+[ext_resource type="PackedScene" path="res://scenes/units/ormcv.tscn" id="7_ptrr1"]
+[ext_resource type="PackedScene" path="res://scenes/units/atmcv.tscn" id="8_6wlgg"]
+[ext_resource type="PackedScene" path="res://scenes/units/hkmcv.tscn" id="9_5xq1e"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="10_side_panel"]
 [ext_resource type="Script" uid="uid://c3sursjoim88" path="res://scripts/ui/selection_rectangle.gd" id="12_selection_rectangle"]
 
@@ -45,10 +47,6 @@ metadata/_edit_lock_ = true
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
 
-[node name="ATMongoose" parent="Units" unique_id=1780156039 instance=ExtResource("7_nxa0e")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 245.8526, 8.723818, 128.19543)
-owner_player_id = 1
-
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
 
 [node name="Help" type="Label" parent="HUD" unique_id=1755436348]
@@ -88,3 +86,15 @@ horizontal_alignment = 2
 
 [node name="SidePanel" parent="HUD" unique_id=1902101368 instance=ExtResource("10_side_panel")]
 layout_mode = 3
+
+[node name="ORMCV" parent="." unique_id=1224361290 instance=ExtResource("7_ptrr1")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 259.74557, 9.111493, 136.74658)
+owner_player_id = 1
+
+[node name="ATMCV" parent="." unique_id=1756258562 instance=ExtResource("8_6wlgg")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 251.81052, 9.114471, 152.82968)
+owner_player_id = 1
+
+[node name="HKMCV" parent="." unique_id=236858247 instance=ExtResource("9_5xq1e")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 236.85866, 9.116537, 148.0266)
+owner_player_id = 1

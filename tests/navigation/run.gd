@@ -108,6 +108,7 @@ func _initialize() -> void:
 	_test_unit_navigation_order_api(grid)
 	_test_dock_order_has_per_unit_building_access(grid)
 	_test_building_marker_navigation_semantics(grid)
+	_test_map_change_prunes_freed_units(grid)
 	_test_blocked_target_uses_unit_approach_side(grid)
 	_test_rotated_building_blockers(grid)
 	_test_interior_escape(grid)
@@ -419,6 +420,32 @@ func _test_building_marker_navigation_semantics(grid: MapNavigationGrid) -> void
 					and not navigation.runtime_map.is_stoppable(cell, MapNavigationGrid.PASS_VEHICLE),
 				"s/d/p occupy cells must be passable no-stop space"
 			)
+	match_root.free()
+
+
+func _test_map_change_prunes_freed_units(grid: MapNavigationGrid) -> void:
+	var match_root := Node3D.new()
+	root.add_child(match_root)
+	var navigation := NavigationSystemScript.new()
+	match_root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation must initialize for freed-unit blocker refresh")
+	var unit := FakeUnit.new()
+	match_root.add_child(unit)
+	unit.global_position = Vector3(90.5, 0.0, 100.5)
+	navigation.command_move([unit], Vector3(120.5, 0.0, 100.5))
+	var unit_id := unit.get_instance_id()
+	unit.free()
+
+	var building := FakeBuilding.new(["B"])
+	building.position = Vector3(100.0, 0.0, 100.0)
+	building.add_to_group("buildings")
+	match_root.add_child(building)
+	navigation.call("_refresh_building_blockers")
+	_expect(
+		not navigation._agents.has(unit_id),
+		"a blocker-map replan must prune agents whose units were already freed"
+	)
 	match_root.free()
 
 

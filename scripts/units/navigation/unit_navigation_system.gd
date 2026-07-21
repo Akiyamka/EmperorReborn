@@ -1714,6 +1714,9 @@ func _refresh_building_blockers() -> void:
 
 
 func _replan_after_map_change() -> void:
+	# Blocker refreshes run independently of navigation ticks, so an agent's
+	# unit may have been freed since the last regular pruning pass.
+	_prune_agents()
 	var changed_by_command := {}
 	for key in _agents.keys():
 		var agent: Dictionary = _agents[key]

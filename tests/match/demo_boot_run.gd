@@ -3,6 +3,9 @@ extends SceneTree
 const LegacyRulesFixture := preload("res://tests/support/legacy_rules_fixture.gd")
 
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
+const BuildingDefinitionCatalogScript := preload(
+	"res://scripts/buildings/building_definition_catalog.gd"
+)
 const MatchFixtureScene := preload("res://tests/fixtures/match_fixture.tscn")
 const HarvesterScene := preload("res://scenes/units/harvester.tscn")
 const ATRefineryScene := preload("res://assets/converted/buildings/ATRefinery/ATRefinery.scn")
@@ -1099,22 +1102,19 @@ func _test_real_harvester_unload_trip() -> void:
 ## The model converter negates Z (left-handed source -> Godot), which puts
 ## every building's low skirt/apron on its +Z side, while the footprint code
 ## lays occupy row 0 toward -Z. import_rules.gd therefore Z-mirrors the
-## occupy matrix at import (rows stored back-to-front relative to Rules.txt).
+## occupy matrix during native-resource generation (rows stored back-to-front
+## relative to Rules.txt).
 ## This pins the mirror against the real converted data: a reimport that
 ## drops it would silently turn every footprint 180 degrees away from its
 ## model again.
 func _test_occupy_rows_are_mirrored() -> void:
-	var rules := get_root().get_node_or_null("/root/Rules")
-	_expect(rules != null, "the Rules autoload must be available")
-	if rules == null:
-		return
-
-	var con_yard: Resource = rules.call("building", &"ATConYard")
-	_expect(con_yard != null, "ATConYard rules config must exist")
+	var catalog := BuildingDefinitionCatalogScript.new()
+	var con_yard: Resource = catalog.definition(&"ATConYard")
+	_expect(con_yard != null, "ATConYard native definition must exist")
 	if con_yard == null:
 		return
 
-	var occupy_rows: Array = con_yard.list(&"occupy_rows")
+	var occupy_rows: Array = con_yard.occupy_rows
 	_expect(occupy_rows.size() == 10, "ATConYard must keep its 10-row occupy matrix")
 	if occupy_rows.size() != 10:
 		return
