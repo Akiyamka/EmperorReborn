@@ -85,6 +85,28 @@ func build(xbf_path: String) -> PackedScene:
 	var root := Node3D.new()
 	root.name = _scene_name_from_path(xbf_path)
 	root.scale = Vector3.ONE * world_scale
+	# Keep the original FX definitions on the converted scene. Their event
+	# frames determine burst particle counts, while bank parameter 06 supplies
+	# particle size in source coordinates. Runtime effects can therefore use
+	# authored data instead of unit-specific casing constants.
+	var baked_fx_banks: Array = xbf.fx_banks.duplicate(true)
+	for bank_value: Variant in baked_fx_banks:
+		var bank := bank_value as Dictionary
+		bank["world_particle_size"] = float(bank.get("particle_size", 0.0)) * world_scale
+	root.set_meta("xbf_world_scale", world_scale)
+	root.set_meta("xbf_fx_format_version", xbf.fx_format_version)
+	root.set_meta("xbf_fx_bank_table_version", xbf.fx_bank_table_version)
+	root.set_meta("xbf_fx_banks", baked_fx_banks)
+	root.set_meta("xbf_fx_event_frame_count", xbf.fx_event_frame_count)
+	root.set_meta("xbf_fx_event_object_count", xbf.fx_event_object_count)
+	root.set_meta("xbf_fx_event_master", xbf.fx_event_master)
+	root.set_meta("xbf_fx_event_counts", xbf.fx_event_counts)
+	root.set_meta("xbf_fx_events", xbf.fx_events.duplicate(true))
+	root.set_meta("xbf_fx_events_complete", xbf.fx_events_complete)
+	# A small set of source files uses event payload variants that are not yet
+	# decoded. Preserve the complete original block as well, so conversion is
+	# lossless even when xbf_fx_events_complete is false.
+	root.set_meta("xbf_fx_event_raw_data", xbf.fx_event_raw_data)
 
 	var anim := Animation.new()
 	anim.resource_name = "idle"

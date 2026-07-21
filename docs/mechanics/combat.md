@@ -145,6 +145,19 @@ warm point-light pulse just behind the active barrel (using the rear marker
 when present), so a multi-shot salvo illuminates the unit once per shot rather
 than once for the complete firing animation.
 
+Converted model roots retain the source FX bank records in `xbf_fx_banks` and
+their timeline records in `xbf_fx_events`; undecoded words and the raw event
+block remain available as metadata as well. Bank parameter 06 is particle size
+in source-model coordinates. Thus the `!%shel` values 10 (Minotaurus), 6
+(Trike), 4 (APC), and 3 (light infantry and Sniper) become 0.625, 0.375, 0.25,
+and 0.1875 world units at the normal 1/16 model scale. Casing count is encoded
+by the frames strictly between the bank's type-3 start and type-4 stop events,
+with a one-frame pulse still yielding one particle: Minotaurus gets one per
+barrel, Trike two per `Fire 0`, light infantry seven across its three burst
+intervals, and Sniper one. The APC also authors a `!%shel` interval, attached
+to `::1turret#`; the Mongoose has no casing bank and only authors its `!cexp`
+backblast.
+
 The Mongoose also selects `Muzzle3`, placing that front flash at its combined
 `>>0#flame` projectile marker. Its launcher has a separate sibling `#smoke`
 marker behind the tube: the firing event emits the original sixteen-frame

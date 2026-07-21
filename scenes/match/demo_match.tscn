@@ -4,7 +4,7 @@
 [ext_resource type="Script" uid="uid://xoynnrvxuq2p" path="res://scripts/world/camera/rts_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" path="res://assets/converted/maps/#M25 GM Aprit Chard S 2/terrain.tscn" id="4_map"]
 [ext_resource type="Resource" uid="uid://nj40xd0p0abq" path="res://configs/camera/rts_camera_config.tres" id="6_camera_config"]
-[ext_resource type="PackedScene" path="res://assets/converted/buildings/ATConYard/ATConYard.scn" id="9_at_con_yard"]
+[ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="7_nxa0e"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="10_side_panel"]
 [ext_resource type="Script" uid="uid://c3sursjoim88" path="res://scripts/ui/selection_rectangle.gd" id="12_selection_rectangle"]
 
@@ -42,10 +42,6 @@ far = 500.0
 metadata/_edit_lock_ = true
 
 [node name="Buildings" type="Node3D" parent="." unique_id=251147608]
-
-[node name="ATConYard" parent="Buildings" unique_id=226675699 instance=ExtResource("9_at_con_yard")]
-transform = Transform3D(0.99999994, 0, 0, 0, 1, 0, 0, 0, 0.99999994, 12.411575, 7.893318, 13.417204)
-owner_player_id = 1
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
 
@@ -88,3 +84,7 @@ horizontal_alignment = 2
 
 [node name="SidePanel" parent="HUD" unique_id=1902101368 instance=ExtResource("10_side_panel")]
 layout_mode = 3
+
+[node name="Unit" parent="." unique_id=1844996278 instance=ExtResource("7_nxa0e")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 237.4714, 7.9346795, 156.98572)
+config_id = &"ATMVC"
