@@ -35,11 +35,7 @@ const SHOT_LIGHT_RANGE := 4.0
 const SHOT_LIGHT_REAR_OFFSET := 0.35
 const SHOT_LIGHT_HOLD_DURATION := 0.04
 const SHOT_LIGHT_FADE_DURATION := 0.16
-const CASING_FRAME_COUNT := 10
-const CASINGS_PER_SHOT := 1
-const CASING_SIZE := 0.56
-const CASING_LIFETIME := 1.0
-const CASING_GRAVITY := 5.5
+const CASING_SEQUENCE := "!%shel"
 const LAUNCH_SMOKE_MARKER := "#smoke"
 const LAUNCH_SMOKE_SEQUENCE := "!cexp"
 const LAUNCH_SMOKE_FRAME_COUNT := 16
@@ -68,6 +64,7 @@ var current_yaw := 0.0
 var current_pitch := 0.0
 
 var _model_root: Node3D
+var _fx_model_root: Node3D
 var _weapon_index := -1
 var _root_pivot: Node3D
 var _yaw_pivot: Node3D
@@ -81,10 +78,11 @@ var _uses_embedded_muzzle_flash := false
 var _next_muzzle_index := 0
 var _last_emissions: Array[Dictionary] = []
 var _rear_flash_textures: Array[Texture2D] = []
-var _casing_textures: Array[Texture2D] = []
 var _launch_smoke_textures: Array[Texture2D] = []
-static var _muzzle_bank_texture_cache: Dictionary = {}
 var _muzzle_bank_particle_index := 0
+var _casing_particle_index := 0
+var _casing_timeline_tween: Tween
+var _authored_fire_fx_active := false
 var _definition_catalog := CombatDefinitionCatalogScript.new()
 
 
@@ -137,6 +135,7 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 	if model_root == null or weapon_index < 0:
 		return false
 	_model_root = model_root
+	_fx_model_root = _find_fx_model_root(model_root)
 	_uses_embedded_muzzle_flash = _has_embedded_muzzle_flash(model_root)
 
 	var pivot_candidates: Array[Node3D] = []
@@ -184,8 +183,10 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 
 
 func unbind_model() -> void:
+	cancel_authored_fire_fx()
 	_restore_pivot_transforms()
 	_model_root = null
+	_fx_model_root = null
 	_root_pivot = null
 	_yaw_pivot = null
 	_pitch_pivot = null
@@ -197,6 +198,8 @@ func unbind_model() -> void:
 	_uses_embedded_muzzle_flash = false
 	_next_muzzle_index = 0
 	_last_emissions.clear()
+	_casing_timeline_tween = null
+	_authored_fire_fx_active = false
 	current_yaw = 0.0
 	current_pitch = 0.0
 
@@ -624,6 +627,16 @@ func _has_embedded_muzzle_flash(node: Node) -> bool:
 	return false
 
 
+func _find_fx_model_root(node: Node) -> Node3D:
+	if node is Node3D and node.has_meta("xbf_fx_banks"):
+		return node as Node3D
+	for child in node.get_children():
+		var candidate := _find_fx_model_root(child)
+		if candidate != null:
+			return candidate
+	return null
+
+
 func _bind_rear_muzzles(node: Node) -> void:
 	var candidates: Array[Node3D] = []
 	_collect_rear_muzzles(node, candidates)
@@ -854,6 +867,256 @@ func _desired_pitch_for_direction(target_direction: Vector3) -> float:
 	return current_pitch - angle_difference(direction_pitch, target_pitch)
 
 
+## Starts model-authored particle banks alongside a sliced Fire animation.
+## Unit owns the animation lifecycle and calls cancel_authored_fire_fx() when
+## the action finishes or is interrupted; already-emitted world particles keep
+## their own short lifetime.
+func start_authored_fire_fx(
+		animation_name: StringName,
+		parent: Node = null,
+		playback_speed := 1.0
+	) -> bool:
+	cancel_authored_fire_fx()
+	var started := _start_model_casing_timeline(
+		animation_name, parent, playback_speed
+	)
+	_authored_fire_fx_active = started
+	return started
+
+
+func has_authored_fire_fx() -> bool:
+	return _authored_fire_fx_active
+
+
+func cancel_authored_fire_fx() -> void:
+	_authored_fire_fx_active = false
+	if _casing_timeline_tween != null and _casing_timeline_tween.is_valid():
+		_casing_timeline_tween.kill()
+	_casing_timeline_tween = null
+
+
+func _start_model_casing_timeline(
+		animation_name: StringName,
+		parent: Node,
+		playback_speed: float
+	) -> bool:
+	if _fx_model_root == null or not is_instance_valid(_fx_model_root) \
+	or not bool(_fx_model_root.get_meta("xbf_fx_events_complete", false)):
+		return false
+	var bank := _fx_bank_by_texture(
+		_fx_model_root.get_meta("xbf_fx_banks", []) as Array,
+		CASING_SEQUENCE
+	)
+	if bank.is_empty():
+		return false
+	var animation_entry := _model_animation_entry(animation_name)
+	if animation_entry.is_empty():
+		return false
+	var schedule := _fx_bank_schedule(
+		String(bank.get("id", "")),
+		int(animation_entry.get("start_frame", 0)),
+		int(animation_entry.get("end_frame", 0))
+	)
+	if schedule.is_empty():
+		return false
+	var frame_count := int(bank.get("texture_frame_count", 0))
+	var textures := _muzzle_bank_textures(CASING_SEQUENCE, frame_count)
+	if textures.size() != frame_count:
+		return false
+	var resolved_parent := parent if parent != null else _default_projectile_parent()
+	if resolved_parent == null or not resolved_parent.is_inside_tree():
+		return false
+
+	var base_frame := int(animation_entry.get("start_frame", 0))
+	var seconds_per_frame := INLINE_FX_FRAME_SECONDS / maxf(playback_speed, 0.001)
+	var timeline := _fx_model_root.create_tween()
+	_casing_timeline_tween = timeline
+	var previous_time := 0.0
+	var scheduled_particles := 0
+	var world_scale := float(_fx_model_root.get_meta("xbf_world_scale", 1.0))
+	for scheduled_value: Dictionary in schedule:
+		var attachment := String(scheduled_value.get("attachment", ""))
+		var marker := _find_original_node(_fx_model_root, attachment)
+		if marker == null:
+			continue
+		var emission_time := maxf(
+			float(int(scheduled_value.get("frame", base_frame)) - base_frame)
+				* seconds_per_frame,
+			0.0
+		)
+		if emission_time > previous_time:
+			timeline.tween_interval(emission_time - previous_time)
+		timeline.tween_callback(
+			_emit_casing_particle.bind(
+				weakref(resolved_parent), weakref(marker), bank, textures, world_scale,
+				attachment, scheduled_particles
+			)
+		)
+		previous_time = emission_time
+		scheduled_particles += 1
+	if scheduled_particles == 0:
+		timeline.kill()
+		_casing_timeline_tween = null
+		return false
+	timeline.tween_interval(seconds_per_frame)
+	timeline.finished.connect(_finish_casing_timeline)
+	return true
+
+
+func _finish_casing_timeline() -> void:
+	_casing_timeline_tween = null
+
+
+func _model_animation_entry(animation_name: StringName) -> Dictionary:
+	if _fx_model_root == null or not is_instance_valid(_fx_model_root):
+		return {}
+	var wanted := String(animation_name).strip_edges().replace(" ", "_")
+	var entries := _fx_model_root.get_meta("xbf_animation_entries", []) as Array
+	for entry_value: Variant in entries:
+		var entry := entry_value as Dictionary
+		var candidate := String(entry.get("name", "")).strip_edges().replace(" ", "_")
+		if candidate.nocasecmp_to(wanted) == 0:
+			return entry
+	return {}
+
+
+func _fx_bank_schedule(
+		bank_id: String, clip_start_frame: int, clip_end_frame: int
+	) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var active_frames := {}
+	var events := _fx_model_root.get_meta("xbf_fx_events", []) as Array
+	for event_value: Variant in events:
+		var event := event_value as Dictionary
+		if String(event.get("bank_id", "")) != bank_id:
+			continue
+		var attachment := String(event.get("attachment", ""))
+		var action := String(event.get("action", ""))
+		var frame := int(event.get("frame", -1))
+		if action == "start":
+			active_frames[attachment] = frame
+		elif action == "stop" and active_frames.has(attachment):
+			var start_frame := int(active_frames[attachment])
+			active_frames.erase(attachment)
+			if start_frame < clip_start_frame or frame > clip_end_frame:
+				continue
+			var first_particle_frame := start_frame + 1 \
+				if frame - start_frame > 1 else start_frame
+			var particle_count := maxi(frame - start_frame - 1, 1)
+			for particle_offset in particle_count:
+				result.append({
+					"frame": first_particle_frame + particle_offset,
+					"attachment": attachment,
+				})
+	return result
+
+
+func _emit_casing_particle(
+		parent_ref: WeakRef,
+		marker_ref: WeakRef,
+		bank: Dictionary,
+		textures: Array[Texture2D],
+		world_scale: float,
+		attachment: String,
+		particle_number: int
+	) -> void:
+	var parent := parent_ref.get_ref() as Node if parent_ref != null else null
+	var marker := marker_ref.get_ref() as Node3D if marker_ref != null else null
+	if parent == null or not parent.is_inside_tree() \
+	or marker == null or not is_instance_valid(marker) or textures.is_empty():
+		return
+	var particle_size := float(bank.get(
+		"world_particle_size",
+		float(bank.get("particle_size", 0.0)) * world_scale
+	))
+	var source_gravity := float(bank.get("gravity", _fx_bank_gravity(bank)))
+	var world_gravity := float(bank.get(
+		"world_gravity",
+		source_gravity * world_scale \
+			* AIM_UPDATES_PER_SECOND * AIM_UPDATES_PER_SECOND
+	))
+	var acceleration := Vector3.DOWN * world_gravity
+	var current_emission := peek_emission()
+	var firing_direction := Vector3(
+		current_emission.get("direction", Vector3.FORWARD)
+	).normalized()
+	if firing_direction.is_zero_approx():
+		firing_direction = Vector3.FORWARD
+	var eject_direction := -firing_direction
+	var side := eject_direction.cross(Vector3.UP).normalized()
+	if side.is_zero_approx():
+		side = Vector3.RIGHT
+	var variation := particle_number % 3
+	var side_sign := -1.0 if particle_number % 2 == 0 else 1.0
+	var velocity := (
+		eject_direction * (1.4 + 0.2 * variation)
+		+ Vector3.UP * (1.55 + 0.15 * variation)
+		+ side * (0.35 * side_sign)
+	)
+
+	var particle := Node3D.new()
+	particle.name = "Casing_%d_%d" % [_weapon_index, _casing_particle_index]
+	particle.set_meta("combat_muzzle_fx", &"casing")
+	particle.set_meta("emission_index", particle_number)
+	particle.set_meta("combat_fx_bank_id", StringName(String(bank.get("id", ""))))
+	particle.set_meta("combat_fx_texture", StringName(String(bank.get("texture", ""))))
+	particle.set_meta("combat_fx_attachment", attachment)
+	particle.set_meta("combat_fx_particle_size", particle_size)
+	particle.set_meta("combat_fx_source_gravity", source_gravity)
+	particle.set_meta("combat_muzzle_acceleration", acceleration)
+	particle.set_meta("combat_muzzle_velocity", velocity)
+	_casing_particle_index += 1
+	var material := _fx_bank_material(bank, textures.front())
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE * particle_size
+	quad.material = material
+	var visual := MeshInstance3D.new()
+	visual.name = "Visual"
+	visual.mesh = quad
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	particle.add_child(visual)
+	parent.add_child(particle)
+	particle.top_level = true
+	var start := marker.global_position
+	particle.global_position = start
+	particle.set_meta("combat_muzzle_start_position", start)
+
+	var duration := float(textures.size()) * INLINE_FX_FRAME_SECONDS
+	var motion := particle.create_tween().set_process_mode(
+		Tween.TWEEN_PROCESS_PHYSICS
+	)
+	motion.tween_method(
+		_update_casing_particle.bind(
+			particle, start, velocity, acceleration
+		),
+		0.0, duration, duration
+	)
+	var tint := material.albedo_color
+	var frame_animation := particle.create_tween()
+	for frame_index in textures.size():
+		frame_animation.tween_callback(
+			_set_fx_bank_frame.bind(
+				material, textures[frame_index], tint,
+				_fx_bank_frame_opacity(bank, frame_index)
+			)
+		)
+		frame_animation.tween_interval(INLINE_FX_FRAME_SECONDS)
+	frame_animation.finished.connect(particle.queue_free)
+
+
+func _update_casing_particle(
+		elapsed: float,
+		particle: Node3D,
+		start: Vector3,
+		velocity: Vector3,
+		acceleration: Vector3
+	) -> void:
+	if particle == null or not is_instance_valid(particle):
+		return
+	particle.global_position = start + velocity * elapsed \
+		+ 0.5 * acceleration * elapsed * elapsed
+
+
 func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 	if muzzle_flash_scene == null or parent == null or not parent.is_inside_tree():
 		return
@@ -1003,7 +1266,7 @@ func _emit_barrel_smoke_particle(
 		"world_particle_size",
 		float(bank.get("particle_size", 0.0)) * world_scale
 	))
-	var material := _barrel_smoke_material(bank, textures.front())
+	var material := _fx_bank_material(bank, textures.front())
 	var quad := QuadMesh.new()
 	quad.size = Vector2.ONE * particle_size
 	quad.material = material
@@ -1068,18 +1331,11 @@ func _find_original_node(node: Node, original_name: String) -> Node3D:
 func _muzzle_bank_textures(base_name: String, count: int) -> Array[Texture2D]:
 	if count <= 0:
 		return []
-	var cache_key := "%s:%d" % [base_name, count]
-	if _muzzle_bank_texture_cache.has(cache_key):
-		var cached: Array[Texture2D] = []
-		cached.assign(_muzzle_bank_texture_cache[cache_key])
-		return cached
 	var textures := _load_fx_texture_sequence(base_name, count)
-	if textures.size() == count:
-		_muzzle_bank_texture_cache[cache_key] = textures
-	return textures
+	return textures if textures.size() == count else []
 
 
-func _barrel_smoke_material(
+func _fx_bank_material(
 		bank: Dictionary, texture: Texture2D
 	) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
@@ -1183,9 +1439,6 @@ func _spawn_auxiliary_muzzle_effects(parent: Node, emission: Dictionary) -> void
 	_ensure_inline_fx_textures()
 	if _rear_flash_textures.size() == REAR_FLASH_FRAME_COUNT:
 		_spawn_rear_flash(parent, emission)
-	if _casing_textures.size() == CASING_FRAME_COUNT:
-		for casing_index in CASINGS_PER_SHOT:
-			_spawn_casing(parent, emission, casing_index)
 
 
 func _spawn_launch_smoke(parent: Node, emission: Dictionary) -> void:
@@ -1266,48 +1519,6 @@ func _spawn_rear_flash(parent: Node, emission: Dictionary) -> void:
 	animation.finished.connect(effect.queue_free)
 
 
-func _spawn_casing(parent: Node, emission: Dictionary, casing_index: int) -> void:
-	var effect := Node3D.new()
-	effect.name = "Casing_%d_%d" % [int(emission.get("index", 0)), casing_index]
-	effect.set_meta("combat_muzzle_fx", &"casing")
-	effect.set_meta("emission_index", int(emission.get("index", 0)))
-	parent.add_child(effect)
-	effect.top_level = true
-	var start := Vector3(emission["rear_position"])
-	effect.global_position = start
-	var visual := _fx_quad(_casing_textures.front(), CASING_SIZE)
-	visual.name = "Visual"
-	effect.add_child(visual)
-	var material := (visual.mesh as QuadMesh).material as StandardMaterial3D
-
-	var eject_direction := Vector3(
-		emission.get("rear_direction", -Vector3(emission.get("direction", Vector3.FORWARD)))
-	).normalized()
-	if eject_direction.is_zero_approx():
-		eject_direction = Vector3.BACK
-	var side := eject_direction.cross(Vector3.UP).normalized()
-	if side.is_zero_approx():
-		side = Vector3.RIGHT
-	var side_sign := -1.0 if casing_index % 2 == 0 else 1.0
-	var velocity := (
-		eject_direction * (1.4 + 0.25 * casing_index)
-		+ Vector3.UP * (1.55 + 0.2 * casing_index)
-		+ side * (0.35 * side_sign)
-	)
-	var motion := effect.create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
-	motion.tween_method(
-		_update_casing.bind(effect, start, velocity),
-		0.0,
-		CASING_LIFETIME,
-		CASING_LIFETIME
-	)
-	motion.finished.connect(effect.queue_free)
-	var animation := effect.create_tween().set_loops()
-	for texture in _casing_textures:
-		animation.tween_callback(_set_fx_texture.bind(material, texture))
-		animation.tween_interval(INLINE_FX_FRAME_SECONDS)
-
-
 func _fx_quad(texture: Texture2D, size: float) -> MeshInstance3D:
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -1328,8 +1539,6 @@ func _fx_quad(texture: Texture2D, size: float) -> MeshInstance3D:
 func _ensure_inline_fx_textures() -> void:
 	if _rear_flash_textures.is_empty():
 		_rear_flash_textures = _load_fx_texture_sequence("!cexp", REAR_FLASH_FRAME_COUNT)
-	if _casing_textures.is_empty():
-		_casing_textures = _load_fx_texture_sequence("!%shel", CASING_FRAME_COUNT)
 
 
 func _ensure_launch_smoke_textures() -> void:
@@ -1373,20 +1582,6 @@ func _opaque_additive_texture(source: Texture2D) -> Texture2D:
 func _set_fx_texture(material: StandardMaterial3D, texture: Texture2D) -> void:
 	if material != null:
 		material.albedo_texture = texture
-
-
-func _update_casing(
-		elapsed: float,
-		effect: Node3D,
-		start: Vector3,
-		initial_velocity: Vector3
-	) -> void:
-	if effect == null or not is_instance_valid(effect):
-		return
-	effect.global_position = (
-		start + initial_velocity * elapsed
-		+ Vector3.DOWN * (0.5 * CASING_GRAVITY * elapsed * elapsed)
-	)
 
 
 ## Rules ranges belong to the gameplay entity, not to an animated muzzle.

@@ -47,6 +47,18 @@ metadata/_edit_lock_ = true
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
 
+[node name="ATMCV" parent="Units" unique_id=1756258562 instance=ExtResource("8_6wlgg")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 251.81052, 9.114471, 152.82968)
+owner_player_id = 1
+
+[node name="HKMCV" parent="Units" unique_id=236858247 instance=ExtResource("9_5xq1e")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 236.85866, 9.116537, 148.0266)
+owner_player_id = 1
+
+[node name="ORMCV" parent="Units" unique_id=1224361290 instance=ExtResource("7_ptrr1")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 259.74557, 9.111493, 136.74658)
+owner_player_id = 1
+
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
 
 [node name="Help" type="Label" parent="HUD" unique_id=1755436348]
@@ -86,15 +98,3 @@ horizontal_alignment = 2
 
 [node name="SidePanel" parent="HUD" unique_id=1902101368 instance=ExtResource("10_side_panel")]
 layout_mode = 3
-
-[node name="ORMCV" parent="." unique_id=1224361290 instance=ExtResource("7_ptrr1")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 259.74557, 9.111493, 136.74658)
-owner_player_id = 1
-
-[node name="ATMCV" parent="." unique_id=1756258562 instance=ExtResource("8_6wlgg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 251.81052, 9.114471, 152.82968)
-owner_player_id = 1
-
-[node name="HKMCV" parent="." unique_id=236858247 instance=ExtResource("9_5xq1e")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 236.85866, 9.116537, 148.0266)
-owner_player_id = 1

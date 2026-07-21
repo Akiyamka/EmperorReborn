@@ -146,8 +146,7 @@ the bank selected through `TurretMuzzleFlash`, emits at its authored attachment,
 applies the bank colour/fade, and lets each billboard continue rising after the
 short flash model disappears. Consequently Trike/APC receive this smoke from
 `Muzzle1`, while Mongoose/Minotaurus receive it from `Muzzle3`, without a unit
-allowlist. The Minotaurus model
-also pairs every front
+allowlist. The Minotaurus model also pairs every front
 `>>...#muzzle01–04` marker with a sibling rear `#muzzle05–08` marker. The XBF
 FX bank assigns the original `!cexp` rear cannon flash and a `!%shel` tumbling
 casing particle to that rear point; they are emitted by the same per-barrel
@@ -156,18 +155,25 @@ warm point-light pulse just behind the active barrel (using the rear marker
 when present), so a multi-shot salvo illuminates the unit once per shot rather
 than once for the complete firing animation.
 
-Converted model roots retain the source FX bank records in `xbf_fx_banks` and
-their timeline records in `xbf_fx_events`; undecoded words and the raw event
-block remain available as metadata as well. Bank parameter 06 is particle size
-in source-model coordinates. Thus the `!%shel` values 10 (Minotaurus), 6
+Converted model roots retain the source FX bank records in `xbf_fx_banks`,
+their timeline records in `xbf_fx_events`, and the absolute source clip ranges
+in `xbf_animation_entries`; undecoded words and the raw event block remain
+available as metadata as well. Bank parameter 05 is signed gravity per source
+update squared, while parameter 06 is particle size in source-model
+coordinates. Thus the `!%shel` values 10 (Minotaurus), 6
 (Trike), 4 (APC), and 3 (light infantry and Sniper) become 0.625, 0.375, 0.25,
 and 0.1875 world units at the normal 1/16 model scale. Casing count is encoded
 by the frames strictly between the bank's type-3 start and type-4 stop events,
 with a one-frame pulse still yielding one particle: Minotaurus gets one per
 barrel, Trike two per `Fire 0`, light infantry seven across its three burst
-intervals, and Sniper one. The APC also authors a `!%shel` interval, attached
-to `::1turret#`; the Mongoose has no casing bank and only authors its `!cexp`
-backblast.
+intervals, and Sniper one. The APC also authors three small casings in one
+`!%shel` interval attached to `::1turret#`; the Mongoose has no casing bank
+and only authors its `!cexp`
+backblast. Runtime aligns these absolute events with the sliced `Fire_0` clip,
+emits each ten-frame tumbling casing at the named attachment, and applies its
+bank size and positive downward gravity. This replaces the former one-casing,
+size-0.56, gravity-5.5 rear-muzzle fallback and also lets infantry with an
+embedded muzzle flash retain their separate authored casing bank.
 
 The Mongoose also selects `Muzzle3`, placing that front flash at its combined
 `>>0#flame` projectile marker. Its launcher has a separate sibling `#smoke`

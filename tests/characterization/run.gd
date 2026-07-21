@@ -513,6 +513,9 @@ func _test_xbf_fx_banks() -> bool:
 			"the packed scene must retain source and world-space particle sizes"
 		)
 		var baked_events := root.get_meta("xbf_fx_events", []) as Array
+		var baked_fire := _xbf_animation_entry(
+			root.get_meta("xbf_animation_entries", []) as Array, "Fire 0"
+		)
 		_expect(
 			bool(root.get_meta("xbf_fx_events_complete", false))
 			and _fx_event_frames(
@@ -522,6 +525,12 @@ func _test_xbf_fx_banks() -> bool:
 				"xbf_fx_event_raw_data", PackedByteArray()
 			) as PackedByteArray).is_empty(),
 			"the packed scene must retain the infantry FX event table"
+		)
+		_expect(
+			not baked_fire.is_empty()
+			and int(baked_fire.start_frame) == 207
+			and int(baked_fire.end_frame) == 251,
+			"the packed scene must retain source clip ranges for FX alignment"
 		)
 		root.free()
 	return true

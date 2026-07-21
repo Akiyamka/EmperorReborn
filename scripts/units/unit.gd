@@ -174,6 +174,12 @@ func _ready() -> void:
 	_refresh_owner_visuals()
 
 
+func _exit_tree() -> void:
+	_cancel_fire_sequence(false)
+	for turret in combat_turrets:
+		turret.cancel_authored_fire_fx()
+
+
 func _process(delta: float) -> void:
 	for turret in combat_turrets:
 		turret.advance_ticks(delta * RULE_COMBAT_TICKS_PER_SECOND)
@@ -827,6 +833,7 @@ func _start_authored_fire_sequence(turret) -> bool:
 		turret.begin_reload()
 	player.speed_scale = FIRE_ANIMATION_SPEED_SCALE
 	_play_animation_from_start(player, animation_name)
+	turret.start_authored_fire_fx(animation_name, null, player.speed_scale)
 	return true
 
 
@@ -887,6 +894,8 @@ func _reload_starts_after_fire_animation() -> bool:
 func _clear_fire_sequence() -> void:
 	if _fire_sequence_player != null and is_instance_valid(_fire_sequence_player):
 		_fire_sequence_player.stop()
+	if _fire_sequence_turret != null:
+		_fire_sequence_turret.cancel_authored_fire_fx()
 	_fire_sequence_active = false
 	_fire_sequence_turret = null
 	_fire_sequence_player = null

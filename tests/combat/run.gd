@@ -11,6 +11,12 @@ const UnitScript := preload("res://scripts/units/unit.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const ATAPCModelScene := preload("res://assets/converted/models/AT_APC_H0/AT_APC_H0.scn")
 const ATInfantryModelScene := preload("res://assets/converted/models/AT_inf_H0/AT_inf_H0.scn")
+const ATSniperModelScene := preload(
+	"res://assets/converted/models/AT_Sniper_H0/AT_Sniper_H0.scn"
+)
+const ATTrikeModelScene := preload(
+	"res://assets/converted/models/AT_Trike_H0/AT_Trike_H0.scn"
+)
 const ATMongooseModelScene := preload(
 	"res://assets/converted/models/AT_mongoose_H0/AT_mongoose_H0.scn"
 )
@@ -138,6 +144,10 @@ func _initialize() -> void:
 	await _run_async_case(
 		"muzzle FX banks emit authored rising barrel smoke",
 		_test_muzzle_fx_bank_smoke
+	)
+	await _run_async_case(
+		"model FX banks emit authored casing counts and sizes",
+		_test_model_fx_bank_casings
 	)
 	await _run_async_case(
 		"turret launches projectiles and composes the authored impact FX",
@@ -755,6 +765,80 @@ func _test_muzzle_fx_bank_smoke() -> void:
 	_free_muzzle_effects()
 
 
+func _test_model_fx_bank_casings() -> void:
+	var cases := [
+		[ATMinotaurusModelScene, &"ATMinotaurusBase", 4, 0.625, 12.5, 1.27,
+			["#muzzle06", "#muzzle05", "#muzzle08", "#muzzle07"]],
+		[ATTrikeModelScene, &"ATTrikeGun", 2, 0.375, 7.5, 0.22,
+			["Gun", "Gun"]],
+		[ATInfantryModelScene, &"ATInfGun", 7, 0.1875, 7.5, 1.37,
+			["gun", "gun", "gun", "gun", "gun", "gun", "gun"]],
+		[ATSniperModelScene, &"ATSniperGun", 1, 0.1875, 0.75, 1.02,
+			["Agunbone"]],
+		[ATAPCModelScene, &"ATAPCBase", 3, 0.25, 7.5, 0.37,
+			["::1turret#", "::1turret#", "::1turret#"]],
+		[ATMongooseModelScene, &"ATMongooseMissile", 0, 0.0, 0.0, 0.0, []],
+	]
+	for casing_case: Array in cases:
+		_free_muzzle_effects()
+		var model := (casing_case[0] as PackedScene).instantiate() as Node3D
+		root.add_child(model)
+		var turret = CombatTurretScript.new()
+		_expect(
+			turret.configure(StringName(casing_case[1]))
+			and turret.bind_model(model, 0),
+			"%s must bind for casing-bank playback" % String(casing_case[1])
+		)
+		var observed: Array[Dictionary] = []
+		var observe_casing := func(child: Node) -> void:
+			if child.get_meta("combat_muzzle_fx", &"") != &"casing":
+				return
+			observed.append({
+				"texture": child.get_meta("combat_fx_texture", &""),
+				"size": float(child.get_meta("combat_fx_particle_size", 0.0)),
+				"acceleration": Vector3(child.get_meta(
+					"combat_muzzle_acceleration", Vector3.ZERO
+				)),
+				"velocity": Vector3(child.get_meta(
+					"combat_muzzle_velocity", Vector3.ZERO
+				)),
+				"attachment": String(child.get_meta("combat_fx_attachment", "")),
+			})
+		root.child_entered_tree.connect(observe_casing)
+		var started := turret.start_authored_fire_fx(&"Fire_0", root)
+		_expect(
+			started == (int(casing_case[2]) > 0),
+			"%s casing timeline presence must come from its !%%shel bank"
+				% String(casing_case[1])
+		)
+		if started:
+			await create_timer(float(casing_case[5])).timeout
+		root.child_entered_tree.disconnect(observe_casing)
+		_expect(
+			observed.size() == int(casing_case[2]),
+			"%s must emit %d authored casings, found %d"
+				% [casing_case[1], casing_case[2], observed.size()]
+		)
+		var bank_driven := observed.size() == int(casing_case[2])
+		var attachments: Array[String] = []
+		for casing: Dictionary in observed:
+			var acceleration := Vector3(casing["acceleration"])
+			bank_driven = bank_driven \
+				and casing["texture"] == &"!%shel" \
+				and is_equal_approx(float(casing["size"]), float(casing_case[3])) \
+				and is_equal_approx(-acceleration.y, float(casing_case[4])) \
+				and not Vector3(casing["velocity"]).is_zero_approx()
+			attachments.append(String(casing["attachment"]))
+		_expect(
+			bank_driven and attachments == casing_case[6],
+			"%s casings must retain bank size, gravity, and authored attachments"
+				% String(casing_case[1])
+		)
+		turret.cancel_authored_fire_fx()
+		_free_muzzle_effects()
+		model.free()
+
+
 func _test_turret_projectile_launch() -> void:
 	var rules = root.get_node("Rules")
 	var model := ATMinotaurusModelScene.instantiate() as Node3D
@@ -804,7 +888,6 @@ func _test_turret_projectile_launch() -> void:
 		var shot_lights := _muzzle_effects(&"shot_light", 0)
 		var shot_light := shot_lights.front() as OmniLight3D \
 			if not shot_lights.is_empty() else null
-		var casings := _muzzle_effects(&"casing", 0)
 		_expect(
 			muzzle_flash != null
 			and muzzle_flash.global_position.is_equal_approx(
@@ -845,17 +928,6 @@ func _test_turret_projectile_launch() -> void:
 			)
 			and shot_light.light_energy > 0.0,
 			"each projectile event must briefly light the area behind its active barrel"
-		)
-		var casings_at_rear := casings.size() == 1
-		for casing in casings:
-			casings_at_rear = casings_at_rear and (
-				(casing as Node3D).global_position.distance_to(
-					Vector3(aimed_emission["rear_position"])
-				) <= 0.01
-			)
-		_expect(
-			casings_at_rear,
-			"each shot must eject one shell visual from its paired #muzzle marker (found %d)" % casings.size()
 		)
 		_expect(projectile.bullet.id() == &"KobraHowitzer_B", "the projectile must carry the turret's configured bullet")
 		_expect(
@@ -1642,6 +1714,10 @@ func _test_unit_attack_order() -> void:
 		if not infantry_fired.is_empty():
 			break
 	_expect(not infantry_fired.is_empty(), "Atreides Infantry must emit its authored shot")
+	_expect(
+		infantry.combat_turrets[0].has_authored_fire_fx(),
+		"Fire_0 must start its casing timeline even with an embedded muzzle flash"
+	)
 	_expect(
 		is_zero_approx(infantry.combat_turrets[0].reload_ticks_remaining),
 		"infantry ReloadCount must remain deferred during its full-body Fire_0 action"

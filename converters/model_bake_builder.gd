@@ -107,6 +107,9 @@ func build(xbf_path: String) -> PackedScene:
 	root.set_meta("xbf_fx_event_counts", xbf.fx_event_counts)
 	root.set_meta("xbf_fx_events", xbf.fx_events.duplicate(true))
 	root.set_meta("xbf_fx_events_complete", xbf.fx_events_complete)
+	# FX event frames are absolute in the source timeline. Runtime needs the
+	# authored clip ranges to align bank emissions with sliced Fire_0 animations.
+	root.set_meta("xbf_animation_entries", xbf.animation_entries.duplicate(true))
 	# A small set of source files uses event payload variants that are not yet
 	# decoded. Preserve the complete original block as well, so conversion is
 	# lossless even when xbf_fx_events_complete is false.
