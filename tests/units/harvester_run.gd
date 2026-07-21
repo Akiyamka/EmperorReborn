@@ -399,7 +399,7 @@ func _test_two_harvesters_share_field(token: int) -> int:
 	var harvesters: Array[TestHarvester] = []
 	for index in 6:
 		var harvester := TestHarvester.new()
-		harvester.unit_config = root.get_node("Rules").unit(&"Harvester")
+		harvester.config_id = &"Harvester"
 		harvester.max_spice = 700.0
 		harvester.move_speed = 4.0
 		harvester.turn_rate = 0.15

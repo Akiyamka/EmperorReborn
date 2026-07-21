@@ -4,14 +4,15 @@ const BakedMapDataScript := preload("res://scripts/world/map/baked_map_data.gd")
 const MapLoaderScript := preload("res://scripts/world/map/map_loader.gd")
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 const MapSpiceLayerScript := preload("res://scripts/world/map/map_spice_layer.gd")
-const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
+const SpiceMoundDefinitionScript := preload("res://scripts/world/map/spice_mound_definition.gd")
+const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 const SpiceMoundScene := preload("res://scenes/world/spice_mound.tscn")
 const TextureImageUtilsScript := preload("res://converters/texture_image_utils.gd")
 
 
 class HazardUnit:
 	extends Node3D
-	var unit_config: Resource
+	var unit_definition: Resource
 	var damage_taken := 0.0
 
 	func take_damage(amount: float) -> void:
@@ -170,8 +171,9 @@ func _test_spice_mound_source_grid_mapping(token: int) -> int:
 
 
 func _test_spice_mound_runtime_entity_contract(token: int) -> int:
-	var config = RuleEntityConfigScript.new()
-	config.fields = {"size": 1000, "cost": 500}
+	var config = SpiceMoundDefinitionScript.new()
+	config.maturity_minimum_ticks = 1000
+	config.maturity_random_ticks = 500
 	var mound = SpiceMoundScene.instantiate()
 	mound.configure(Vector2i(4, 5), Vector2(2.0, 3.0), config, 0.5)
 
@@ -277,8 +279,10 @@ func _test_spice_mound_staged_passable_sand_spread(token: int) -> int:
 	_expect(grid.load_baked(data), "a staged spice-spread fixture must load its navigation grid")
 	var layer = MapSpiceLayerScript.new()
 	_expect(layer.load_baked(data, grid), "a staged spice-spread layer must load")
-	var config = RuleEntityConfigScript.new()
-	config.fields = {"blast_radius": 3.0, "spice_capacity": 800, "build_time": 6}
+	var config = SpiceMoundDefinitionScript.new()
+	config.blast_radius = 3.0
+	config.spice_capacity = 800
+	config.build_time_ticks = 6
 	_expect(is_equal_approx(layer.call("_spread_interval_seconds", config), 0.3), "spice rings must advance three times slower than the Rules BuildTime interval")
 	var spread: Dictionary = layer.call("_create_spice_spread_job", center, config)
 	_expect(spread.get("stage_count") == 3 and (spread.get("cells", []) as Array).size() == 4, "BlastRadius must produce one outward ring per tile and select only eligible cells")
@@ -291,15 +295,15 @@ func _test_spice_mound_staged_passable_sand_spread(token: int) -> int:
 	_expect(is_equal_approx(layer.call("_spice_hazard_damage_per_second"), 10.0), "the hazard damage rate must use SpicePuff Damage from the rules catalog")
 
 	var infantry := HazardUnit.new()
-	infantry.unit_config = RuleEntityConfigScript.new()
-	infantry.unit_config.fields = {"infantry": true}
+	infantry.unit_definition = UnitDefinitionScript.new()
+	infantry.unit_definition.infantry = true
 	infantry.position = grid.grid_to_world(center)
 	var vehicle := HazardUnit.new()
-	vehicle.unit_config = RuleEntityConfigScript.new()
-	vehicle.unit_config.fields = {"infantry": false}
+	vehicle.unit_definition = UnitDefinitionScript.new()
+	vehicle.unit_definition.infantry = false
 	vehicle.position = grid.grid_to_world(center)
 	var outside_infantry := HazardUnit.new()
-	outside_infantry.unit_config = infantry.unit_config
+	outside_infantry.unit_definition = infantry.unit_definition
 	outside_infantry.position = grid.grid_to_world(beyond_radius)
 	root.add_child(infantry)
 	root.add_child(vehicle)

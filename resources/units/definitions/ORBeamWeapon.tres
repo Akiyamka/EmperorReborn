@@ -1,0 +1,58 @@
+[gd_resource type="Resource" script_class="UnitDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/units/unit_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"ORBeamWeapon"
+legacy_name = &"ORBeamWeapon"
+house_id = &"Ordos"
+unit_group_id = &"FromORPalace"
+scene_path = ""
+model_scene_path = ""
+icon_path = "icons\\\\OR_Chaos.tga"
+icon_grey_path = "icons\\\\grey_OR_Chaos.tga"
+sidebar_type = &"Units"
+cost = 0
+build_time_ticks = 6220
+tech_level = 0
+upgraded_primary_required = false
+primary_building_ids = [&"ORPalace"]
+secondary_building_ids = []
+size = 3
+health = 0
+shield_health = 0
+armour_type = &""
+speed = 0
+mech_speed = 0
+mech = false
+turn_rate = 0
+infantry = false
+can_fly = false
+can_move_any_direction = false
+terrain_ids = [&"Sand", &"Rock", &"NBRock", &"Ramp"]
+can_be_deviated = false
+can_self_repair = false
+can_be_repaired = false
+crushable = false
+crushes = false
+starportable = false
+tasty_to_worms = false
+worm_attraction = 0
+can_be_suppressed = false
+can_die = false
+cant_be_leeched = false
+selectable = false
+stealthed_when_still = false
+height_offset = 0
+roof_height = 0
+spice_capacity = 0
+unload_rate = 0
+resource_ids = [&"ORPalaceLightning", &"Beserk_B"]
+explosion_effect_ids = []
+chaos_effect_id = &""
+hawk_effect_id = &""
+damage_effect_id = &""
+explosion_type_id = &""
+veterancy_level_paths = []
+turret_ids = []

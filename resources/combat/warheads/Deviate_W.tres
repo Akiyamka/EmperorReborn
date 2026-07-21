@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="WarheadDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/warhead_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"Deviate_W"
+armour_damage = {"Aircraft": 20, "BPV": 10, "Building": 20, "CY": 10, "Concrete": 100, "Earplugs": 20, "Harvester": 20, "Heavy": 20, "Invulnerable": 0, "Light": 20, "Medium": 20, "None": 20, "Walls": 20}

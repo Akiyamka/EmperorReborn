@@ -4,7 +4,8 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const PlayerRosterScript := preload("res://scripts/players/player_roster.gd")
 const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
-const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
+const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
+const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 const ModelXbfScript := preload("res://converters/xbf/model_xbf.gd")
 const ModelBakeBuilderScript := preload("res://converters/model_bake_builder.gd")
 const BuildingBakeBuilderScript := preload("res://converters/building_bake_builder.gd")
@@ -886,21 +887,18 @@ func _config(
 		upgraded_primary_required := false,
 		tech_level := 0
 ):
-	var config = RuleEntityConfigScript.new()
-	config.entity_type = entity_type
-	config.fields = {
-		"house": String(house),
-		"upgraded_primary_required": upgraded_primary_required,
-		"tech_level": tech_level,
-	}
+	var config = BuildingDefinitionScript.new() if entity_type == &"building" else UnitDefinitionScript.new()
+	config.house_id = house
+	config.upgraded_primary_required = upgraded_primary_required
+	config.tech_level = tech_level
+	var typed_primary: Array[StringName] = []
+	var typed_secondary: Array[StringName] = []
+	typed_primary.assign(primary)
+	typed_secondary.assign(secondary)
 	if entity_type == &"building":
-		config.lists = {
-			"requires_primary": primary,
-			"requires_secondary": secondary,
-		}
+		config.primary_building_ids = typed_primary
+		config.secondary_building_ids = typed_secondary
 	else:
-		config.lists = {
-			"primary_buildings": primary,
-			"secondary_buildings": secondary,
-		}
+		config.primary_building_ids = typed_primary
+		config.secondary_building_ids = typed_secondary
 	return config

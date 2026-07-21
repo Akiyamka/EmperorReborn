@@ -14,13 +14,14 @@ signal mcv_undeployed(unit: Node3D)
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
+const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 
 const MCV_IDS: Array[StringName] = [&"ATMCV", &"HKMCV", &"ORMCV"]
 const QUARTER_TURN_RADIANS := PI * 0.5
 const DEFAULT_BUILDING_FORWARD_OFFSET_CELLS := 1
 const DEFAULT_UNIT_FORWARD_OFFSET_WORLD := -0.8
 const BUILDING_SCENE_ROOT := "res://assets/converted/buildings"
-const UNIT_MODEL_ROOT := "res://assets/converted/models"
 
 var _navigation_grid
 var _buildings_root: Node3D
@@ -28,8 +29,9 @@ var _units_root: Node
 var _navigation
 var _deployments: Dictionary = {}
 var _undeployments: Dictionary = {}
-var _unit_model_scene_paths: Dictionary = {}
 var _building_scene_cache: Dictionary = {}
+var _unit_scene_catalog := UnitSceneCatalogScript.new()
+var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 
 
 func setup(
@@ -147,7 +149,7 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 		Callable(self, "_occupy_rows_for_existing_building")
 	)
 	var occupy_rows: Array[String] = []
-	occupy_rows.assign(config.list(&"occupy_rows"))
+	occupy_rows.assign(config.occupy_rows)
 	if not placement.begin(building_id, String(building_id), occupy_rows, false, true):
 		placement.free()
 		return {
@@ -182,7 +184,7 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 ## path. Result keys mirror try_deploy: handled, started, and message.
 func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dictionary:
 	var building_config := _building_config_for(building)
-	if building_config == null or not bool(building_config.field(&"is_con_yard", false)):
+	if building_config == null or not building_config.is_construction_yard:
 		return {"handled": false, "started": false, "message": ""}
 	if _undeployments.has(building.get_instance_id()):
 		return _result(false, "Construction Yard is already packing")
@@ -194,8 +196,11 @@ func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dic
 	var unit_id: StringName = mcv.get("id", &"")
 	if unit_id == &"":
 		return _result(false, "Construction Yard cannot pack: its rules have no concrete MCV")
-	var model_scene := _unit_model_scene(unit_id)
-	if model_scene == null:
+	var unit_scene := _unit_scene_catalog.scene_for(unit_id, UnitScene)
+	if unit_scene == null:
+		return _result(false, "Construction Yard cannot pack: %s scene is unavailable" % String(unit_id))
+	if not _unit_scene_catalog.has_scene(unit_id) \
+	and _unit_scene_catalog.model_scene_for(unit_id) == null:
 		return _result(false, "Construction Yard cannot pack: %s model is unavailable" % String(unit_id))
 	var units_parent := _units_parent(building)
 	if units_parent == null:
@@ -205,8 +210,8 @@ func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dic
 	_undeployments[undeployment_id] = {
 		"building": building,
 		"unit_id": unit_id,
-		"unit_config": mcv.get("config"),
-		"model_scene": model_scene,
+		"unit_definition": mcv.get("config"),
+		"unit_scene": unit_scene,
 		"units_parent": units_parent,
 		"owner_player_id": int(building.get("owner_player_id")),
 		"spawn_position": _building_spawn_position(building),
@@ -351,24 +356,23 @@ func _finish_undeployment(undeployment_id: int) -> void:
 		return
 	var building := undeployment.get("building") as Node3D
 	var units_parent := undeployment.get("units_parent") as Node
-	var model_scene := undeployment.get("model_scene") as PackedScene
+	var unit_scene := undeployment.get("unit_scene") as PackedScene
 	if building == null or not is_instance_valid(building) \
 	or units_parent == null or not is_instance_valid(units_parent) \
-	or model_scene == null:
+	or unit_scene == null:
 		_abort_undeployment(
 			undeployment_id, building != null and is_instance_valid(building)
 		)
 		return
 
-	var unit := UnitScene.instantiate() as Unit
+	var unit_id: StringName = undeployment["unit_id"]
+	var unit := _unit_scene_catalog.instantiate(unit_id, UnitScene) as Unit
 	if unit == null:
 		_abort_undeployment(undeployment_id, true)
 		return
-	var unit_id: StringName = undeployment["unit_id"]
 	unit.name = String(unit_id)
 	unit.config_id = unit_id
-	unit.unit_config = undeployment.get("unit_config") as Resource
-	_configure_unit_visual(unit, model_scene)
+	unit.unit_definition = undeployment.get("unit_definition") as Resource
 	units_parent.add_child(unit)
 	unit.global_position = undeployment["spawn_position"]
 	unit.face_direction(undeployment["facing"])
@@ -420,55 +424,45 @@ func _abort_deployment(deployment_id: int, release_unit: bool) -> void:
 
 
 func _construction_yard_for(unit: Node3D) -> Dictionary:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		return {}
-	var unit_config = unit.get("unit_config") as Resource
-	if unit_config == null:
-		unit_config = rules.call("unit", StringName(String(unit.get("config_id"))))
-	if unit_config == null:
+	var unit_definition = unit.get("unit_definition") as Resource
+	if unit_definition == null:
+		unit_definition = _unit_scene_catalog.definition_for(StringName(String(unit.get("config_id"))))
+	if unit_definition == null:
 		return {}
 	# The concrete MCV rules entry carries exactly one deployment target. Player
 	# ownership and the player's default/cosmetic house are intentionally absent
 	# from this decision.
-	for link in unit_config.link(&"resources", []):
-		var building_id := StringName(String((link as Dictionary).get("target", "")))
-		var config := rules.call("building", building_id) as Resource
-		if config == null or not bool(config.field(&"is_con_yard", false)):
+	for value in unit_definition.resource_ids:
+		var building_id := StringName(String(value))
+		var config := _building_definition_catalog.definition(building_id)
+		if config == null or not config.is_construction_yard:
 			continue
 		return {"id": building_id, "config": config}
 	return {}
 
 
 func _mcv_for(building: Node3D, building_config: Resource = null) -> Dictionary:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		return {}
 	var config := building_config
 	if config == null:
 		config = _building_config_for(building)
 	if config == null:
 		return {}
-	for link in config.link(&"resources", []):
-		var unit_id := StringName(String((link as Dictionary).get("target", "")))
+	for value in config.linked_unit_ids:
+		var unit_id := StringName(String(value))
 		if unit_id not in MCV_IDS:
 			continue
-		var unit_config := rules.call("unit", unit_id) as Resource
-		if unit_config != null:
-			return {"id": unit_id, "config": unit_config}
+		var unit_definition := _unit_scene_catalog.definition_for(unit_id)
+		if unit_definition != null:
+			return {"id": unit_id, "config": unit_definition}
 	return {}
 
 
 func _building_config_for(building: Node3D) -> Resource:
 	if building == null:
 		return null
-	var config := building.get("building_config") as Resource
-	if config != null:
-		return config
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		return null
-	return rules.call("building", StringName(String(building.get("config_id")))) as Resource
+	return _building_definition_catalog.definition(
+		StringName(String(building.get("config_id")))
+	)
 
 
 func _units_parent(building: Node3D) -> Node:
@@ -508,62 +502,13 @@ func _building_exit_direction(building: Node3D) -> Vector3:
 	return SpatialOrientationScript.world_horizontal_axis(building, Vector3.BACK)
 
 
-func _unit_model_scene(unit_id: StringName) -> PackedScene:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		return null
-	var art_config := rules.call("get_entity", &"art_config", unit_id) as Resource
-	var xaf := String(art_config.field(&"xaf", "")) if art_config != null else ""
-	if xaf.is_empty():
-		return null
-	var model_name := "%s_H0" % xaf
-	var scene_path := _unit_model_scene_path(model_name)
-	if scene_path.is_empty() or not ResourceLoader.exists(scene_path):
-		return null
-	return load(scene_path) as PackedScene
-
-
-func _configure_unit_visual(unit: Unit, model_scene: PackedScene) -> void:
-	var visual_root := unit.get_node_or_null("VisualRoot") as Node3D
-	if visual_root == null:
-		return
-	for child in visual_root.get_children():
-		visual_root.remove_child(child)
-		child.free()
-	visual_root.add_child(model_scene.instantiate())
-
-
-func _unit_model_scene_path(model_name: String) -> String:
-	var key := model_name.to_lower()
-	if _unit_model_scene_paths.has(key):
-		return String(_unit_model_scene_paths[key])
-	var directory := DirAccess.open(UNIT_MODEL_ROOT)
-	if directory == null:
-		return ""
-	directory.list_dir_begin()
-	var directory_name := directory.get_next()
-	while not directory_name.is_empty():
-		if directory.current_is_dir() and directory_name.to_lower() == key:
-			var scene_path := UNIT_MODEL_ROOT.path_join(directory_name).path_join(
-				"%s.scn" % directory_name
-			)
-			_unit_model_scene_paths[key] = scene_path
-			directory.list_dir_end()
-			return scene_path
-		directory_name = directory.get_next()
-	directory.list_dir_end()
-	return ""
-
-
 func _occupy_rows_for_existing_building(building: Node3D) -> Array[String]:
-	var config = building.get("building_config") as Resource
-	if config == null:
-		var rules := get_node_or_null("/root/Rules")
-		if rules != null:
-			config = rules.call("building", StringName(String(building.get("config_id"))))
+	var config = _building_definition_catalog.definition(
+		StringName(String(building.get("config_id")))
+	)
 	var rows: Array[String] = []
 	if config != null:
-		rows.assign(config.list(&"occupy_rows"))
+		rows.assign(config.occupy_rows)
 	return rows
 
 

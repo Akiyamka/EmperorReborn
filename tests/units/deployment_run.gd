@@ -1,5 +1,7 @@
 extends SceneTree
 
+const LegacyRulesFixture := preload("res://tests/support/legacy_rules_fixture.gd")
+
 const UnitDeploymentControllerScript := preload("res://scripts/units/unit_deployment_controller.gd")
 const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
@@ -79,6 +81,7 @@ class FakeNavigation extends RefCounted:
 
 
 func _initialize() -> void:
+	LegacyRulesFixture.install(root)
 	await process_frame
 	await _run_case("rules define three concrete MCV units", _test_three_mcv_rules)
 	await _run_case("MCV uses its authored stop transition", _test_unit_deployment_animation)
@@ -327,7 +330,10 @@ func _test_house_construction_yard_undeployment() -> void:
 			continue
 		var unit := units.get_child(0) as Unit
 		_expect(unit.config_id == house_case[3], "%s must pack into its concrete %s" % [house_case[2], house_case[3]])
-		_expect(unit.unit_config == rules.unit(house_case[3]), "the packed MCV must receive its concrete rules config")
+		_expect(
+			unit.unit_definition != null and unit.unit_definition.config_id == house_case[3],
+			"the packed MCV must receive its concrete native definition"
+		)
 		_expect(unit.owner_player_id == house_case[0], "the packed MCV must preserve Construction Yard ownership")
 		_expect(unit.global_position.is_equal_approx(expected_spawn), "the packed MCV must honor the runtime forward offset from the Construction Yard")
 		_expect(SpatialOrientationScript.world_forward(unit).dot(expected_facing) > 0.999, "the packed MCV must face out of the Construction Yard")

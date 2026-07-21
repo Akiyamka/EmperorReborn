@@ -4,6 +4,8 @@ const NavigationMapScript := preload("res://scripts/units/navigation/unit_naviga
 const NavigationPlannerScript := preload("res://scripts/units/navigation/unit_navigation_planner.gd")
 const NavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
+const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
+const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -16,7 +18,7 @@ class FakeUnit extends Node3D:
 	var navigation_rotation_radius_override := -1.0
 	var can_move_any_direction := true
 	var arrival_radius := 0.2
-	var unit_config := RuleEntityConfig.new()
+	var unit_definition := UnitDefinitionScript.new()
 	var managed := false
 	var destination := Vector3.ZERO
 	var owner_player_id := 1
@@ -25,8 +27,10 @@ class FakeUnit extends Node3D:
 	var prepared_navigation_targets: Array[Vector3] = []
 
 	func _init(size := 1.0, infantry := false) -> void:
-		unit_config.fields = {"size": size, "infantry": infantry, "can_fly": false}
-		unit_config.lists = {"terrain": [&"Rock"]}
+		unit_definition.size = roundi(size)
+		unit_definition.infantry = infantry
+		unit_definition.can_fly = false
+		unit_definition.terrain_ids = [&"Rock"]
 
 	func set_navigation_managed(active: bool) -> void:
 		managed = active
@@ -90,10 +94,10 @@ class FakeTurningUnit extends FakeUnit:
 
 
 class FakeBuilding extends Node3D:
-	var building_config := RuleEntityConfig.new()
+	var building_definition := BuildingDefinitionScript.new()
 
 	func _init(rows: Array[String]) -> void:
-		building_config.lists = {&"occupy_rows": rows}
+		building_definition.occupy_rows = rows
 
 
 func _initialize() -> void:
@@ -403,7 +407,7 @@ func _test_building_marker_navigation_semantics(grid: MapNavigationGrid) -> void
 	_expect(navigation.setup(grid), "navigation must initialize for occupy marker semantics")
 	navigation.call("_refresh_building_blockers")
 	var footprint: Dictionary = BuildingFootprintScript.nav_cells_by_marker(
-		building, building.building_config.list(&"occupy_rows"), grid, 2
+		building, building.building_definition.occupy_rows, grid, 2
 	)
 	for cell in footprint:
 		var marker := String(footprint[cell]).to_lower()

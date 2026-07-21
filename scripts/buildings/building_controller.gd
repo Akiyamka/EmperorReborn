@@ -15,6 +15,8 @@ const WallChainScript := preload("res://scripts/buildings/wall_chain.gd")
 const WallLineScript := preload("res://scripts/buildings/wall_line.gd")
 const DoubleClickTrackerScript := preload("res://scripts/buildings/double_click_tracker.gd")
 const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+const GameSettingsCatalogScript := preload("res://scripts/rules/game_settings_catalog.gd")
 
 const DEFAULT_BUILD_RADIUS_TILES := 6
 const WALL_BUILDING_GROUP := "Wall"
@@ -32,6 +34,8 @@ var max_tech_level: int = TechnologyTreeScript.UNLIMITED_TECH_LEVEL
 var _building_configs: Dictionary = {}
 var _building_ids: Array[StringName] = []
 var _technology_tree: TechnologyTree = TechnologyTreeScript.new()
+var _definition_catalog := BuildingDefinitionCatalogScript.new()
+var _game_settings_catalog := GameSettingsCatalogScript.new()
 var _building_availability: Dictionary = {}
 var _building_queue: BuildingQueue = BuildingQueueScript.new()
 var _building_placement: BuildingPlacement = BuildingPlacementScript.new()
@@ -363,7 +367,7 @@ func _building_sale_refund(building: Node3D) -> int:
 	var config = building.get("building_config")
 	if config == null:
 		config = _building_config(StringName(String(building.get("config_id"))))
-	var cost := int(config.field(&"cost", 0)) if config != null else 0
+	var cost := int(config.cost) if config != null else 0
 	return maxi(cost / 2, 0)
 
 
@@ -388,14 +392,14 @@ func _designate_primary_building(building: Node3D, player_id: int) -> bool:
 	var config = building.get("building_config") as Resource
 	if config == null:
 		config = _building_config(StringName(String(building.get("config_id"))))
-	if config == null or not bool(config.field(&"can_be_primary", false)):
+	if config == null or not config.can_be_primary:
 		return false
 
 	var players = _players()
 	if players == null:
 		return false
 
-	if bool(config.field(&"is_con_yard", false)):
+	if config.is_construction_yard:
 		players.set_main_base(player_id, building)
 		status_changed.emit("%s designated as primary Construction Yard (main base)" % String(building.get("config_id")))
 		return true
@@ -462,15 +466,10 @@ func _refresh_player_resources() -> void:
 
 
 func _load_building_configs() -> void:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		push_warning("Rules autoload is not available; building production uses no rules")
-		return
-
 	for building_id in _building_ids:
-		var config: Resource = rules.call("building", building_id)
+		var config: Resource = _definition_catalog.definition(building_id)
 		if config == null:
-			push_warning("Building rules config not found: %s" % String(building_id))
+			push_warning("Building definition not found: %s" % String(building_id))
 			continue
 		_building_configs[building_id] = config
 
@@ -560,8 +559,8 @@ func _start_building_order(building_id: StringName) -> void:
 	if not _building_queue.start(
 		building_id,
 		_building_display_name(building_id),
-		maxi(int(config.field(&"cost", 0)), 0),
-		maxf(float(config.field(&"build_time", 0.0)), 1.0)
+		maxi(config.cost, 0),
+		maxf(config.build_time_ticks, 1.0)
 	):
 		return
 	_building_placement.cancel()
@@ -659,8 +658,8 @@ func _start_wall_chain(from_nav_cell: Vector2i, to_nav_cell: Vector2i, building_
 	_wall_chain = WallChainScript.new(
 		building_id,
 		_building_display_name(building_id),
-		maxi(int(config.field(&"cost", 0)), 0),
-		maxf(float(config.field(&"build_time", 0.0)), 1.0),
+		maxi(config.cost, 0),
+		maxf(config.build_time_ticks, 1.0),
 		nav_cells,
 		owner_player_id
 	)
@@ -789,7 +788,7 @@ func _building_occupy_rows(config: Resource) -> Array[String]:
 	if config == null:
 		return rows
 
-	for row in config.list(&"occupy_rows"):
+	for row in config.occupy_rows:
 		var row_text := String(row)
 		if not row_text.is_empty():
 			rows.append(row_text)
@@ -815,17 +814,12 @@ func _is_wall_building_id(building_id: StringName) -> bool:
 
 
 func _is_wall_config(config: Resource) -> bool:
-	return config != null and String(config.field(&"building_group", "")) == WALL_BUILDING_GROUP
+	return config != null and String(config.building_group_id) == WALL_BUILDING_GROUP
 
 
 func _build_radius_tiles() -> int:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null or not rules.has_method("general_rules"):
-		return DEFAULT_BUILD_RADIUS_TILES
-	var general_config: Resource = rules.call("general_rules")
-	if general_config == null:
-		return DEFAULT_BUILD_RADIUS_TILES
-	return int(general_config.field(&"max_building_placement_tile_dist", DEFAULT_BUILD_RADIUS_TILES))
+	var settings := _game_settings_catalog.settings()
+	return settings.max_building_placement_tile_dist if settings != null else DEFAULT_BUILD_RADIUS_TILES
 
 
 func _building_config(building_id: StringName) -> Resource:
@@ -833,12 +827,7 @@ func _building_config(building_id: StringName) -> Resource:
 	# _exit_tree() can still trigger _refresh_building_option_states() (via
 	# the energy/resources signal chain) after this controller has left the
 	# tree, at which point absolute-path autoload lookups are invalid.
-	if not is_inside_tree():
-		return null
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		return null
-	return rules.call("building", building_id)
+	return _definition_catalog.definition(building_id)
 
 
 func _building_scene_path(building_id: StringName) -> String:
@@ -861,17 +850,8 @@ func _building_scene_path_for_name(scene_name: String) -> String:
 
 
 func _building_model_name(building_id: StringName) -> String:
-	var art_config := _building_art_config(building_id)
-	if art_config == null:
-		return ""
-	return String(art_config.field(&"xaf", ""))
-
-
-func _building_art_config(building_id: StringName) -> Resource:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null or not rules.has_method("get_entity"):
-		return null
-	return rules.call("get_entity", &"art_config", building_id)
+	var definition := _definition_catalog.definition(building_id)
+	return definition.model_name if definition != null else ""
 
 
 func _is_building_available(building_id: StringName) -> bool:
@@ -943,9 +923,9 @@ func _building_tooltip(building_id: StringName) -> String:
 	if config == null:
 		return _building_display_name(building_id)
 
-	var cost := int(config.field(&"cost", 0))
-	var build_time_ticks := float(config.field(&"build_time", 0.0))
-	var build_seconds := build_time_ticks / BuildingQueueScript.BUILD_TICKS_PER_SECOND
+	var cost: int = int(config.cost)
+	var build_time_ticks: float = float(config.build_time_ticks)
+	var build_seconds: float = build_time_ticks / BuildingQueueScript.BUILD_TICKS_PER_SECOND
 	return "%s\nCost: %d\nBuild: %.1fs" % [
 		_building_display_name(building_id),
 		cost,

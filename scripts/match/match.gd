@@ -6,6 +6,8 @@ const BuildingUpgradeControllerScript := preload("res://scripts/buildings/buildi
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
 const UnitDeploymentControllerScript := preload("res://scripts/units/unit_deployment_controller.gd")
 const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
+const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const NavigationGridDebugScript := preload("res://scripts/units/navigation/navigation_grid_debug.gd")
 const MatchSnapshotScript := preload("res://scripts/match/match_snapshot.gd")
@@ -45,6 +47,8 @@ var _upgrade_option_ids: Array[StringName] = []
 ## through UnitRosterController.
 var _unit_option_ids: Array[StringName] = []
 var _unit_roster_controller: UnitRosterController
+var _unit_definition_catalog := UnitSceneCatalogScript.new()
+var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 var _match_snapshot
 
 
@@ -339,54 +343,52 @@ func _configure_demo_players() -> void:
 
 func _local_player_building_option_ids() -> Array[StringName]:
 	var players = _players()
-	var rules := get_node_or_null("/root/Rules")
-	if players == null or rules == null:
+	if players == null:
 		return []
 
 	var local_player = players.player(LOCAL_PLAYER_ID)
 	if local_player == null:
 		return []
 
-	return rules.buildable_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.buildable_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _local_player_wall_building_ids() -> Array[StringName]:
 	var players = _players()
-	var rules := get_node_or_null("/root/Rules")
-	if players == null or rules == null:
+	if players == null:
 		return []
 
 	var local_player = players.player(LOCAL_PLAYER_ID)
 	if local_player == null:
 		return []
 
-	return rules.wall_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.wall_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _local_player_unit_option_ids() -> Array[StringName]:
 	var players = _players()
-	var rules := get_node_or_null("/root/Rules")
-	if players == null or rules == null:
+	if players == null:
 		return []
 
 	var local_player = players.player(LOCAL_PLAYER_ID)
 	if local_player == null:
 		return []
 
-	return rules.producible_unit_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _unit_definition_catalog.producible_unit_ids(
+		local_player.house_id, local_player.subhouse_ids
+	)
 
 
 func _local_player_upgrade_option_ids() -> Array[StringName]:
 	var players = _players()
-	var rules := get_node_or_null("/root/Rules")
-	if players == null or rules == null:
+	if players == null:
 		return []
 
 	var local_player = players.player(LOCAL_PLAYER_ID)
 	if local_player == null:
 		return []
 
-	return rules.upgrade_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.upgrade_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _players():

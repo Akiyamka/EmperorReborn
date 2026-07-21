@@ -1,0 +1,58 @@
+[gd_resource type="Resource" script_class="UnitDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/units/unit_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"GUMaker"
+legacy_name = &"GUMaker"
+house_id = &"Guild"
+unit_group_id = &"FromGUPalace"
+scene_path = "res://scenes/units/gu_maker.tscn"
+model_scene_path = "res://assets/converted/models/GU_Maker_H0/GU_Maker_H0.scn"
+icon_path = "icons\\\\GU_Maker.tga"
+icon_grey_path = "icons\\\\grey_GU_Maker.tga"
+sidebar_type = &"Units"
+cost = 1000
+build_time_ticks = 589
+tech_level = 4
+upgraded_primary_required = false
+primary_building_ids = [&"GUPalace"]
+secondary_building_ids = []
+size = 2
+health = 1000
+shield_health = 0
+armour_type = &"Medium"
+speed = 4
+mech_speed = 0
+mech = false
+turn_rate = 0.3
+infantry = false
+can_fly = false
+can_move_any_direction = true
+terrain_ids = [&"Sand", &"Rock", &"NBRock", &"Ramp"]
+can_be_deviated = false
+can_self_repair = false
+can_be_repaired = false
+crushable = false
+crushes = false
+starportable = true
+tasty_to_worms = true
+worm_attraction = -20
+can_be_suppressed = false
+can_die = false
+cant_be_leeched = false
+selectable = false
+stealthed_when_still = false
+height_offset = 0
+roof_height = 0
+spice_capacity = 0
+unload_rate = 0
+resource_ids = []
+explosion_effect_ids = [&"Explosion"]
+chaos_effect_id = &"MediumChaosFX"
+hawk_effect_id = &"MediumHawkFX"
+damage_effect_id = &"BloodFX"
+explosion_type_id = &"Explosion"
+veterancy_level_paths = ["res://resources/units/veterancy/GUMaker_1.tres", "res://resources/units/veterancy/GUMaker_2.tres", "res://resources/units/veterancy/GUMaker_3.tres"]
+turret_ids = [&"GUMakerGun"]

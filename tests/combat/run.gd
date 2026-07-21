@@ -1,9 +1,12 @@
 extends SceneTree
 
+const LegacyRulesFixture := preload("res://tests/support/legacy_rules_fixture.gd")
+
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
 const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
+const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_definition_catalog.gd")
 const UnitScript := preload("res://scripts/units/unit.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const ATAPCModelScene := preload("res://assets/converted/models/AT_APC_H0/AT_APC_H0.scn")
@@ -24,6 +27,7 @@ const HKGunTurretScene := preload(
 var _assertions := 0
 var _failures := 0
 var _current_case := ""
+var _combat_catalog := CombatDefinitionCatalogScript.new()
 
 
 class CombatTarget extends RefCounted:
@@ -117,6 +121,7 @@ class CombatSource extends RefCounted:
 
 
 func _initialize() -> void:
+	LegacyRulesFixture.install(root)
 	await process_frame
 	_run_case("warhead matrix scales bullet damage by target armour", _test_armour_matrix)
 	_run_case("bullet targeting distinguishes ground and aircraft", _test_target_domains)
@@ -229,8 +234,7 @@ func _free_impact_effects() -> void:
 
 
 func _test_armour_matrix() -> void:
-	var rules = root.get_node("Rules")
-	var bullet = CombatBulletScript.new(rules.bullet(&"LMG_B"), rules.warhead(&"LMG_W"))
+	var bullet = CombatBulletScript.new(_combat_catalog.bullet(&"LMG_B"), _combat_catalog.warhead(&"LMG_W"))
 	_expect(bullet.is_hitscan(), "LMG_B's negative conceptual speed must make it hitscan")
 	_expect(is_equal_approx(bullet.base_damage(), 219.0), "LMG_B must retain its rules damage")
 	_expect(
@@ -271,7 +275,7 @@ func _test_armour_matrix() -> void:
 		"impact must deliver the same resolved damage to the target"
 	)
 
-	var leech = CombatBulletScript.new(rules.bullet(&"Leech_B"), null)
+	var leech = CombatBulletScript.new(_combat_catalog.bullet(&"Leech_B"), null)
 	_expect(
 		is_equal_approx(leech.damage_against(&"Heavy"), 100.0),
 		"a special-effect bullet without a warhead must retain its direct fallback damage"
@@ -279,8 +283,7 @@ func _test_armour_matrix() -> void:
 
 
 func _test_target_domains() -> void:
-	var rules = root.get_node("Rules")
-	var lmg = CombatBulletScript.new(rules.bullet(&"LMG_B"), rules.warhead(&"LMG_W"))
+	var lmg = CombatBulletScript.new(_combat_catalog.bullet(&"LMG_B"), _combat_catalog.warhead(&"LMG_W"))
 	var aircraft := CombatTarget.new(&"Aircraft", true)
 	_expect(not lmg.can_hit(aircraft), "a bullet without AntiAircraft must reject aircraft")
 	_expect(lmg.can_hit_ground(), "an ordinary ground weapon must accept attack-ground")
@@ -289,10 +292,10 @@ func _test_target_domains() -> void:
 		"a rejected aircraft impact must resolve no target"
 	)
 
-	var adp_config: Resource = rules.bullet(&"ATHEATADP_B")
+	var adp_config: Resource = _combat_catalog.bullet(&"ATHEATADP_B")
 	var adp = CombatBulletScript.new(
 		adp_config,
-		rules.warhead(StringName(String(adp_config.field(&"warhead", ""))))
+		_combat_catalog.warhead(adp_config.warhead_id)
 	)
 	_expect(adp.can_hit(aircraft), "ATHEATADP_B must accept aircraft")
 	_expect(
@@ -653,7 +656,7 @@ func _test_turret_reload() -> void:
 	var rules = root.get_node("Rules")
 	var turret = CombatTurretScript.new()
 	_expect(
-		turret.configure_from_rules(rules.turret(&"ATInfGun"), rules),
+		turret.configure(&"ATInfGun"),
 		"ATInfGun must resolve Turret -> LMG_B -> LMG_W"
 	)
 	var first_shot: Array = turret.try_fire()
@@ -667,7 +670,7 @@ func _test_turret_reload() -> void:
 
 	var burst_turret = CombatTurretScript.new()
 	_expect(
-		burst_turret.configure_from_rules(rules.turret(&"ATOrnithopterGun"), rules),
+		burst_turret.configure(&"ATOrnithopterGun"),
 		"the Ornithopter turret must resolve through the rules catalog"
 	)
 	_expect(
@@ -688,7 +691,7 @@ func _test_muzzle_fx_bank_smoke() -> void:
 		var smoke_case: Array = cases[case_index]
 		var turret = CombatTurretScript.new()
 		_expect(
-			turret.configure_from_rules(rules.turret(smoke_case[0]), rules),
+			turret.configure(StringName(smoke_case[0])),
 			"%s must configure for muzzle-bank smoke" % String(smoke_case[0])
 		)
 		_expect(
@@ -736,7 +739,7 @@ func _test_muzzle_fx_bank_smoke() -> void:
 
 	var no_smoke_turret = CombatTurretScript.new()
 	_expect(
-		no_smoke_turret.configure_from_rules(rules.turret(&"ATSniperGun"), rules),
+		no_smoke_turret.configure(&"ATSniperGun"),
 		"the Sniper muzzle flash must configure for the negative smoke case"
 	)
 	no_smoke_turret._spawn_muzzle_flash(root, {
@@ -757,7 +760,7 @@ func _test_turret_projectile_launch() -> void:
 	var model := ATMinotaurusModelScene.instantiate() as Node3D
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
-	turret.configure_from_rules(rules.turret(&"ATMinotaurusBase"), rules)
+	turret.configure(&"ATMinotaurusBase")
 	turret.bind_model(model, 0)
 	_expect(
 		turret.muzzle_flash_id == &"Muzzle3" and turret.muzzle_flash_scene != null,
@@ -999,7 +1002,7 @@ func _test_mongoose_launch_and_impact_fx() -> void:
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
 	_expect(
-		turret.configure_from_rules(rules.turret(&"ATMongooseMissile"), rules),
+		turret.configure(&"ATMongooseMissile"),
 		"ATMongooseMissile must resolve its rules-backed presentation"
 	)
 	_expect(turret.bind_model(model, 0), "the Mongoose launcher must bind its authored markers")
@@ -1164,7 +1167,7 @@ func _test_compound_turret() -> void:
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
 	_expect(
-		turret.configure_from_rules(rules.turret(&"ATAPCBase"), rules),
+		turret.configure(&"ATAPCBase"),
 		"ATAPCBase must resolve its ATAPCGun joint"
 	)
 	_expect(turret.bind_model(model, 0), "the APC's ::0 pivot must bind")
@@ -1207,7 +1210,7 @@ func _test_fixed_turret() -> void:
 	_free_impact_effects()
 	var turret = CombatTurretScript.new()
 	_expect(
-		turret.configure_from_rules(rules.turret(&"ATInfGun"), rules),
+		turret.configure(&"ATInfGun"),
 		"ATInfGun must remain a configured fixed weapon"
 	)
 	_expect(
@@ -1256,7 +1259,7 @@ func _test_single_axis_turret() -> void:
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
 	_expect(
-		turret.configure_from_rules(rules.turret(&"ORLaserTankBase"), rules),
+		turret.configure(&"ORLaserTankBase"),
 		"ORLaserTankBase must resolve its laser bullet"
 	)
 	_expect(turret.bind_model(model, 0), "the Laser Tank's ::0 pivot must bind")
@@ -1278,7 +1281,7 @@ func _test_multi_barrel_turret() -> void:
 	var model := ATMinotaurusModelScene.instantiate() as Node3D
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
-	turret.configure_from_rules(rules.turret(&"ATMinotaurusBase"), rules)
+	turret.configure(&"ATMinotaurusBase")
 	_expect(turret.bind_model(model, 0), "the Minotaurus turret root must bind")
 	_expect(turret.muzzle_count() == 4, "all four descendant >> markers must be collected")
 	_expect(
@@ -1305,7 +1308,7 @@ func _test_parallel_trajectory_salvo() -> void:
 	var model := ATMinotaurusModelScene.instantiate() as Node3D
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
-	turret.configure_from_rules(rules.turret(&"ATMinotaurusBase"), rules)
+	turret.configure(&"ATMinotaurusBase")
 	_expect(turret.bind_model(model, 0), "the Minotaurus turret root must bind")
 	var first_emission := turret.peek_emission()
 	var level_forward := Vector3(first_emission["direction"])
@@ -1872,10 +1875,10 @@ func _test_shield_absorption() -> void:
 	unit.free()
 
 
-func _runtime_bullet(rules: Object, bullet_id: StringName):
-	var config: Resource = rules.call("bullet", bullet_id)
-	var warhead_id := StringName(String(config.field(&"warhead", ""))) if config != null else &""
-	var warhead_config: Resource = rules.call("warhead", warhead_id) if warhead_id != &"" else null
+func _runtime_bullet(_rules: Object, bullet_id: StringName):
+	var config: Resource = _combat_catalog.bullet(bullet_id)
+	var warhead_id: StringName = config.warhead_id if config != null else &""
+	var warhead_config: Resource = _combat_catalog.warhead(warhead_id) if warhead_id != &"" else null
 	return CombatBulletScript.new(config, warhead_config)
 
 

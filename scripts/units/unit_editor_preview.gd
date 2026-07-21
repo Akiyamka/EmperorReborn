@@ -29,6 +29,10 @@ func _show_resting_pose() -> void:
 			continue
 		player.play(animation_name)
 		player.advance(0.0)
+		# `play()` keeps the AnimationPlayer processing in the editor even after
+		# the requested pose has been applied. Freeze it immediately: the preview
+		# only needs a stable authored pose, not a continuously running animation.
+		player.pause()
 
 
 func _resting_animation(player: AnimationPlayer) -> StringName:

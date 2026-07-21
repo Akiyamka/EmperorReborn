@@ -3,6 +3,7 @@ extends RefCounted
 
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
+const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_definition_catalog.gd")
 
 ## Converted XBF models preserve the original Emperor attachment markers:
 ##   ::N...  pivot of weapon/turret N
@@ -84,13 +85,14 @@ var _casing_textures: Array[Texture2D] = []
 var _launch_smoke_textures: Array[Texture2D] = []
 static var _muzzle_bank_texture_cache: Dictionary = {}
 var _muzzle_bank_particle_index := 0
+var _definition_catalog := CombatDefinitionCatalogScript.new()
 
 
-func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
+func configure(turret_id: StringName) -> bool:
 	unbind_model()
 	_weapon_index = -1
-	config = turret_config
-	joint_configs = _joint_chain(turret_config, rules)
+	config = _definition_catalog.turret(turret_id)
+	joint_configs = _joint_chain(config)
 	firing_config = _last_firing_joint(joint_configs)
 	bullet_config = null
 	warhead_config = null
@@ -100,37 +102,32 @@ func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
 	muzzle_flash_scene = null
 	reload_ticks_remaining = 0.0
 	bullet_gravity = 1.0
-	if firing_config == null or rules == null:
+	if firing_config == null:
 		return false
-	var general_config: Resource = rules.call("general_rules") \
-		if rules.has_method("general_rules") else null
+	var general_config: Resource = _definition_catalog.settings()
 	if general_config != null:
-		bullet_gravity = maxf(float(general_config.field(&"bullet_gravity", 1.0)), 0.0)
+		bullet_gravity = maxf(float(general_config.bullet_gravity), 0.0)
 
-	var bullet_id := StringName(String(firing_config.field(&"bullet", "")))
+	var bullet_id: StringName = firing_config.bullet_id
 	if bullet_id == &"":
 		return false
-	bullet_config = rules.call("bullet", bullet_id)
+	bullet_config = _definition_catalog.bullet(bullet_id)
 	if bullet_config == null:
 		return false
-	projectile_visual_scene = _resolve_projectile_visual_scene(rules, bullet_id)
-	var explosion_effect_ids: Array = bullet_config.list(&"explosion_effects")
-	if explosion_effect_ids.is_empty():
-		var primary_explosion_id := String(bullet_config.field(&"explosion_type", ""))
-		if not primary_explosion_id.is_empty():
-			explosion_effect_ids.append(primary_explosion_id)
+	projectile_visual_scene = _definition_catalog.scene(bullet_config.projectile_scene_path)
+	var explosion_effect_ids: Array = bullet_config.explosion_effect_ids
 	for value in explosion_effect_ids:
 		var effect_id := StringName(String(value))
-		var effect_scene := _resolve_impact_visual_scene(rules, effect_id)
+		var effect_scene := _definition_catalog.scene(String(bullet_config.impact_scene_paths.get(effect_id, "")))
 		if effect_scene != null:
 			impact_visual_scenes[effect_id] = effect_scene
-	muzzle_flash_id = StringName(String(firing_config.field(&"turret_muzzle_flash", "")))
+	muzzle_flash_id = firing_config.muzzle_flash_id
 	if muzzle_flash_id != &"":
-		muzzle_flash_scene = _resolve_muzzle_flash_scene(rules, muzzle_flash_id)
+		muzzle_flash_scene = _definition_catalog.scene(firing_config.muzzle_flash_scene_path)
 
-	var warhead_id := StringName(String(bullet_config.field(&"warhead", "")))
+	var warhead_id: StringName = bullet_config.warhead_id
 	if warhead_id != &"":
-		warhead_config = rules.call("warhead", warhead_id)
+		warhead_config = _definition_catalog.warhead(warhead_id)
 	return true
 
 
@@ -172,9 +169,9 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 			if not pivot_chain.is_empty() else null
 		if pivot == null:
 			continue
-		if _yaw_pivot == null and _axis_speed(joint_config, &"turret_y_rotation_angle") > 0.0:
+		if _yaw_pivot == null and _axis_speed(joint_config, &"yaw_speed") > 0.0:
 			_yaw_pivot = pivot
-		if _pitch_pivot == null and _axis_speed(joint_config, &"turret_x_rotation_angle") > 0.0:
+		if _pitch_pivot == null and _axis_speed(joint_config, &"pitch_speed") > 0.0:
 			_pitch_pivot = pivot
 
 	for pivot in [_root_pivot, _yaw_pivot, _pitch_pivot, _reference_pivot]:
@@ -235,7 +232,7 @@ func requires_hull_turn_for(world_position: Vector3) -> bool:
 	var desired_yaw := _desired_yaw(world_position)
 	var reachable_yaw := _clamp_rule_angle(
 		desired_yaw, yaw_config,
-		&"turret_min_y_rotation", &"turret_max_y_rotation"
+		&"minimum_yaw", &"maximum_yaw"
 	)
 	return absf(angle_difference(desired_yaw, reachable_yaw)) \
 		> deg_to_rad(_acceptable_yaw_degrees())
@@ -281,12 +278,12 @@ func aim_at(world_position: Vector3, delta: float) -> bool:
 		var yaw_config := _yaw_config()
 		var desired_yaw := _clamp_rule_angle(
 			_desired_yaw(world_position), yaw_config,
-			&"turret_min_y_rotation", &"turret_max_y_rotation"
+			&"minimum_yaw", &"maximum_yaw"
 		)
 		current_yaw = _turn_axis(
 			current_yaw,
 			desired_yaw,
-			_axis_speed(yaw_config, &"turret_y_rotation_angle"),
+			_axis_speed(yaw_config, &"yaw_speed"),
 			delta
 		)
 		_apply_aim_transforms()
@@ -294,12 +291,12 @@ func aim_at(world_position: Vector3, delta: float) -> bool:
 		var pitch_config := _pitch_config()
 		var desired_pitch := _clamp_rule_angle(
 			_desired_firing_pitch(world_position), pitch_config,
-			&"turret_min_x_rotation", &"turret_max_x_rotation"
+			&"minimum_pitch", &"maximum_pitch"
 		)
 		current_pitch = _turn_axis(
 			current_pitch,
 			desired_pitch,
-			_axis_speed(pitch_config, &"turret_x_rotation_angle"),
+			_axis_speed(pitch_config, &"pitch_speed"),
 			delta
 		)
 		_apply_aim_transforms()
@@ -307,8 +304,8 @@ func aim_at(world_position: Vector3, delta: float) -> bool:
 
 
 func recenter(delta: float) -> bool:
-	current_yaw = _turn_axis(current_yaw, 0.0, _axis_speed(_yaw_config(), &"turret_y_rotation_angle"), delta)
-	current_pitch = _turn_axis(current_pitch, 0.0, _axis_speed(_pitch_config(), &"turret_x_rotation_angle"), delta)
+	current_yaw = _turn_axis(current_yaw, 0.0, _axis_speed(_yaw_config(), &"yaw_speed"), delta)
+	current_pitch = _turn_axis(current_pitch, 0.0, _axis_speed(_pitch_config(), &"pitch_speed"), delta)
 	_apply_aim_transforms()
 	return is_zero_approx(current_yaw) and is_zero_approx(current_pitch)
 
@@ -410,7 +407,7 @@ func is_ready() -> bool:
 
 
 func reload_count() -> float:
-	return maxf(float(firing_config.field(&"reload_count", 0.0)), 0.0) \
+	return maxf(float(firing_config.reload_count), 0.0) \
 		if firing_config != null else 0.0
 
 
@@ -466,7 +463,7 @@ func try_fire(begin_reload_after_shot := true, committed_sequence := false) -> A
 		return result
 
 	_last_emissions.clear()
-	var bullet_count := maxi(int(firing_config.field(&"turret_bullet_count", 1)), 1)
+	var bullet_count := maxi(int(firing_config.bullet_count), 1)
 	for index in bullet_count:
 		result.append(CombatBulletScript.new(
 			bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
@@ -571,27 +568,27 @@ func _default_projectile_parent() -> Node:
 	return tree.current_scene if tree.current_scene != null else tree.root
 
 
-func _joint_chain(turret_config: Resource, rules: Object) -> Array[Resource]:
+func _joint_chain(turret_config: Resource) -> Array[Resource]:
 	var result: Array[Resource] = []
 	var current := turret_config
 	var visited: Dictionary = {}
 	while current != null:
-		var current_id := String(current.get("id"))
+		var current_id := String(current.config_id)
 		if not current_id.is_empty() and visited.has(current_id):
 			return []
 		if not current_id.is_empty():
 			visited[current_id] = true
 		result.append(current)
-		var next_joint := StringName(String(current.field(&"turret_next_joint", "")))
-		if next_joint == &"" or rules == null:
+		var next_joint: StringName = current.next_joint_id
+		if next_joint == &"":
 			break
-		current = rules.call("turret", next_joint)
+		current = _definition_catalog.turret(next_joint)
 	return result
 
 
 func _last_firing_joint(configs: Array[Resource]) -> Resource:
 	for index in range(configs.size() - 1, -1, -1):
-		if not String(configs[index].field(&"bullet", "")).is_empty():
+		if configs[index].bullet_id != &"":
 			return configs[index]
 	return null
 
@@ -834,7 +831,7 @@ func _desired_firing_direction(world_position: Vector3) -> Vector3:
 		var candidate_pitch := _desired_pitch_for_direction(candidate)
 		var reachable_pitch := _clamp_rule_angle(
 			candidate_pitch, pitch_config,
-			&"turret_min_x_rotation", &"turret_max_x_rotation"
+			&"minimum_pitch", &"maximum_pitch"
 		)
 		var limit_error := absf(angle_difference(candidate_pitch, reachable_pitch))
 		if limit_error < best_limit_error:
@@ -855,51 +852,6 @@ func _desired_pitch_for_direction(target_direction: Vector3) -> float:
 	# Positive authored X rotation lowers a BACK-facing muzzle, hence the
 	# subtraction when converting world-space pitch error into joint rotation.
 	return current_pitch - angle_difference(direction_pitch, target_pitch)
-
-
-func _resolve_projectile_visual_scene(rules: Object, bullet_id: StringName) -> PackedScene:
-	return _resolve_art_visual_scene(
-		rules, bullet_id, "res://assets/converted/projectiles"
-	)
-
-
-func _resolve_muzzle_flash_scene(rules: Object, flash_id: StringName) -> PackedScene:
-	return _resolve_art_visual_scene(
-		rules, flash_id, "res://assets/converted/muzzle_flashes"
-	)
-
-
-func _resolve_impact_visual_scene(rules: Object, effect_id: StringName) -> PackedScene:
-	return _resolve_art_visual_scene(
-		rules, effect_id, "res://assets/converted/impact_effects"
-	)
-
-
-func _resolve_art_visual_scene(
-		rules: Object,
-		art_id: StringName,
-		output_root: String
-	) -> PackedScene:
-	if rules == null or not rules.has_method("get_entity"):
-		return null
-	var art_config := rules.call("get_entity", &"art_config", art_id) as Resource
-	if art_config == null and rules.has_method("all"):
-		for candidate: Resource in rules.call("all", &"art_config"):
-			if String(candidate.id).nocasecmp_to(String(art_id)) == 0:
-				art_config = candidate
-				break
-	if art_config == null:
-		return null
-	var xaf := String(art_config.field(&"xaf", ""))
-	if xaf.is_empty():
-		return null
-	var visual_name := xaf.get_file().get_basename().to_lower()
-	var scene_path := "%s/%s/%s.scn" % [
-		output_root, visual_name, visual_name,
-	]
-	if not ResourceLoader.exists(scene_path, "PackedScene"):
-		return null
-	return load(scene_path) as PackedScene
 
 
 func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
@@ -1475,32 +1427,32 @@ func _clamp_rule_angle(
 	) -> float:
 	if joint_config == null:
 		return 0.0
-	var minimum_value: Variant = joint_config.field(minimum_field, null)
-	var maximum_value: Variant = joint_config.field(maximum_field, null)
-	if minimum_value == null and maximum_value == null:
+	var minimum_value := float(joint_config.get(minimum_field))
+	var maximum_value := float(joint_config.get(maximum_field))
+	if is_nan(minimum_value) and is_nan(maximum_value):
 		return wrapf(angle, -PI, PI)
-	var minimum := float(minimum_value) if minimum_value != null else -180.0
-	var maximum := float(maximum_value) if maximum_value != null else 180.0
+	var minimum := minimum_value if not is_nan(minimum_value) else -180.0
+	var maximum := maximum_value if not is_nan(maximum_value) else 180.0
 	if maximum - minimum >= 360.0:
 		return wrapf(angle, -PI, PI)
 	return clampf(angle, deg_to_rad(minimum), deg_to_rad(maximum))
 
 
 func _axis_speed(joint_config: Resource, field_name: StringName) -> float:
-	return maxf(float(joint_config.field(field_name, 0.0)), 0.0) \
+	return maxf(float(joint_config.get(field_name)), 0.0) \
 		if joint_config != null else 0.0
 
 
 func _yaw_config() -> Resource:
 	for joint_config in joint_configs:
-		if _axis_speed(joint_config, &"turret_y_rotation_angle") > 0.0:
+		if _axis_speed(joint_config, &"yaw_speed") > 0.0:
 			return joint_config
 	return null
 
 
 func _pitch_config() -> Resource:
 	for joint_config in joint_configs:
-		if _axis_speed(joint_config, &"turret_x_rotation_angle") > 0.0:
+		if _axis_speed(joint_config, &"pitch_speed") > 0.0:
 			return joint_config
 	return null
 
@@ -1509,7 +1461,7 @@ func _acceptable_yaw_degrees() -> float:
 	var yaw_config := _yaw_config()
 	if yaw_config != null:
 		return maxf(
-			float(yaw_config.field(&"turret_y_acceptable_aim", DEFAULT_ACCEPTABLE_AIM_DEGREES)),
+			float(yaw_config.acceptable_yaw),
 			DEFAULT_ACCEPTABLE_AIM_DEGREES
 		)
 	return DEFAULT_ACCEPTABLE_AIM_DEGREES
@@ -1519,7 +1471,7 @@ func _acceptable_pitch_degrees() -> float:
 	var pitch_config := _pitch_config()
 	if pitch_config != null:
 		return maxf(
-			float(pitch_config.field(&"turret_x_acceptable_aim", DEFAULT_ACCEPTABLE_AIM_DEGREES)),
+			float(pitch_config.acceptable_pitch),
 			DEFAULT_ACCEPTABLE_AIM_DEGREES
 		)
 	return DEFAULT_ACCEPTABLE_AIM_DEGREES

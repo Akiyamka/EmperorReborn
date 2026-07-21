@@ -1,5 +1,7 @@
 extends SceneTree
 
+const LegacyRulesFixture := preload("res://tests/support/legacy_rules_fixture.gd")
+
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const MatchFixtureScene := preload("res://tests/fixtures/match_fixture.tscn")
 const HarvesterScene := preload("res://scenes/units/harvester.tscn")
@@ -25,6 +27,7 @@ var _current_case := ""
 
 
 func _initialize() -> void:
+	LegacyRulesFixture.install(root)
 	await _run_case("units and buildings use authored collision meshes", _test_authored_collision_meshes)
 	await _run_case("ground vehicles follow terrain elevation and slope", _test_units_follow_terrain)
 	await _run_case("units turn at their rules rates", _test_unit_turn_rates)
@@ -77,7 +80,7 @@ func _test_authored_collision_meshes() -> void:
 	for unit_name in [&"ScoutA", &"OrdosAPC", &"NIABTank"]:
 		var unit := match_instance.get_node("Units/%s" % unit_name)
 		_expect(unit._collision_sources().size() > 0, "%s must expose an authored collision volume" % unit_name)
-		var rule_size := float(unit.unit_config.field(&"size", 1.0))
+		var rule_size := float(unit.unit_definition.size)
 		var rule_radius := maxf(0.35, rule_size * 0.42)
 		var navigation_radius := float(unit.navigation_collision_radius(rule_radius))
 		_expect(
@@ -315,8 +318,8 @@ func _test_mech_gait_speeds() -> void:
 
 	var unit := match_instance.get_node("Units/ScoutA") as Unit
 	unit.setup(&"ATMongoose")
-	var configured_speed := float(unit.unit_config.field(&"speed", 0.0))
-	var configured_mech_speed := float(unit.unit_config.field(&"mech_speed", 0.0))
+	var configured_speed := float(unit.unit_definition.speed)
+	var configured_mech_speed := float(unit.unit_definition.mech_speed)
 	_expect(
 		is_equal_approx(unit.move_speed, configured_speed),
 		"Mongoose must load its editable Speed rule"

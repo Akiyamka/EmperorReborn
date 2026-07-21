@@ -12,7 +12,7 @@ func _init(warhead_config: Resource = null) -> void:
 
 
 func id() -> StringName:
-	return StringName(String(config.get("id"))) if config != null else &""
+	return config.config_id if config != null else &""
 
 
 func armour_damage_matrix() -> Dictionary:
@@ -22,7 +22,7 @@ func armour_damage_matrix() -> Dictionary:
 func _armour_damage_matrix() -> Dictionary:
 	if config == null:
 		return {}
-	var matrix: Variant = config.field(&"armour_damage", {})
+	var matrix: Variant = config.armour_damage
 	return matrix as Dictionary if matrix is Dictionary else {}
 
 

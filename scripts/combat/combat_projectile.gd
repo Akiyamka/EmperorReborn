@@ -5,7 +5,7 @@ const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_
 const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
 
 ## A physical, world-space delivery instance for one CombatBullet payload.
-## CombatBullet remains the immutable Rules.txt view; this node owns flight,
+## CombatBullet remains the immutable typed-definition view; this node owns flight,
 ## homing, collision and lifetime state for one emitted shot.
 
 signal impacted(target: Object, damage: float, world_position: Vector3)

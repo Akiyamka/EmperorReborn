@@ -21,6 +21,8 @@ const HAZARD_DAMPING_MIN_RATIO := 0.24
 const HAZARD_DAMPING_MAX_RATIO := 0.34
 const HAZARD_DAMPING_RANGE_COMPENSATION := 1.45
 const HAZARD_LAUNCH_SPEED_MULTIPLIER := 1.28
+const SpiceDefinitionCatalogScript := preload("res://scripts/world/map/spice_definition_catalog.gd")
+static var _definition_catalog := SpiceDefinitionCatalogScript.new()
 
 @export var source_cell := Vector2i(-1, -1)
 
@@ -43,7 +45,7 @@ func configure(
 ) -> void:
 	source_cell = cell
 	_footprint = Vector2(maxf(footprint.x, 0.001), maxf(footprint.y, 0.001))
-	config = rules_config
+	config = rules_config if rules_config != null else _definition_catalog.mound()
 	_lifespan_random_fraction = lifespan_random_fraction
 	_has_activated = false
 	_apply_footprint()
@@ -57,7 +59,7 @@ func _ready() -> void:
 	monitoring = true
 	monitorable = true
 	if config == null:
-		config = _rules_config()
+		config = _definition_catalog.mound()
 	_apply_footprint()
 	body_entered.connect(_on_body_entered)
 	maturity_timer.timeout.connect(_on_maturity_timeout)
@@ -75,8 +77,8 @@ func maturity_duration_seconds(random_fraction := -1.0) -> float:
 	if config == null:
 		return 0.0
 	var fraction := randf() if random_fraction < 0.0 else clampf(random_fraction, 0.0, 1.0)
-	var minimum_ticks := maxf(float(config.field(&"size", 0.0)), 0.0)
-	var random_ticks := maxf(float(config.field(&"cost", 0.0)), 0.0)
+	var minimum_ticks := maxf(config.maturity_minimum_ticks, 0.0)
+	var random_ticks := maxf(config.maturity_random_ticks, 0.0)
 	return (minimum_ticks + random_ticks * fraction) / RULE_TICKS_PER_SECOND \
 		* MATURITY_DURATION_MULTIPLIER
 
@@ -255,8 +257,3 @@ func _on_body_entered(body: Node3D) -> void:
 
 func _on_maturity_timeout() -> void:
 	activate(false)
-
-
-func _rules_config() -> Resource:
-	var rules := get_node_or_null("/root/Rules")
-	return rules.get_entity(&"spice_mound", &"SpiceMound") if rules != null else null

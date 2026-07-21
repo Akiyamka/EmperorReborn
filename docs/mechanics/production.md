@@ -111,6 +111,13 @@ Rules for placing a ready building on the map:
 
 ## 3. Unit production
 
+Runtime unit creation resolves the completed unit's `config_id` through
+`UnitSceneCatalog` and instantiates the same prepared scene that designers can
+place in a Godot mission. Scenes and definitions load lazily and are cached. A
+missing prepared scene falls back to the generic `unit.tscn` plus its converted
+model; the dedicated Harvester scene and lifecycle remain intact. See
+[`docs/architecture/unit-data-migration.md`](../architecture/unit-data-migration.md).
+
 - Production buildings: **barracks** (infantry), **factory** (vehicles, including
   harvesters and MCVs), **hangar** (aircraft and carryalls), **Sub-House building**
   (Sub-House units — section 2 §1.2), and **starport** (batch orders — section 3 §4);

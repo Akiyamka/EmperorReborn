@@ -30,15 +30,15 @@ func _init(
 
 
 func base_damage() -> float:
-	return maxf(float(config.field(&"damage", 0.0)), 0.0) if config != null else 0.0
+	return maxf(float(config.damage), 0.0) if config != null else 0.0
 
 
 func maximum_range() -> float:
-	return maxf(float(config.field(&"max_range", 0.0)), 0.0) if config != null else 0.0
+	return maxf(float(config.maximum_range), 0.0) if config != null else 0.0
 
 
 func minimum_range() -> float:
-	return maxf(float(config.field(&"min_range", 0.0)), 0.0) if config != null else 0.0
+	return maxf(float(config.minimum_range), 0.0) if config != null else 0.0
 
 
 func maximum_range_world() -> float:
@@ -50,11 +50,11 @@ func minimum_range_world() -> float:
 
 
 func speed() -> float:
-	return float(config.field(&"speed", 0.0)) if config != null else 0.0
+	return float(config.speed) if config != null else 0.0
 
 
 func blast_radius() -> float:
-	return maxf(float(config.field(&"blast_radius", 0.0)), 0.0) if config != null else 0.0
+	return maxf(float(config.blast_radius), 0.0) if config != null else 0.0
 
 
 func blast_radius_world() -> float:
@@ -64,12 +64,16 @@ func blast_radius_world() -> float:
 
 
 func explosion_type() -> StringName:
-	return StringName(String(config.field(&"explosion_type", ""))) \
+	return config.explosion_type_id \
 		if config != null else &""
 
 
 func explosion_effects() -> Array:
-	return config.list(&"explosion_effects") if config != null else []
+	var result: Array = []
+	if config != null:
+		for value in config.explosion_effect_ids:
+			result.append(String(value))
+	return result
 
 
 func explosion_effect_ids() -> Array[StringName]:
@@ -89,14 +93,14 @@ func explosion_visual_scene(effect_id: StringName) -> PackedScene:
 
 
 func friendly_damage_amount() -> float:
-	return clampf(float(config.field(&"friendly_damage_amount", 0.0)), 0.0, 100.0) \
+	return clampf(float(config.friendly_damage_amount), 0.0, 100.0) \
 		if config != null else 0.0
 
 
 func reduces_damage_with_distance() -> bool:
 	# Rules.txt only spells this field out to opt out (`False`). Its absence is
 	# the engine default: radial damage falls off toward the blast edge.
-	return config != null and bool(config.field(&"reduce_damage_with_distance", true))
+	return config != null and config.reduce_damage_with_distance
 
 
 func is_hitscan() -> bool:
@@ -106,62 +110,62 @@ func is_hitscan() -> bool:
 
 
 func is_laser() -> bool:
-	return config != null and bool(config.field(&"is_laser", false))
+	return config != null and config.is_laser
 
 
 func is_homing() -> bool:
-	return config != null and bool(config.field(&"homing", false))
+	return config != null and config.homing
 
 
 func homing_delay_ticks() -> float:
-	return maxf(float(config.field(&"homing_delay", 0.0)), 0.0) if config != null else 0.0
+	return maxf(float(config.homing_delay), 0.0) if config != null else 0.0
 
 
 func turn_rate() -> float:
-	return maxf(float(config.field(&"turn_rate", 0.0)), 0.0) if config != null else 0.0
+	return maxf(float(config.turn_rate), 0.0) if config != null else 0.0
 
 
 func has_trajectory() -> bool:
-	return config != null and bool(config.field(&"trajectory", false))
+	return config != null and config.trajectory
 
 
 func has_missile_trail() -> bool:
 	# Trail style zero is a valid authored value, so presence rather than
 	# truthiness decides whether the engine-generated trail exists.
-	return config != null and config.field(&"missile_trail", null) != null
+	return config != null and config.missile_trail_present
 
 
 func missile_trail_style() -> int:
-	return int(config.field(&"missile_trail", 0)) if config != null else 0
+	return int(config.missile_trail) if config != null else 0
 
 
 func missile_trail_size() -> float:
-	return maxf(float(config.field(&"missile_trail_size", 0.0)), 0.0) \
+	return maxf(float(config.missile_trail_size), 0.0) \
 		if config != null else 0.0
 
 
 func missile_trail_length() -> int:
-	return maxi(int(config.field(&"missile_trail_length", 0)), 0) \
+	return maxi(int(config.missile_trail_length), 0) \
 		if config != null else 0
 
 
 func missile_trail_delta() -> float:
-	return maxf(float(config.field(&"missile_trail_delta", 0.0)), 0.0) \
+	return maxf(float(config.missile_trail_delta), 0.0) \
 		if config != null else 0.0
 
 
 func missile_trail_wiggle_frequency() -> float:
-	return maxf(float(config.field(&"missile_trail_wiggle_freq", 0.0)), 0.0) \
+	return maxf(float(config.missile_trail_wiggle_frequency), 0.0) \
 		if config != null else 0.0
 
 
 func missile_trail_wiggle_scale() -> float:
-	return maxf(float(config.field(&"missile_trail_wiggle_scale", 0.0)), 0.0) \
+	return maxf(float(config.missile_trail_wiggle_scale), 0.0) \
 		if config != null else 0.0
 
 
 func is_continuous() -> bool:
-	return config != null and bool(config.field(&"continuous", false))
+	return config != null and config.continuous
 
 
 func is_piercing() -> bool:
@@ -178,9 +182,7 @@ func effect_flags() -> Dictionary:
 		&"burnt", &"ignites", &"gassed", &"leech", &"infantry",
 		&"damage_column", &"deviate", &"beserk", &"retreat",
 	]:
-		var value: Variant = config.field(field_name, null)
-		if value != null:
-			result[String(field_name)] = bool(value)
+		result[String(field_name)] = bool(config.get(field_name))
 	return result
 
 
@@ -194,32 +196,32 @@ func active_effect_flags() -> Array[StringName]:
 
 
 func effect_targets_infantry() -> bool:
-	return config != null and bool(config.field(&"infantry", false))
+	return config != null and config.infantry
 
 
 func effect_health() -> float:
-	return maxf(float(config.field(&"health", 0.0)), 0.0) if config != null else 0.0
+	return maxf(float(config.effect_health), 0.0) if config != null else 0.0
 
 
 func effect_damage_per_tick() -> float:
 	# Leech_B/Contaminator_B call this source field ShieldHealth. It is not the
 	# projectile's shield; Rules.txt documents it as damage to the infected unit.
-	return maxf(float(config.field(&"shield_health", 0.0)), 0.0) \
+	return maxf(float(config.effect_damage_per_tick), 0.0) \
 		if config != null else 0.0
 
 
 func linger_duration_ticks() -> float:
-	return maxf(float(config.field(&"linger_duration", 0.0)), 0.0) \
+	return maxf(float(config.linger_duration), 0.0) \
 		if config != null else 0.0
 
 
 func linger_damage() -> float:
-	return maxf(float(config.field(&"linger_damage", 0.0)), 0.0) \
+	return maxf(float(config.linger_damage), 0.0) \
 		if config != null else 0.0
 
 
 func id() -> StringName:
-	return StringName(String(config.get("id"))) if config != null else &""
+	return config.config_id if config != null else &""
 
 
 func can_reach(from: Vector3, to: Vector3) -> bool:
@@ -235,16 +237,16 @@ func can_hit(target: Object) -> bool:
 	var airborne := target.has_method("combat_is_airborne") \
 		and bool(target.call("combat_is_airborne"))
 	if airborne:
-		return bool(config.field(&"anti_aircraft", false))
+		return config.anti_aircraft
 	# AntiGround is opt-out in Rules.txt: almost every bullet omits it, while
 	# ATHEATADP_B explicitly sets it to false for an air-only weapon.
-	return bool(config.field(&"anti_ground", true))
+	return config.anti_ground
 
 
 func can_hit_ground() -> bool:
 	# Attack-ground has no target object from which can_hit() could infer the
 	# domain. Preserve the same opt-out semantics for coordinate targets.
-	return config != null and bool(config.field(&"anti_ground", true))
+	return config != null and config.anti_ground
 
 
 func damage_against(armour_type: StringName) -> float:

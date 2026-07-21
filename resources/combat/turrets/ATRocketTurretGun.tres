@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="TurretDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/turret_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"ATRocketTurretGun"
+bullet_id = &"Rocket_B"
+next_joint_id = &""
+reload_count = 45
+muzzle_flash_id = &"Muzzle3"
+muzzle_flash_scene_path = "res://assets/converted/muzzle_flashes/muzzle3/muzzle3.scn"
+yaw_speed = 0
+pitch_speed = 4
+acceptable_yaw = 1
+acceptable_pitch = 1
+bullet_count = 1
+disabled_when_deployed = false
+disabled_when_undeployed = false
+minimum_pitch = -90
+maximum_pitch = 50

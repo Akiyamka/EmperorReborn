@@ -3,6 +3,8 @@ class_name Unit
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
+const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
+static var _definition_catalog := UnitSceneCatalogScript.new()
 
 signal owner_changed(player_id: int)
 signal navigation_enemy_encountered(enemies: Array[Node3D])
@@ -90,7 +92,7 @@ enum SlopeAlignmentMode {
 
 @onready var visual_root: Node3D = get_node_or_null(visual_root_path)
 
-var unit_config: Resource
+var unit_definition: Resource
 var target_position: Vector3
 var is_selected := false
 var is_hovered := false
@@ -152,7 +154,7 @@ func _ready() -> void:
 	if visual_root != null:
 		_visual_root_rest_basis = visual_root.transform.basis.orthonormalized()
 		_visual_slope_target_basis = _visual_root_rest_basis
-	_apply_rules_config()
+	_apply_unit_definition()
 	target_position = global_position
 	# Terrain height is sampled explicitly below. Letting CharacterBody collide
 	# with the terrain mesh makes each triangle edge behave like a small wall,
@@ -452,13 +454,13 @@ func aligns_visual_to_terrain_slope() -> bool:
 			return true
 		SlopeAlignmentMode.DISABLED:
 			return false
-	if unit_config == null:
+	if unit_definition == null:
 		return false
 	return (
-		float(unit_config.field(&"size", 1.0)) > 1.0
-		and not bool(unit_config.field(&"infantry", false))
-		and not bool(unit_config.field(&"can_fly", false))
-		and not bool(unit_config.field(&"mech", false))
+		float(unit_definition.size) > 1.0
+		and not unit_definition.infantry
+		and not unit_definition.can_fly
+		and not unit_definition.mech
 		and config_id not in LEGACY_WALKER_UNIT_IDS
 	)
 
@@ -528,7 +530,7 @@ func setup(unit_id: StringName) -> void:
 	if not is_inside_tree():
 		return
 
-	_apply_rules_config()
+	_apply_unit_definition()
 	health = max_health
 	shields = max_shields
 	_set_visual_slope_target(_last_terrain_normal)
@@ -590,7 +592,7 @@ func combat_armour_type() -> StringName:
 
 
 func combat_is_airborne() -> bool:
-	return unit_config != null and bool(unit_config.field(&"can_fly", false))
+	return unit_definition != null and unit_definition.can_fly
 
 
 func combat_aim_position() -> Vector3:
@@ -879,7 +881,7 @@ func _cancel_fire_sequence(restore_idle := true) -> void:
 
 
 func _reload_starts_after_fire_animation() -> bool:
-	return unit_config != null and bool(unit_config.field(&"infantry", false))
+	return unit_definition != null and unit_definition.infantry
 
 
 func _clear_fire_sequence() -> void:
@@ -1202,44 +1204,36 @@ func _refresh_shield_visibility() -> void:
 		mesh_instance.visible = shields > 0.0
 
 
-func _apply_rules_config() -> void:
+func _apply_unit_definition() -> void:
 	if String(config_id).is_empty():
 		return
 
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		push_warning("Rules autoload is not available; using scene defaults for %s" % name)
+	unit_definition = _definition_catalog.definition_for(config_id)
+	if unit_definition == null:
+		push_warning("Unit definition not found: %s" % String(config_id))
 		return
 
-	unit_config = rules.call("unit", config_id)
-	if unit_config == null:
-		push_warning("Unit rules config not found: %s" % String(config_id))
-		return
-
-	move_speed = float(unit_config.field(&"speed", move_speed))
-	mech_speed = maxf(float(unit_config.field(&"mech_speed", move_speed)), 0.0)
-	_uses_mech_gait = bool(unit_config.field(&"mech", false)) \
+	move_speed = float(unit_definition.speed)
+	mech_speed = maxf(float(unit_definition.mech_speed), 0.0)
+	_uses_mech_gait = unit_definition.mech \
 		and mech_speed > 0.0 \
 		and not is_equal_approx(mech_speed, move_speed)
 	_mech_gait_elapsed = 0.0
-	turn_rate = maxf(float(unit_config.field(&"turn_rate", 0.0)), 0.0)
-	can_move_any_direction = bool(unit_config.field(&"can_move_any_direction", false))
-	max_health = float(unit_config.field(&"health", max_health))
-	max_shields = float(unit_config.field(&"shield_health", 0.0))
-	armour_type = StringName(String(unit_config.field(&"armour_type", "")))
-	_configure_combat_turrets(rules)
+	turn_rate = maxf(float(unit_definition.turn_rate), 0.0)
+	can_move_any_direction = unit_definition.can_move_any_direction
+	max_health = float(unit_definition.health)
+	max_shields = float(unit_definition.shield_health)
+	armour_type = unit_definition.armour_type
+	_configure_combat_turrets()
 
 
-func _configure_combat_turrets(rules: Object) -> void:
+func _configure_combat_turrets() -> void:
 	combat_turrets.clear()
-	var turret_values: Array = unit_config.list(&"turrets")
+	var turret_values: Array = unit_definition.turret_ids
 	for weapon_index in turret_values.size():
 		var turret_value: Variant = turret_values[weapon_index]
-		var turret_config: Resource = rules.call("turret", StringName(String(turret_value)))
-		if turret_config == null:
-			continue
 		var turret = CombatTurretScript.new()
-		if turret.configure_from_rules(turret_config, rules):
+		if turret.configure(StringName(String(turret_value))):
 			turret.bind_model(visual_root, weapon_index)
 			combat_turrets.append(turret)
 

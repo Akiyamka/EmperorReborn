@@ -1,0 +1,21 @@
+class_name TurretDefinition
+extends Resource
+
+@export var config_id: StringName
+@export var bullet_id: StringName
+@export var next_joint_id: StringName
+@export var reload_count: float
+@export var muzzle_flash_id: StringName
+@export_file("*.scn", "*.tscn") var muzzle_flash_scene_path: String
+@export var yaw_speed: float
+@export var minimum_yaw: float = NAN
+@export var maximum_yaw: float = NAN
+@export var pitch_speed: float
+@export var minimum_pitch: float = NAN
+@export var maximum_pitch: float = NAN
+@export var acceptable_yaw: float = 1.0
+@export var acceptable_pitch: float = 1.0
+@export var bullet_count: int = 1
+@export var disabled_when_deployed: bool
+@export var disabled_when_undeployed: bool
+

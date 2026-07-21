@@ -1,0 +1,7 @@
+[gd_resource type="Resource" script_class="GameSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rules/game_settings.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+max_building_placement_tile_dist = 6
