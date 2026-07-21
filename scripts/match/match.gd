@@ -31,6 +31,7 @@ var _unit_command_controller: UnitCommandController
 var _unit_deployment_controller
 var _unit_navigation_system
 var _navigation_grid_debug
+var _debug_layers_enabled := false
 ## Whole roster of the local player's house, gated by the technology tree
 ## rather than a hardcoded demo list -- see docs/mechanics/production.md.
 var _building_option_ids: Array[StringName] = []
@@ -181,6 +182,7 @@ func _setup_unit_navigation_system() -> void:
 	add_child(_unit_navigation_system)
 	if terrain.navigation_grid != null:
 		_unit_navigation_system.setup(terrain.navigation_grid)
+	_unit_navigation_system.set_debug_enabled(_debug_layers_enabled)
 
 
 func _setup_navigation_grid_debug() -> void:
@@ -188,6 +190,7 @@ func _setup_navigation_grid_debug() -> void:
 	_navigation_grid_debug.name = "NavigationGridDebug"
 	add_child(_navigation_grid_debug)
 	_navigation_grid_debug.setup(terrain, _unit_navigation_system)
+	_navigation_grid_debug.set_enabled(_debug_layers_enabled)
 
 
 func _place_on_map() -> void:
@@ -235,6 +238,10 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _handle_debug_shortcut(event):
+		get_viewport().set_input_as_handled()
+		return
+
 	if _handle_snapshot_shortcut(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -249,6 +256,28 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if _unit_command_controller != null and _unit_command_controller.handle_unhandled_input(event):
 		get_viewport().set_input_as_handled()
+
+
+func _handle_debug_shortcut(event: InputEvent) -> bool:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return false
+	if event.keycode != KEY_F3 and event.physical_keycode != KEY_F3:
+		return false
+	_set_debug_layers_enabled(not _debug_layers_enabled)
+	return true
+
+
+func _set_debug_layers_enabled(value: bool) -> void:
+	_debug_layers_enabled = value
+	if _navigation_grid_debug != null:
+		_navigation_grid_debug.set_enabled(value)
+	if _unit_navigation_system != null:
+		_unit_navigation_system.set_debug_enabled(value)
+	print("Navigation debug layers: %s" % ("visible" if value else "hidden"))
+
+
+func debug_layers_enabled() -> bool:
+	return _debug_layers_enabled
 
 
 func _handle_snapshot_shortcut(event: InputEvent) -> bool:

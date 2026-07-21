@@ -33,6 +33,7 @@ func _initialize() -> void:
 	await _run_case("mechs alternate smoothly between gait speeds", _test_mech_gait_speeds)
 	await _run_case("test match roster is non-empty after boot", _test_match_roster_populated)
 	await _run_case("roster controls leave arrow keys to the camera", _test_roster_controls_ignore_keyboard_focus)
+	await _run_case("F3 toggles every navigation debug layer", _test_unified_debug_shortcut)
 	await _run_case("rules art configs resolve every test panel icon", _test_match_panel_icons)
 	await _run_case("rules sidebar type selects the panel tab", _test_rules_sidebar_tabs)
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
@@ -454,6 +455,58 @@ func _test_roster_controls_ignore_keyboard_focus() -> void:
 			tab.focus_mode == Control.FOCUS_NONE,
 			"roster tab %s must not participate in arrow-key focus navigation" % tab.name
 		)
+
+	match_instance.queue_free()
+
+
+func _test_unified_debug_shortcut() -> void:
+	var match_instance := MatchFixtureScene.instantiate()
+	get_root().add_child(match_instance)
+	await process_frame
+	await process_frame
+
+	var grid_debug = match_instance.get_node("NavigationGridDebug")
+	var navigation = match_instance.get_node("UnitNavigationSystem")
+	var route_debug = navigation.get_node("NavigationDebug")
+	var unit = match_instance.get_node("Units/ScoutA")
+	var halo = unit.get_node("SelectionHalo")
+	_expect(
+		not match_instance.debug_layers_enabled()
+		and not grid_debug.is_enabled()
+		and not navigation.debug_enabled()
+		and not route_debug.is_enabled()
+		and not halo.is_movement_debug_visible(),
+		"all navigation debug layers must start disabled"
+	)
+
+	var f3_event := InputEventKey.new()
+	f3_event.keycode = KEY_F3
+	f3_event.pressed = true
+	_expect(match_instance._handle_debug_shortcut(f3_event), "F3 must own the unified debug shortcut")
+	_expect(
+		grid_debug.visible
+		and navigation.debug_enabled()
+		and route_debug.visible
+		and halo.is_movement_debug_visible(),
+		"F3 must enable the grid, route markers, and final steering arrows together"
+	)
+
+	var n_event := InputEventKey.new()
+	n_event.keycode = KEY_N
+	n_event.pressed = true
+	_expect(
+		not match_instance._handle_debug_shortcut(n_event)
+		and match_instance.debug_layers_enabled(),
+		"N must no longer control any navigation debug layer"
+	)
+	_expect(match_instance._handle_debug_shortcut(f3_event), "a second F3 press must be accepted")
+	_expect(
+		not grid_debug.visible
+		and not navigation.debug_enabled()
+		and not route_debug.visible
+		and not halo.is_movement_debug_visible(),
+		"a second F3 press must disable every navigation debug layer together"
+	)
 
 	match_instance.queue_free()
 

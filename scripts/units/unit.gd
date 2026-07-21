@@ -113,6 +113,7 @@ var _pending_navigation_order := Vector3.ZERO
 var _pending_navigation_exit := Vector3.INF
 var _has_pending_navigation_order := false
 var _navigation_requested_velocity := Vector3.ZERO
+var _navigation_debug_visible := false
 var _visual_root_rest_basis := Basis.IDENTITY
 var _visual_slope_target_basis := Basis.IDENTITY
 var _last_terrain_normal := Vector3.UP
@@ -1137,6 +1138,12 @@ func _set_navigation_debug_direction(value: Vector3) -> void:
 		_selection_halo.set_movement_direction(_navigation_requested_velocity)
 
 
+func set_navigation_debug_visible(value: bool) -> void:
+	_navigation_debug_visible = value
+	if _selection_halo != null:
+		_selection_halo.set_movement_debug_visible(value)
+
+
 func set_hovered(value: bool) -> void:
 	if is_hovered == value:
 		return
@@ -1506,6 +1513,7 @@ func _add_selection_halo() -> void:
 	add_child(_selection_halo)
 	_selection_halo.configure(self, _selection_radius(), _selection_position())
 	_selection_halo.set_movement_direction(_navigation_requested_velocity)
+	_selection_halo.set_movement_debug_visible(_navigation_debug_visible)
 
 
 func _selection_radius() -> float:

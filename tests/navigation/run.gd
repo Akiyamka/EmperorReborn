@@ -569,9 +569,19 @@ func _test_selected_unit_navigation_debug(grid: MapNavigationGrid) -> void:
 	navigation.call("_navigation_tick", 0.05)
 	var debug = navigation.get_node("NavigationDebug")
 	var geometry := debug.get_node("Geometry") as MeshInstance3D
+	_expect(
+		not navigation.debug_enabled() and not debug.visible and not debug.has_geometry(),
+		"navigation diagnostics must start disabled until the unified debug layer is enabled"
+	)
+	navigation.set_debug_enabled(true)
+	navigation.call("_navigation_tick", 0.05)
 	_expect(debug.has_geometry() and geometry.mesh != null \
 		and geometry.mesh.get_surface_count() >= 4,
-		"a selected unit must draw route, waypoint, look-ahead, and destination surfaces")
+		"enabled diagnostics must draw route, waypoint, look-ahead, and destination surfaces")
+	navigation.set_debug_enabled(false)
+	_expect(not debug.visible and not debug.has_geometry(),
+		"disabling navigation diagnostics must hide and clear every route marker")
+	navigation.set_debug_enabled(true)
 	unit.set_selected(false)
 	navigation.call("_navigation_tick", 0.05)
 	_expect(not debug.has_geometry(), "navigation route diagnostics must disappear after deselection")

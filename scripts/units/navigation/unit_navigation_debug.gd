@@ -16,6 +16,7 @@ const MARKER_SEGMENTS := 20
 
 var _mesh_instance: MeshInstance3D
 var _has_geometry := false
+var _enabled := false
 
 
 func _ready() -> void:
@@ -26,10 +27,25 @@ func _ready() -> void:
 	_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mesh_instance.extra_cull_margin = 1000.0
 	add_child(_mesh_instance)
+	visible = _enabled
+
+
+func set_enabled(value: bool) -> void:
+	_enabled = value
+	visible = value
+	if not value:
+		_clear_geometry()
+
+
+func is_enabled() -> bool:
+	return _enabled
 
 
 func update_agents(snapshots: Array[Dictionary]) -> void:
 	if _mesh_instance == null:
+		return
+	if not _enabled:
+		_clear_geometry()
 		return
 	var route_vertices := PackedVector3Array()
 	var waypoint_vertices := PackedVector3Array()
@@ -63,6 +79,12 @@ func update_agents(snapshots: Array[Dictionary]) -> void:
 
 func has_geometry() -> bool:
 	return _has_geometry
+
+
+func _clear_geometry() -> void:
+	_has_geometry = false
+	if _mesh_instance != null:
+		_mesh_instance.mesh = null
 
 
 func _append_surface(mesh: ImmediateMesh, vertices: PackedVector3Array, color: Color) -> void:

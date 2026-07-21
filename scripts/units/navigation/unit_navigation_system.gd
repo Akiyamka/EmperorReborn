@@ -51,12 +51,14 @@ var _navigation_tick_index := 0
 var _navigation_accumulator := 0.0
 var _blocker_refresh_remaining := 0.0
 var _command_log: Array[Dictionary] = []
+var _debug_enabled := false
 
 
 func _ready() -> void:
 	if navigation_debug.get_parent() == null:
 		navigation_debug.name = "NavigationDebug"
 		add_child(navigation_debug)
+	navigation_debug.set_enabled(_debug_enabled)
 	if not get_tree().node_added.is_connected(_on_tree_node_added):
 		get_tree().node_added.connect(_on_tree_node_added)
 
@@ -147,13 +149,32 @@ func register_unit(unit: Node3D) -> int:
 		unit.call("set_navigation_managed", true)
 	if unit.has_method("set_navigation_controller"):
 		unit.call("set_navigation_controller", self)
+	if unit.has_method("set_navigation_debug_visible"):
+		unit.call("set_navigation_debug_visible", _debug_enabled)
 	return int(agent["id"])
 
 
 func unregister_unit(unit: Node3D) -> void:
 	if unit == null:
 		return
+	if unit.has_method("set_navigation_debug_visible"):
+		unit.call("set_navigation_debug_visible", false)
 	_agents.erase(unit.get_instance_id())
+
+
+func set_debug_enabled(value: bool) -> void:
+	_debug_enabled = value
+	navigation_debug.set_enabled(value)
+	for agent_value in _agents.values():
+		var unit: Node3D = (agent_value as Dictionary).get("unit")
+		if is_instance_valid(unit) and unit.has_method("set_navigation_debug_visible"):
+			unit.call("set_navigation_debug_visible", value)
+	if value:
+		_refresh_navigation_debug()
+
+
+func debug_enabled() -> bool:
+	return _debug_enabled
 
 
 func set_hold_position(unit: Node3D, active: bool) -> void:
@@ -640,6 +661,8 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 
 func _refresh_navigation_debug() -> void:
 	if navigation_debug == null or not navigation_debug.is_inside_tree():
+		return
+	if not _debug_enabled:
 		return
 	var snapshots: Array[Dictionary] = []
 	for value in _agents.values():

@@ -2,7 +2,7 @@ class_name NavigationGridDebug
 extends Node3D
 ## Visual-only overlay for the immutable 256x256 baked navigation grid plus the
 ## dynamic obstacle overlay (building blockers) from the match runtime map.
-## N toggles it without affecting navigation state or pathfinding costs.
+## Match owns its visibility together with the other F3 debug layers.
 
 const GRID_SHADER := preload("res://scripts/units/navigation/navigation_grid_debug.gdshader")
 const DYNAMIC_BLOCKED_COLOR := Color(1.0, 0.0, 1.0, 0.8)
@@ -13,6 +13,7 @@ var _configured := false
 var _material: ShaderMaterial
 var _runtime_map
 var _blocked_revision := -1
+var _enabled := false
 
 
 func setup(map_loader: MapLoader, navigation_system = null) -> bool:
@@ -44,7 +45,8 @@ func setup(map_loader: MapLoader, navigation_system = null) -> bool:
 		add_child(overlay)
 		overlay.global_transform = source.global_transform
 	_configured = get_child_count() > 0
-	visible = visible_by_default and _configured
+	_enabled = visible_by_default
+	visible = _enabled and _configured
 	return _configured
 
 
@@ -100,18 +102,16 @@ func _terrain_color(terrain_type: int) -> Color:
 			return Color(1.00, 0.00, 0.70, 0.55)
 
 
-func toggle() -> void:
-	if not _configured:
-		return
-	visible = not visible
-	print("Navigation grid debug: %s" % ("visible" if visible else "hidden"))
+func set_enabled(value: bool) -> void:
+	_enabled = value
+	visible = _enabled and _configured
+	if visible:
+		# Force the dynamic blockers texture to refresh on the first visible frame.
+		_blocked_revision = -1
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_N or event.physical_keycode == KEY_N:
-			toggle()
-			get_viewport().set_input_as_handled()
+func is_enabled() -> bool:
+	return _enabled
 
 
 func _clear_overlays() -> void:

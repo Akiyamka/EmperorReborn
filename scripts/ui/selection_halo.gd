@@ -27,6 +27,7 @@ var _is_hovered := false
 var _layers := {}
 var _movement_arrow: MeshInstance3D
 var _movement_direction := Vector3.ZERO
+var _movement_debug_visible := false
 var _indicator_radius := 1.0
 
 
@@ -77,6 +78,15 @@ func set_movement_direction(value: Vector3) -> void:
 	_refresh_visibility()
 
 
+func set_movement_debug_visible(value: bool) -> void:
+	_movement_debug_visible = value
+	_refresh_visibility()
+
+
+func is_movement_debug_visible() -> bool:
+	return _movement_debug_visible
+
+
 func _process(delta: float) -> void:
 	if _entity == null:
 		return
@@ -120,7 +130,8 @@ func _refresh() -> void:
 func _refresh_visibility() -> void:
 	visible = _is_selected or _is_hovered
 	if _movement_arrow != null:
-		_movement_arrow.visible = _is_selected and not _movement_direction.is_zero_approx()
+		_movement_arrow.visible = _movement_debug_visible \
+			and _is_selected and not _movement_direction.is_zero_approx()
 
 
 func _fraction(current: StringName, maximum: StringName) -> float:
