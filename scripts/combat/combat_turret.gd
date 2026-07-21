@@ -8,6 +8,7 @@ const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.
 ##   ::N...  pivot of weapon/turret N
 ##   >>N...  projectile emission point
 ##   #muzzleNN  paired rear blast / shell-casing emitter
+##   #smoke  paired launcher backblast emitter
 ## A TurretNextJoint chain maps onto the nested :: pivots between a weapon's
 ## root marker and its muzzle markers.
 
@@ -16,6 +17,8 @@ const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.
 const AIM_UPDATES_PER_SECOND := 20.0
 const DEFAULT_ACCEPTABLE_AIM_DEGREES := 1.0
 const DEFAULT_MUZZLE_FLASH_DURATION := 0.2
+const MUZZLE3_PRIMARY_MESH := "Mesh_00"
+const MUZZLE3_PRIMARY_SCALE := 0.5
 const TURRET_MARKER := "::"
 const MUZZLE_MARKER := ">>"
 const REAR_MUZZLE_MARKER := "#muzzle"
@@ -35,6 +38,10 @@ const CASINGS_PER_SHOT := 1
 const CASING_SIZE := 0.56
 const CASING_LIFETIME := 1.0
 const CASING_GRAVITY := 5.5
+const LAUNCH_SMOKE_MARKER := "#smoke"
+const LAUNCH_SMOKE_SEQUENCE := "!cexp"
+const LAUNCH_SMOKE_FRAME_COUNT := 16
+const LAUNCH_SMOKE_SIZE := 1.25
 
 enum TargetRange {
 	INVALID,
@@ -67,10 +74,12 @@ var _reference_pivot: Node3D
 var _pivot_rest_transforms: Dictionary = {}
 var _muzzles: Array[Node3D] = []
 var _rear_muzzles: Dictionary = {}
+var _launch_smokes: Dictionary = {}
 var _next_muzzle_index := 0
 var _last_emissions: Array[Dictionary] = []
 var _rear_flash_textures: Array[Texture2D] = []
 var _casing_textures: Array[Texture2D] = []
+var _launch_smoke_textures: Array[Texture2D] = []
 
 
 func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
@@ -141,7 +150,9 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 	if _muzzles.is_empty():
 		_collect_visual_muzzle_fallbacks(_root_pivot if _root_pivot != null else model_root, _muzzles)
 	_muzzles.sort_custom(_muzzle_less)
-	_bind_rear_muzzles(_root_pivot if _root_pivot != null else model_root)
+	var effect_root := _root_pivot if _root_pivot != null else model_root
+	_bind_rear_muzzles(effect_root)
+	_bind_launch_smokes(effect_root)
 
 	var pivot_chain := _pivot_chain_to(_muzzles.front() if not _muzzles.is_empty() else null)
 	if pivot_chain.is_empty() and _root_pivot != null:
@@ -180,6 +191,7 @@ func unbind_model() -> void:
 	_pivot_rest_transforms.clear()
 	_muzzles.clear()
 	_rear_muzzles.clear()
+	_launch_smokes.clear()
 	_next_muzzle_index = 0
 	_last_emissions.clear()
 	current_yaw = 0.0
@@ -348,6 +360,10 @@ func emission_points() -> Array[Dictionary]:
 			# basis is not authored as an exhaust vector. Direction is explicitly
 			# opposite the paired barrel's projectile heading.
 			emission["rear_direction"] = -direction.normalized()
+		var launch_smoke := _launch_smokes.get(muzzle) as Node3D
+		if launch_smoke != null and is_instance_valid(launch_smoke):
+			emission["smoke_node"] = launch_smoke
+			emission["smoke_position"] = launch_smoke.global_position
 		result.append(emission)
 	if result.is_empty() and _reference_pivot != null and is_instance_valid(_reference_pivot):
 		var transform := _reference_pivot.global_transform
@@ -509,7 +525,7 @@ func try_fire_at(
 			continue
 		_spawn_muzzle_flash(parent, emission)
 		_spawn_shot_light(parent, emission)
-		_spawn_rear_muzzle_effects(parent, emission)
+		_spawn_auxiliary_muzzle_effects(parent, emission)
 		result.append(projectile)
 	return result
 
@@ -601,12 +617,32 @@ func _bind_rear_muzzles(node: Node) -> void:
 				break
 
 
+func _bind_launch_smokes(node: Node) -> void:
+	var candidates: Array[Node3D] = []
+	_collect_named_markers(node, LAUNCH_SMOKE_MARKER, candidates)
+	for muzzle in _muzzles:
+		for candidate in candidates:
+			# The Mongoose's >>0#flame and #smoke markers are siblings on the
+			# launcher. Pair by hierarchy so unrelated smoke emitters elsewhere
+			# in a model cannot become weapon backblast.
+			if candidate.get_parent() == muzzle.get_parent():
+				_launch_smokes[muzzle] = candidate
+				break
+
+
 func _collect_rear_muzzles(node: Node, result: Array[Node3D]) -> void:
 	if node is Node3D \
 	and _original_name(node).to_lower().begins_with(REAR_MUZZLE_MARKER):
 		result.append(node as Node3D)
 	for child in node.get_children():
 		_collect_rear_muzzles(child, result)
+
+
+func _collect_named_markers(node: Node, marker: String, result: Array[Node3D]) -> void:
+	if node is Node3D and _original_name(node).nocasecmp_to(marker) == 0:
+		result.append(node as Node3D)
+	for child in node.get_children():
+		_collect_named_markers(child, marker, result)
 
 
 func _pivot_with_muzzles(candidates: Array[Node3D]) -> Node3D:
@@ -849,6 +885,8 @@ func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 	var authored_visual := muzzle_flash_scene.instantiate() as Node3D
 	if authored_visual == null:
 		return
+	if muzzle_flash_id == &"Muzzle3":
+		_scale_muzzle3_primary_mesh(authored_visual)
 	var effect := Node3D.new()
 	effect.name = "MuzzleFlash_%s" % String(muzzle_flash_id)
 	effect.set_meta("combat_muzzle_fx", &"front_flash")
@@ -887,8 +925,40 @@ func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 	cleanup.start()
 
 
-func _spawn_rear_muzzle_effects(parent: Node, emission: Dictionary) -> void:
-	if parent == null or not parent.is_inside_tree() or not emission.has("rear_position"):
+func _scale_muzzle3_primary_mesh(authored_visual: Node3D) -> void:
+	var primary_mesh := authored_visual.find_child(
+		MUZZLE3_PRIMARY_MESH, true, false
+	) as MeshInstance3D
+	if primary_mesh == null:
+		return
+	var mesh_parent := primary_mesh.get_parent() as Node3D
+	if mesh_parent == null:
+		return
+
+	# Muzzle3 animates Mesh_00's transform. Keep that authored track targeting
+	# a proxy while the actual mesh remains at half size beneath it.
+	var authored_transform := primary_mesh.transform
+	var sibling_index := primary_mesh.get_index()
+	primary_mesh.name = "%s_Visual" % MUZZLE3_PRIMARY_MESH
+	var animated_transform := Node3D.new()
+	animated_transform.name = MUZZLE3_PRIMARY_MESH
+	mesh_parent.add_child(animated_transform)
+	mesh_parent.move_child(animated_transform, sibling_index)
+	animated_transform.transform = authored_transform
+	primary_mesh.reparent(animated_transform, false)
+	primary_mesh.transform = Transform3D(
+		Basis.from_scale(Vector3.ONE * MUZZLE3_PRIMARY_SCALE), Vector3.ZERO
+	)
+
+
+func _spawn_auxiliary_muzzle_effects(parent: Node, emission: Dictionary) -> void:
+	if parent == null or not parent.is_inside_tree():
+		return
+	if emission.has("smoke_position"):
+		_ensure_launch_smoke_textures()
+		if _launch_smoke_textures.size() == LAUNCH_SMOKE_FRAME_COUNT:
+			_spawn_launch_smoke(parent, emission)
+	if not emission.has("rear_position"):
 		return
 	_ensure_inline_fx_textures()
 	if _rear_flash_textures.size() == REAR_FLASH_FRAME_COUNT:
@@ -896,6 +966,25 @@ func _spawn_rear_muzzle_effects(parent: Node, emission: Dictionary) -> void:
 	if _casing_textures.size() == CASING_FRAME_COUNT:
 		for casing_index in CASINGS_PER_SHOT:
 			_spawn_casing(parent, emission, casing_index)
+
+
+func _spawn_launch_smoke(parent: Node, emission: Dictionary) -> void:
+	var effect := Node3D.new()
+	effect.name = "LaunchSmoke_%d" % int(emission.get("index", 0))
+	effect.set_meta("combat_muzzle_fx", &"launch_smoke")
+	effect.set_meta("emission_index", int(emission.get("index", 0)))
+	parent.add_child(effect)
+	effect.top_level = true
+	effect.global_position = Vector3(emission["smoke_position"])
+	var visual := _fx_quad(_launch_smoke_textures.front(), LAUNCH_SMOKE_SIZE)
+	visual.name = "Visual"
+	effect.add_child(visual)
+	var material := (visual.mesh as QuadMesh).material as StandardMaterial3D
+	var animation := effect.create_tween()
+	for texture in _launch_smoke_textures:
+		animation.tween_callback(_set_fx_texture.bind(material, texture))
+		animation.tween_interval(INLINE_FX_FRAME_SECONDS)
+	animation.finished.connect(effect.queue_free)
 
 
 func _spawn_shot_light(parent: Node, emission: Dictionary) -> void:
@@ -912,7 +1001,10 @@ func _spawn_shot_light(parent: Node, emission: Dictionary) -> void:
 	if rear_direction.is_zero_approx():
 		rear_direction = -shot_direction
 	var origin := Vector3(
-		emission.get("rear_position", emission.get("position", Vector3.ZERO))
+		emission.get(
+			"rear_position",
+			emission.get("smoke_position", emission.get("position", Vector3.ZERO))
+		)
 	)
 
 	var light := OmniLight3D.new()
@@ -1018,6 +1110,13 @@ func _ensure_inline_fx_textures() -> void:
 		_rear_flash_textures = _load_fx_texture_sequence("!cexp", REAR_FLASH_FRAME_COUNT)
 	if _casing_textures.is_empty():
 		_casing_textures = _load_fx_texture_sequence("!%shel", CASING_FRAME_COUNT)
+
+
+func _ensure_launch_smoke_textures() -> void:
+	if _launch_smoke_textures.is_empty():
+		_launch_smoke_textures = _load_fx_texture_sequence(
+			LAUNCH_SMOKE_SEQUENCE, LAUNCH_SMOKE_FRAME_COUNT
+		)
 
 
 func _load_fx_texture_sequence(base_name: String, count: int) -> Array[Texture2D]:

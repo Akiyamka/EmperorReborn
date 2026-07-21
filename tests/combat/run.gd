@@ -134,6 +134,10 @@ func _initialize() -> void:
 		"turret launches projectiles and composes the authored impact FX",
 		_test_turret_projectile_launch
 	)
+	await _run_async_case(
+		"Mongoose composes launch backblast and missile impact FX",
+		_test_mongoose_launch_and_impact_fx
+	)
 	_run_case("compound turret binds authored pivots and muzzle", _test_compound_turret)
 	_run_case("single-axis turret turns without changing pitch", _test_single_axis_turret)
 	_run_case("fixed weapon keeps its authored direction", _test_fixed_turret)
@@ -906,6 +910,171 @@ func _test_turret_projectile_launch() -> void:
 			muzzle_flash.free()
 		_free_muzzle_effects()
 		_free_impact_effects()
+	model.free()
+
+
+func _test_mongoose_launch_and_impact_fx() -> void:
+	var rules = root.get_node("Rules")
+	var model := ATMongooseModelScene.instantiate() as Node3D
+	root.add_child(model)
+	var turret = CombatTurretScript.new()
+	_expect(
+		turret.configure_from_rules(rules.turret(&"ATMongooseMissile"), rules),
+		"ATMongooseMissile must resolve its rules-backed presentation"
+	)
+	_expect(turret.bind_model(model, 0), "the Mongoose launcher must bind its authored markers")
+	_expect(
+		turret.muzzle_flash_id == &"Muzzle3" and turret.muzzle_flash_scene != null,
+		"the Mongoose must resolve its authored Muzzle3 front flash"
+	)
+	_expect(
+		turret.impact_visual_scenes.has(&"MissileHit"),
+		"HEAT_B must resolve ExplosionType=MissileHit through ArtIni"
+	)
+
+	var emission := turret.peek_emission()
+	var smoke_node := emission.get("smoke_node") as Node3D
+	_expect(
+		smoke_node != null
+		and String(smoke_node.get_meta("original_name", "")) == "#smoke",
+		"the >>0#flame launcher must pair with its sibling #smoke backblast marker"
+	)
+	var target_position := Vector3(emission["position"]) \
+		+ Vector3(emission["direction"]) * 10.0
+	target_position.y = 0.0
+	_expect(
+		turret.aim_at(target_position, 1.0 / 60.0),
+		"the yaw-only Mongoose launcher must accept a ground point ahead"
+	)
+	var projectiles: Array = turret.try_fire_at(target_position, model, root)
+	_expect(projectiles.size() == 1, "the Mongoose launch must emit one HEAT_B missile")
+	if projectiles.is_empty():
+		model.free()
+		return
+	var fired_emission: Dictionary = turret.last_emissions()[0]
+
+	var front_flashes := _muzzle_effects(&"front_flash")
+	var launch_smokes := _muzzle_effects(&"launch_smoke", 0)
+	var shot_lights := _muzzle_effects(&"shot_light", 0)
+	_expect(
+		front_flashes.size() == 1
+		and front_flashes[0].global_position.is_equal_approx(
+			Vector3(fired_emission["position"])
+		),
+		"one Muzzle3 flash must spawn at the Mongoose's >>0#flame marker"
+	)
+	var muzzle3_mesh := front_flashes[0].find_child(
+		"Mesh_00_Visual", true, false
+	) as MeshInstance3D if front_flashes.size() == 1 else null
+	_expect(
+		muzzle3_mesh != null
+		and muzzle3_mesh.scale.is_equal_approx(Vector3.ONE * 0.5),
+		"Muzzle3 must render its oversized Mesh_00 at half scale"
+	)
+	_expect(
+		launch_smokes.size() == 1
+		and launch_smokes[0].global_position.is_equal_approx(
+			Vector3(fired_emission["smoke_position"])
+		),
+		"the original !cexp launch backblast must spawn at #smoke"
+	)
+	_expect(
+		launch_smokes.size() == 1
+		and launch_smokes[0].get_node_or_null("Visual") is MeshInstance3D,
+		"the Mongoose backblast must render as an additive animated billboard"
+	)
+	_expect(
+		shot_lights.size() == 1
+		and (shot_lights[0] as OmniLight3D).light_energy > 0.0,
+		"the launch event must briefly illuminate the launcher"
+	)
+
+	var projectile = projectiles[0]
+	projectile.advance(1.0)
+	var missile_hits := _impact_effects(&"MissileHit")
+	var missile_hit: Node3D = missile_hits.front() if not missile_hits.is_empty() else null
+	_expect(
+		projectile.finish_reason == &"impact_ground"
+		and missile_hits.size() == 1
+		and missile_hit.global_position.is_equal_approx(target_position),
+		"one MissileHit composition must spawn at the resolved ground impact"
+	)
+	var impact_visual := missile_hit.get_node_or_null("Visual") as Node3D \
+		if missile_hit != null else null
+	var emitter_meshes := impact_visual.find_children(
+		"*", "MeshInstance3D", true, false
+	) if impact_visual != null else []
+	var emitter_geometry_hidden := not emitter_meshes.is_empty()
+	for emitter_mesh in emitter_meshes:
+		emitter_geometry_hidden = emitter_geometry_hidden \
+			and not (emitter_mesh as MeshInstance3D).visible
+	_expect(
+		emitter_geometry_hidden,
+		"MissileHit's #bing cubes must remain hidden emitter helpers"
+	)
+	await process_frame
+	var particle_counts := {
+		&"!%Bru": 0,
+		&"!cexp": 0,
+		&"!@sm": 0,
+	}
+	var particle_nodes := missile_hit.find_children(
+		"ImpactParticle_*", "Node3D", true, false
+	) if missile_hit != null else []
+	for child in particle_nodes:
+		var sequence := StringName(String(child.get_meta("combat_impact_particle", "")))
+		if particle_counts.has(sequence):
+			particle_counts[sequence] += 1
+	_expect(
+		particle_counts[&"!%Bru"] == 1
+		and particle_counts[&"!cexp"] == 0
+		and particle_counts[&"!@sm"] == 32,
+		"MissileHit must retain its loose shrapnel spray and add one particle ring"
+	)
+	var ring_velocities: Array[Vector3] = []
+	var loose_shrapnel_count := 0
+	for child in particle_nodes:
+		if child.get_meta("combat_impact_ring", false):
+			ring_velocities.append(Vector3(
+				child.get_meta("combat_impact_velocity", Vector3.ZERO)
+			))
+		elif child.get_meta("combat_impact_particle", &"") == &"!@sm":
+			loose_shrapnel_count += 1
+	var ring_is_randomized := ring_velocities.size() == 16
+	var differs_from_even_spacing := false
+	for velocity_index in ring_velocities.size():
+		var expected_angle := TAU * float(velocity_index) / float(ring_velocities.size())
+		var expected_direction := Vector3(sin(expected_angle), 0.0, cos(expected_angle))
+		var horizontal_velocity := ring_velocities[velocity_index]
+		horizontal_velocity.y = 0.0
+		differs_from_even_spacing = differs_from_even_spacing \
+			or horizontal_velocity.normalized().dot(expected_direction) < 0.99
+		ring_is_randomized = (
+			ring_is_randomized
+			and not horizontal_velocity.is_zero_approx()
+			and is_equal_approx(
+				ring_velocities[velocity_index].y, ring_velocities[0].y
+			)
+		)
+	_expect(
+		loose_shrapnel_count == 16,
+		"MissileHit must preserve the original independent shrapnel spray"
+	)
+	_expect(
+		ring_is_randomized and differs_from_even_spacing,
+		"MissileHit ring points must share one radius but use randomized angles"
+	)
+	var impact_light := missile_hit.get_node_or_null("ImpactLight") as OmniLight3D \
+		if missile_hit != null else null
+	_expect(
+		impact_light != null and impact_light.light_energy > 0.0,
+		"MissileHit must briefly illuminate the impact area"
+	)
+
+	if is_instance_valid(projectile):
+		projectile.free()
+	_free_muzzle_effects()
+	_free_impact_effects()
 	model.free()
 
 

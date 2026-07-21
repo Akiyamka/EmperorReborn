@@ -2,14 +2,16 @@ class_name CombatImpactEffect
 extends Node3D
 
 ## Short-lived rules-backed impact presentation. Most ExplosionType XBFs are
-## directly renderable. ShellHit is an authored particle-emitter rig: its
-## `#bing` cubes are invisible moving anchors. In the XBF event table, record
-## types 3/4 start and stop an FX bank; they are not animation frame numbers.
+## directly renderable. ShellHit and MissileHit are authored particle-emitter
+## rigs: their `#bing` cubes are invisible moving anchors. In the XBF event
+## table, record types 3/4 start and stop an FX bank; they are not animation
+## frame numbers.
 
 const RULE_UPDATES_PER_SECOND := 20.0
 const DEFAULT_DURATION := 0.5
 const INLINE_FX_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
 const SHELL_HIT_ID := &"ShellHit"
+const MISSILE_HIT_ID := &"MissileHit"
 const SHELL_HIT_BURST_SEQUENCE := "!%Bru"
 const SHELL_HIT_BURST_FRAME_COUNT := 21
 const SHELL_HIT_BURST_SIZE := 2.0
@@ -19,7 +21,10 @@ const SHELL_HIT_SMOKE_OPACITY := 0.55
 const SHELL_HIT_SHRAPNEL_SEQUENCE := "!@sm"
 const SHELL_HIT_SHRAPNEL_FRAME_COUNT := 11
 const SHELL_HIT_SHRAPNEL_SIZE := 0.16
-const SHELL_HIT_SHRAPNEL_DURATION := 1.0
+const SHELL_HIT_SHRAPNEL_ANIMATION_DURATION := 1.0
+const SHELL_HIT_SHRAPNEL_FADE_DURATION := 0.3
+const SHELL_HIT_SHRAPNEL_START_HEIGHT := 0.08
+const SHELL_HIT_CLEANUP_MARGIN := 0.05
 const SHELL_HIT_SHRAPNEL_COUNT := 16
 const SHELL_HIT_SHRAPNEL_VERTICAL_SPEED_MIN := 0.8
 const SHELL_HIT_SHRAPNEL_VERTICAL_SPEED_MAX := 1.4
@@ -27,6 +32,9 @@ const SHELL_HIT_SHRAPNEL_GRAVITY := 1.6
 const SHELL_HIT_SHRAPNEL_TINT := Color(1.8, 1.45, 0.72, 1.0)
 const SHELL_HIT_LIGHT_COLOR := Color(1.0, 0.43, 0.12)
 const SHELL_HIT_LIGHT_RANGE := 3.5
+const MISSILE_HIT_RING_SPEED := 1.4
+const MISSILE_HIT_RING_VERTICAL_SPEED := 0.55
+const MISSILE_HIT_RING_GRAVITY := 1.1
 
 static var _texture_sequence_cache: Dictionary = {}
 
@@ -62,12 +70,16 @@ func configure(
 	_authored_visual.name = "Visual"
 	add_child(_authored_visual)
 
-	if effect_id == SHELL_HIT_ID:
+	if effect_id == SHELL_HIT_ID or effect_id == MISSILE_HIT_ID:
 		_hide_emitter_geometry(_authored_visual)
 
 	var lifetime := _play_authored_animation_once()
 	if effect_id == SHELL_HIT_ID:
 		_start_shell_hit_fx()
+		lifetime = maxf(lifetime, _shell_hit_fx_lifetime())
+	elif effect_id == MISSILE_HIT_ID:
+		_start_shell_hit_fx(true)
+		lifetime = maxf(lifetime, _shell_hit_fx_lifetime())
 
 	var cleanup := Timer.new()
 	cleanup.name = "Cleanup"
@@ -122,7 +134,7 @@ func _hide_emitter_geometry(node: Node) -> void:
 		_hide_emitter_geometry(child)
 
 
-func _start_shell_hit_fx() -> void:
+func _start_shell_hit_fx(shrapnel_ring: bool = false) -> void:
 	if _authored_visual == null or not is_instance_valid(_authored_visual):
 		return
 	var burst_textures := _load_texture_sequence(
@@ -140,11 +152,52 @@ func _start_shell_hit_fx() -> void:
 	)
 	if not shrapnel_textures.is_empty():
 		_spawn_shell_hit_shrapnel(shrapnel_textures)
+		if shrapnel_ring:
+			_spawn_missile_hit_ring(shrapnel_textures)
 	_spawn_shell_hit_light()
 
 
+func _spawn_missile_hit_ring(textures: Array[Texture2D]) -> void:
+	var start := global_position + Vector3.UP * SHELL_HIT_SHRAPNEL_START_HEIGHT
+	for particle_number in SHELL_HIT_SHRAPNEL_COUNT:
+		# RocketDetonation repeatedly emits the same small shrapnel sprite while
+		# its helpers expand from the centre. Every particle shares one radial
+		# speed so the group remains a ring, while independent random angles keep
+		# its points from forming an artificial regular polygon.
+		var angle := _random.randf_range(0.0, TAU)
+		var direction := Vector3(sin(angle), 0.0, cos(angle))
+		var velocity := (
+			direction * MISSILE_HIT_RING_SPEED
+			+ Vector3.UP * MISSILE_HIT_RING_VERTICAL_SPEED
+		)
+		var particle := _spawn_world_particle(
+			SHELL_HIT_SHRAPNEL_SEQUENCE, textures,
+			SHELL_HIT_SHRAPNEL_SIZE,
+			SHELL_HIT_SHRAPNEL_ANIMATION_DURATION, start, false
+		)
+		if particle != null:
+			var landing_time := _ballistic_landing_time(
+				SHELL_HIT_SHRAPNEL_START_HEIGHT,
+				velocity.y,
+				MISSILE_HIT_RING_GRAVITY
+			)
+			particle.set_meta("combat_impact_velocity", velocity)
+			particle.set_meta("combat_impact_ring", true)
+			particle.set_meta("combat_impact_landing_time", landing_time)
+			var motion := particle.create_tween().set_process_mode(
+				Tween.TWEEN_PROCESS_PHYSICS
+			)
+			motion.tween_method(
+				_update_particle_position.bind(
+					particle, start, velocity, MISSILE_HIT_RING_GRAVITY
+				),
+				0.0, landing_time, landing_time
+			)
+			motion.finished.connect(_fade_landed_shrapnel.bind(particle))
+
+
 func _spawn_shell_hit_shrapnel(textures: Array[Texture2D]) -> void:
-	var start := global_position + Vector3.UP * 0.08
+	var start := global_position + Vector3.UP * SHELL_HIT_SHRAPNEL_START_HEIGHT
 	for particle_number in SHELL_HIT_SHRAPNEL_COUNT:
 		# The source effect is a loose radial spray, not four authored rays:
 		# every spark independently samples its direction and speed.
@@ -158,15 +211,67 @@ func _spawn_shell_hit_shrapnel(textures: Array[Texture2D]) -> void:
 			)
 		var particle := _spawn_world_particle(
 			SHELL_HIT_SHRAPNEL_SEQUENCE, textures,
-			SHELL_HIT_SHRAPNEL_SIZE, SHELL_HIT_SHRAPNEL_DURATION, start
+			SHELL_HIT_SHRAPNEL_SIZE,
+			SHELL_HIT_SHRAPNEL_ANIMATION_DURATION, start, false
 		)
 		if particle != null:
+			var landing_time := _ballistic_landing_time(
+				SHELL_HIT_SHRAPNEL_START_HEIGHT,
+				velocity.y,
+				SHELL_HIT_SHRAPNEL_GRAVITY
+			)
 			particle.set_meta("combat_impact_velocity", velocity)
+			particle.set_meta("combat_impact_landing_time", landing_time)
 			var motion := particle.create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
 			motion.tween_method(
-				_update_shrapnel_position.bind(particle, start, velocity),
-				0.0, SHELL_HIT_SHRAPNEL_DURATION, SHELL_HIT_SHRAPNEL_DURATION
+				_update_particle_position.bind(
+					particle, start, velocity, SHELL_HIT_SHRAPNEL_GRAVITY
+				),
+				0.0, landing_time, landing_time
 			)
+			motion.finished.connect(_fade_landed_shrapnel.bind(particle))
+
+
+func _shell_hit_fx_lifetime() -> float:
+	var maximum_flight_time := _ballistic_landing_time(
+		SHELL_HIT_SHRAPNEL_START_HEIGHT,
+		SHELL_HIT_SHRAPNEL_VERTICAL_SPEED_MAX,
+		SHELL_HIT_SHRAPNEL_GRAVITY
+	)
+	return maxf(
+		SHELL_HIT_BURST_DURATION,
+		maxf(SHELL_HIT_SHRAPNEL_ANIMATION_DURATION, maximum_flight_time)
+			+ SHELL_HIT_SHRAPNEL_FADE_DURATION + SHELL_HIT_CLEANUP_MARGIN
+	)
+
+
+func _ballistic_landing_time(
+		start_height: float,
+		vertical_speed: float,
+		gravity: float
+	) -> float:
+	if gravity <= 0.0:
+		return SHELL_HIT_SHRAPNEL_ANIMATION_DURATION
+	return (vertical_speed + sqrt(
+		vertical_speed * vertical_speed + 2.0 * gravity * maxf(start_height, 0.0)
+	)) / gravity
+
+
+func _fade_landed_shrapnel(particle: Node3D) -> void:
+	if particle == null or not is_instance_valid(particle):
+		return
+	var visual := particle.get_node_or_null("Visual") as MeshInstance3D
+	var material := (visual.mesh as QuadMesh).material as StandardMaterial3D \
+		if visual != null else null
+	if material == null:
+		particle.queue_free()
+		return
+	var fade := particle.create_tween()
+	fade.tween_method(
+		_set_particle_opacity.bind(material),
+		material.albedo_color.a, 0.0, SHELL_HIT_SHRAPNEL_FADE_DURATION
+	)
+	fade.finished.connect(particle.queue_free)
 
 
 func _spawn_shell_hit_light() -> void:
@@ -222,13 +327,14 @@ func _spawn_world_particle(
 		textures: Array[Texture2D],
 		size: float,
 		duration: float,
-		world_position: Vector3
+		world_position: Vector3,
+		free_after_animation: bool = true
 	) -> Node3D:
 	var particle := _create_particle(sequence, textures, size)
 	add_child(particle)
 	particle.top_level = true
 	particle.global_position = world_position
-	_start_particle_animation(particle, textures, duration)
+	_start_particle_animation(particle, textures, duration, free_after_animation)
 	return particle
 
 
@@ -266,7 +372,8 @@ func _create_particle(
 func _start_particle_animation(
 		particle: Node3D,
 		textures: Array[Texture2D],
-		duration: float
+		duration: float,
+		free_after_animation: bool
 	) -> void:
 	var visual := particle.get_node_or_null("Visual") as MeshInstance3D
 	var material := (visual.mesh as QuadMesh).material as StandardMaterial3D \
@@ -286,20 +393,22 @@ func _start_particle_animation(
 			_set_particle_frame.bind(material, textures[frame_index], opacity)
 		)
 		animation.tween_interval(frame_duration)
-	animation.finished.connect(particle.queue_free)
+	if free_after_animation:
+		animation.finished.connect(particle.queue_free)
 
 
-func _update_shrapnel_position(
+func _update_particle_position(
 		elapsed: float,
 		particle: Node3D,
 		start: Vector3,
-		velocity: Vector3
+		velocity: Vector3,
+		gravity: float
 	) -> void:
 	if particle == null or not is_instance_valid(particle):
 		return
 	particle.global_position = start + velocity * elapsed \
 		+ Vector3.DOWN * (
-			0.5 * SHELL_HIT_SHRAPNEL_GRAVITY * elapsed * elapsed
+			0.5 * gravity * elapsed * elapsed
 		)
 
 
@@ -310,6 +419,13 @@ func _set_particle_frame(
 	) -> void:
 	if material != null:
 		material.albedo_texture = texture
+		var color := material.albedo_color
+		color.a = opacity
+		material.albedo_color = color
+
+
+func _set_particle_opacity(opacity: float, material: StandardMaterial3D) -> void:
+	if material != null:
 		var color := material.albedo_color
 		color.a = opacity
 		material.albedo_color = color

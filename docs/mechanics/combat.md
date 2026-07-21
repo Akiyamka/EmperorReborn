@@ -126,7 +126,10 @@ fading wake behind a physical bullet. For example, the Minotaurus uses the dark
 is not persistent rocket exhaust. A separate `TurretMuzzleFlash` field selects
 the short effect spawned at the active muzzle when a shot is emitted. The
 Minotaurus maps `Muzzle3` through ArtIni to the original
-`3DDATA/Explosion/Muzzle3.xbf` visual. Its model also pairs every front
+`3DDATA/Explosion/Muzzle3.xbf` visual. The oversized primary `Mesh_00` element
+is rendered at half scale for every turret that selects `Muzzle3`; its authored
+animation continues to drive the surrounding transform. The Minotaurus model
+also pairs every front
 `>>...#muzzle01–04` marker with a sibling rear `#muzzle05–08` marker. The XBF
 FX bank assigns the original `!cexp` rear cannon flash and a `!%shel` tumbling
 casing particle to that rear point; they are emitted by the same per-barrel
@@ -134,6 +137,13 @@ firing event as the projectile. Every emitted projectile also creates a short
 warm point-light pulse just behind the active barrel (using the rear marker
 when present), so a multi-shot salvo illuminates the unit once per shot rather
 than once for the complete firing animation.
+
+The Mongoose also selects `Muzzle3`, placing that front flash at its combined
+`>>0#flame` projectile marker. Its launcher has a separate sibling `#smoke`
+marker behind the tube: the firing event emits the original sixteen-frame
+`!cexp` additive backblast there. The same short warm light pulse is centred on
+that rear marker, so the launch illuminates both the missile mouth and the
+exhaust side of the turret.
 
 On a resolved impact, the bullet's ordered `ExplosionType` entries select the
 short-lived world-space visuals mapped by `ArtIni`; the effect survives the
@@ -149,6 +159,17 @@ frames stay opaque, while its following smoke frames render translucent. A
 two-frame orange point-light flash then leaves roughly ten source frames of
 weaker local illumination. Range exhaustion and target loss are expiry events
 rather than impacts and therefore do not request this effect.
+
+The Mongoose's `HEAT_B` selects `MissileHit`. Like `ShellHit`, its source XBF is
+an emitter rig rather than visible cube geometry: `#bigbing` drives the central
+`!%Bru` fire/smoke burst and `!@sm` produces the loose randomized shrapnel
+spray. A second group of the same small particles expands at one radial speed
+to preserve a ring, with independently randomized positions around its
+circumference. The four animated `#bing1–4` helpers stay hidden rather than
+appearing as four large diverging objects. For both `ShellHit` and `MissileHit`,
+shrapnel keeps its final sprite frame after the texture sequence, follows its
+ballistic arc to the ground, and then fades instead of disappearing in mid-air.
+The detonation receives the same brief warm point-light flash.
 
 Summary of how different bullets miss (follows from the verified behavior above):
 
