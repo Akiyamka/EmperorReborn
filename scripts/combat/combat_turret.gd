@@ -75,6 +75,7 @@ var _pivot_rest_transforms: Dictionary = {}
 var _muzzles: Array[Node3D] = []
 var _rear_muzzles: Dictionary = {}
 var _launch_smokes: Dictionary = {}
+var _uses_embedded_muzzle_flash := false
 var _next_muzzle_index := 0
 var _last_emissions: Array[Dictionary] = []
 var _rear_flash_textures: Array[Texture2D] = []
@@ -136,6 +137,7 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 	if model_root == null or weapon_index < 0:
 		return false
 	_model_root = model_root
+	_uses_embedded_muzzle_flash = _has_embedded_muzzle_flash(model_root)
 
 	var pivot_candidates: Array[Node3D] = []
 	_collect_markers(model_root, TURRET_MARKER, weapon_index, pivot_candidates)
@@ -192,6 +194,7 @@ func unbind_model() -> void:
 	_muzzles.clear()
 	_rear_muzzles.clear()
 	_launch_smokes.clear()
+	_uses_embedded_muzzle_flash = false
 	_next_muzzle_index = 0
 	_last_emissions.clear()
 	current_yaw = 0.0
@@ -454,9 +457,9 @@ func target_range(target_or_position: Variant, aim_offset := Vector3.ZERO) -> in
 	return TargetRange.IN_RANGE
 
 
-func try_fire(begin_reload_after_shot := true) -> Array:
+func try_fire(begin_reload_after_shot := true, committed_sequence := false) -> Array:
 	var result: Array = []
-	if not is_ready():
+	if not is_configured() or (not committed_sequence and not is_ready()):
 		return result
 
 	_last_emissions.clear()
@@ -480,10 +483,12 @@ func try_fire_at(
 		projectile_parent: Node = null,
 		aim_offset := Vector3.ZERO,
 		begin_reload_after_shot := true,
-		require_aim := true
+		require_aim := true,
+		committed_sequence := false
 	) -> Array:
 	var result: Array = []
-	if not is_ready() or not is_bound():
+	if not is_configured() or not is_bound() \
+	or (not committed_sequence and not is_ready()):
 		return result
 	var target_position := _bullet_target_position(target_or_position)
 	var preview_emission := peek_emission()
@@ -510,7 +515,7 @@ func try_fire_at(
 	var parent := projectile_parent if projectile_parent != null else _default_projectile_parent()
 	if parent == null or not parent.is_inside_tree():
 		return result
-	var payloads := try_fire(begin_reload_after_shot)
+	var payloads := try_fire(begin_reload_after_shot, committed_sequence)
 	for index in payloads.size():
 		var projectile = CombatProjectileScript.new()
 		parent.add_child(projectile)
@@ -523,9 +528,13 @@ func try_fire_at(
 		):
 			projectile.free()
 			continue
-		_spawn_muzzle_flash(parent, emission)
-		_spawn_shot_light(parent, emission)
-		_spawn_auxiliary_muzzle_effects(parent, emission)
+		# Some infantry models use their animated bigflash geometry as the only
+		# available muzzle marker. Fire clips already reveal that embedded flash,
+		# so adding the rules TurretMuzzleFlash and runtime light would duplicate it.
+		if not _uses_embedded_muzzle_flash:
+			_spawn_muzzle_flash(parent, emission)
+			_spawn_shot_light(parent, emission)
+			_spawn_auxiliary_muzzle_effects(parent, emission)
 		result.append(projectile)
 	return result
 
@@ -602,6 +611,17 @@ func _collect_visual_muzzle_fallbacks(node: Node, result: Array[Node3D]) -> void
 			result.append(node as Node3D)
 	for child in node.get_children():
 		_collect_visual_muzzle_fallbacks(child, result)
+
+
+func _has_embedded_muzzle_flash(node: Node) -> bool:
+	if node is Node3D:
+		var lower_name := _original_name(node).to_lower()
+		if lower_name.contains("bigflash") or lower_name.contains("bflash"):
+			return true
+	for child in node.get_children():
+		if _has_embedded_muzzle_flash(child):
+			return true
+	return false
 
 
 func _bind_rear_muzzles(node: Node) -> void:

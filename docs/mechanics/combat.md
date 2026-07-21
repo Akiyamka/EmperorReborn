@@ -64,12 +64,19 @@ Other weapon properties on a unit:
 - a unit carries **one or more weapons** `[← 5: Sardaukar, Devastator]` `[Rules]`;
   selection logic when several are present: by **target type** `[?]`; can two
   weapons operate **simultaneously against different targets** `[?]`;
-- reload/rate of fire is per weapon `[Rules]`. A firing cycle consists of the
-  complete authored `Fire N` XBF clip followed by `ReloadCount`; the reload
-  value uses the model's 20 Hz frame domain and starts only after the clip ends
-  (verified). Projectile events inside the clip follow the animated barrel
+- reload/rate of fire is per weapon `[Rules]`. `ReloadCount` and source Fire
+  clip frames use a 25 Hz combat domain. Converted XBF timelines are baked at
+  20 Hz, so runtime Fire playback uses a `25 / 20` speed scale to preserve the
+  source cadence. Vehicle and walker turrets advance ReloadCount in parallel with
+  their complete authored `Fire N` XBF clip; the next firing action starts
+  only after both restrictions have completed. Infantry instead executes its
+  full-body Fire clip as a locked action and starts the post-action
+  `ReloadCount` when that clip ends. The distinction is rules-backed by the
+  unit's `Infantry` flag rather than a list of unit names. Projectile events
+  inside the clip follow the animated barrel
   recoils: the Minotaurus emits four sequential shells from its four muzzles
-  during one 31-frame `Fire 0` clip, then reloads. `TurretBulletCount` remains a
+  during one 31-frame `Fire 0` clip while its reload timer is already advancing.
+  `TurretBulletCount` remains a
   separate rule for several projectiles emitted by one event. Once the firing
   clip has started, its authored salvo events are committed; the next barrel
   does not have to pass a fresh one-frame aim-tolerance check;

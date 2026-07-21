@@ -1123,10 +1123,20 @@ func _test_fixed_turret() -> void:
 	var rules = root.get_node("Rules")
 	var model := ATInfantryModelScene.instantiate() as Node3D
 	root.add_child(model)
+	_free_muzzle_effects()
+	_free_impact_effects()
 	var turret = CombatTurretScript.new()
 	_expect(
 		turret.configure_from_rules(rules.turret(&"ATInfGun"), rules),
 		"ATInfGun must remain a configured fixed weapon"
+	)
+	_expect(
+		turret.muzzle_flash_id == &"Smuzz2" and turret.muzzle_flash_scene != null,
+		"ATInfGun must retain its rules TurretMuzzleFlash for models without an embedded flash"
+	)
+	_expect(
+		turret.impact_visual_scenes.has(&"Mghit"),
+		"LMG_B must resolve its rules ExplosionType=mghit through ArtIni"
 	)
 	_expect(turret.bind_model(model, 0), "the infantry weapon marker must bind")
 	_expect(turret.is_fixed(), "a turret without X/Y rotation speeds must be fixed")
@@ -1136,6 +1146,27 @@ func _test_fixed_turret() -> void:
 	_expect(not turret.aim_at(side_target, 10.0), "a fixed weapon must not rotate to a side target")
 	_expect(is_zero_approx(turret.current_yaw_degrees()), "a fixed weapon's yaw must stay at rest")
 	_expect(is_zero_approx(turret.current_pitch_degrees()), "a fixed weapon's pitch must stay at rest")
+
+	var target_position: Vector3 = Vector3(emission["position"]) \
+		+ Vector3(emission["direction"]) * 5.0
+	var projectiles: Array = turret.try_fire_at(target_position, model, root)
+	_expect(projectiles.size() == 1, "ATInfGun must emit its conceptual LMG_B shot")
+	_expect(
+		root.get_node_or_null("MuzzleFlash_Smuzz2") == null
+		and _muzzle_effects(&"shot_light").is_empty(),
+		"AT Infantry Fire_0 must use only its embedded muzzle flash"
+	)
+	var impacts := _impact_effects(&"Mghit")
+	_expect(
+		impacts.size() == 1
+		and impacts[0].global_position.is_equal_approx(target_position),
+		"AT Infantry must spawn the rules-backed Mghit at its hit position"
+	)
+	for projectile in projectiles:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	_free_muzzle_effects()
+	_free_impact_effects()
 	model.free()
 
 
@@ -1483,14 +1514,77 @@ func _test_unit_attack_order() -> void:
 		"the Mongoose shot must occur inside its authored Fire_0 animation"
 	)
 	_expect(
-		is_zero_approx(mongoose.combat_turrets[0].reload_ticks_remaining),
-		"Mongoose reload must not begin until Fire_0 completes"
+		mongoose.combat_turrets[0].reload_ticks_remaining > 0.0
+		and mongoose.combat_turrets[0].reload_ticks_remaining < 30.0,
+		"Mongoose ReloadCount must advance alongside Fire_0"
 	)
+	var mongoose_refire_elapsed := 0.0
 	for frame in 60:
 		mongoose._process(1.0 / 60.0)
+		mongoose_refire_elapsed += 1.0 / 60.0
 	_expect(
 		mongoose_fired.size() == 1,
 		"the Mongoose must not fire again while its first Fire_0 animation is active"
+	)
+	for frame in 60:
+		mongoose._process(1.0 / 60.0)
+		mongoose_refire_elapsed += 1.0 / 60.0
+		if mongoose_fired.size() >= 2:
+			break
+	_expect(
+		mongoose_fired.size() == 2
+		and absf(mongoose_refire_elapsed - 30.0 / UnitScript.RULE_COMBAT_TICKS_PER_SECOND) \
+			<= 1.0 / 30.0,
+		"Mongoose shots must be separated by ReloadCount, not Fire_0 plus ReloadCount"
+	)
+
+	var infantry = UnitScene.instantiate()
+	infantry.config_id = &"ATInfantry"
+	root.add_child(infantry)
+	infantry.replace_visual_scene(ATInfantryModelScene)
+	var infantry_emission: Dictionary = infantry.turret_emission_points()[0]
+	var infantry_forward: Vector3 = Vector3(infantry_emission["direction"])
+	var infantry_target: Vector3 = Vector3(infantry_emission["position"]) \
+		+ infantry_forward.normalized() * 5.0
+	var infantry_fired: Array = []
+	infantry.weapon_fired.connect(func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+		infantry_fired.append_array(projectiles)
+	)
+	_expect(
+		infantry.command_attack(infantry_target),
+		"Atreides Infantry must accept an in-range ground target"
+	)
+	for frame in 240:
+		infantry._process(1.0 / 60.0)
+		if not infantry_fired.is_empty():
+			break
+	_expect(not infantry_fired.is_empty(), "Atreides Infantry must emit its authored shot")
+	_expect(
+		is_zero_approx(infantry.combat_turrets[0].reload_ticks_remaining),
+		"infantry ReloadCount must remain deferred during its full-body Fire_0 action"
+	)
+	var infantry_refire_elapsed := 0.0
+	for frame in 240:
+		infantry._process(1.0 / 60.0)
+		infantry_refire_elapsed += 1.0 / 60.0
+		if not infantry._fire_sequence_active:
+			break
+	_expect(
+		is_equal_approx(infantry.combat_turrets[0].reload_ticks_remaining, 30.0),
+		"infantry ReloadCount must begin after its full-body Fire_0 action"
+	)
+	for frame in 120:
+		infantry._process(1.0 / 60.0)
+		infantry_refire_elapsed += 1.0 / 60.0
+		if infantry_fired.size() >= 2:
+			break
+	_expect(
+		infantry_fired.size() == 2
+		and absf(
+			infantry_refire_elapsed
+			- (45.0 + 30.0) / UnitScript.RULE_COMBAT_TICKS_PER_SECOND
+		) <= 1.0 / 30.0,
+		"Atreides Infantry shots must combine its 45-frame action and 30-tick reload"
 	)
 
 	var minotaurus = UnitScene.instantiate()
@@ -1538,12 +1632,13 @@ func _test_unit_attack_order() -> void:
 		"starting Fire_0 must preserve the Minotaurus visual turret yaw"
 	)
 	_expect(
-		is_zero_approx(minotaurus.combat_turrets[0].reload_ticks_remaining),
-		"Minotaurus reload must stay stopped during its four-shot Fire_0 animation"
+		minotaurus.combat_turrets[0].reload_ticks_remaining > 0.0
+		and minotaurus.combat_turrets[0].reload_ticks_remaining < 120.0,
+		"Minotaurus ReloadCount must advance during its four-shot Fire_0 animation"
 	)
 	for frame in 120:
 		minotaurus._process(1.0 / 60.0)
-		if minotaurus.combat_turrets[0].reload_ticks_remaining > 0.0:
+		if not minotaurus._fire_sequence_active:
 			break
 	_expect(
 		minotaurus_fired.size() == 4,
@@ -1554,8 +1649,12 @@ func _test_unit_attack_order() -> void:
 		"all four Minotaurus shells must belong to one authored firing animation"
 	)
 	_expect(
-		is_equal_approx(minotaurus.combat_turrets[0].reload_ticks_remaining, 120.0),
-		"the Minotaurus ReloadCount must begin only after its salvo animation completes"
+		absf(
+			minotaurus.combat_turrets[0].reload_ticks_remaining
+			- (120.0 - minotaurus_player.get_animation(&"Fire_0").length \
+				* UnitScript.BAKED_MODEL_FRAMES_PER_SECOND)
+		) <= 0.5,
+		"the Minotaurus salvo animation must consume the matching part of ReloadCount"
 	)
 	minotaurus_visible_yaw = rad_to_deg(_horizontal_angle_between(
 		minotaurus_forward,
@@ -1575,10 +1674,14 @@ func _test_unit_attack_order() -> void:
 	for projectile in mongoose_fired:
 		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
 			projectile.free()
+	for projectile in infantry_fired:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
 	for projectile in minotaurus_fired:
 		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
 			projectile.free()
 	mongoose.free()
+	infantry.free()
 	minotaurus.free()
 	unit.free()
 

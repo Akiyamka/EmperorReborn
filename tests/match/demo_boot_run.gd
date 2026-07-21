@@ -910,8 +910,9 @@ func _test_real_forced_friendly_attack() -> void:
 		"the real Mongoose missile must launch during its authored Fire_0 clip"
 	)
 	_expect(
-		is_zero_approx(attacker.combat_turrets[0].reload_ticks_remaining),
-		"the real Mongoose must not start reload before Fire_0 finishes"
+		attacker.combat_turrets[0].reload_ticks_remaining > 0.0
+		and attacker.combat_turrets[0].reload_ticks_remaining < 30.0,
+		"the real Mongoose must advance ReloadCount during Fire_0"
 	)
 	_expect(
 		not fired_projectiles.is_empty() \
@@ -999,16 +1000,19 @@ func _test_real_forced_friendly_attack() -> void:
 		"the real Minotaurus salvo must use one Fire_0 animation for all four shells"
 	)
 	_expect(
-		is_zero_approx(attacker.combat_turrets[0].reload_ticks_remaining),
-		"the real Minotaurus must not reload before its salvo animation completes"
+		attacker.combat_turrets[0].reload_ticks_remaining > 0.0
+		and attacker.combat_turrets[0].reload_ticks_remaining < 120.0,
+		"the real Minotaurus must advance ReloadCount during its salvo"
 	)
 	for _frame in 60:
 		await process_frame
-		if attacker.combat_turrets[0].reload_ticks_remaining > 0.0:
+		if not attacker._fire_sequence_active:
 			break
 	_expect(
-		attacker.combat_turrets[0].reload_ticks_remaining > 0.0,
-		"the real Minotaurus must begin ReloadCount after Fire_0 completes"
+		not attacker._fire_sequence_active
+		and attacker.combat_turrets[0].reload_ticks_remaining > 0.0
+		and attacker.combat_turrets[0].reload_ticks_remaining < 120.0,
+		"the real Minotaurus must retain only the unelapsed ReloadCount after Fire_0"
 	)
 	for _frame in 240:
 		await process_frame

@@ -28,9 +28,14 @@ const LEGACY_WALKER_UNIT_IDS: Array[StringName] = [&"INTLWalker"]
 ## 20 fixed updates per second, so use the same cadence for the unmanaged
 ## fallback to keep turning independent of the caller's frame rate.
 const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
-## ReloadCount is authored in the same 20 Hz frame domain as the XBF model
-## animations. Reload starts after an authored Fire clip completes.
-const RULE_COMBAT_TICKS_PER_SECOND := 20.0
+## Converted XBF tracks use a 20 Hz timeline, while the original firing
+## cadence measured from ReloadCount and Fire clip frame counts is 25 Hz.
+## Fire clips therefore traverse the baked timeline at 25/20 speed.
+const BAKED_MODEL_FRAMES_PER_SECOND := 20.0
+const RULE_COMBAT_TICKS_PER_SECOND := 25.0
+const FIRE_ANIMATION_SPEED_SCALE := (
+	RULE_COMBAT_TICKS_PER_SECOND / BAKED_MODEL_FRAMES_PER_SECOND
+)
 const FIRE_ANIMATION_PREFIX := "Fire_"
 const FIRE_EVENT_EPSILON := 0.0001
 const MOVING_ANIMATION := &"Move"
@@ -518,7 +523,7 @@ func _terrain_hit_at(position: Vector3) -> Dictionary:
 
 
 func setup(unit_id: StringName) -> void:
-	_cancel_fire_sequence(true, false)
+	_cancel_fire_sequence(false)
 	config_id = unit_id
 	if not is_inside_tree():
 		return
@@ -534,7 +539,7 @@ func setup(unit_id: StringName) -> void:
 func replace_visual_scene(model_scene: PackedScene) -> void:
 	if model_scene == null or visual_root == null:
 		return
-	_cancel_fire_sequence(true, false)
+	_cancel_fire_sequence(false)
 	for child in visual_root.get_children():
 		visual_root.remove_child(child)
 		child.free()
@@ -680,7 +685,7 @@ func can_attack(target_or_position: Variant) -> bool:
 func command_attack(target_or_position: Variant) -> bool:
 	if not can_attack(target_or_position):
 		return false
-	_cancel_fire_sequence(true)
+	_cancel_fire_sequence()
 	stop_at_current_position()
 	_has_attack_order = true
 	_attack_is_ground = target_or_position is Vector3
@@ -694,7 +699,7 @@ func command_attack(target_or_position: Variant) -> bool:
 
 
 func cancel_attack_order() -> void:
-	_cancel_fire_sequence(true)
+	_cancel_fire_sequence()
 	if not _has_attack_order:
 		return
 	_has_attack_order = false
@@ -781,9 +786,8 @@ func _advance_attack_order(delta: float) -> void:
 			hull_aimed = _turn_toward(target_world_position - global_position, delta)
 			break
 	for turret in in_range_turrets:
-		var aimed: bool = bool(turret.aim_at(target_world_position, delta))
-		if turret.requires_hull_turn():
-			aimed = aimed and hull_aimed
+		var aimed := hull_aimed if turret.requires_hull_turn() \
+			else bool(turret.aim_at(target_world_position, delta))
 		if not aimed:
 			continue
 		if turret.is_ready() and _start_authored_fire_sequence(turret):
@@ -813,7 +817,13 @@ func _start_authored_fire_sequence(turret) -> bool:
 	_fire_sequence_shot_times = _authored_fire_shot_times(player, animation, turret)
 	_fire_sequence_next_shot = 0
 	_fire_sequence_shots_emitted = 0
-	player.speed_scale = 1.0
+	# Vehicle turrets reload independently while their authored clip plays.
+	# Infantry Fire clips animate the whole actor through one locked action, so
+	# their post-action ReloadCount is started by _finish_fire_sequence instead.
+	# Committed shots bypass either timer so multi-muzzle salvos finish normally.
+	if not _reload_starts_after_fire_animation():
+		turret.begin_reload()
+	player.speed_scale = FIRE_ANIMATION_SPEED_SCALE
 	_play_animation_from_start(player, animation_name)
 	return true
 
@@ -822,7 +832,9 @@ func _advance_fire_sequence(delta: float, attack_target: Variant) -> void:
 	if not _fire_sequence_active:
 		return
 	_fire_sequence_elapsed = minf(
-		_fire_sequence_elapsed + maxf(delta, 0.0), _fire_sequence_duration
+		_fire_sequence_elapsed
+			+ maxf(delta, 0.0) * FIRE_ANIMATION_SPEED_SCALE,
+		_fire_sequence_duration
 	)
 	while (
 		_fire_sequence_next_shot < _fire_sequence_shot_times.size()
@@ -831,7 +843,7 @@ func _advance_fire_sequence(delta: float, attack_target: Variant) -> void:
 	):
 		_fire_sequence_next_shot += 1
 		var projectiles: Array = _fire_sequence_turret.try_fire_at(
-			attack_target, self, null, Vector3.ZERO, false, false
+			attack_target, self, null, Vector3.ZERO, false, false, true
 		)
 		if projectiles.is_empty():
 			continue
@@ -849,21 +861,25 @@ func _finish_fire_sequence() -> void:
 	var turret = _fire_sequence_turret
 	var emitted := _fire_sequence_shots_emitted
 	_clear_fire_sequence()
-	if emitted > 0 and turret != null:
+	if _reload_starts_after_fire_animation() and emitted > 0 and turret != null:
 		turret.begin_reload()
 	_set_movement_animation(false)
 
 
-func _cancel_fire_sequence(begin_reload_if_fired: bool, restore_idle := true) -> void:
+func _cancel_fire_sequence(restore_idle := true) -> void:
 	if not _fire_sequence_active:
 		return
 	var turret = _fire_sequence_turret
 	var emitted := _fire_sequence_shots_emitted
 	_clear_fire_sequence()
-	if begin_reload_if_fired and emitted > 0 and turret != null:
+	if _reload_starts_after_fire_animation() and emitted > 0 and turret != null:
 		turret.begin_reload()
 	if restore_idle:
 		_set_movement_animation(false)
+
+
+func _reload_starts_after_fire_animation() -> bool:
+	return unit_config != null and bool(unit_config.field(&"infantry", false))
 
 
 func _clear_fire_sequence() -> void:
@@ -898,7 +914,7 @@ func _authored_fire_shot_times(
 		player: AnimationPlayer, animation: Animation, turret
 	) -> Array[float]:
 	var fallback: Array[float] = [
-		minf(1.0 / RULE_COMBAT_TICKS_PER_SECOND, animation.length)
+		minf(1.0 / BAKED_MODEL_FRAMES_PER_SECOND, animation.length)
 	]
 	if turret.muzzle_count() <= 1:
 		return fallback
@@ -1289,7 +1305,7 @@ func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
 	if _fire_sequence_active:
 		if not is_moving:
 			return
-		_cancel_fire_sequence(true, false)
+		_cancel_fire_sequence(false)
 	if not is_moving:
 		_mech_gait_elapsed = 0.0
 	_movement_animation_active = is_moving
@@ -1378,14 +1394,15 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 		and animation_name == _fire_sequence_animation
 	):
 		# A long render frame may jump directly past the last authored shot.
-		# Complete the animation timeline before starting post-animation reload.
+		# Complete the committed animation timeline. Vehicle ReloadCount has
+		# already been advancing; infantry starts it when the action finishes.
 		var attack_target: Variant = attack_order_target()
 		if attack_target != null:
 			_fire_sequence_elapsed = _fire_sequence_duration
 			while _fire_sequence_next_shot < _fire_sequence_shot_times.size():
 				_fire_sequence_next_shot += 1
 				var projectiles: Array = _fire_sequence_turret.try_fire_at(
-					attack_target, self, null, Vector3.ZERO, false, false
+					attack_target, self, null, Vector3.ZERO, false, false, true
 				)
 				if projectiles.is_empty():
 					continue
