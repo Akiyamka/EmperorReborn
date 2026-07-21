@@ -124,6 +124,7 @@ func _initialize() -> void:
 	_run_case("impact effects use typed acceptance and fallback damage", _test_impact_effect_contract)
 	_run_case("hitscan resolves at launch without travel", _test_hitscan_projectile)
 	_run_case("non-homing bullets keep the sampled aim point", _test_linear_projectile_no_lead)
+	_run_case("attack-ground missiles descend to the sampled point", _test_attack_ground_missile)
 	_run_case("homing respects delay, turn rate and target lifetime", _test_homing_projectile)
 	_run_case("trajectory bullets follow a gravity arc", _test_trajectory_projectile)
 	await _run_async_case("projectiles collide and Sonic pierces in 3D", _test_projectile_world_collision)
@@ -430,6 +431,38 @@ func _test_linear_projectile_no_lead() -> void:
 	projectile.advance(0.25)
 	_expect(projectile.finish_reason == &"impact_ground", "a sidestepping target must escape a non-homing shot")
 	_expect(is_zero_approx(target.damage_taken), "a missed non-homing shot must not damage its former target")
+	projectile.free()
+
+
+func _test_attack_ground_missile() -> void:
+	var rules = root.get_node("Rules")
+	var launch_position := Vector3(0.0, 2.0, 0.0)
+	var ground_position := Vector3(0.0, 0.0, -10.0)
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	_expect(
+		projectile.launch(
+			_runtime_bullet(rules, &"HEAT_B"),
+			_emission(launch_position, Vector3.FORWARD),
+			ground_position
+		),
+		"the Mongoose missile must accept an in-range attack-ground point"
+	)
+	_expect(
+		projectile.direction().is_equal_approx(
+			launch_position.direction_to(ground_position)
+		),
+		"a yaw-only launcher must include the downward component in a coordinate shot"
+	)
+	projectile.advance(1.0)
+	_expect(
+		projectile.finish_reason == &"impact_ground",
+		"the attack-ground missile must resolve as a ground impact"
+	)
+	_expect(
+		projectile.global_position.is_equal_approx(ground_position),
+		"a large simulation step must not carry the missile past its sampled point"
+	)
 	projectile.free()
 
 

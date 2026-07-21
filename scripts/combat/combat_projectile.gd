@@ -112,7 +112,17 @@ func launch(
 		_collect_collision_rids(source, _excluded_rids)
 
 	var authored_direction := Vector3(emission.get("direction", Vector3.ZERO))
-	_direction = authored_direction.normalized() if not authored_direction.is_zero_approx() \
+	var attack_ground_direction := _launch_position.direction_to(_aim_position) \
+		if target_or_position is Vector3 and not bullet.has_trajectory() \
+		else Vector3.ZERO
+	# A yaw-only launcher cannot encode the vertical component of an
+	# attack-ground shot in its muzzle marker. Direct coordinate shots must use
+	# the complete sampled direction or they fly horizontally and merely expire
+	# above/below the requested point. Artillery keeps its authored heading so
+	# parallel barrels retain their geometric spread.
+	_direction = attack_ground_direction \
+		if not attack_ground_direction.is_zero_approx() \
+		else authored_direction.normalized() if not authored_direction.is_zero_approx() \
 		else _launch_position.direction_to(_aim_position)
 	if _direction.is_zero_approx():
 		_direction = Vector3.FORWARD
@@ -544,7 +554,8 @@ func _advance_trajectory(_previous_elapsed: float, current_elapsed: float) -> vo
 
 
 func _advance_direct(delta: float, previous_elapsed: float) -> void:
-	if bullet.is_homing() and _tracks_live_target \
+	var tracks_live_homing_target: bool = bullet.is_homing() and _tracks_live_target
+	if tracks_live_homing_target \
 	and previous_elapsed * RULE_UPDATES_PER_SECOND \
 		>= bullet.homing_delay_ticks():
 		_update_homing(delta)
@@ -554,6 +565,10 @@ func _advance_direct(delta: float, previous_elapsed: float) -> void:
 		_expire(&"range_exhausted")
 		return
 	var step_distance := minf(bullet.speed() * delta, remaining_range)
+	if not tracks_live_homing_target:
+		step_distance = minf(
+			step_distance, maxf(_aim_travel_distance - traveled_distance, 0.0)
+		)
 	var from := global_position
 	var to := from + _direction * step_distance
 	velocity = _direction * bullet.speed()
@@ -565,7 +580,7 @@ func _advance_direct(delta: float, previous_elapsed: float) -> void:
 	global_position = to
 	_face_direction(_direction)
 
-	if not (bullet.is_homing() and _tracks_live_target) \
+	if not tracks_live_homing_target \
 	and traveled_distance + 0.000001 >= _aim_travel_distance:
 		_resolve_arrival(global_position)
 	elif traveled_distance + 0.000001 >= _maximum_flight_distance:
