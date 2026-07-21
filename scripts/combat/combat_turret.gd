@@ -24,6 +24,12 @@ const INLINE_FX_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Texture
 const INLINE_FX_FRAME_SECONDS := 1.0 / AIM_UPDATES_PER_SECOND
 const REAR_FLASH_FRAME_COUNT := 16
 const REAR_FLASH_SIZE := 2.2
+const SHOT_LIGHT_COLOR := Color(1.0, 0.34, 0.08)
+const SHOT_LIGHT_ENERGY := 3.0
+const SHOT_LIGHT_RANGE := 4.0
+const SHOT_LIGHT_REAR_OFFSET := 0.35
+const SHOT_LIGHT_HOLD_DURATION := 0.04
+const SHOT_LIGHT_FADE_DURATION := 0.16
 const CASING_FRAME_COUNT := 10
 const CASINGS_PER_SHOT := 1
 const CASING_SIZE := 0.56
@@ -502,6 +508,7 @@ func try_fire_at(
 			projectile.free()
 			continue
 		_spawn_muzzle_flash(parent, emission)
+		_spawn_shot_light(parent, emission)
 		_spawn_rear_muzzle_effects(parent, emission)
 		result.append(projectile)
 	return result
@@ -889,6 +896,43 @@ func _spawn_rear_muzzle_effects(parent: Node, emission: Dictionary) -> void:
 	if _casing_textures.size() == CASING_FRAME_COUNT:
 		for casing_index in CASINGS_PER_SHOT:
 			_spawn_casing(parent, emission, casing_index)
+
+
+func _spawn_shot_light(parent: Node, emission: Dictionary) -> void:
+	if parent == null or not parent.is_inside_tree():
+		return
+	var shot_direction := Vector3(
+		emission.get("direction", Vector3.FORWARD)
+	).normalized()
+	if shot_direction.is_zero_approx():
+		shot_direction = Vector3.FORWARD
+	var rear_direction := Vector3(
+		emission.get("rear_direction", -shot_direction)
+	).normalized()
+	if rear_direction.is_zero_approx():
+		rear_direction = -shot_direction
+	var origin := Vector3(
+		emission.get("rear_position", emission.get("position", Vector3.ZERO))
+	)
+
+	var light := OmniLight3D.new()
+	light.name = "ShotLight_%d" % int(emission.get("index", 0))
+	light.set_meta("combat_muzzle_fx", &"shot_light")
+	light.set_meta("emission_index", int(emission.get("index", 0)))
+	light.light_color = SHOT_LIGHT_COLOR
+	light.light_energy = SHOT_LIGHT_ENERGY
+	light.omni_range = SHOT_LIGHT_RANGE
+	light.shadow_enabled = false
+	parent.add_child(light)
+	light.top_level = true
+	light.global_position = origin + rear_direction * SHOT_LIGHT_REAR_OFFSET
+
+	var flash := light.create_tween()
+	flash.tween_interval(SHOT_LIGHT_HOLD_DURATION)
+	flash.tween_property(
+		light, "light_energy", 0.0, SHOT_LIGHT_FADE_DURATION
+	).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	flash.finished.connect(light.queue_free)
 
 
 func _spawn_rear_flash(parent: Node, emission: Dictionary) -> void:

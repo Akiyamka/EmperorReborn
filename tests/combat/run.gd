@@ -681,6 +681,9 @@ func _test_turret_projectile_launch() -> void:
 		var rear_flashes := _muzzle_effects(&"rear_flash", 0)
 		var rear_flash: Node3D = rear_flashes.front() \
 			if not rear_flashes.is_empty() else null
+		var shot_lights := _muzzle_effects(&"shot_light", 0)
+		var shot_light := shot_lights.front() as OmniLight3D \
+			if not shot_lights.is_empty() else null
 		var casings := _muzzle_effects(&"casing", 0)
 		_expect(
 			muzzle_flash != null
@@ -709,6 +712,19 @@ func _test_turret_projectile_launch() -> void:
 				Vector3(aimed_emission["rear_position"])
 			),
 			"the paired #muzzle marker must emit the original rear cannon flash"
+		)
+		var expected_light_position := Vector3(aimed_emission["rear_position"]) \
+			+ Vector3(aimed_emission["rear_direction"]) \
+			* CombatTurretScript.SHOT_LIGHT_REAR_OFFSET
+		_expect(
+			shot_lights.size() == 1
+			and shot_light != null
+			and shot_light.global_position.is_equal_approx(expected_light_position)
+			and shot_light.light_color.is_equal_approx(
+				CombatTurretScript.SHOT_LIGHT_COLOR
+			)
+			and shot_light.light_energy > 0.0,
+			"each projectile event must briefly light the area behind its active barrel"
 		)
 		var casings_at_rear := casings.size() == 1
 		for casing in casings:

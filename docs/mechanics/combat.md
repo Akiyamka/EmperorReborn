@@ -130,7 +130,10 @@ Minotaurus maps `Muzzle3` through ArtIni to the original
 `>>...#muzzle01–04` marker with a sibling rear `#muzzle05–08` marker. The XBF
 FX bank assigns the original `!cexp` rear cannon flash and a `!%shel` tumbling
 casing particle to that rear point; they are emitted by the same per-barrel
-firing event as the projectile.
+firing event as the projectile. Every emitted projectile also creates a short
+warm point-light pulse just behind the active barrel (using the rear marker
+when present), so a multi-shot salvo illuminates the unit once per shot rather
+than once for the complete firing animation.
 
 On a resolved impact, the bullet's ordered `ExplosionType` entries select the
 short-lived world-space visuals mapped by `ArtIni`; the effect survives the

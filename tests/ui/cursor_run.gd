@@ -260,11 +260,12 @@ func _test_cursor_render_passes(cursors) -> void:
 					mesh_instance.layers == CursorManagerScript.CURSOR_NORMAL_RENDER_LAYER,
 					"ordinary Attack surfaces must belong only to the normal render layer"
 				)
-	_expect(normal_surfaces > 0, "Attack must retain its ordinary red and white surfaces")
+	_expect(normal_surfaces > 0, "Attack must retain its ordinary red surfaces")
 	_expect(screen_surfaces > 0, "Attack must isolate its !%orange surface for screen composition")
 
 	var blue_ring_quirks := {
 		CursorManagerScript.CursorType.MOVE: "move",
+		CursorManagerScript.CursorType.ATTACK: "attack",
 		CursorManagerScript.CursorType.DEPLOY: "deploy",
 	}
 	for cursor: int in blue_ring_quirks:

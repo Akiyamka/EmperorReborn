@@ -19,8 +19,11 @@ const SHELL_HIT_SMOKE_OPACITY := 0.55
 const SHELL_HIT_SHRAPNEL_SEQUENCE := "!@sm"
 const SHELL_HIT_SHRAPNEL_FRAME_COUNT := 11
 const SHELL_HIT_SHRAPNEL_SIZE := 0.16
-const SHELL_HIT_SHRAPNEL_DURATION := 0.65
+const SHELL_HIT_SHRAPNEL_DURATION := 1.0
 const SHELL_HIT_SHRAPNEL_COUNT := 16
+const SHELL_HIT_SHRAPNEL_VERTICAL_SPEED_MIN := 0.8
+const SHELL_HIT_SHRAPNEL_VERTICAL_SPEED_MAX := 1.4
+const SHELL_HIT_SHRAPNEL_GRAVITY := 1.6
 const SHELL_HIT_SHRAPNEL_TINT := Color(1.8, 1.45, 0.72, 1.0)
 const SHELL_HIT_LIGHT_COLOR := Color(1.0, 0.43, 0.12)
 const SHELL_HIT_LIGHT_RANGE := 3.5
@@ -149,7 +152,10 @@ func _spawn_shell_hit_shrapnel(textures: Array[Texture2D]) -> void:
 		var direction := Vector3(sin(angle), 0.0, cos(angle))
 		var speed := _random.randf_range(0.55, 1.65)
 		var velocity := direction * speed \
-			+ Vector3.UP * _random.randf_range(0.05, 0.18)
+			+ Vector3.UP * _random.randf_range(
+				SHELL_HIT_SHRAPNEL_VERTICAL_SPEED_MIN,
+				SHELL_HIT_SHRAPNEL_VERTICAL_SPEED_MAX
+			)
 		var particle := _spawn_world_particle(
 			SHELL_HIT_SHRAPNEL_SEQUENCE, textures,
 			SHELL_HIT_SHRAPNEL_SIZE, SHELL_HIT_SHRAPNEL_DURATION, start
@@ -292,7 +298,9 @@ func _update_shrapnel_position(
 	if particle == null or not is_instance_valid(particle):
 		return
 	particle.global_position = start + velocity * elapsed \
-		+ Vector3.DOWN * (0.18 * elapsed * elapsed)
+		+ Vector3.DOWN * (
+			0.5 * SHELL_HIT_SHRAPNEL_GRAVITY * elapsed * elapsed
+		)
 
 
 func _set_particle_frame(
