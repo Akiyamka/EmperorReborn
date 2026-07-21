@@ -37,6 +37,10 @@ func _initialize() -> void:
 	_run_case("TechnologyTree unit requirements", _test_technology_tree_unit_requirements)
 	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case(
+		"XBF duplicate sibling animations keep independent paths",
+		_test_duplicate_object_animation_paths
+	)
 	_run_case("XBF FX banks retain parameters and event frames", _test_xbf_fx_banks)
 	_run_case("building transition clips retain authored action names", _test_building_transition_clips)
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
@@ -365,6 +369,64 @@ func _points_bounds(points: PackedVector3Array) -> AABB:
 	for point: Vector3 in points:
 		bounds = bounds.expand(point)
 	return bounds
+
+
+func _test_duplicate_object_animation_paths() -> bool:
+	var path := "res://assets/raw_original_content/3DDATA/Buildings/AT_Palace_H0.XbF"
+	var builder = ModelBakeBuilderScript.new()
+	var scene: PackedScene = builder.build(path)
+	_expect(scene != null, "AT Palace idle model must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate() as Node3D
+	var player := root.get_node_or_null("AnimationPlayer") as AnimationPlayer
+	var timeline := player.get_animation(&"timeline") if player != null else null
+	_expect(timeline != null, "AT Palace idle model must retain its source timeline")
+	if timeline == null:
+		root.free()
+		return true
+
+	for source_suffix in ["Spotlight02", "Spotlight03"]:
+		var nodes: Array[Node3D] = []
+		_collect_nodes_with_original_suffix(root, source_suffix, nodes)
+		_expect(
+			nodes.size() == 2,
+			"AT Palace must retain both source objects named %s" % source_suffix
+		)
+		var converted_names := {}
+		for node in nodes:
+			converted_names[String(node.name)] = true
+			var track_path := NodePath(
+				"%s:transform" % String(root.get_path_to(node))
+			)
+			var track := timeline.find_track(track_path, Animation.TYPE_VALUE)
+			_expect(
+				track >= 0,
+				"%s must have its own transform track at %s"
+					% [node.name, track_path]
+			)
+			if track >= 0:
+				var first_key := timeline.track_get_key_value(track, 0) as Transform3D
+				_expect(
+					first_key.origin.distance_to(node.transform.origin) < 0.001,
+					"%s track must start at its own authored transform" % node.name
+				)
+		_expect(
+			converted_names.size() == nodes.size(),
+			"duplicate %s siblings must receive stable unique node names"
+				% source_suffix
+		)
+	root.free()
+	return true
+
+
+func _collect_nodes_with_original_suffix(
+		node: Node, suffix: String, result: Array[Node3D]
+	) -> void:
+	if node is Node3D and String(node.get_meta("original_name", "")).ends_with(suffix):
+		result.append(node as Node3D)
+	for child in node.get_children():
+		_collect_nodes_with_original_suffix(child, suffix, result)
 
 
 func _test_xbf_animation_table_variants() -> bool:

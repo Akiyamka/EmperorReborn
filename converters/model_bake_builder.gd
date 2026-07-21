@@ -121,8 +121,14 @@ func build(xbf_path: String) -> PackedScene:
 	var max_frame := 1
 	var clip_target_paths := _clip_target_paths(xbf.objects, xbf.animation_entries)
 
+	var root_child_names := {}
 	for object in xbf.objects:
-		var child := _build_object_node(object, xbf.textures, ".", anim)
+		var child_name := _unique_sibling_node_name(
+			String(object.name), root_child_names
+		)
+		var child := _build_object_node(
+			object, xbf.textures, ".", anim, child_name
+		)
 		root.add_child(child)
 		max_frame = maxi(max_frame, _object_animation_length(object))
 
@@ -158,12 +164,19 @@ func build(xbf_path: String) -> PackedScene:
 	return scene
 
 
-func _build_object_node(object: Dictionary, texture_names: PackedStringArray, node_path: String, anim: Animation, parent_parity := 1) -> Node3D:
+func _build_object_node(
+		object: Dictionary,
+		texture_names: PackedStringArray,
+		node_path: String,
+		anim: Animation,
+		node_name: String,
+		parent_parity := 1
+	) -> Node3D:
 	var node := Node3D.new()
 	var raw_name := String(object.name)
 	var uses_mirrored_content := _object_animation_is_consistently_mirrored(object)
 	var parity := parent_parity * _object_parity(object, uses_mirrored_content)
-	node.name = _safe_node_name(raw_name)
+	node.name = node_name
 	node.set_meta("original_name", raw_name)
 	if raw_name == COLLISION_OBJECT_NAME:
 		node.set_meta("collision_mesh", true)
@@ -251,8 +264,14 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 			# converges/diverges on its own from that geometry.
 			mesh_instance.set_meta("scroll_fx", true)
 
+	var child_names := _existing_child_names(content_root)
 	for child_object: Dictionary in object.children:
-		var child := _build_object_node(child_object, texture_names, content_path, anim, parity)
+		var child_name := _unique_sibling_node_name(
+			String(child_object.name), child_names
+		)
+		var child := _build_object_node(
+			child_object, texture_names, content_path, anim, child_name, parity
+		)
 		content_root.add_child(child)
 
 	return node
@@ -1419,6 +1438,27 @@ func _safe_node_name(value: String) -> String:
 	if result.is_empty() or (result.unicode_at(0) >= 48 and result.unicode_at(0) <= 57):
 		result = "Object_%s" % result
 	return result
+
+
+func _existing_child_names(parent: Node) -> Dictionary:
+	var result := {}
+	for child in parent.get_children():
+		result[String(child.name)] = true
+	return result
+
+
+## XBF permits same-named sibling objects. Resolve collisions before creating
+## animation tracks: Node.add_child() auto-renames too late, after both tracks
+## have already been pointed at the first sibling's path.
+func _unique_sibling_node_name(raw_name: String, used_names: Dictionary) -> String:
+	var base_name := _safe_node_name(raw_name)
+	var candidate := base_name
+	var suffix := 2
+	while used_names.has(candidate):
+		candidate = "%s_%d" % [base_name, suffix]
+		suffix += 1
+	used_names[candidate] = true
+	return candidate
 
 
 func _scene_name_from_path(path: String) -> String:
