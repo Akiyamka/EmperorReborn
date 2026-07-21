@@ -113,10 +113,11 @@ Additional bullet properties (verified):
   position**, not a calculated intercept point — a target moving sideways escapes
   non-homing bullets. Compensation is left to the player as a micro-management
   element: the **attack ground** order (§4) allows manual leading;
-- **indirect-fire spread** is expected for artillery such as the Minotaurus,
-  but `Rules.txt` contains no explicit spread/accuracy amount. It is deferred
-  until the original engine behavior can be characterized without inventing a
-  per-weapon rule value;
+- **indirect-fire spread** for side-by-side artillery barrels is geometric,
+  not random (verified with the Minotaurus): the rigid turret aims as one group
+  and every shell preserves its muzzle's horizontal forward direction. The
+  trajectories remain parallel, so the authored barrel spacing becomes the
+  lateral impact pattern without a separate spread/accuracy rule;
 
 Projectile presentation is also rules-backed: `MissileTrail`,
 `MissileTrailSize`, `MissileTrailLength`, and `MissileTrailDelta` produce the
@@ -125,13 +126,33 @@ fading wake behind a physical bullet. For example, the Minotaurus uses the dark
 is not persistent rocket exhaust. A separate `TurretMuzzleFlash` field selects
 the short effect spawned at the active muzzle when a shot is emitted. The
 Minotaurus maps `Muzzle3` through ArtIni to the original
-`3DDATA/Explosion/Muzzle3.xbf` visual.
+`3DDATA/Explosion/Muzzle3.xbf` visual. Its model also pairs every front
+`>>...#muzzle01–04` marker with a sibling rear `#muzzle05–08` marker. The XBF
+FX bank assigns the original `!cexp` rear cannon flash and a `!%shel` tumbling
+casing particle to that rear point; they are emitted by the same per-barrel
+firing event as the projectile.
+
+On a resolved impact, the bullet's ordered `ExplosionType` entries select the
+short-lived world-space visuals mapped by `ArtIni`; the effect survives the
+projectile node long enough to play its source animation once. The Minotaurus'
+`KobraHowitzer_B` selects `ShellHit`, rendered from the original
+`3DDATA/Explosion/shellhit.xbf`. That file's blue `#bing` cubes are hidden
+animated emitter anchors, not visible blast geometry. XBF event types 3/4
+start and stop (rather than timestamp) the FX banks: one central `!%Bru` burst,
+followed by a loose radial spray of small warm-white particles. Every particle
+receives an independent random horizontal direction and speed; the hidden
+`#bing1–4` motion must not appear as four fixed rays. The burst's first two fire
+frames stay opaque, while its following smoke frames render translucent. A
+two-frame orange point-light flash then leaves roughly ten source frames of
+weaker local illumination. Range exhaustion and target loss are expiry events
+rather than impacts and therefore do not request this effect.
 
 Summary of how different bullets miss (follows from the verified behavior above):
 
-- **non-homing arc bullets**: no lead means the bullet lands at the target's
-  sampled former position; the deferred artillery spread will offset that
-  point, after which the warhead's splash may hit neighbors;
+- **non-homing arc bullets**: no lead means the bullet reaches the plane through
+  the target's sampled former position. It does not correct sideways after
+  leaving the muzzle, so a side-mounted barrel keeps its lateral offset and the
+  warhead's splash resolves at that offset impact point;
 - **missiles**: a miss means the target dodged beyond the turn-rate limit or the
   bullet outlived its lifetime; target death in flight → self-destruction;
 - **laser**: never misses.

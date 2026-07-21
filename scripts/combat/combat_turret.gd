@@ -7,6 +7,7 @@ const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.
 ## Converted XBF models preserve the original Emperor attachment markers:
 ##   ::N...  pivot of weapon/turret N
 ##   >>N...  projectile emission point
+##   #muzzleNN  paired rear blast / shell-casing emitter
 ## A TurretNextJoint chain maps onto the nested :: pivots between a weapon's
 ## root marker and its muzzle markers.
 
@@ -17,7 +18,17 @@ const DEFAULT_ACCEPTABLE_AIM_DEGREES := 1.0
 const DEFAULT_MUZZLE_FLASH_DURATION := 0.2
 const TURRET_MARKER := "::"
 const MUZZLE_MARKER := ">>"
+const REAR_MUZZLE_MARKER := "#muzzle"
 const AUTHORED_MUZZLE_FORWARD := Vector3.BACK
+const INLINE_FX_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
+const INLINE_FX_FRAME_SECONDS := 1.0 / AIM_UPDATES_PER_SECOND
+const REAR_FLASH_FRAME_COUNT := 16
+const REAR_FLASH_SIZE := 2.2
+const CASING_FRAME_COUNT := 10
+const CASINGS_PER_SHOT := 1
+const CASING_SIZE := 0.56
+const CASING_LIFETIME := 1.0
+const CASING_GRAVITY := 5.5
 
 enum TargetRange {
 	INVALID,
@@ -31,6 +42,7 @@ var firing_config: Resource
 var bullet_config: Resource
 var warhead_config: Resource
 var projectile_visual_scene: PackedScene
+var impact_visual_scenes: Dictionary = {}
 var muzzle_flash_id: StringName = &""
 var muzzle_flash_scene: PackedScene
 var joint_configs: Array[Resource] = []
@@ -48,8 +60,11 @@ var _pitch_pivot: Node3D
 var _reference_pivot: Node3D
 var _pivot_rest_transforms: Dictionary = {}
 var _muzzles: Array[Node3D] = []
+var _rear_muzzles: Dictionary = {}
 var _next_muzzle_index := 0
 var _last_emissions: Array[Dictionary] = []
+var _rear_flash_textures: Array[Texture2D] = []
+var _casing_textures: Array[Texture2D] = []
 
 
 func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
@@ -61,6 +76,7 @@ func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
 	bullet_config = null
 	warhead_config = null
 	projectile_visual_scene = null
+	impact_visual_scenes.clear()
 	muzzle_flash_id = &""
 	muzzle_flash_scene = null
 	reload_ticks_remaining = 0.0
@@ -79,6 +95,16 @@ func configure_from_rules(turret_config: Resource, rules: Object) -> bool:
 	if bullet_config == null:
 		return false
 	projectile_visual_scene = _resolve_projectile_visual_scene(rules, bullet_id)
+	var explosion_effect_ids: Array = bullet_config.list(&"explosion_effects")
+	if explosion_effect_ids.is_empty():
+		var primary_explosion_id := String(bullet_config.field(&"explosion_type", ""))
+		if not primary_explosion_id.is_empty():
+			explosion_effect_ids.append(primary_explosion_id)
+	for value in explosion_effect_ids:
+		var effect_id := StringName(String(value))
+		var effect_scene := _resolve_impact_visual_scene(rules, effect_id)
+		if effect_scene != null:
+			impact_visual_scenes[effect_id] = effect_scene
 	muzzle_flash_id = StringName(String(firing_config.field(&"turret_muzzle_flash", "")))
 	if muzzle_flash_id != &"":
 		muzzle_flash_scene = _resolve_muzzle_flash_scene(rules, muzzle_flash_id)
@@ -109,6 +135,7 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 	if _muzzles.is_empty():
 		_collect_visual_muzzle_fallbacks(_root_pivot if _root_pivot != null else model_root, _muzzles)
 	_muzzles.sort_custom(_muzzle_less)
+	_bind_rear_muzzles(_root_pivot if _root_pivot != null else model_root)
 
 	var pivot_chain := _pivot_chain_to(_muzzles.front() if not _muzzles.is_empty() else null)
 	if pivot_chain.is_empty() and _root_pivot != null:
@@ -146,6 +173,7 @@ func unbind_model() -> void:
 	_reference_pivot = null
 	_pivot_rest_transforms.clear()
 	_muzzles.clear()
+	_rear_muzzles.clear()
 	_next_muzzle_index = 0
 	_last_emissions.clear()
 	current_yaw = 0.0
@@ -195,6 +223,10 @@ func joint_count() -> int:
 
 func muzzle_count() -> int:
 	return _muzzles.size()
+
+
+func rear_muzzle_count() -> int:
+	return _rear_muzzles.size()
 
 
 func current_yaw_degrees() -> float:
@@ -293,13 +325,24 @@ func emission_points() -> Array[Dictionary]:
 		var direction := transform.basis * AUTHORED_MUZZLE_FORWARD
 		if direction.length_squared() <= 0.000001:
 			continue
-		result.append({
+		var emission := {
 			"index": muzzle_index,
 			"node": muzzle,
 			"transform": transform,
 			"position": transform.origin,
 			"direction": direction.normalized(),
-		})
+		}
+		var rear_muzzle := _rear_muzzles.get(muzzle) as Node3D
+		if rear_muzzle != null and is_instance_valid(rear_muzzle):
+			var rear_transform := rear_muzzle.global_transform
+			emission["rear_node"] = rear_muzzle
+			emission["rear_transform"] = rear_transform
+			emission["rear_position"] = rear_transform.origin
+			# The rear marker supplies the animated position but its empty-node
+			# basis is not authored as an exhaust vector. Direction is explicitly
+			# opposite the paired barrel's projectile heading.
+			emission["rear_direction"] = -direction.normalized()
+		result.append(emission)
 	if result.is_empty() and _reference_pivot != null and is_instance_valid(_reference_pivot):
 		var transform := _reference_pivot.global_transform
 		var direction := transform.basis * AUTHORED_MUZZLE_FORWARD
@@ -360,7 +403,7 @@ func can_target(target_or_position: Variant) -> bool:
 	if not target_position.is_finite() or peek_emission().is_empty():
 		return false
 	var bullet = CombatBulletScript.new(
-		bullet_config, warhead_config, projectile_visual_scene
+		bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
 	)
 	if target_or_position is Vector3:
 		return bullet.can_hit_ground()
@@ -380,7 +423,7 @@ func target_range(target_or_position: Variant, aim_offset := Vector3.ZERO) -> in
 	var offset: Vector3 = target_position - range_origin
 	var horizontal_distance := Vector2(offset.x, offset.z).length()
 	var bullet = CombatBulletScript.new(
-		bullet_config, warhead_config, projectile_visual_scene
+		bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
 	)
 	if horizontal_distance + 0.0001 < bullet.minimum_range_world():
 		return TargetRange.TOO_CLOSE
@@ -398,7 +441,7 @@ func try_fire(begin_reload_after_shot := true) -> Array:
 	var bullet_count := maxi(int(firing_config.field(&"turret_bullet_count", 1)), 1)
 	for index in bullet_count:
 		result.append(CombatBulletScript.new(
-			bullet_config, warhead_config, projectile_visual_scene
+			bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
 		))
 		_last_emissions.append(next_emission())
 	if begin_reload_after_shot:
@@ -427,7 +470,7 @@ func try_fire_at(
 	if require_aim and not is_aimed_at(target_position + aim_offset):
 		return result
 	var preview_bullet = CombatBulletScript.new(
-		bullet_config, warhead_config, projectile_visual_scene
+		bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
 	)
 	if target_or_position is Vector3 and not preview_bullet.can_hit_ground():
 		return result
@@ -459,6 +502,7 @@ func try_fire_at(
 			projectile.free()
 			continue
 		_spawn_muzzle_flash(parent, emission)
+		_spawn_rear_muzzle_effects(parent, emission)
 		result.append(projectile)
 	return result
 
@@ -535,6 +579,27 @@ func _collect_visual_muzzle_fallbacks(node: Node, result: Array[Node3D]) -> void
 			result.append(node as Node3D)
 	for child in node.get_children():
 		_collect_visual_muzzle_fallbacks(child, result)
+
+
+func _bind_rear_muzzles(node: Node) -> void:
+	var candidates: Array[Node3D] = []
+	_collect_rear_muzzles(node, candidates)
+	for muzzle in _muzzles:
+		for candidate in candidates:
+			# Minotaurus pairs each >> marker and its rear #muzzle marker as
+			# siblings under the same animated gun object. Pair by hierarchy,
+			# not by the unrelated source number ranges 01-04 and 05-08.
+			if candidate.get_parent() == muzzle.get_parent():
+				_rear_muzzles[muzzle] = candidate
+				break
+
+
+func _collect_rear_muzzles(node: Node, result: Array[Node3D]) -> void:
+	if node is Node3D \
+	and _original_name(node).to_lower().begins_with(REAR_MUZZLE_MARKER):
+		result.append(node as Node3D)
+	for child in node.get_children():
+		_collect_rear_muzzles(child, result)
 
 
 func _pivot_with_muzzles(candidates: Array[Node3D]) -> Node3D:
@@ -631,7 +696,10 @@ func _desired_yaw(world_position: Vector3) -> float:
 	if emission.is_empty():
 		return current_yaw
 	var direction: Vector3 = emission["direction"]
-	var target_direction: Vector3 = world_position - Vector3(emission["position"])
+	# Aim the rigid barrel group from its pivot. Aiming separately from the
+	# active side muzzle would turn the whole group a little toward the centre
+	# and make consecutive Minotaurus shells converge.
+	var target_direction: Vector3 = world_position - _aim_origin()
 	var horizontal_direction := Vector2(direction.x, direction.z)
 	var horizontal_target := Vector2(target_direction.x, target_direction.z)
 	if horizontal_direction.is_zero_approx() or horizontal_target.is_zero_approx():
@@ -649,23 +717,40 @@ func _desired_firing_direction(world_position: Vector3) -> Vector3:
 	var emission := peek_emission()
 	if emission.is_empty():
 		return Vector3.ZERO
-	var target_direction: Vector3 = world_position - Vector3(emission["position"])
+	var emission_position := Vector3(emission["position"])
+	var target_direction: Vector3 = world_position - emission_position
 	if target_direction.is_zero_approx():
 		return Vector3(emission["direction"]).normalized()
 	var bullet = CombatBulletScript.new(
-		bullet_config, warhead_config, projectile_visual_scene
+		bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
 	)
 	if not bullet.has_trajectory():
 		return target_direction.normalized()
+	# A rigid multi-barrel mount has one shared elevation. Solve that elevation
+	# from the centre of the muzzle group rather than changing it whenever the
+	# active >> marker advances to the next barrel.
+	var trajectory_origin := _muzzle_group_origin()
+	if not trajectory_origin.is_finite():
+		trajectory_origin = emission_position
+	var target_heading := world_position - _aim_origin()
+	target_heading.y = 0.0
+	if target_heading.is_zero_approx():
+		target_heading = target_direction
+	var trajectory_impact_position: Vector3 = (
+		CombatProjectileScript.parallel_trajectory_impact_position(
+			trajectory_origin, world_position, target_heading
+		)
+	)
+	var trajectory_direction := trajectory_impact_position - trajectory_origin
 	var velocities: Array[Vector3] = CombatProjectileScript.trajectory_launch_velocities(
 		bullet,
-		Vector3(emission["position"]),
-		world_position,
+		trajectory_origin,
+		trajectory_impact_position,
 		CombatProjectileScript.trajectory_gravity_world(bullet_gravity),
-		_projectile_flight_range(Vector3(emission["position"]), bullet)
+		bullet.maximum_range_world()
 	)
 	if velocities.is_empty():
-		return target_direction.normalized()
+		return trajectory_direction.normalized()
 
 	var directions: Array[Vector3] = []
 	for velocity in velocities:
@@ -718,6 +803,12 @@ func _resolve_muzzle_flash_scene(rules: Object, flash_id: StringName) -> PackedS
 	)
 
 
+func _resolve_impact_visual_scene(rules: Object, effect_id: StringName) -> PackedScene:
+	return _resolve_art_visual_scene(
+		rules, effect_id, "res://assets/converted/impact_effects"
+	)
+
+
 func _resolve_art_visual_scene(
 		rules: Object,
 		art_id: StringName,
@@ -753,6 +844,7 @@ func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 		return
 	var effect := Node3D.new()
 	effect.name = "MuzzleFlash_%s" % String(muzzle_flash_id)
+	effect.set_meta("combat_muzzle_fx", &"front_flash")
 	parent.add_child(effect)
 	effect.top_level = true
 	effect.global_position = Vector3(emission.get("position", Vector3.ZERO))
@@ -788,6 +880,152 @@ func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 	cleanup.start()
 
 
+func _spawn_rear_muzzle_effects(parent: Node, emission: Dictionary) -> void:
+	if parent == null or not parent.is_inside_tree() or not emission.has("rear_position"):
+		return
+	_ensure_inline_fx_textures()
+	if _rear_flash_textures.size() == REAR_FLASH_FRAME_COUNT:
+		_spawn_rear_flash(parent, emission)
+	if _casing_textures.size() == CASING_FRAME_COUNT:
+		for casing_index in CASINGS_PER_SHOT:
+			_spawn_casing(parent, emission, casing_index)
+
+
+func _spawn_rear_flash(parent: Node, emission: Dictionary) -> void:
+	var effect := Node3D.new()
+	effect.name = "RearMuzzleFlash_%d" % int(emission.get("index", 0))
+	effect.set_meta("combat_muzzle_fx", &"rear_flash")
+	effect.set_meta("emission_index", int(emission.get("index", 0)))
+	parent.add_child(effect)
+	effect.top_level = true
+	effect.global_position = Vector3(emission["rear_position"])
+	var visual := _fx_quad(_rear_flash_textures.front(), REAR_FLASH_SIZE)
+	visual.name = "Visual"
+	effect.add_child(visual)
+	var material := (visual.mesh as QuadMesh).material as StandardMaterial3D
+	var animation := effect.create_tween()
+	for texture in _rear_flash_textures:
+		animation.tween_callback(_set_fx_texture.bind(material, texture))
+		animation.tween_interval(INLINE_FX_FRAME_SECONDS)
+	animation.finished.connect(effect.queue_free)
+
+
+func _spawn_casing(parent: Node, emission: Dictionary, casing_index: int) -> void:
+	var effect := Node3D.new()
+	effect.name = "Casing_%d_%d" % [int(emission.get("index", 0)), casing_index]
+	effect.set_meta("combat_muzzle_fx", &"casing")
+	effect.set_meta("emission_index", int(emission.get("index", 0)))
+	parent.add_child(effect)
+	effect.top_level = true
+	var start := Vector3(emission["rear_position"])
+	effect.global_position = start
+	var visual := _fx_quad(_casing_textures.front(), CASING_SIZE)
+	visual.name = "Visual"
+	effect.add_child(visual)
+	var material := (visual.mesh as QuadMesh).material as StandardMaterial3D
+
+	var eject_direction := Vector3(
+		emission.get("rear_direction", -Vector3(emission.get("direction", Vector3.FORWARD)))
+	).normalized()
+	if eject_direction.is_zero_approx():
+		eject_direction = Vector3.BACK
+	var side := eject_direction.cross(Vector3.UP).normalized()
+	if side.is_zero_approx():
+		side = Vector3.RIGHT
+	var side_sign := -1.0 if casing_index % 2 == 0 else 1.0
+	var velocity := (
+		eject_direction * (1.4 + 0.25 * casing_index)
+		+ Vector3.UP * (1.55 + 0.2 * casing_index)
+		+ side * (0.35 * side_sign)
+	)
+	var motion := effect.create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+	motion.tween_method(
+		_update_casing.bind(effect, start, velocity),
+		0.0,
+		CASING_LIFETIME,
+		CASING_LIFETIME
+	)
+	motion.finished.connect(effect.queue_free)
+	var animation := effect.create_tween().set_loops()
+	for texture in _casing_textures:
+		animation.tween_callback(_set_fx_texture.bind(material, texture))
+		animation.tween_interval(INLINE_FX_FRAME_SECONDS)
+
+
+func _fx_quad(texture: Texture2D, size: float) -> MeshInstance3D:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.albedo_texture = texture
+	var quad := QuadMesh.new()
+	quad.size = Vector2(size, size)
+	quad.material = material
+	var visual := MeshInstance3D.new()
+	visual.mesh = quad
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return visual
+
+
+func _ensure_inline_fx_textures() -> void:
+	if _rear_flash_textures.is_empty():
+		_rear_flash_textures = _load_fx_texture_sequence("!cexp", REAR_FLASH_FRAME_COUNT)
+	if _casing_textures.is_empty():
+		_casing_textures = _load_fx_texture_sequence("!%shel", CASING_FRAME_COUNT)
+
+
+func _load_fx_texture_sequence(base_name: String, count: int) -> Array[Texture2D]:
+	var result: Array[Texture2D] = []
+	for frame in count:
+		# Concatenate instead of %-formatting: the literal `%` in `!%shel`
+		# would otherwise be interpreted as another format placeholder.
+		var path := INLINE_FX_TEXTURE_DIR + "/" + base_name + str(frame) + ".tga"
+		var source_texture := load(path) as Texture2D
+		if source_texture == null:
+			return []
+		result.append(_opaque_additive_texture(source_texture))
+	return result
+
+
+func _opaque_additive_texture(source: Texture2D) -> Texture2D:
+	var image := source.get_image()
+	if image == null or image.is_empty():
+		return source
+	# The attribute bit in these original 16-bpp TGAs is not transparency;
+	# cexp happens to decode with alpha=0 for every pixel. Their `!` prefix
+	# means additive rendering, where opaque black is already invisible.
+	image.convert(Image.FORMAT_RGBA8)
+	var data := image.get_data()
+	for alpha_index in range(3, data.size(), 4):
+		data[alpha_index] = 255
+	image.set_data(
+		image.get_width(), image.get_height(), image.has_mipmaps(),
+		Image.FORMAT_RGBA8, data
+	)
+	return ImageTexture.create_from_image(image)
+
+
+func _set_fx_texture(material: StandardMaterial3D, texture: Texture2D) -> void:
+	if material != null:
+		material.albedo_texture = texture
+
+
+func _update_casing(
+		elapsed: float,
+		effect: Node3D,
+		start: Vector3,
+		initial_velocity: Vector3
+	) -> void:
+	if effect == null or not is_instance_valid(effect):
+		return
+	effect.global_position = (
+		start + initial_velocity * elapsed
+		+ Vector3.DOWN * (0.5 * CASING_GRAVITY * elapsed * elapsed)
+	)
+
+
 ## Rules ranges belong to the gameplay entity, not to an animated muzzle.
 ## Using a muzzle here makes entering range depend on whether Move, Fire or an
 ## elevated trajectory pose happened to run on that frame.
@@ -797,15 +1035,21 @@ func _range_origin() -> Vector3:
 	return _model_root.global_position
 
 
-func _projectile_flight_range(emission_position: Vector3, bullet) -> float:
-	var range_origin := _range_origin()
-	if not range_origin.is_finite():
-		return bullet.maximum_range_world()
-	var muzzle_offset := Vector2(
-		emission_position.x - range_origin.x,
-		emission_position.z - range_origin.z
-	).length()
-	return bullet.maximum_range_world() + muzzle_offset
+func _aim_origin() -> Vector3:
+	for pivot in [_yaw_pivot, _root_pivot, _reference_pivot]:
+		if pivot != null and is_instance_valid(pivot):
+			return (pivot as Node3D).global_position
+	return _range_origin()
+
+
+func _muzzle_group_origin() -> Vector3:
+	var points := emission_points()
+	if points.is_empty():
+		return Vector3.INF
+	var result := Vector3.ZERO
+	for point in points:
+		result += Vector3(point["position"])
+	return result / float(points.size())
 
 
 func _turn_axis(current: float, target: float, speed_degrees: float, delta: float) -> float:

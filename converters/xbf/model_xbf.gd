@@ -216,7 +216,10 @@ func _collect_attachment_names_from_objects(items: Array[Dictionary], names: Pac
 
 
 func _is_attachment_name(value: String) -> bool:
-	return value.begins_with("~~") or value.begins_with("::") or value.begins_with(">>")
+	return value.begins_with("~~") \
+		or value.begins_with("::") \
+		or value.begins_with(">>") \
+		or value.to_lower().begins_with("#muzzle")
 
 
 func _is_animation_name(value: String) -> bool:

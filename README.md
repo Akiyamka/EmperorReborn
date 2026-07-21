@@ -59,7 +59,7 @@ make godot-convert-building BUILDING=ATSmWindtrap
 make godot-convert-building BUILDING=ATBarracks
 make godot-convert-all-buildings  # every rules-defined building with an H0 model
 make godot-convert-all-units      # every H0 model referenced by a unit rule
-make godot-convert-projectiles    # bullet models and turret muzzle flashes referenced by Rules/ArtIni
+make godot-convert-projectiles    # bullet, muzzle-flash, and impact models referenced by Rules/ArtIni
 make godot-convert-spice-mound
 MAP="res://assets/raw_original_content/MAPS/#M70 Claw Rock" make godot-convert-map
 ```

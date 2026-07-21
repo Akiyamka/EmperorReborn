@@ -14,16 +14,19 @@ const PIERCING_BULLET_IDS: Array[StringName] = [&"Sound_B", &"SoundInf_B"]
 var config: Resource
 var warhead
 var visual_scene: PackedScene
+var impact_visual_scenes: Dictionary
 
 
 func _init(
 		bullet_config: Resource = null,
 		warhead_config: Resource = null,
-		projectile_visual_scene: PackedScene = null
+		projectile_visual_scene: PackedScene = null,
+		impact_effect_scenes := {}
 	) -> void:
 	config = bullet_config
 	warhead = CombatWarheadScript.new(warhead_config)
 	visual_scene = projectile_visual_scene
+	impact_visual_scenes = impact_effect_scenes.duplicate()
 
 
 func base_damage() -> float:
@@ -67,6 +70,22 @@ func explosion_type() -> StringName:
 
 func explosion_effects() -> Array:
 	return config.list(&"explosion_effects") if config != null else []
+
+
+func explosion_effect_ids() -> Array[StringName]:
+	var result: Array[StringName] = []
+	for value in explosion_effects():
+		var effect_id := StringName(String(value))
+		if effect_id != &"" and effect_id not in result:
+			result.append(effect_id)
+	var primary_id := explosion_type()
+	if result.is_empty() and primary_id != &"":
+		result.append(primary_id)
+	return result
+
+
+func explosion_visual_scene(effect_id: StringName) -> PackedScene:
+	return impact_visual_scenes.get(effect_id) as PackedScene
 
 
 func friendly_damage_amount() -> float:

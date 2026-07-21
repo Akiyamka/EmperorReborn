@@ -2,6 +2,7 @@ class_name CombatProjectile
 extends Node3D
 
 const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
+const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
 
 ## A physical, world-space delivery instance for one CombatBullet payload.
 ## CombatBullet remains the immutable Rules.txt view; this node owns flight,
@@ -46,6 +47,7 @@ var elapsed_seconds := 0.0
 var _direction := Vector3.ZERO
 var _launch_position := Vector3.ZERO
 var _aim_position := Vector3.ZERO
+var _trajectory_impact_position := Vector3.ZERO
 var _aim_travel_distance := 0.0
 var _target_ref: WeakRef
 var _tracks_live_target := false
@@ -93,6 +95,7 @@ func launch(
 	global_position = Vector3(emission["position"])
 	_launch_position = global_position
 	_aim_position = Vector3(resolved_target["position"]) + aim_offset
+	_trajectory_impact_position = _aim_position
 	var gameplay_range_origin := range_origin \
 		if range_origin.is_finite() else _launch_position
 	_maximum_flight_distance = bullet.maximum_range_world() \
@@ -350,6 +353,10 @@ func aim_position() -> Vector3:
 	return _aim_position
 
 
+func trajectory_impact_position() -> Vector3:
+	return _trajectory_impact_position
+
+
 func target() -> Object:
 	return _target_ref.get_ref() if _target_ref != null else null
 
@@ -371,12 +378,19 @@ func _resolve_hitscan() -> void:
 
 
 func _configure_trajectory() -> void:
-	var offset := _aim_position - _launch_position
+	# Artillery shells retain the muzzle's horizontal heading. Side-by-side
+	# barrels therefore fly in parallel instead of steering every shell toward
+	# one common point; elevation remains the ballistic solution for the target
+	# plane. This is the Minotaurus' original deterministic "spread".
+	_trajectory_impact_position = parallel_trajectory_impact_position(
+		_launch_position, _aim_position, _direction
+	)
+	var offset := _trajectory_impact_position - _launch_position
 	var horizontal := Vector3(offset.x, 0.0, offset.z)
 	var horizontal_distance := horizontal.length()
 	var ballistic_velocities: Array[Vector3] = trajectory_launch_velocities(
-		bullet, _launch_position, _aim_position, _gravity_world,
-		_maximum_flight_distance
+		bullet, _launch_position, _trajectory_impact_position, _gravity_world,
+		bullet.maximum_range_world()
 	)
 	if not ballistic_velocities.is_empty():
 		_trajectory_initial_velocity = _closest_velocity(
@@ -408,6 +422,33 @@ func _configure_trajectory() -> void:
 	velocity = _trajectory_initial_velocity
 	_direction = velocity.normalized() if not velocity.is_zero_approx() else _direction
 	_face_direction(_direction)
+
+
+## Projects an artillery shell straight ahead from its muzzle until it reaches
+## the plane through the sampled target. Only the vertical launch angle is
+## solved ballistically; no horizontal correction converges parallel barrels.
+static func parallel_trajectory_impact_position(
+		launch_position: Vector3,
+		aim_position: Vector3,
+		forward_direction: Vector3
+	) -> Vector3:
+	var horizontal_forward := Vector3(
+		forward_direction.x, 0.0, forward_direction.z
+	)
+	var horizontal_offset := Vector3(
+		aim_position.x - launch_position.x,
+		0.0,
+		aim_position.z - launch_position.z
+	)
+	if horizontal_forward.is_zero_approx() or horizontal_offset.is_zero_approx():
+		return aim_position
+	horizontal_forward = horizontal_forward.normalized()
+	var forward_distance := horizontal_offset.dot(horizontal_forward)
+	if forward_distance <= 0.000001:
+		return aim_position
+	var result := launch_position + horizontal_forward * forward_distance
+	result.y = aim_position.y
+	return result
 
 
 ## Returns the low and high ballistic solutions for a trajectory bullet whose
@@ -499,7 +540,7 @@ func _advance_trajectory(_previous_elapsed: float, current_elapsed: float) -> vo
 		_direction = segment.normalized()
 		_face_direction(_direction)
 	if current_elapsed + 0.000001 >= _trajectory_duration:
-		_resolve_arrival(_aim_position)
+		_resolve_arrival(_trajectory_impact_position)
 
 
 func _advance_direct(delta: float, previous_elapsed: float) -> void:
@@ -617,6 +658,20 @@ func _resolve_impact(direct_target: Object, world_position: Vector3) -> void:
 	var explosion_effects: Array = bullet.explosion_effects()
 	if explosion_type != &"" or not explosion_effects.is_empty():
 		explosion_requested.emit(explosion_type, explosion_effects, world_position)
+	_spawn_explosion_visuals(world_position)
+
+
+func _spawn_explosion_visuals(world_position: Vector3) -> void:
+	if bullet == null or get_parent() == null or not get_parent().is_inside_tree():
+		return
+	for effect_id in bullet.explosion_effect_ids():
+		var scene: PackedScene = bullet.explosion_visual_scene(effect_id)
+		if scene == null:
+			continue
+		var effect = CombatImpactEffectScript.new()
+		get_parent().add_child(effect)
+		if not effect.configure(effect_id, scene, world_position):
+			effect.free()
 
 
 func _finish_impact(reason: StringName, world_position: Vector3) -> void:

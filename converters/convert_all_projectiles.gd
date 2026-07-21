@@ -1,7 +1,8 @@
 extends SceneTree
 
-## Converts every available XBF referenced by a bullet ArtIni entry and every
-## TurretMuzzleFlash referenced by a turret rule.
+## Converts every available XBF referenced by a bullet ArtIni entry, every
+## TurretMuzzleFlash referenced by a turret rule, and every ExplosionType
+## referenced by a bullet.
 ##
 ## Several bullets share one XAF (for example Howitzer_B and
 ## KobraHowitzer_B both use shell.xaf), so each source visual is baked once and
@@ -10,12 +11,14 @@ extends SceneTree
 const ModelBakeBuilderScript := preload("res://converters/model_bake_builder.gd")
 
 const ART_DIR := "res://assets/converted/rules/art"
+const BULLET_DIR := "res://assets/converted/rules/bullets"
 const TURRET_DIR := "res://assets/converted/rules/turrets"
 const PROJECTILE_SOURCE_DIR := "res://assets/raw_original_content/3DDATA/bullets"
-const MUZZLE_FLASH_SOURCE_DIR := "res://assets/raw_original_content/3DDATA/Explosion"
+const EFFECT_SOURCE_DIR := "res://assets/raw_original_content/3DDATA/Explosion"
 const TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
 const PROJECTILE_OUTPUT_DIR := "res://assets/converted/projectiles"
 const MUZZLE_FLASH_OUTPUT_DIR := "res://assets/converted/muzzle_flashes"
+const IMPACT_EFFECT_OUTPUT_DIR := "res://assets/converted/impact_effects"
 
 
 func _init() -> void:
@@ -32,13 +35,22 @@ func _init() -> void:
 	var muzzle_flash_result := _convert_visuals(
 		&"muzzle flash",
 		_muzzle_flash_visual_names(),
-		_find_source_models(MUZZLE_FLASH_SOURCE_DIR),
+		_find_source_models(EFFECT_SOURCE_DIR),
 		MUZZLE_FLASH_OUTPUT_DIR,
 		force,
 		true
 	)
+	var impact_effect_result := _convert_visuals(
+		&"impact effect",
+		_impact_effect_visual_names(),
+		_find_source_models(EFFECT_SOURCE_DIR),
+		IMPACT_EFFECT_OUTPUT_DIR,
+		force,
+		true
+	)
 	var failure_count := int(projectile_result["failures"]) \
-		+ int(muzzle_flash_result["failures"])
+		+ int(muzzle_flash_result["failures"]) \
+		+ int(impact_effect_result["failures"])
 	quit(1 if failure_count > 0 else 0)
 
 
@@ -48,7 +60,7 @@ func _convert_visuals(
 		source_by_name: Dictionary,
 		output_dir: String,
 		force: bool,
-		standalone_muzzle_flash: bool
+		standalone_effect: bool
 	) -> Dictionary:
 	var converted := 0
 	var skipped_existing := 0
@@ -65,8 +77,8 @@ func _convert_visuals(
 			continue
 		var builder = ModelBakeBuilderScript.new()
 		builder.source_texture_dir = TEXTURE_DIR
-		builder.bake_embedded_muzzle_flash_visibility = not standalone_muzzle_flash
-		builder.stationary_clip_loops = not standalone_muzzle_flash
+		builder.bake_embedded_muzzle_flash_visibility = not standalone_effect
+		builder.stationary_clip_loops = not standalone_effect
 		var scene: PackedScene = builder.build(source)
 		if scene == null or _save_scene(scene, output) != OK:
 			failures.append(visual_name)
@@ -141,6 +153,37 @@ func _muzzle_flash_visual_names() -> PackedStringArray:
 				var xaf := String(art_xaf_by_id.get(flash_id.to_lower(), ""))
 				if not xaf.is_empty():
 					names[xaf.get_file().get_basename().to_lower()] = true
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	var result: PackedStringArray = []
+	for visual_name in names:
+		result.append(String(visual_name))
+	result.sort()
+	return result
+
+
+func _impact_effect_visual_names() -> PackedStringArray:
+	var art_xaf_by_id := _art_xaf_by_id()
+	var names := {}
+	var dir := DirAccess.open(BULLET_DIR)
+	if dir == null:
+		push_error("convert_all_projectiles: cannot open %s" % BULLET_DIR)
+		return PackedStringArray()
+	dir.list_dir_begin()
+	var file_name := dir.get_next()
+	while not file_name.is_empty():
+		if not dir.current_is_dir() and file_name.get_extension() == "tres":
+			var config = ResourceLoader.load(BULLET_DIR.path_join(file_name))
+			if config != null and config.has_method("list"):
+				var effect_ids: Array = config.list(&"explosion_effects")
+				if effect_ids.is_empty():
+					var primary_id := String(config.field(&"explosion_type", ""))
+					if not primary_id.is_empty():
+						effect_ids.append(primary_id)
+				for effect_id in effect_ids:
+					var xaf := String(art_xaf_by_id.get(String(effect_id).to_lower(), ""))
+					if not xaf.is_empty():
+						names[xaf.get_file().get_basename().to_lower()] = true
 		file_name = dir.get_next()
 	dir.list_dir_end()
 	var result: PackedStringArray = []
