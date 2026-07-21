@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="WarheadDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/warhead_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"Stab_W"
+armour_damage = {"Aircraft": 40, "BPV": 90, "Building": 5, "CY": 5, "Concrete": 5, "Earplugs": 100, "Harvester": 5, "Heavy": 5, "Invulnerable": 0, "Light": 5, "Medium": 5, "None": 100, "Walls": 5}

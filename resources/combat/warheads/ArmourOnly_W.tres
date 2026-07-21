@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="WarheadDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/warhead_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"ArmourOnly_W"
+armour_damage = {"Aircraft": 0, "BPV": 0, "Building": 0, "CY": 0, "Concrete": 0, "Earplugs": 0, "Harvester": 100, "Heavy": 100, "Invulnerable": 0, "Light": 100, "Medium": 100, "None": 0, "Walls": 0}

@@ -1,5 +1,7 @@
 class_name TechnologyTree
 extends RefCounted
+const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
+const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
 
 const BUILDING_PRIMARY_REQUIREMENTS := &"requires_primary"
 const BUILDING_SECONDARY_REQUIREMENTS := &"requires_secondary"
@@ -25,14 +27,16 @@ func is_available(
 		return false
 	if not _belongs_to_player_house(config, player):
 		return false
-	if max_tech_level != UNLIMITED_TECH_LEVEL and int(config.field(&"tech_level", 0)) > max_tech_level:
+	var tech_level := int(config.tech_level)
+	if max_tech_level != UNLIMITED_TECH_LEVEL and tech_level > max_tech_level:
 		return false
 
 	var owned_buildings := _owned_buildings(buildings, player.player_id)
 	var primary_requirements := _requirements(config, true)
 	if not _has_any_building(primary_requirements, owned_buildings):
 		return false
-	if bool(config.field(&"upgraded_primary_required", false)) and not _has_upgraded_building(
+	var needs_upgrade := bool(config.upgraded_primary_required)
+	if needs_upgrade and not _has_upgraded_building(
 		primary_requirements, owned_buildings
 	):
 		return false
@@ -40,7 +44,7 @@ func is_available(
 
 
 func _belongs_to_player_house(config: Resource, player) -> bool:
-	var required_house := StringName(String(config.field(&"house", "")))
+	var required_house: StringName = config.house_id
 	return (
 		String(required_house).is_empty()
 		or required_house == player.house_id
@@ -49,12 +53,11 @@ func _belongs_to_player_house(config: Resource, player) -> bool:
 
 
 func _requirements(config: Resource, primary: bool) -> Array:
-	var list_name: StringName
-	if config.entity_type == &"building":
-		list_name = BUILDING_PRIMARY_REQUIREMENTS if primary else BUILDING_SECONDARY_REQUIREMENTS
-	else:
-		list_name = UNIT_PRIMARY_REQUIREMENTS if primary else UNIT_SECONDARY_REQUIREMENTS
-	return config.list(list_name)
+	if config is UnitDefinitionScript:
+		return config.primary_building_ids if primary else config.secondary_building_ids
+	if config is BuildingDefinitionScript:
+		return config.primary_building_ids if primary else config.secondary_building_ids
+	return []
 
 
 func _owned_buildings(buildings: Array[Node], player_id: int) -> Array[Node]:

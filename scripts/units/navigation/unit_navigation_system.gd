@@ -9,6 +9,8 @@ const UnitNavigationPlannerScript := preload("res://scripts/units/navigation/uni
 const UnitLocalAvoidanceScript := preload("res://scripts/units/navigation/unit_local_avoidance.gd")
 const UnitNavigationDebugScript := preload("res://scripts/units/navigation/unit_navigation_debug.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 
 signal destination_slots_assigned(command_id: int, assignments: Array[Dictionary])
 signal enemy_blocked(unit: Node3D, blockers: Array[Node3D])
@@ -51,12 +53,14 @@ var _navigation_tick_index := 0
 var _navigation_accumulator := 0.0
 var _blocker_refresh_remaining := 0.0
 var _command_log: Array[Dictionary] = []
+var _debug_enabled := false
 
 
 func _ready() -> void:
 	if navigation_debug.get_parent() == null:
 		navigation_debug.name = "NavigationDebug"
 		add_child(navigation_debug)
+	navigation_debug.set_enabled(_debug_enabled)
 	if not get_tree().node_added.is_connected(_on_tree_node_added):
 		get_tree().node_added.connect(_on_tree_node_added)
 
@@ -147,13 +151,32 @@ func register_unit(unit: Node3D) -> int:
 		unit.call("set_navigation_managed", true)
 	if unit.has_method("set_navigation_controller"):
 		unit.call("set_navigation_controller", self)
+	if unit.has_method("set_navigation_debug_visible"):
+		unit.call("set_navigation_debug_visible", _debug_enabled)
 	return int(agent["id"])
 
 
 func unregister_unit(unit: Node3D) -> void:
 	if unit == null:
 		return
+	if unit.has_method("set_navigation_debug_visible"):
+		unit.call("set_navigation_debug_visible", false)
 	_agents.erase(unit.get_instance_id())
+
+
+func set_debug_enabled(value: bool) -> void:
+	_debug_enabled = value
+	navigation_debug.set_enabled(value)
+	for agent_value in _agents.values():
+		var unit: Node3D = (agent_value as Dictionary).get("unit")
+		if is_instance_valid(unit) and unit.has_method("set_navigation_debug_visible"):
+			unit.call("set_navigation_debug_visible", value)
+	if value:
+		_refresh_navigation_debug()
+
+
+func debug_enabled() -> bool:
+	return _debug_enabled
 
 
 func set_hold_position(unit: Node3D, active: bool) -> void:
@@ -640,6 +663,8 @@ func _desired_velocity(agent: Dictionary) -> Vector3:
 
 func _refresh_navigation_debug() -> void:
 	if navigation_debug == null or not navigation_debug.is_inside_tree():
+		return
+	if not _debug_enabled:
 		return
 	var snapshots: Array[Dictionary] = []
 	for value in _agents.values():
@@ -1600,10 +1625,10 @@ func _movement_probe_for(unit: Node3D) -> Dictionary:
 
 
 func _profile_for(unit: Node3D) -> Dictionary:
-	var config = unit.get("unit_config")
-	var infantry := bool(config.field(&"infantry", false)) if config != null else false
-	var can_fly := bool(config.field(&"can_fly", false)) if config != null else false
-	var size := float(config.field(&"size", 1.0)) if config != null else 1.0
+	var config = unit.get("unit_definition")
+	var infantry := bool(config.infantry) if config != null else false
+	var can_fly := bool(config.can_fly) if config != null else false
+	var size := float(config.size) if config != null else 1.0
 	var radius := maxf(0.35, size * 0.42)
 	if unit.has_method("navigation_collision_radius"):
 		radius = float(unit.call("navigation_collision_radius", radius))
@@ -1622,7 +1647,7 @@ func _profile_for(unit: Node3D) -> Dictionary:
 		int(ceil(rotation_radius / maxf(minf(cell_size.x, cell_size.y), 0.001))) - 1
 	)
 	var pass_mask := MapNavigationGrid.PASS_AIR if can_fly else (MapNavigationGrid.PASS_INFANTRY if infantry else MapNavigationGrid.PASS_VEHICLE)
-	var terrain_mask := _terrain_mask(config.list(&"terrain") if config != null else [])
+	var terrain_mask := _terrain_mask(config.terrain_ids if config != null else [])
 	# `size` is the side of the unit's square footprint in navigation cells;
 	# destinations are always the center of a free size x size cell block.
 	var footprint := maxi(1, roundi(size))
@@ -1662,19 +1687,18 @@ func _refresh_building_blockers() -> void:
 		return
 	var blocked := {}
 	var no_stop := {}
-	var rules := get_node_or_null("/root/Rules")
 	for node in get_tree().get_nodes_in_group("buildings"):
 		var building := node as Node3D
 		if building == null or not _owns_node(building):
 			continue
-		var config = building.get("building_config")
-		if config == null and rules != null:
-			var config_id = building.get("config_id")
-			if config_id != null:
-				config = rules.call("building", config_id)
+		var config = building.get("building_definition") as Resource \
+			if "building_definition" in building else null
+		if config == null:
+			var config_id := StringName(str(building.get("config_id")))
+			config = _building_definition_catalog.definition(config_id)
 		if config == null:
 			continue
-		var rows: Array = config.list(&"occupy_rows")
+		var rows: Array = config.occupy_rows
 		var footprint: Dictionary = BuildingFootprintScript.nav_cells_by_marker(
 			building, rows, runtime_map.grid, OCCUPY_CELL_SPAN
 		)
@@ -1690,6 +1714,9 @@ func _refresh_building_blockers() -> void:
 
 
 func _replan_after_map_change() -> void:
+	# Blocker refreshes run independently of navigation ticks, so an agent's
+	# unit may have been freed since the last regular pruning pass.
+	_prune_agents()
 	var changed_by_command := {}
 	for key in _agents.keys():
 		var agent: Dictionary = _agents[key]

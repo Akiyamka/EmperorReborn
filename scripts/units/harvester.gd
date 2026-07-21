@@ -18,10 +18,9 @@ const ORIGINAL_UNLOAD_RATE_PER_UPDATE := 2.0
 const UNLOAD_HOLD_FALLBACK_SECONDS := 0.05
 const AUTO_SEARCH_RETRY_SECONDS := 1.0
 const INVALID_DOCK := -1
-## Rules.txt [Harvester] has SpiceCapacity=700. The normalized database
-## currently preserves this legacy special-unit field as an orphan custom row,
-## so retain the authoritative value as a compatibility fallback until that
-## converter representation gains a typed unit column.
+## Rules.txt [Harvester] has SpiceCapacity=700, but the normalized schema has no
+## unit column for it. UnitDefinition carries the value; this constant is the
+## explicit fallback until the database schema gains that typed column.
 const ORIGINAL_SPICE_CAPACITY := 700.0
 
 enum HarvestPhase { NONE, TRAVEL, START, HOLD, END }
@@ -581,7 +580,7 @@ func _is_close_to_harvest_cell(cell: Vector2i) -> bool:
 	# three cells from the clicked spice cell while its hull is already touching
 	# the field. Scale the action radius to the authored footprint instead of
 	# making every harvester fight for the same central parking block.
-	var footprint_cells := float(unit_config.field(&"size", 1.0)) if unit_config != null else 1.0
+	var footprint_cells := float(unit_definition.size) if unit_definition != null else 1.0
 	var approach_cells := maxf(HARVEST_APPROACH_RADIUS_CELLS, footprint_cells)
 	var approach_radius := maxf(cell_dimensions.x, cell_dimensions.y) * approach_cells
 	var offset := target - global_position
@@ -761,15 +760,15 @@ func _execute_pending_order() -> void:
 				_start_unload_order(refinery, data.get("grid"))
 
 
-func _apply_rules_config() -> void:
-	super._apply_rules_config()
-	if unit_config == null:
+func _apply_unit_definition() -> void:
+	super._apply_unit_definition()
+	if unit_definition == null:
 		return
-	max_spice = maxf(float(unit_config.field(&"spice_capacity", max_spice)), 0.0)
+	max_spice = maxf(float(unit_definition.spice_capacity), 0.0)
 	if max_spice <= 0.0:
 		max_spice = ORIGINAL_SPICE_CAPACITY
 	unload_rate_per_update = maxf(float(
-		unit_config.field(&"unload_rate", ORIGINAL_UNLOAD_RATE_PER_UPDATE)
+		unit_definition.unload_rate
 	), 0.0)
 	spice = spice
 

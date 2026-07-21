@@ -14,6 +14,8 @@ const SPICE_COMPOSITE_SHADER := preload("res://scripts/world/map/spice_composite
 const SPICE_TEXTURE := preload("res://assets/raw_original_content/3DDATA/Textures/spicetga_32.tga")
 const SPICE_MOUND_SCENE := preload("res://scenes/world/spice_mound.tscn")
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
+const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_definition_catalog.gd")
+static var _combat_definition_catalog := CombatDefinitionCatalogScript.new()
 const COMPOSITE_TEXTURE_SIZE := 1024
 const RULE_TICKS_PER_SECOND := 60.0
 const MIN_SPREAD_INTERVAL_SECONDS := 0.001
@@ -334,7 +336,7 @@ func _start_spice_spread(source_cell: Vector2i, config: Resource, maturity_fract
 
 
 func _spread_interval_seconds(config: Resource) -> float:
-	var build_time_ticks := float(config.field(&"build_time", 0.0)) if config != null else 0.0
+	var build_time_ticks: float = float(config.build_time_ticks) if config != null else 0.0
 	return maxf(
 		build_time_ticks / RULE_TICKS_PER_SECOND * SPREAD_INTERVAL_MULTIPLIER,
 		MIN_SPREAD_INTERVAL_SECONDS
@@ -346,8 +348,8 @@ func _create_spice_spread_job(
 	config: Resource,
 	maturity_fraction := 1.0
 ) -> Dictionary:
-	var blast_radius := maxf(float(config.field(&"blast_radius", 0.0)), 0.0) if config != null else 0.0
-	var full_spice_capacity := maxi(int(config.field(&"spice_capacity", 0)), 0) if config != null else 0
+	var blast_radius := maxf(config.blast_radius, 0.0) if config != null else 0.0
+	var full_spice_capacity := maxi(config.spice_capacity, 0) if config != null else 0
 	var spice_capacity := floori(float(full_spice_capacity) * clampf(maturity_fraction, 0.0, 1.0))
 	var stage_count := maxi(int(ceil(blast_radius)), 1)
 	var spread := {
@@ -536,8 +538,8 @@ func _damage_infantry_in_cells(cells: Dictionary, damage: float, units: Array) -
 	for unit: Variant in units:
 		if not is_instance_valid(unit) or not unit.has_method("take_damage"):
 			continue
-		var unit_config: Resource = unit.get("unit_config")
-		if unit_config == null or not bool(unit_config.field(&"infantry", false)):
+		var unit_definition: Resource = unit.get("unit_definition")
+		if unit_definition == null or not unit_definition.infantry:
 			continue
 		var world_position: Vector3 = unit.global_position if unit.is_inside_tree() else unit.position
 		if not cells.has(_navigation_grid.world_to_grid(world_position)):
@@ -548,11 +550,9 @@ func _damage_infantry_in_cells(cells: Dictionary, damage: float, units: Array) -
 
 
 func _spice_hazard_damage_per_second() -> float:
-	var tree := Engine.get_main_loop() as SceneTree
-	var rules := tree.root.get_node_or_null("Rules") if tree != null else null
-	var spice_puff: Resource = rules.bullet(SPICE_PUFF_ID) if rules != null else null
+	var spice_puff := _combat_definition_catalog.bullet(SPICE_PUFF_ID)
 	return maxf(
-		float(spice_puff.field(&"damage", DEFAULT_SPICE_HAZARD_DAMAGE)) if spice_puff != null \
+		spice_puff.damage if spice_puff != null \
 		else DEFAULT_SPICE_HAZARD_DAMAGE,
 		0.0
 	)

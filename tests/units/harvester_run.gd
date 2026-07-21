@@ -299,8 +299,14 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 	var material := harvester_layer.material_override as ShaderMaterial
 	_expect(harvester_layer.visible and not spice_layer.visible, "harvester cargo must use the authored @!Harv ring without a duplicate @!Spice ring")
 	_expect(is_equal_approx(float(material.get_shader_parameter("fill")), 0.5), "@!Harv fill must track spice divided by bunker capacity")
+	_expect(not movement_arrow.visible,
+		"the final navigation course must remain hidden while debug layers are disabled")
+	halo.set_movement_debug_visible(true)
 	_expect(movement_arrow.visible and movement_arrow.mesh != null,
-		"a selected moving unit must expose its final navigation course as a visible arrow")
+		"an enabled debug layer must expose the selected unit's final navigation course")
+	halo.set_movement_debug_visible(false)
+	_expect(not movement_arrow.visible, "disabling debug layers must hide the navigation course arrow")
+	halo.set_movement_debug_visible(true)
 	halo.set_selected(false)
 	_expect(not movement_arrow.visible, "the navigation course arrow must disappear with selection")
 	harvester.queue_free()
@@ -393,7 +399,7 @@ func _test_two_harvesters_share_field(token: int) -> int:
 	var harvesters: Array[TestHarvester] = []
 	for index in 6:
 		var harvester := TestHarvester.new()
-		harvester.unit_config = root.get_node("Rules").unit(&"Harvester")
+		harvester.config_id = &"Harvester"
 		harvester.max_spice = 700.0
 		harvester.move_speed = 4.0
 		harvester.turn_rate = 0.15

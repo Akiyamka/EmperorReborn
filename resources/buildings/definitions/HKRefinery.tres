@@ -1,0 +1,36 @@
+[gd_resource type="Resource" script_class="BuildingDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/buildings/building_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"HKRefinery"
+legacy_name = &"HKRefinery"
+house_id = &"Harkonnen"
+building_group_id = &"Refinery"
+cost = 1500
+build_time_ticks = 720
+health = 3000
+shield_health = 0
+armour_type = &"Building"
+tech_level = 1
+power_used = 40
+power_generated = 0
+can_be_primary = false
+is_construction_yard = false
+upgraded_primary_required = false
+primary_building_ids = [&"ATConYard", &"ORConYard", &"HKConYard"]
+secondary_building_ids = [&"ATSmWindtrap", &"ORSmWindtrap", &"HKSmWindtrap"]
+roles = [&"Refinery"]
+occupy_rows = ["nnnnbbbnnnn", "nnbbbbbbbnn", "nnbbbbbbbnn", "pppbbbbbppp", "pppdddddppp", "pppdddddppp", "ddddddddddd", "sssssssssss", "sssssssssss", "sssssssssss"]
+deploy_points = [{"tile_x": 5, "tile_y": 4, "angle": 0}, {"tile_x": 9, "tile_y": 5, "angle": -45}, {"tile_x": 1, "tile_y": 5, "angle": 45}]
+linked_unit_ids = []
+survivor_count = 3
+turret_id = &""
+upgrade_tech_level = 0
+upgrade_cost = 0
+upgrade_build_time_ticks = 0
+model_name = "hk_refinery"
+icon_path = "icons\\\\HK_Refinery.tga"
+icon_grey_path = "icons\\\\grey_HK_Refinery.tga"
+sidebar_type = &"Buildings"

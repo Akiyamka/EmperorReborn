@@ -1,0 +1,58 @@
+[gd_resource type="Resource" script_class="UnitDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/units/unit_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"GUAdvisor"
+legacy_name = &"GUAdvisor"
+house_id = &"Ix"
+unit_group_id = &"FromBarracks"
+scene_path = "res://scenes/units/gu_advisor.tscn"
+model_scene_path = "res://assets/converted/models/GU_Man_H0/GU_Man_H0.scn"
+icon_path = ""
+icon_grey_path = ""
+sidebar_type = &""
+cost = 40
+build_time_ticks = 0
+tech_level = 1
+upgraded_primary_required = false
+primary_building_ids = []
+secondary_building_ids = []
+size = 1
+health = 700
+shield_health = 0
+armour_type = &"None"
+speed = 2
+mech_speed = 0
+mech = false
+turn_rate = 0.2
+infantry = true
+can_fly = false
+can_move_any_direction = true
+terrain_ids = [&"Sand", &"Rock", &"NBRock", &"InfRock", &"Ramp"]
+can_be_deviated = false
+can_self_repair = false
+can_be_repaired = false
+crushable = true
+crushes = false
+starportable = false
+tasty_to_worms = false
+worm_attraction = 3
+can_be_suppressed = true
+can_die = false
+cant_be_leeched = false
+selectable = false
+stealthed_when_still = false
+height_offset = 0
+roof_height = 0
+spice_capacity = 0
+unload_rate = 0
+resource_ids = []
+explosion_effect_ids = []
+chaos_effect_id = &"SmallChaosFX"
+hawk_effect_id = &"SmallHawkFX"
+damage_effect_id = &""
+explosion_type_id = &""
+veterancy_level_paths = []
+turret_ids = []

@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://nanahv818ytp" path="res://scripts/units/harvester.gd" id="1_harvester"]
 [ext_resource type="PackedScene" path="res://assets/converted/models/G_harvester_h0/G_harvester_h0.scn" id="2_model"]
+[ext_resource type="Script" path="res://scripts/units/unit_editor_preview.gd" id="3_preview"]
 
 [node name="Harvester" type="CharacterBody3D" groups=["units"]]
 collision_layer = 2
@@ -13,3 +14,5 @@ config_id = &"Harvester"
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0)
 
 [node name="G_harvester_h0" parent="VisualRoot" instance=ExtResource("2_model")]
+[node name="EditorPreview" type="Node" parent="."]
+script = ExtResource("3_preview")

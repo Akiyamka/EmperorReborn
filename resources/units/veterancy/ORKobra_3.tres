@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="UnitVeterancyDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/units/unit_veterancy_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+level = 3
+score = 60
+extra_damage_percent = 75
+extra_armour_percent = 0
+extra_range_percent = 0
+can_self_repair = false
+elite = false
+stealthed_when_still = false
+speed_override = 12

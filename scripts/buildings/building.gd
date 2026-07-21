@@ -3,6 +3,9 @@ extends Node3D
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
+const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+static var _native_definition_catalog := BuildingDefinitionCatalogScript.new()
 ## Converted Emperor buildings expose their apron/door on authored local +Z.
 const LOCAL_EXIT_DIRECTION := Vector3.BACK
 
@@ -22,6 +25,7 @@ const OCCUPY_CELL_WORLD_SPAN := 2.0
 const REFINERY_ROLE := "Refinery"
 const REFINERY_DOCK_RELEASE_DELAY_SECONDS := 3.0
 const INVALID_REFINERY_DOCK := -1
+const RULE_COMBAT_TICKS_PER_SECOND := 20.0
 
 ## Refinery dock upgrades are visual states of the refinery itself, not
 ## separate Building nodes. The first/left upgrade unfolds ~~3SmallPad01 and
@@ -50,10 +54,16 @@ const REFINERY_DOCK_POINT_ORDER := [0, 2, 1]
 @export var default_state := &"idle"
 @export var max_health := 0.0
 @export var max_shields := 0.0
+@export var armour_type: StringName = &""
 @export var upgrade_level := 0
 @export_enum("No upgrades", "Left dock", "Both docks") var refinery_upgrade_state: int = RefineryUpgradeState.NONE
 
-var building_config: Resource
+var building_definition: Resource
+var building_config: Resource:
+	get:
+		return building_definition
+	set(value):
+		building_definition = value
 var health := 0.0:
 	set(value):
 		health = clampf(value, 0.0, max_health)
@@ -65,6 +75,7 @@ var shields := 0.0:
 var is_selected := false
 var is_hovered := false
 var rally_point := Vector3.ZERO
+var combat_turrets: Array = []
 
 var current_state := &""
 var invulnerable := false
@@ -97,7 +108,7 @@ func _ready() -> void:
 	add_to_group("buildings")
 	if String(config_id).is_empty() and has_meta("building_id"):
 		config_id = StringName(String(get_meta("building_id")))
-	_apply_rules_config()
+	_apply_building_definition()
 	health = max_health
 	shields = max_shields
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
@@ -119,6 +130,8 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
+	for turret in combat_turrets:
+		turret.advance_ticks(delta * RULE_COMBAT_TICKS_PER_SECOND)
 	_advance_refinery_dock_cooldowns(delta)
 	if _scroll_fx_meshes.is_empty():
 		return
@@ -154,10 +167,10 @@ func production_spawn_position() -> Vector3:
 	# nearest-to-centre cell rather than at the outer edge, so units are born
 	# inside the correct footprint cell but already facing a clear exit to the
 	# rally point.
-	if building_config == null:
+	if building_definition == null:
 		return global_position + exit_direction()
 	var rows: Array[String] = []
-	rows.assign(building_config.list(&"occupy_rows"))
+	rows.assign(building_definition.occupy_rows)
 	var spawn_cell := _nearest_skirt_cell(rows)
 	if spawn_cell.x < 0:
 		return global_position + exit_direction()
@@ -185,8 +198,8 @@ func production_exit_position() -> Vector3:
 
 
 func _front_footprint_extent() -> float:
-	if building_config != null:
-		var rows: Array = building_config.list(&"occupy_rows")
+	if building_definition != null:
+		var rows: Array = building_definition.occupy_rows
 		if not rows.is_empty():
 			return float(rows.size()) * OCCUPY_CELL_WORLD_SPAN * 0.5
 	return _front_collision_extent()
@@ -391,6 +404,7 @@ func play_state(state: StringName) -> void:
 		# frame. Otherwise a freshly added building can briefly render its
 		# default idle state before construct starts updating.
 		player.advance(0.0)
+		_bind_combat_turrets(_state_root(state))
 		return
 
 	var states := get_node_or_null("States")
@@ -400,6 +414,18 @@ func play_state(state: StringName) -> void:
 	for child in states.get_children():
 		var child_state := StringName(String(child.get_meta("state", child.name.to_lower())))
 		child.visible = child_state == state
+	_bind_combat_turrets(_state_root(state))
+
+
+func _state_root(state: StringName) -> Node3D:
+	var states := get_node_or_null("States")
+	if states == null:
+		return null
+	for child in states.get_children():
+		var child_state := StringName(String(child.get_meta("state", child.name.to_lower())))
+		if child_state == state and child is Node3D:
+			return child as Node3D
+	return null
 
 
 func set_owner_player_id(player_id: int) -> void:
@@ -423,7 +449,7 @@ func refinery_dock_capacity() -> int:
 
 
 func is_refinery() -> bool:
-	return building_config != null and building_config.list(&"roles").has(REFINERY_ROLE)
+	return building_definition != null and building_definition.roles.has(REFINERY_ROLE)
 
 
 ## Reserves one currently active pad immediately. A reservation remains owned
@@ -522,7 +548,7 @@ func refinery_dock_navigation_cells(navigation_grid) -> Dictionary:
 
 
 func _refinery_dock_points() -> Array:
-	var source_points: Array = building_config.list(&"deploy_points") if building_config != null else []
+	var source_points: Array = building_definition.deploy_points if building_definition != null else []
 	var ordered_points: Array = []
 	for source_index in REFINERY_DOCK_POINT_ORDER:
 		if source_index < source_points.size():
@@ -531,7 +557,7 @@ func _refinery_dock_points() -> Array:
 
 
 func _refinery_occupy_rows() -> Array:
-	return building_config.list(&"occupy_rows") if building_config != null else []
+	return building_definition.occupy_rows if building_definition != null else []
 
 
 func _advance_refinery_dock_cooldowns(delta: float) -> void:
@@ -604,7 +630,7 @@ func setup(building_id: StringName) -> void:
 	if not is_inside_tree():
 		return
 
-	_apply_rules_config()
+	_apply_building_definition()
 	health = max_health
 
 
@@ -651,13 +677,93 @@ func take_damage(amount: float) -> void:
 	if invulnerable or amount <= 0.0 or health <= 0.0:
 		return
 
-	health -= amount
+	var remaining_damage := amount
+	if shields > 0.0:
+		var absorbed := minf(shields, remaining_damage)
+		shields -= absorbed
+		remaining_damage -= absorbed
+	if remaining_damage <= 0.0:
+		return
+	health -= remaining_damage
 	if health <= 0.0:
 		# §2.1 "Building destruction": no debris/ruins remain, so the footprint
 		# is freed immediately via queue_free() — survivors must be spawned
 		# first, before the building (and its footprint bounds) disappear.
 		BuildingSurvivorsScript.spawn_for_destroyed_building(self)
 		queue_free()
+
+
+func combat_armour_type() -> StringName:
+	return armour_type
+
+
+func combat_is_airborne() -> bool:
+	return false
+
+
+func combat_aim_position() -> Vector3:
+	return global_position
+
+
+func combat_is_alive() -> bool:
+	return health > 0.0 and not is_queued_for_deletion()
+
+
+func combat_hit_radius() -> float:
+	var collision_body := get_node_or_null("SelectionCollision") as StaticBody3D
+	if collision_body != null and collision_body.has_meta("collision_bounds"):
+		var bounds: AABB = collision_body.get_meta("collision_bounds")
+		return maxf(minf(bounds.size.x, bounds.size.z) * 0.5, 0.5)
+	return 0.5
+
+
+func combat_owner_player_id() -> int:
+	# Stable combat-facing ownership contract used for friendly-fire scaling.
+	return owner_player_id
+
+
+func aim_turrets_at(world_position: Vector3, delta: float) -> bool:
+	if combat_turrets.is_empty():
+		return false
+	var all_aimed := true
+	for turret in combat_turrets:
+		all_aimed = turret.aim_at(world_position, delta) and all_aimed
+	return all_aimed
+
+
+func turret_emission_points(weapon_index: int = 0) -> Array[Dictionary]:
+	var turret = _combat_turret_for_weapon(weapon_index)
+	if turret == null:
+		return []
+	return turret.emission_points()
+
+
+func next_turret_emission(weapon_index: int = 0) -> Dictionary:
+	var turret = _combat_turret_for_weapon(weapon_index)
+	if turret == null:
+		return {}
+	return turret.next_emission()
+
+
+func fire_weapon_at(
+		target_or_position: Variant,
+		weapon_index: int = 0,
+		projectile_parent: Node = null,
+		aim_offset := Vector3.ZERO
+	) -> Array:
+	var turret = _combat_turret_for_weapon(weapon_index)
+	if turret == null:
+		return []
+	return turret.try_fire_at(target_or_position, self, projectile_parent, aim_offset)
+
+
+func _combat_turret_for_weapon(weapon_index: int):
+	if weapon_index < 0:
+		return null
+	for turret in combat_turrets:
+		if turret.weapon_index() == weapon_index:
+			return turret
+	return null
 
 
 func owner_player():
@@ -689,30 +795,44 @@ func _refresh_owner_visuals() -> void:
 	_apply_team_color(self, _owner_team_color())
 
 
-func _apply_rules_config() -> void:
+func _apply_building_definition() -> void:
 	if String(config_id).is_empty():
 		return
 
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		push_warning("Rules autoload is not available; using scene defaults for %s" % name)
+	building_definition = _native_definition_catalog.definition(config_id)
+	if building_definition == null:
+		push_warning("Building definition not found: %s" % String(config_id))
 		return
 
-	building_config = rules.call("building", config_id)
-	if building_config == null:
-		push_warning("Building rules config not found: %s" % String(config_id))
-		return
+	max_health = building_definition.health
+	max_shields = building_definition.shield_health
+	armour_type = building_definition.armour_type
+	_configure_combat_turret()
 
-	max_health = float(building_config.field(&"health", max_health))
-	max_shields = float(building_config.field(&"shield_health", max_shields))
+
+func _configure_combat_turret() -> void:
+	combat_turrets.clear()
+	var definition := _native_definition_catalog.definition(config_id)
+	var turret_id: StringName = definition.turret_id if definition != null else &""
+	if turret_id == &"":
+		return
+	var turret = CombatTurretScript.new()
+	if turret.configure(turret_id):
+		turret.bind_model(_state_root(current_state), 0)
+		combat_turrets.append(turret)
+
+
+func _bind_combat_turrets(model_root: Node3D) -> void:
+	for turret in combat_turrets:
+		turret.bind_model(model_root, turret.weapon_index())
 
 
 func _refresh_generated_energy() -> void:
-	if not is_inside_tree() or building_config == null or max_health <= 0.0 or health <= 0.0:
+	if not is_inside_tree() or building_definition == null or max_health <= 0.0 or health <= 0.0:
 		_set_generated_energy(0)
 		return
 
-	var full_power := int(building_config.field(&"power_generated", 0))
+	var full_power := int(building_definition.power_generated)
 	_set_generated_energy(roundi(float(full_power) * health / max_health))
 
 

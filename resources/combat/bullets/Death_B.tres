@@ -1,0 +1,47 @@
+[gd_resource type="Resource" script_class="BulletDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/bullet_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"Death_B"
+warhead_id = &""
+damage = 0
+maximum_range = 0
+minimum_range = 0
+speed = 0
+blast_radius = 0
+friendly_damage_amount = 0
+reduce_damage_with_distance = true
+anti_aircraft = false
+anti_ground = true
+homing = false
+homing_delay = 0
+turn_rate = 0
+continuous = false
+trajectory = false
+is_laser = false
+missile_trail_present = false
+missile_trail = 0
+missile_trail_size = 0
+missile_trail_wiggle_frequency = 0
+missile_trail_wiggle_scale = 0
+missile_trail_length = 0
+missile_trail_delta = 0
+burnt = false
+ignites = false
+gassed = false
+leech = false
+infantry = false
+damage_column = false
+deviate = false
+beserk = false
+retreat = false
+effect_health = 0
+effect_damage_per_tick = 0
+linger_duration = 0
+linger_damage = 0
+explosion_type_id = &""
+explosion_effect_ids = []
+projectile_scene_path = "res://assets/converted/projectiles/shell/shell.scn"
+impact_scene_paths = {}

@@ -23,7 +23,6 @@ config/icon="res://icon.svg"
 [autoload]
 
 Players="*res://scripts/players/player_roster.gd"
-Rules="*res://scripts/rules/rules.gd"
 Cursors="*res://scripts/ui/cursor_manager.gd"
 
 [display]

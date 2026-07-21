@@ -1,8 +1,20 @@
 extends SceneTree
 
+const LegacyRulesFixture := preload("res://tests/support/legacy_rules_fixture.gd")
+
+const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
+const BuildingDefinitionCatalogScript := preload(
+	"res://scripts/buildings/building_definition_catalog.gd"
+)
 const MatchFixtureScene := preload("res://tests/fixtures/match_fixture.tscn")
 const HarvesterScene := preload("res://scenes/units/harvester.tscn")
 const ATRefineryScene := preload("res://assets/converted/buildings/ATRefinery/ATRefinery.scn")
+const ATMongooseModelScene := preload(
+	"res://assets/converted/models/AT_mongoose_H0/AT_mongoose_H0.scn"
+)
+const ATMinotaurusModelScene := preload(
+	"res://assets/converted/models/AT_minotaurus_H0/AT_minotaurus_H0.scn"
+)
 
 ## Regression test for a startup-ordering bug: Match._enter_tree() used to
 ## compute the building-panel roster via Rules.buildable_building_ids_for_house(),
@@ -18,6 +30,7 @@ var _current_case := ""
 
 
 func _initialize() -> void:
+	LegacyRulesFixture.install(root)
 	await _run_case("units and buildings use authored collision meshes", _test_authored_collision_meshes)
 	await _run_case("ground vehicles follow terrain elevation and slope", _test_units_follow_terrain)
 	await _run_case("units turn at their rules rates", _test_unit_turn_rates)
@@ -26,12 +39,14 @@ func _initialize() -> void:
 	await _run_case("mechs alternate smoothly between gait speeds", _test_mech_gait_speeds)
 	await _run_case("test match roster is non-empty after boot", _test_match_roster_populated)
 	await _run_case("roster controls leave arrow keys to the camera", _test_roster_controls_ignore_keyboard_focus)
+	await _run_case("F3 toggles every navigation debug layer", _test_unified_debug_shortcut)
 	await _run_case("rules art configs resolve every test panel icon", _test_match_panel_icons)
 	await _run_case("rules sidebar type selects the panel tab", _test_rules_sidebar_tabs)
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
 	await _run_case("upgrade slot appears after its building is placed later", _test_upgrade_availability_polls)
 	await _run_case("unit slots follow prerequisite buildings and their upgrades", _test_unit_roster_availability)
 	await _run_case("completed units emerge from primary building toward rally point", _test_unit_production_rally_and_primary)
+	await _run_case("real match units execute forced friendly attack orders", _test_real_forced_friendly_attack)
 	await _run_case("real harvester completes a refinery unload trip", _test_real_harvester_unload_trip)
 	await _run_case("occupy matrices are Z-mirrored to match converted models", _test_occupy_rows_are_mirrored)
 
@@ -68,7 +83,7 @@ func _test_authored_collision_meshes() -> void:
 	for unit_name in [&"ScoutA", &"OrdosAPC", &"NIABTank"]:
 		var unit := match_instance.get_node("Units/%s" % unit_name)
 		_expect(unit._collision_sources().size() > 0, "%s must expose an authored collision volume" % unit_name)
-		var rule_size := float(unit.unit_config.field(&"size", 1.0))
+		var rule_size := float(unit.unit_definition.size)
 		var rule_radius := maxf(0.35, rule_size * 0.42)
 		var navigation_radius := float(unit.navigation_collision_radius(rule_radius))
 		_expect(
@@ -306,8 +321,8 @@ func _test_mech_gait_speeds() -> void:
 
 	var unit := match_instance.get_node("Units/ScoutA") as Unit
 	unit.setup(&"ATMongoose")
-	var configured_speed := float(unit.unit_config.field(&"speed", 0.0))
-	var configured_mech_speed := float(unit.unit_config.field(&"mech_speed", 0.0))
+	var configured_speed := float(unit.unit_definition.speed)
+	var configured_mech_speed := float(unit.unit_definition.mech_speed)
 	_expect(
 		is_equal_approx(unit.move_speed, configured_speed),
 		"Mongoose must load its editable Speed rule"
@@ -367,6 +382,14 @@ func _unit_animation_player(unit: Unit) -> AnimationPlayer:
 		if player.has_animation(&"Move") and player.has_animation(&"Stationary"):
 			return player
 	return null
+
+
+func _projectile_has_visible_mesh(projectile: Node) -> bool:
+	if projectile == null:
+		return false
+	var visual := projectile.get_node_or_null("Visual")
+	return visual is MeshInstance3D \
+		or (visual != null and not visual.find_children("*", "MeshInstance3D", true, false).is_empty())
 
 
 func _is_unit_idle(player: AnimationPlayer) -> bool:
@@ -438,6 +461,58 @@ func _test_roster_controls_ignore_keyboard_focus() -> void:
 			tab.focus_mode == Control.FOCUS_NONE,
 			"roster tab %s must not participate in arrow-key focus navigation" % tab.name
 		)
+
+	match_instance.queue_free()
+
+
+func _test_unified_debug_shortcut() -> void:
+	var match_instance := MatchFixtureScene.instantiate()
+	get_root().add_child(match_instance)
+	await process_frame
+	await process_frame
+
+	var grid_debug = match_instance.get_node("NavigationGridDebug")
+	var navigation = match_instance.get_node("UnitNavigationSystem")
+	var route_debug = navigation.get_node("NavigationDebug")
+	var unit = match_instance.get_node("Units/ScoutA")
+	var halo = unit.get_node("SelectionHalo")
+	_expect(
+		not match_instance.debug_layers_enabled()
+		and not grid_debug.is_enabled()
+		and not navigation.debug_enabled()
+		and not route_debug.is_enabled()
+		and not halo.is_movement_debug_visible(),
+		"all navigation debug layers must start disabled"
+	)
+
+	var f3_event := InputEventKey.new()
+	f3_event.keycode = KEY_F3
+	f3_event.pressed = true
+	_expect(match_instance._handle_debug_shortcut(f3_event), "F3 must own the unified debug shortcut")
+	_expect(
+		grid_debug.visible
+		and navigation.debug_enabled()
+		and route_debug.visible
+		and halo.is_movement_debug_visible(),
+		"F3 must enable the grid, route markers, and final steering arrows together"
+	)
+
+	var n_event := InputEventKey.new()
+	n_event.keycode = KEY_N
+	n_event.pressed = true
+	_expect(
+		not match_instance._handle_debug_shortcut(n_event)
+		and match_instance.debug_layers_enabled(),
+		"N must no longer control any navigation debug layer"
+	)
+	_expect(match_instance._handle_debug_shortcut(f3_event), "a second F3 press must be accepted")
+	_expect(
+		not grid_debug.visible
+		and not navigation.debug_enabled()
+		and not route_debug.visible
+		and not halo.is_movement_debug_visible(),
+		"a second F3 press must disable every navigation debug layer together"
+	)
 
 	match_instance.queue_free()
 
@@ -790,6 +865,176 @@ func _test_unit_production_rally_and_primary() -> void:
 	match_instance.queue_free()
 
 
+func _test_real_forced_friendly_attack() -> void:
+	var match_instance := MatchFixtureScene.instantiate()
+	get_root().add_child(match_instance)
+	await physics_frame
+	await physics_frame
+
+	var attacker := match_instance.get_node("Units/ScoutA") as Unit
+	var target := match_instance.get_node("Units/OrdosAPC") as Unit
+	attacker.setup(&"ATMongoose")
+	attacker.replace_visual_scene(ATMongooseModelScene)
+	target.set_owner_player_id(attacker.owner_player_id)
+	attacker.stop_at_current_position()
+	target.stop_at_current_position()
+
+	var emission: Dictionary = attacker.turret_emission_points()[0]
+	var forward: Vector3 = emission["direction"]
+	forward.y = 0.0
+	var side := forward.normalized().rotated(Vector3.UP, PI * 0.5)
+	target.global_position = attacker.global_position + side * 8.0
+	target.call("_snap_to_terrain")
+
+	var fired_projectiles: Array = []
+	var fired_animation_names: Array[StringName] = []
+	var mongoose_target_durability := target.health + target.shields
+	attacker.weapon_fired.connect(func(projectiles: Array, fired_target: Variant, _weapon_index: int) -> void:
+		if fired_target == target:
+			fired_projectiles.append_array(projectiles)
+			var player := _unit_animation_player(attacker)
+			fired_animation_names.append(player.current_animation if player != null else &"")
+	)
+	_expect(
+		attacker.command_attack(target),
+		"the navigation-managed Mongoose must accept a real allied unit target"
+	)
+	for _frame in 240:
+		await process_frame
+		if not fired_projectiles.is_empty():
+			break
+	_expect(
+		absf(attacker.combat_turrets[0].current_yaw_degrees()) > 1.0,
+		"the automatically processed Mongoose must turn its turret toward an in-range ally"
+	)
+	_expect(
+		not fired_projectiles.is_empty(),
+		"the automatically processed Mongoose must fire after aiming at an in-range ally"
+	)
+	_expect(
+		fired_animation_names == [&"Fire_0"],
+		"the real Mongoose missile must launch during its authored Fire_0 clip"
+	)
+	_expect(
+		attacker.combat_turrets[0].reload_ticks_remaining > 0.0
+		and attacker.combat_turrets[0].reload_ticks_remaining < 30.0,
+		"the real Mongoose must advance ReloadCount during Fire_0"
+	)
+	_expect(
+		not fired_projectiles.is_empty() \
+			and is_instance_valid(fired_projectiles[0]) \
+			and _projectile_has_visible_mesh(fired_projectiles[0]),
+		"the Mongoose missile must be visible while it travels"
+	)
+	for _frame in 120:
+		await process_frame
+		if target.health + target.shields < mongoose_target_durability:
+			break
+	_expect(
+		target.health + target.shields < mongoose_target_durability,
+		"the Mongoose missile must damage its explicitly selected allied target"
+	)
+
+	for projectile in fired_projectiles:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	fired_projectiles.clear()
+	fired_animation_names.clear()
+	attacker.cancel_attack_order()
+	attacker.setup(&"ATMinotaurus")
+	attacker.replace_visual_scene(ATMinotaurusModelScene)
+	# Keep the real target alive until all four authored barrel events occur;
+	# otherwise a normal ORAPC can die from the leading shells of the same salvo.
+	target.max_health = 10000.0
+	target.health = target.max_health
+	target.max_shields = 0.0
+	target.shields = 0.0
+	emission = attacker.turret_emission_points()[0]
+	forward = emission["direction"]
+	forward.y = 0.0
+	var minotaurus_initial_hull_yaw := attacker.global_rotation.y
+	var minotaurus_initial_position := attacker.global_position
+	target.global_position = attacker.global_position + Vector3.RIGHT * 35.0
+	target.call("_snap_to_terrain")
+	var minotaurus_target_health := target.health
+	_expect(
+		attacker.combat_turrets[0].target_range(target)
+			== CombatTurretScript.TargetRange.TOO_FAR,
+		"the real Minotaurus pursuit regression must begin beyond maximum range"
+	)
+	_expect(
+		attacker.command_attack(target),
+		"the navigation-managed Minotaurus must accept a real allied unit target"
+	)
+	for _frame in 600:
+		await process_frame
+		if not fired_projectiles.is_empty():
+			break
+	_expect(
+		absf(angle_difference(minotaurus_initial_hull_yaw, attacker.global_rotation.y))
+			> deg_to_rad(30.0),
+		"the automatically processed Minotaurus must turn its hull toward a distant side target"
+	)
+	_expect(
+		attacker.global_position.distance_to(minotaurus_initial_position) > 0.5,
+		"the automatically processed Minotaurus must close distance before firing"
+	)
+	_expect(
+		absf(attacker.combat_turrets[0].current_yaw_degrees()) <= 45.01,
+		"the Minotaurus turret must remain inside its authored sector while the hull turns"
+	)
+	_expect(
+		not fired_projectiles.is_empty(),
+		"the automatically processed Minotaurus must fire after aiming at an in-range ally"
+	)
+	_expect(
+		not fired_projectiles.is_empty() \
+			and is_instance_valid(fired_projectiles[0]) \
+			and _projectile_has_visible_mesh(fired_projectiles[0]),
+		"the Minotaurus shell must be visible while it travels"
+	)
+	for _frame in 120:
+		await process_frame
+		if fired_projectiles.size() >= 4:
+			break
+	_expect(
+		fired_projectiles.size() == 4,
+		"the real Minotaurus must emit four sequential shells in one salvo"
+	)
+	_expect(
+		fired_animation_names == [&"Fire_0", &"Fire_0", &"Fire_0", &"Fire_0"],
+		"the real Minotaurus salvo must use one Fire_0 animation for all four shells"
+	)
+	_expect(
+		attacker.combat_turrets[0].reload_ticks_remaining > 0.0
+		and attacker.combat_turrets[0].reload_ticks_remaining < 120.0,
+		"the real Minotaurus must advance ReloadCount during its salvo"
+	)
+	for _frame in 60:
+		await process_frame
+		if not attacker._fire_sequence_active:
+			break
+	_expect(
+		not attacker._fire_sequence_active
+		and attacker.combat_turrets[0].reload_ticks_remaining > 0.0
+		and attacker.combat_turrets[0].reload_ticks_remaining < 120.0,
+		"the real Minotaurus must retain only the unelapsed ReloadCount after Fire_0"
+	)
+	for _frame in 240:
+		await process_frame
+		if target.health < minotaurus_target_health:
+			break
+	_expect(
+		target.health < minotaurus_target_health,
+		"the Minotaurus shell must damage its explicitly selected allied target"
+	)
+	for projectile in fired_projectiles:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	match_instance.queue_free()
+	await process_frame
+
+
 func _test_real_harvester_unload_trip() -> void:
 	var match_instance = MatchFixtureScene.instantiate()
 	for child in match_instance.get_node("Buildings").get_children():
@@ -857,22 +1102,19 @@ func _test_real_harvester_unload_trip() -> void:
 ## The model converter negates Z (left-handed source -> Godot), which puts
 ## every building's low skirt/apron on its +Z side, while the footprint code
 ## lays occupy row 0 toward -Z. import_rules.gd therefore Z-mirrors the
-## occupy matrix at import (rows stored back-to-front relative to Rules.txt).
+## occupy matrix during native-resource generation (rows stored back-to-front
+## relative to Rules.txt).
 ## This pins the mirror against the real converted data: a reimport that
 ## drops it would silently turn every footprint 180 degrees away from its
 ## model again.
 func _test_occupy_rows_are_mirrored() -> void:
-	var rules := get_root().get_node_or_null("/root/Rules")
-	_expect(rules != null, "the Rules autoload must be available")
-	if rules == null:
-		return
-
-	var con_yard: Resource = rules.call("building", &"ATConYard")
-	_expect(con_yard != null, "ATConYard rules config must exist")
+	var catalog := BuildingDefinitionCatalogScript.new()
+	var con_yard: Resource = catalog.definition(&"ATConYard")
+	_expect(con_yard != null, "ATConYard native definition must exist")
 	if con_yard == null:
 		return
 
-	var occupy_rows: Array = con_yard.list(&"occupy_rows")
+	var occupy_rows: Array = con_yard.occupy_rows
 	_expect(occupy_rows.size() == 10, "ATConYard must keep its 10-row occupy matrix")
 	if occupy_rows.size() != 10:
 		return

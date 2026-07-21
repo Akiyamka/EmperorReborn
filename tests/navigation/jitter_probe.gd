@@ -4,6 +4,7 @@ extends SceneTree
 ## per navigation tick, to find where left/right twitching enters the pipeline.
 
 const NavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 
 
 class ProbeUnit extends Node3D:
@@ -11,7 +12,7 @@ class ProbeUnit extends Node3D:
 	var turn_rate := 0.15
 	var can_move_any_direction := false
 	var arrival_radius := 0.2
-	var unit_config := RuleEntityConfig.new()
+	var unit_definition := UnitDefinitionScript.new()
 	var destination := Vector3.ZERO
 	var is_selected := false
 	var facing := Vector3.RIGHT
@@ -20,8 +21,10 @@ class ProbeUnit extends Node3D:
 	var _turning := false
 
 	func _init() -> void:
-		unit_config.fields = {"size": 3.0, "infantry": false, "can_fly": false}
-		unit_config.lists = {"terrain": [&"Rock"]}
+		unit_definition.size = 3
+		unit_definition.infantry = false
+		unit_definition.can_fly = false
+		unit_definition.terrain_ids = [&"Rock"]
 
 	func set_navigation_managed(_active: bool) -> void:
 		pass

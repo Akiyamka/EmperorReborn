@@ -5,12 +5,13 @@ const CursorModelCatalogScript := preload("res://scripts/ui/cursor_model_catalog
 
 const NORMAL_RENDER_LAYER := 1
 const SCREEN_RENDER_LAYER := 2
-# Move and Deploy author their blue rings as ordinary `whitering2.TGA` even
-# though the original cursor renderer treats those surfaces as screen effects.
-# Keep these exceptions source-specific: the same shared texture is used
-# normally by many other cursor XBFs.
+# Move, Attack, and Deploy author their blue rings as ordinary
+# `whitering2.TGA` even though the original cursor renderer treats those
+# surfaces as screen effects. Keep these exceptions source-specific: the same
+# shared texture is used normally by many other cursor XBFs.
 const SCREEN_SURFACE_QUIRKS := {
 	"cu_move_h0.xbf": {"whitering2.tga": true},
+	"cu_attack_h0.xbf": {"whitering2.tga": true},
 	"cu_deploy_h0.xbf": {"whitering2.tga": true},
 }
 

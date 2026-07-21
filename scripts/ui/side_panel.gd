@@ -10,6 +10,8 @@ const QUEUE_GRID_ROWS := 5
 const QUEUE_SLOT_SIZE := Vector2(64, 64)
 const ICON_TEXTURE_ROOT := "res://assets/raw_original_content/3DDATA/Textures"
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
+const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 
 ## All five tabs switch the content of the same production grid,
 ## so exactly one of them is active at a time.
@@ -48,6 +50,8 @@ var _upgrade_option_states: Dictionary = {}
 var _icon_paths_by_filename: Dictionary = {}
 var _icon_textures: Dictionary = {}
 var _entity_tabs: Dictionary = {}
+var _unit_definition_catalog := UnitSceneCatalogScript.new()
+var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 var _credits_amount := 0
 var _energy_amount := 0
 var _sell_mode_active := false
@@ -284,14 +288,19 @@ func _configure_upgrade_slot(slot_index: int, upgrade_id: StringName) -> void:
 
 
 func _building_icon_data(building_id: StringName) -> Array[Texture2D]:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null or not rules.has_method("get_entity"):
+	var unit_definition := _unit_definition_catalog.definition_for(building_id)
+	if unit_definition != null:
+		var unit_colored := _icon_texture(unit_definition.icon_path)
+		var unit_grey := _icon_texture(unit_definition.icon_grey_path)
+		var unit_icons: Array[Texture2D] = []
+		if unit_colored != null and unit_grey != null:
+			unit_icons.assign([unit_colored, unit_grey])
+		return unit_icons
+	var building_definition := _building_definition_catalog.definition(building_id)
+	if building_definition == null:
 		return []
-	var art_config: Resource = rules.call("get_entity", &"art_config", building_id)
-	if art_config == null:
-		return []
-	var colored := _icon_texture(String(art_config.field(&"icon", "")))
-	var grey := _icon_texture(String(art_config.field(&"icon_grey", "")))
+	var colored := _icon_texture(building_definition.icon_path)
+	var grey := _icon_texture(building_definition.icon_grey_path)
 	if colored == null or grey == null:
 		return []
 	return [colored, grey]
@@ -359,13 +368,15 @@ func _art_tab_for_entity(entity_id: StringName, fallback: Tab) -> Tab:
 		return int(_entity_tabs[entity_id]) as Tab
 	if not is_inside_tree():
 		return fallback
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null or not rules.has_method("get_entity"):
+	var unit_definition := _unit_definition_catalog.definition_for(entity_id)
+	if unit_definition != null:
+		var unit_tab := int(ART_SIDEBAR_TABS.get(String(unit_definition.sidebar_type), fallback)) as Tab
+		_entity_tabs[entity_id] = unit_tab
+		return unit_tab
+	var building_definition := _building_definition_catalog.definition(entity_id)
+	if building_definition == null:
 		return fallback
-	var art_config: Resource = rules.call("get_entity", &"art_config", entity_id)
-	if art_config == null:
-		return fallback
-	var sidebar_type := String(art_config.field(&"sidebar_type", ""))
+	var sidebar_type := String(building_definition.sidebar_type)
 	var tab := int(ART_SIDEBAR_TABS.get(sidebar_type, fallback)) as Tab
 	_entity_tabs[entity_id] = tab
 	return tab

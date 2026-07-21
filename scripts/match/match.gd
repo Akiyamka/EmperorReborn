@@ -6,6 +6,8 @@ const BuildingUpgradeControllerScript := preload("res://scripts/buildings/buildi
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
 const UnitDeploymentControllerScript := preload("res://scripts/units/unit_deployment_controller.gd")
 const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
+const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const NavigationGridDebugScript := preload("res://scripts/units/navigation/navigation_grid_debug.gd")
 const MatchSnapshotScript := preload("res://scripts/match/match_snapshot.gd")
@@ -31,6 +33,7 @@ var _unit_command_controller: UnitCommandController
 var _unit_deployment_controller
 var _unit_navigation_system
 var _navigation_grid_debug
+var _debug_layers_enabled := false
 ## Whole roster of the local player's house, gated by the technology tree
 ## rather than a hardcoded demo list -- see docs/mechanics/production.md.
 var _building_option_ids: Array[StringName] = []
@@ -44,6 +47,8 @@ var _upgrade_option_ids: Array[StringName] = []
 ## through UnitRosterController.
 var _unit_option_ids: Array[StringName] = []
 var _unit_roster_controller: UnitRosterController
+var _unit_definition_catalog := UnitSceneCatalogScript.new()
+var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 var _match_snapshot
 
 
@@ -181,6 +186,7 @@ func _setup_unit_navigation_system() -> void:
 	add_child(_unit_navigation_system)
 	if terrain.navigation_grid != null:
 		_unit_navigation_system.setup(terrain.navigation_grid)
+	_unit_navigation_system.set_debug_enabled(_debug_layers_enabled)
 
 
 func _setup_navigation_grid_debug() -> void:
@@ -188,6 +194,7 @@ func _setup_navigation_grid_debug() -> void:
 	_navigation_grid_debug.name = "NavigationGridDebug"
 	add_child(_navigation_grid_debug)
 	_navigation_grid_debug.setup(terrain, _unit_navigation_system)
+	_navigation_grid_debug.set_enabled(_debug_layers_enabled)
 
 
 func _place_on_map() -> void:
@@ -235,6 +242,10 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _handle_debug_shortcut(event):
+		get_viewport().set_input_as_handled()
+		return
+
 	if _handle_snapshot_shortcut(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -249,6 +260,28 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if _unit_command_controller != null and _unit_command_controller.handle_unhandled_input(event):
 		get_viewport().set_input_as_handled()
+
+
+func _handle_debug_shortcut(event: InputEvent) -> bool:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return false
+	if event.keycode != KEY_F3 and event.physical_keycode != KEY_F3:
+		return false
+	_set_debug_layers_enabled(not _debug_layers_enabled)
+	return true
+
+
+func _set_debug_layers_enabled(value: bool) -> void:
+	_debug_layers_enabled = value
+	if _navigation_grid_debug != null:
+		_navigation_grid_debug.set_enabled(value)
+	if _unit_navigation_system != null:
+		_unit_navigation_system.set_debug_enabled(value)
+	print("Navigation debug layers: %s" % ("visible" if value else "hidden"))
+
+
+func debug_layers_enabled() -> bool:
+	return _debug_layers_enabled
 
 
 func _handle_snapshot_shortcut(event: InputEvent) -> bool:
@@ -310,54 +343,52 @@ func _configure_demo_players() -> void:
 
 func _local_player_building_option_ids() -> Array[StringName]:
 	var players = _players()
-	var rules := get_node_or_null("/root/Rules")
-	if players == null or rules == null:
+	if players == null:
 		return []
 
 	var local_player = players.player(LOCAL_PLAYER_ID)
 	if local_player == null:
 		return []
 
-	return rules.buildable_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.buildable_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _local_player_wall_building_ids() -> Array[StringName]:
 	var players = _players()
-	var rules := get_node_or_null("/root/Rules")
-	if players == null or rules == null:
+	if players == null:
 		return []
 
 	var local_player = players.player(LOCAL_PLAYER_ID)
 	if local_player == null:
 		return []
 
-	return rules.wall_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.wall_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _local_player_unit_option_ids() -> Array[StringName]:
 	var players = _players()
-	var rules := get_node_or_null("/root/Rules")
-	if players == null or rules == null:
+	if players == null:
 		return []
 
 	var local_player = players.player(LOCAL_PLAYER_ID)
 	if local_player == null:
 		return []
 
-	return rules.producible_unit_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _unit_definition_catalog.producible_unit_ids(
+		local_player.house_id, local_player.subhouse_ids
+	)
 
 
 func _local_player_upgrade_option_ids() -> Array[StringName]:
 	var players = _players()
-	var rules := get_node_or_null("/root/Rules")
-	if players == null or rules == null:
+	if players == null:
 		return []
 
 	var local_player = players.player(LOCAL_PLAYER_ID)
 	if local_player == null:
 		return []
 
-	return rules.upgrade_building_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.upgrade_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
 
 func _players():

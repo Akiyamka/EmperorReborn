@@ -16,10 +16,9 @@ const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.g
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
-const HarvesterScene := preload("res://scenes/units/harvester.tscn")
+const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 
-const UNIT_MODEL_ROOT := "res://assets/converted/models"
 const UNIT_POPULATION_LIMIT := 1000
 const UNIT_QUEUE_CAPACITY := 100
 
@@ -28,7 +27,7 @@ const UNIT_QUEUE_CAPACITY := 100
 var max_tech_level: int = TechnologyTreeScript.UNLIMITED_TECH_LEVEL
 
 var _unit_ids: Array[StringName] = []
-var _unit_configs: Dictionary = {}
+var _unit_definitions: Dictionary = {}
 var _technology_tree: TechnologyTree = TechnologyTreeScript.new()
 var _unit_availability: Dictionary = {}
 var _production_queues: Dictionary = {}
@@ -37,12 +36,12 @@ var _production_queues: Dictionary = {}
 ## the gradual-payment implementation shared with building construction while
 ## allowing the documented 100-unit production queue.
 var _pending_unit_ids: Dictionary = {}
-var _unit_model_scene_paths: Dictionary = {}
+var _unit_scene_catalog := UnitSceneCatalogScript.new()
 
 
 func setup(unit_ids: Array[StringName]) -> void:
 	_unit_ids = unit_ids.duplicate()
-	_load_unit_configs()
+	_load_unit_definitions()
 	_refresh_unit_option_states()
 
 
@@ -77,7 +76,7 @@ func _on_unit_slot_left_pressed(unit_id: StringName, quantity: int) -> void:
 	if not _is_unit_available(unit_id):
 		status_changed.emit("%s is not available" % String(unit_id))
 		return
-	var config: Resource = _unit_configs.get(unit_id)
+	var config: Resource = _unit_definitions.get(unit_id)
 	var production_building_id := _production_building_id(config)
 	if production_building_id == &"":
 		status_changed.emit("No production building is available for %s" % String(unit_id))
@@ -104,7 +103,7 @@ func _on_unit_slot_left_pressed(unit_id: StringName, quantity: int) -> void:
 
 
 func _on_unit_slot_right_pressed(unit_id: StringName, quantity: int) -> void:
-	var config: Resource = _unit_configs.get(unit_id)
+	var config: Resource = _unit_definitions.get(unit_id)
 	var production_building_id := _production_building_id(config)
 	if production_building_id == &"":
 		return
@@ -156,13 +155,11 @@ func _spawn_completed_unit(unit_id: StringName, production_building_id: StringNa
 	if parent == null or _owned_unit_count(player.player_id) >= UNIT_POPULATION_LIMIT:
 		return false
 
-	var scene := _scene_for_unit(unit_id)
-	var unit := scene.instantiate() as Unit
+	var unit := _unit_scene_catalog.instantiate(unit_id, UnitScene) as Unit
 	if unit == null:
 		return false
 	unit.name = String(unit_id)
 	unit.config_id = unit_id
-	_configure_unit_visual(unit, unit_id)
 	parent.add_child(unit)
 	# Units begin just inside the producer's front edge, then immediately move
 	# toward that building's own rally point.
@@ -181,14 +178,17 @@ func _spawn_completed_unit(unit_id: StringName, production_building_id: StringNa
 ## Specialized units keep their own script/scene lifecycle while remaining
 ## compatible with the Unit production and navigation contracts.
 func _scene_for_unit(unit_id: StringName) -> PackedScene:
-	return HarvesterScene if unit_id == &"Harvester" else UnitScene
+	# Kept as a small compatibility seam for tests and callers that only need
+	# the PackedScene. Actual production uses catalog.instantiate(), which also
+	# configures the visual for the generic fallback path.
+	return _unit_scene_catalog.scene_for(unit_id, UnitScene)
 
 
 func _production_building_id(config: Resource) -> StringName:
 	if config == null:
 		return &""
 	var primary_buildings: Array[StringName] = []
-	primary_buildings.assign(config.list(&"primary_buildings"))
+	primary_buildings.assign(config.primary_building_ids)
 	var player := _local_player()
 	var player_id := player.player_id if player != null else -1
 	for building_id in primary_buildings:
@@ -294,7 +294,7 @@ func _start_next_unit_order(production_building_id: StringName) -> void:
 	if pending.is_empty():
 		return
 	var unit_id: StringName = pending.pop_front()
-	var config: Resource = _unit_configs.get(unit_id)
+	var config: Resource = _unit_definitions.get(unit_id)
 	if config == null:
 		push_warning("Unit rules config not found for queued unit: %s" % String(unit_id))
 		_start_next_unit_order(production_building_id)
@@ -302,8 +302,8 @@ func _start_next_unit_order(production_building_id: StringName) -> void:
 	if not queue.start(
 		unit_id,
 		String(unit_id),
-		maxi(int(config.field(&"cost", 0)), 0),
-		maxf(float(config.field(&"build_time", 0.0)), 1.0)
+		maxi(int(config.cost), 0),
+		maxf(float(config.build_time_ticks), 1.0)
 	):
 		push_warning("Unit could not be started from production queue: %s" % String(unit_id))
 
@@ -325,49 +325,6 @@ func _owned_unit_count(player_id: int) -> int:
 	return count
 
 
-func _configure_unit_visual(unit: Unit, unit_id: StringName) -> void:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		return
-	var art_config: Resource = rules.call("get_entity", &"art_config", unit_id)
-	var xaf := String(art_config.field(&"xaf", "")) if art_config != null else ""
-	if xaf.is_empty():
-		return
-	var model_name := "%s_H0" % xaf
-	var scene_path := _unit_model_scene_path(model_name)
-	if not ResourceLoader.exists(scene_path):
-		push_warning("Unit model scene is unavailable: %s" % scene_path)
-		return
-	var visual_root := unit.get_node_or_null("VisualRoot") as Node3D
-	var model_scene := load(scene_path) as PackedScene
-	if visual_root == null or model_scene == null:
-		return
-	for child in visual_root.get_children():
-		visual_root.remove_child(child)
-		child.queue_free()
-	visual_root.add_child(model_scene.instantiate())
-
-
-func _unit_model_scene_path(model_name: String) -> String:
-	var key := model_name.to_lower()
-	if _unit_model_scene_paths.has(key):
-		return String(_unit_model_scene_paths[key])
-	var directory := DirAccess.open(UNIT_MODEL_ROOT)
-	if directory == null:
-		return ""
-	directory.list_dir_begin()
-	var directory_name := directory.get_next()
-	while not directory_name.is_empty():
-		if directory.current_is_dir() and directory_name.to_lower() == key:
-			var scene_path := UNIT_MODEL_ROOT.path_join(directory_name).path_join("%s.scn" % directory_name)
-			_unit_model_scene_paths[key] = scene_path
-			directory.list_dir_end()
-			return scene_path
-		directory_name = directory.get_next()
-	directory.list_dir_end()
-	return ""
-
-
 func _default_rally_point(building: Node3D) -> Vector3:
 	return building.global_position + _production_exit_direction(building) * 2.0
 
@@ -380,24 +337,19 @@ func _production_exit_direction(building: Node3D) -> Vector3:
 	return SpatialOrientationScript.world_horizontal_axis(building, Vector3.BACK)
 
 
-func _load_unit_configs() -> void:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		push_warning("Rules autoload is not available; unit roster uses no rules")
-		return
-
+func _load_unit_definitions() -> void:
 	for unit_id in _unit_ids:
-		var config: Resource = rules.call("unit", unit_id)
+		var config: Resource = _unit_scene_catalog.definition_for(unit_id)
 		if config == null:
-			push_warning("Unit rules config not found: %s" % String(unit_id))
+			push_warning("Unit definition not found: %s" % String(unit_id))
 			continue
-		_unit_configs[unit_id] = config
+		_unit_definitions[unit_id] = config
 
 
 func _is_unit_available(unit_id: StringName) -> bool:
 	if not is_inside_tree():
 		return false
-	var config: Resource = _unit_configs.get(unit_id)
+	var config: Resource = _unit_definitions.get(unit_id)
 	if config == null:
 		return false
 	var player = _local_player()
@@ -427,7 +379,7 @@ func _refresh_unit_option_states() -> void:
 		var queue_quantity := 0
 		if _is_unit_available(unit_id):
 			state = BuildingOptionStateScript.State.AVAILABLE
-			var production_building_id := _production_building_id(_unit_configs.get(unit_id))
+			var production_building_id := _production_building_id(_unit_definitions.get(unit_id))
 			var queue: BuildingQueue = _production_queues.get(production_building_id)
 			var order = queue.current_order() if queue != null else null
 			if order != null:
@@ -448,12 +400,12 @@ func _refresh_unit_option_states() -> void:
 
 
 func _unit_tooltip(unit_id: StringName) -> String:
-	var config: Resource = _unit_configs.get(unit_id)
+	var config: Resource = _unit_definitions.get(unit_id)
 	if config == null:
 		return String(unit_id)
 
-	var cost := int(config.field(&"cost", 0))
-	var build_time_ticks := float(config.field(&"build_time", 0.0))
+	var cost := int(config.cost)
+	var build_time_ticks := float(config.build_time_ticks)
 	var build_seconds := build_time_ticks / BuildingQueueScript.BUILD_TICKS_PER_SECOND
 	return "%s\nCost: %d\nBuild: %.1fs" % [String(unit_id), cost, build_seconds]
 

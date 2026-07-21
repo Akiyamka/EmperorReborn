@@ -18,6 +18,7 @@ var _selected_entities: Array[Node] = []
 var _hovered_entity = null
 var _drag_start: Vector2 = Vector2.INF
 var _formation_modifier_down := false
+var _attack_modifier_down := false
 
 const DRAG_SELECTION_THRESHOLD := 8.0
 const TERRAIN_COLLISION_MASK := 1
@@ -61,9 +62,13 @@ func _exit_tree() -> void:
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
-	if event is InputEventKey and _is_formation_modifier(event):
-		_formation_modifier_down = event.pressed
-		return false
+	if event is InputEventKey:
+		if _is_attack_modifier(event):
+			_attack_modifier_down = event.pressed
+			return false
+		if _is_formation_modifier(event):
+			_formation_modifier_down = event.pressed
+			return false
 	if event is InputEventMouseMotion:
 		if _is_dragging():
 			_update_drag_selection(event.position)
@@ -81,7 +86,7 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 			return true
 		MOUSE_BUTTON_RIGHT:
 			if event.pressed:
-				_command_move(event.position)
+				_command_at(event.position, event.ctrl_pressed or _attack_modifier_down)
 				return true
 	return false
 
@@ -168,7 +173,68 @@ func _select_units_in_rectangle(rectangle: Rect2) -> void:
 	status_changed.emit("")
 
 
-func _command_move(screen_position: Vector2) -> void:
+func _command_at(screen_position: Vector2, force_attack: bool) -> void:
+	if _selected_entities.is_empty():
+		return
+	var entity_hit := _raycast(screen_position, ENTITY_SELECTION_COLLISION_MASK)
+	var target_entity = _find_selectable_entity(entity_hit.get("collider") as Node)
+	if target_entity != null and (force_attack or _is_enemy_target(target_entity)):
+		_issue_attack_order(target_entity)
+		return
+	if force_attack:
+		var terrain_hit := _raycast(screen_position, TERRAIN_COLLISION_MASK)
+		if terrain_hit.is_empty():
+			status_changed.emit("No attack target")
+			return
+		_issue_attack_order(terrain_hit["position"] as Vector3)
+		return
+	_command_move(screen_position, target_entity)
+
+
+func _issue_attack_order(target_or_position: Variant) -> void:
+	var accepted: Array[Node] = []
+	for entity in _selected_entities:
+		if not _can_control(entity):
+			status_changed.emit("Cannot command this player")
+			return
+		if entity.has_method("is_deploying") and bool(entity.call("is_deploying")):
+			continue
+		if not _can_attack(entity, target_or_position):
+			continue
+		if bool(entity.call("command_attack", target_or_position)):
+			accepted.append(entity)
+	if accepted.is_empty():
+		status_changed.emit("Selected units cannot attack this target")
+		return
+	if target_or_position is Vector3:
+		var target: Vector3 = target_or_position
+		var label := "Attacking ground at %.1f, %.1f" % [target.x, target.z]
+		if accepted.size() > 1:
+			label += " with %d units" % accepted.size()
+		status_changed.emit(label)
+		return
+	var target_name := _command_target_name(target_or_position)
+	var label := "Attacking %s" % target_name
+	if accepted.size() > 1:
+		label += " with %d units" % accepted.size()
+	status_changed.emit(label)
+
+
+func _command_target_name(target_or_position: Variant) -> String:
+	if not target_or_position is Object:
+		return "target"
+	var target_object := target_or_position as Object
+	for property in target_object.get_property_list():
+		if StringName(String(property.get("name", ""))) != &"config_id":
+			continue
+		var config_name := String(target_object.get(&"config_id"))
+		if not config_name.is_empty():
+			return config_name
+		break
+	return String((target_object as Node).name) if target_object is Node else "target"
+
+
+func _command_move(screen_position: Vector2, target_entity = null) -> void:
 	if _selected_entities.is_empty():
 		return
 
@@ -190,19 +256,6 @@ func _command_move(screen_position: Vector2) -> void:
 		if deploying_entities > 0:
 			status_changed.emit("MCV cannot move while deploying")
 		return
-
-	# Buildings and units expose their selectable collision on layer 2, while
-	# movement positions come from terrain layer 1. Keep the queries separate:
-	# otherwise a refinery click resolves only to the ground below it and loses
-	# the entity required by the dedicated unload command.
-	var target_entity = null
-	for entity in movable_entities:
-		if not entity.has_method("can_unload_at"):
-			continue
-		var entity_hit := _raycast(screen_position, ENTITY_SELECTION_COLLISION_MASK)
-		if not entity_hit.is_empty():
-			target_entity = _find_selectable_entity(entity_hit.get("collider") as Node)
-		break
 
 	var hit := _raycast(screen_position, TERRAIN_COLLISION_MASK)
 	if hit.is_empty():
@@ -327,6 +380,10 @@ func _is_formation_modifier(event: InputEventKey) -> bool:
 	return event.keycode == KEY_J or event.physical_keycode == KEY_J
 
 
+func _is_attack_modifier(event: InputEventKey) -> bool:
+	return event.keycode == KEY_CTRL or event.physical_keycode == KEY_CTRL
+
+
 func _clear_selection() -> void:
 	for entity in _selected_entities:
 		if is_instance_valid(entity):
@@ -390,6 +447,11 @@ func _command_cursor_at(screen_position: Vector2) -> int:
 		return NO_CURSOR_OVERRIDE
 	var entity_hit := _raycast(screen_position, ENTITY_SELECTION_COLLISION_MASK)
 	var entity = _find_selectable_entity(entity_hit.get("collider") as Node)
+	var entity_attack_intent := entity != null \
+		and (_attack_modifier_down or _is_enemy_target(entity))
+	if entity_attack_intent:
+		return CursorManagerScript.CursorType.ATTACK \
+			if _can_issue_attack_order(entity) else NO_CURSOR_OVERRIDE
 	var deployment_cursor := _deployment_cursor_for(entity)
 	if deployment_cursor != NO_CURSOR_OVERRIDE:
 		return deployment_cursor
@@ -402,13 +464,51 @@ func _command_cursor_at(screen_position: Vector2) -> int:
 
 	var terrain_hit := _raycast(screen_position, TERRAIN_COLLISION_MASK)
 	if terrain_hit.is_empty():
-		return CursorManagerScript.CursorType.CANT_MOVE
+		return NO_CURSOR_OVERRIDE if _attack_modifier_down \
+			else CursorManagerScript.CursorType.CANT_MOVE
 	var target: Vector3 = terrain_hit["position"]
+	if _attack_modifier_down:
+		return CursorManagerScript.CursorType.ATTACK \
+			if _can_issue_attack_order(target) else NO_CURSOR_OVERRIDE
 	if not _can_issue_movement_order(target):
 		return CursorManagerScript.CursorType.CANT_MOVE
 	if _can_gather_at(target):
 		return CursorManagerScript.CursorType.GATHER
 	return CursorManagerScript.CursorType.MOVE
+
+
+func _can_issue_attack_order(target_or_position: Variant) -> bool:
+	for entity in _selected_entities:
+		if not is_instance_valid(entity) or not _can_control(entity):
+			continue
+		if entity.has_method("is_deploying") and bool(entity.call("is_deploying")):
+			continue
+		if _can_attack(entity, target_or_position):
+			return true
+	return false
+
+
+func _can_attack(entity: Node, target_or_position: Variant) -> bool:
+	if not entity.has_method("command_attack") or not entity.has_method("can_attack"):
+		return false
+	return bool(entity.call("can_attack", target_or_position))
+
+
+func _is_enemy_target(target) -> bool:
+	if target == null:
+		return false
+	var players = _players()
+	if players == null:
+		return false
+	var owner_id := PlayerDataScript.NEUTRAL_PLAYER_ID
+	if target.has_method("combat_owner_player_id"):
+		owner_id = int(target.call("combat_owner_player_id"))
+	elif target.has_method("owner_player"):
+		var target_owner = target.call("owner_player")
+		if target_owner != null:
+			owner_id = int(target_owner.player_id)
+	return players.relation_between(players.local_player_id, owner_id) \
+		== PlayerDataScript.Relation.ENEMY
 
 
 func _can_interact_with(target) -> bool:

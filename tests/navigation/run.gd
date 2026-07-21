@@ -4,6 +4,8 @@ const NavigationMapScript := preload("res://scripts/units/navigation/unit_naviga
 const NavigationPlannerScript := preload("res://scripts/units/navigation/unit_navigation_planner.gd")
 const NavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
+const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
+const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -16,7 +18,7 @@ class FakeUnit extends Node3D:
 	var navigation_rotation_radius_override := -1.0
 	var can_move_any_direction := true
 	var arrival_radius := 0.2
-	var unit_config := RuleEntityConfig.new()
+	var unit_definition := UnitDefinitionScript.new()
 	var managed := false
 	var destination := Vector3.ZERO
 	var owner_player_id := 1
@@ -25,8 +27,10 @@ class FakeUnit extends Node3D:
 	var prepared_navigation_targets: Array[Vector3] = []
 
 	func _init(size := 1.0, infantry := false) -> void:
-		unit_config.fields = {"size": size, "infantry": infantry, "can_fly": false}
-		unit_config.lists = {"terrain": [&"Rock"]}
+		unit_definition.size = roundi(size)
+		unit_definition.infantry = infantry
+		unit_definition.can_fly = false
+		unit_definition.terrain_ids = [&"Rock"]
 
 	func set_navigation_managed(active: bool) -> void:
 		managed = active
@@ -90,10 +94,10 @@ class FakeTurningUnit extends FakeUnit:
 
 
 class FakeBuilding extends Node3D:
-	var building_config := RuleEntityConfig.new()
+	var building_definition := BuildingDefinitionScript.new()
 
 	func _init(rows: Array[String]) -> void:
-		building_config.lists = {&"occupy_rows": rows}
+		building_definition.occupy_rows = rows
 
 
 func _initialize() -> void:
@@ -104,6 +108,7 @@ func _initialize() -> void:
 	_test_unit_navigation_order_api(grid)
 	_test_dock_order_has_per_unit_building_access(grid)
 	_test_building_marker_navigation_semantics(grid)
+	_test_map_change_prunes_freed_units(grid)
 	_test_blocked_target_uses_unit_approach_side(grid)
 	_test_rotated_building_blockers(grid)
 	_test_interior_escape(grid)
@@ -403,7 +408,7 @@ func _test_building_marker_navigation_semantics(grid: MapNavigationGrid) -> void
 	_expect(navigation.setup(grid), "navigation must initialize for occupy marker semantics")
 	navigation.call("_refresh_building_blockers")
 	var footprint: Dictionary = BuildingFootprintScript.nav_cells_by_marker(
-		building, building.building_config.list(&"occupy_rows"), grid, 2
+		building, building.building_definition.occupy_rows, grid, 2
 	)
 	for cell in footprint:
 		var marker := String(footprint[cell]).to_lower()
@@ -415,6 +420,32 @@ func _test_building_marker_navigation_semantics(grid: MapNavigationGrid) -> void
 					and not navigation.runtime_map.is_stoppable(cell, MapNavigationGrid.PASS_VEHICLE),
 				"s/d/p occupy cells must be passable no-stop space"
 			)
+	match_root.free()
+
+
+func _test_map_change_prunes_freed_units(grid: MapNavigationGrid) -> void:
+	var match_root := Node3D.new()
+	root.add_child(match_root)
+	var navigation := NavigationSystemScript.new()
+	match_root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation must initialize for freed-unit blocker refresh")
+	var unit := FakeUnit.new()
+	match_root.add_child(unit)
+	unit.global_position = Vector3(90.5, 0.0, 100.5)
+	navigation.command_move([unit], Vector3(120.5, 0.0, 100.5))
+	var unit_id := unit.get_instance_id()
+	unit.free()
+
+	var building := FakeBuilding.new(["B"])
+	building.position = Vector3(100.0, 0.0, 100.0)
+	building.add_to_group("buildings")
+	match_root.add_child(building)
+	navigation.call("_refresh_building_blockers")
+	_expect(
+		not navigation._agents.has(unit_id),
+		"a blocker-map replan must prune agents whose units were already freed"
+	)
 	match_root.free()
 
 
@@ -569,9 +600,19 @@ func _test_selected_unit_navigation_debug(grid: MapNavigationGrid) -> void:
 	navigation.call("_navigation_tick", 0.05)
 	var debug = navigation.get_node("NavigationDebug")
 	var geometry := debug.get_node("Geometry") as MeshInstance3D
+	_expect(
+		not navigation.debug_enabled() and not debug.visible and not debug.has_geometry(),
+		"navigation diagnostics must start disabled until the unified debug layer is enabled"
+	)
+	navigation.set_debug_enabled(true)
+	navigation.call("_navigation_tick", 0.05)
 	_expect(debug.has_geometry() and geometry.mesh != null \
 		and geometry.mesh.get_surface_count() >= 4,
-		"a selected unit must draw route, waypoint, look-ahead, and destination surfaces")
+		"enabled diagnostics must draw route, waypoint, look-ahead, and destination surfaces")
+	navigation.set_debug_enabled(false)
+	_expect(not debug.visible and not debug.has_geometry(),
+		"disabling navigation diagnostics must hide and clear every route marker")
+	navigation.set_debug_enabled(true)
 	unit.set_selected(false)
 	navigation.call("_navigation_tick", 0.05)
 	_expect(not debug.has_geometry(), "navigation route diagnostics must disappear after deselection")

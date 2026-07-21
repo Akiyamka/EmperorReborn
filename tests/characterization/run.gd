@@ -4,7 +4,8 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const PlayerRosterScript := preload("res://scripts/players/player_roster.gd")
 const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
-const RuleEntityConfigScript := preload("res://scripts/rules/rule_entity_config.gd")
+const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
+const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 const ModelXbfScript := preload("res://converters/xbf/model_xbf.gd")
 const ModelBakeBuilderScript := preload("res://converters/model_bake_builder.gd")
 const BuildingBakeBuilderScript := preload("res://converters/building_bake_builder.gd")
@@ -36,6 +37,7 @@ func _initialize() -> void:
 	_run_case("TechnologyTree unit requirements", _test_technology_tree_unit_requirements)
 	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case("XBF FX banks retain parameters and event frames", _test_xbf_fx_banks)
 	_run_case("building transition clips retain authored action names", _test_building_transition_clips)
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
 	_run_case("XBF mirrored inside-out meshes are re-oriented", _test_mirrored_mesh_orientation)
@@ -389,6 +391,200 @@ func _test_xbf_animation_table_variants() -> bool:
 	return true
 
 
+func _test_xbf_fx_banks() -> bool:
+	var cases := [
+		[
+			"AT_minotaurus_H0.xbf", 10.0,
+			[170, 176, 184, 192], [171, 177, 185, 193], 4,
+		],
+		["AT_Trike_H0.xbf", 6.0, [106], [109], 2],
+		["AT_inf_H0.xbf", 3.0, [215, 221, 229], [218, 223, 234], 7],
+		["AT_Sniper_H0.XBF", 3.0, [232, 292], [233, 293], 1],
+		["AT_APC_H0.xbf", 4.0, [111], [115], 3],
+	]
+	for model_case: Array in cases:
+		var file_name := String(model_case[0])
+		var path := "res://assets/raw_original_content/3DDATA/Units".path_join(file_name)
+		var xbf = ModelXbfScript.load_file(path)
+		_expect(xbf != null, "%s must parse for FX characterization" % file_name)
+		if xbf == null:
+			continue
+		var shell_bank := _fx_bank_by_texture(xbf.fx_banks, "!%shel")
+		_expect(not shell_bank.is_empty(), "%s must retain its !%%shel bank" % file_name)
+		if shell_bank.is_empty():
+			continue
+		_expect(
+			is_equal_approx(float(shell_bank.particle_size), float(model_case[1])),
+			"%s must decode parameter 06 as source particle size" % file_name
+		)
+		_expect(
+			int(shell_bank.texture_frame_count) == 10
+			and (shell_bank.parameter_words as PackedInt32Array).size() == 16
+			and (shell_bank.trailing_words as PackedInt32Array).size() == 8,
+			"%s must preserve every typed and trailing FX-bank word" % file_name
+		)
+		_expect(xbf.fx_events_complete, "%s must expose its complete FX event table" % file_name)
+		var bank_id := String(shell_bank.id)
+		_expect(
+			_fx_event_frames(xbf.fx_events, bank_id, "start") == model_case[2]
+			and _fx_event_frames(xbf.fx_events, bank_id, "stop") == model_case[3],
+			"%s must retain !%%shel start/stop frames" % file_name
+		)
+		var fire_entry := _xbf_animation_entry(xbf.animation_entries, "Fire 0")
+		_expect(not fire_entry.is_empty(), "%s must retain Fire 0" % file_name)
+		if not fire_entry.is_empty():
+			_expect(
+				_fx_emissions_during(
+					xbf.fx_events, bank_id,
+					int(fire_entry.start_frame), int(fire_entry.end_frame)
+				) == int(model_case[4]),
+				"%s must retain the authored Fire 0 casing count" % file_name
+			)
+
+	var mongoose_path := (
+		"res://assets/raw_original_content/3DDATA/Units/AT_mongoose_H0.xbf"
+	)
+	var mongoose = ModelXbfScript.load_file(mongoose_path)
+	_expect(
+		mongoose != null and _fx_bank_by_texture(mongoose.fx_banks, "!%shel").is_empty(),
+		"the Mongoose must not acquire a casing bank from its !cexp backblast"
+	)
+
+	var muzzle_cases := [
+		["Muzzle1.xbf", 8.0, -0.3, [2], [5]],
+		["Muzzle3.xbf", 10.0, -0.2, [3], [6]],
+	]
+	for muzzle_case: Array in muzzle_cases:
+		var file_name := String(muzzle_case[0])
+		var muzzle = ModelXbfScript.load_file(
+			"res://assets/raw_original_content/3DDATA/Explosion".path_join(file_name)
+		)
+		_expect(muzzle != null, "%s must parse for muzzle smoke" % file_name)
+		if muzzle == null:
+			continue
+		var smoke_bank := _fx_bank_by_texture(muzzle.fx_banks, "!%Bru")
+		_expect(not smoke_bank.is_empty(), "%s must retain its !%%Bru bank" % file_name)
+		if smoke_bank.is_empty():
+			continue
+		_expect(
+			is_equal_approx(float(smoke_bank.particle_size), float(muzzle_case[1]))
+			and is_equal_approx(float(smoke_bank.gravity), float(muzzle_case[2]))
+			and int(smoke_bank.texture_frame_count) == 21,
+			"%s must retain smoke size, signed gravity, and texture lifetime" % file_name
+		)
+		var smoke_bank_id := String(smoke_bank.id)
+		_expect(
+			_fx_event_frames(muzzle.fx_events, smoke_bank_id, "start") == muzzle_case[3]
+			and _fx_event_frames(muzzle.fx_events, smoke_bank_id, "stop") == muzzle_case[4],
+			"%s must retain its authored smoke emission interval" % file_name
+		)
+
+	var muzzle_builder = ModelBakeBuilderScript.new()
+	var muzzle_scene: PackedScene = muzzle_builder.build(
+		"res://assets/raw_original_content/3DDATA/Explosion/Muzzle1.xbf"
+	)
+	_expect(muzzle_scene != null, "Muzzle1 with FX metadata must build")
+	if muzzle_scene != null:
+		var muzzle_root := muzzle_scene.instantiate()
+		var baked_smoke := _fx_bank_by_texture(
+			muzzle_root.get_meta("xbf_fx_banks", []) as Array, "!%Bru"
+		)
+		_expect(
+			not baked_smoke.is_empty()
+			and is_equal_approx(float(baked_smoke.world_particle_size), 0.5)
+			and is_equal_approx(float(baked_smoke.world_gravity), -7.5),
+			"Muzzle1 must bake source smoke size and signed gravity into world units"
+		)
+		muzzle_root.free()
+
+	var builder = ModelBakeBuilderScript.new()
+	var scene: PackedScene = builder.build(
+		"res://assets/raw_original_content/3DDATA/Units/AT_inf_H0.xbf"
+	)
+	_expect(scene != null, "the infantry model with FX metadata must build")
+	if scene != null:
+		var root := scene.instantiate()
+		var baked_shell := _fx_bank_by_texture(
+			root.get_meta("xbf_fx_banks", []) as Array, "!%shel"
+		)
+		_expect(
+			not baked_shell.is_empty()
+			and is_equal_approx(float(baked_shell.world_particle_size), 3.0 / 16.0),
+			"the packed scene must retain source and world-space particle sizes"
+		)
+		var baked_events := root.get_meta("xbf_fx_events", []) as Array
+		var baked_fire := _xbf_animation_entry(
+			root.get_meta("xbf_animation_entries", []) as Array, "Fire 0"
+		)
+		_expect(
+			bool(root.get_meta("xbf_fx_events_complete", false))
+			and _fx_event_frames(
+				baked_events, String(baked_shell.get("id", "")), "start"
+			) == [215, 221, 229]
+			and not (root.get_meta(
+				"xbf_fx_event_raw_data", PackedByteArray()
+			) as PackedByteArray).is_empty(),
+			"the packed scene must retain the infantry FX event table"
+		)
+		_expect(
+			not baked_fire.is_empty()
+			and int(baked_fire.start_frame) == 207
+			and int(baked_fire.end_frame) == 251,
+			"the packed scene must retain source clip ranges for FX alignment"
+		)
+		root.free()
+	return true
+
+
+func _fx_bank_by_texture(banks: Array, texture: String) -> Dictionary:
+	for bank_value: Variant in banks:
+		var bank := bank_value as Dictionary
+		if String(bank.get("texture", "")).nocasecmp_to(texture) == 0:
+			return bank
+	return {}
+
+
+func _fx_event_frames(events: Array, bank_id: String, action: String) -> Array[int]:
+	var result: Array[int] = []
+	for event_value: Variant in events:
+		var event := event_value as Dictionary
+		if String(event.get("bank_id", "")) == bank_id \
+		and String(event.get("action", "")) == action:
+			result.append(int(event.get("frame", -1)))
+	return result
+
+
+func _xbf_animation_entry(entries: Array, name: String) -> Dictionary:
+	for entry_value: Variant in entries:
+		var entry := entry_value as Dictionary
+		if String(entry.get("name", "")) == name:
+			return entry
+	return {}
+
+
+func _fx_emissions_during(
+		events: Array, bank_id: String, start_frame: int, end_frame: int
+	) -> int:
+	var active_frames := {}
+	var result := 0
+	for event_value: Variant in events:
+		var event := event_value as Dictionary
+		var frame := int(event.get("frame", -1))
+		if String(event.get("bank_id", "")) != bank_id \
+		or frame < start_frame or frame > end_frame:
+			continue
+		var attachment := String(event.get("attachment", ""))
+		if String(event.get("action", "")) == "start":
+			active_frames[attachment] = frame
+		elif String(event.get("action", "")) == "stop" \
+		and active_frames.has(attachment):
+			# Start/stop are control frames. Particles occupy the intervening
+			# frames; a one-frame pulse still emits one particle.
+			result += maxi(frame - int(active_frames[attachment]) - 1, 1)
+			active_frames.erase(attachment)
+	return result
+
+
 func _test_building_transition_clips() -> bool:
 	var builder = BuildingBakeBuilderScript.new()
 	var scene: PackedScene = builder.build(&"ATConYard")
@@ -700,21 +896,18 @@ func _config(
 		upgraded_primary_required := false,
 		tech_level := 0
 ):
-	var config = RuleEntityConfigScript.new()
-	config.entity_type = entity_type
-	config.fields = {
-		"house": String(house),
-		"upgraded_primary_required": upgraded_primary_required,
-		"tech_level": tech_level,
-	}
+	var config = BuildingDefinitionScript.new() if entity_type == &"building" else UnitDefinitionScript.new()
+	config.house_id = house
+	config.upgraded_primary_required = upgraded_primary_required
+	config.tech_level = tech_level
+	var typed_primary: Array[StringName] = []
+	var typed_secondary: Array[StringName] = []
+	typed_primary.assign(primary)
+	typed_secondary.assign(secondary)
 	if entity_type == &"building":
-		config.lists = {
-			"requires_primary": primary,
-			"requires_secondary": secondary,
-		}
+		config.primary_building_ids = typed_primary
+		config.secondary_building_ids = typed_secondary
 	else:
-		config.lists = {
-			"primary_buildings": primary,
-			"secondary_buildings": secondary,
-		}
+		config.primary_building_ids = typed_primary
+		config.secondary_building_ids = typed_secondary
 	return config

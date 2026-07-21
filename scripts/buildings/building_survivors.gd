@@ -6,6 +6,10 @@ extends RefCounted
 ## immune to the splash that finished the building. No debris/ruins remain.
 
 const UnitScene := preload("res://scenes/units/unit.tscn")
+const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+static var _unit_scene_catalog := UnitSceneCatalogScript.new()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 
 ## Verified against assets/raw_original_content/MODEL/Rules.txt: each House's
 ## barracks-produced, lowest-tier infantry (PrimaryBuilding=<House>Barracks,
@@ -23,7 +27,7 @@ const BASIC_INFANTRY_BY_HOUSE := {
 
 ## [Rules] docs/mechanics/production.md §2.1: per-building NumInfantryWhenGone
 ## in Rules.txt (e.g. ATConYard/ATBarracks = 3, ATSmWindtrap = 1). Used as
-## "num_infantry_when_gone" on building_config. An absent field means Rules
+## "survivor_count" on the native building definition. An absent value means Rules
 ## defines no survivors for that building (not an implicit one survivor).
 const DEFAULT_SURVIVOR_COUNT := 0
 
@@ -38,8 +42,7 @@ static func spawn_for_destroyed_building(building: Building) -> void:
 	if String(unit_id).is_empty():
 		return
 
-	var rules := building.get_node_or_null("/root/Rules")
-	if rules == null or rules.call("unit", unit_id) == null:
+	if _unit_scene_catalog.definition_for(unit_id) == null:
 		return
 
 	var parent := _survivors_parent(building)
@@ -53,15 +56,16 @@ static func spawn_for_destroyed_building(building: Building) -> void:
 
 
 static func _survivor_count(building: Building) -> int:
-	if building.building_config == null:
+	var definition := _building_definition_catalog.definition(building.config_id)
+	if definition == null:
 		return DEFAULT_SURVIVOR_COUNT
-	return maxi(int(building.building_config.field(&"num_infantry_when_gone", DEFAULT_SURVIVOR_COUNT)), 0)
+	return maxi(int(definition.survivor_count), 0)
 
 
 static func _spawn_survivor(
 		parent: Node, unit_id: StringName, owner_player_id: int, origin: Vector3, half_extents: Vector3
 	) -> void:
-	var survivor := UnitScene.instantiate()
+	var survivor := _unit_scene_catalog.instantiate(unit_id, UnitScene)
 	if survivor == null:
 		return
 

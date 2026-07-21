@@ -28,6 +28,8 @@ const UpgradeQueueScript := preload("res://scripts/buildings/upgrade_queue.gd")
 const UpgradeOrderScript := preload("res://scripts/buildings/upgrade_order.gd")
 const UpgradeEffectsScript := preload("res://scripts/buildings/upgrade_effects.gd")
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 
 const REFINERY_ROLE := "Refinery"
 const DEFAULT_GLOBAL_UPGRADE_BUILD_TIME_TICKS := 60.0
@@ -40,6 +42,8 @@ var _building_configs: Dictionary = {}
 var _upgrade_option_ids: Array[StringName] = []
 var _upgrade_queue: UpgradeQueue = UpgradeQueueScript.new()
 var _upgrade_availability: Dictionary = {}
+var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+var _unit_definition_catalog := UnitSceneCatalogScript.new()
 
 
 func setup(building_ids: Array[StringName]) -> void:
@@ -103,7 +107,7 @@ func _try_start_dock_upgrade(refinery: Node3D, dock_building_id: StringName = &"
 	if not _upgrade_queue.start(
 		dock_building_id,
 		_upgrade_display_name(dock_building_id),
-		maxi(int(config.field(&"upgrade_cost", 0)), 0),
+		maxi(config.upgrade_cost, 0),
 		_upgrade_build_time_ticks(config, true),
 		UpgradeOrderScript.Kind.REFINERY_DOCK,
 		refinery
@@ -210,7 +214,7 @@ func _start_global_upgrade_order(building_id: StringName) -> void:
 	if not _upgrade_queue.start(
 		building_id,
 		_upgrade_display_name(building_id),
-		maxi(int(config.field(&"upgrade_cost", 0)), 0),
+		maxi(config.upgrade_cost, 0),
 		_upgrade_build_time_ticks(config, false)
 	):
 		return
@@ -307,12 +311,12 @@ func _is_refinery(building: Node3D) -> bool:
 	var config = building.get("building_config") as Resource
 	if config == null:
 		config = _building_config(StringName(String(building.get("config_id"))))
-	return config != null and config.list(&"roles").has(REFINERY_ROLE)
+	return config != null and config.roles.has(REFINERY_ROLE)
 
 
 func _is_refinery_dock_id(building_id: StringName) -> bool:
 	var config: Resource = _building_configs.get(building_id)
-	return config != null and String(config.field(&"building_group", "")) == "RefineryDock"
+	return config != null and config.building_group_id == &"RefineryDock"
 
 
 ## Returns a deterministic compatible refinery. The scene-tree order is stable,
@@ -387,13 +391,8 @@ func _player_owns_building_type(player_id: int, building_id: StringName) -> bool
 
 
 func _load_building_configs(building_ids: Array[StringName]) -> void:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		push_warning("Rules autoload is not available; upgrades use no rules")
-		return
-
 	for building_id in building_ids:
-		var config: Resource = rules.call("building", building_id)
+		var config: Resource = _building_definition_catalog.definition(building_id)
 		if config == null:
 			continue
 		_building_configs[building_id] = config
@@ -407,7 +406,7 @@ func _load_building_configs(building_ids: Array[StringName]) -> void:
 ## rather than just upgrade_cost catches a config that got the field
 ## partially stripped instead of silently treating it as upgradeable.
 func _has_upgrade_definition(config: Resource) -> bool:
-	return float(config.field(&"upgrade_cost", 0)) > 0.0 and int(config.field(&"upgrade_tech_level", 0)) > 0
+	return config.upgrade_cost > 0 and config.upgrade_tech_level > 0
 
 
 func _refresh_upgrade_option_states() -> void:
@@ -470,7 +469,7 @@ func _upgrade_tooltip(building_id: StringName) -> String:
 	if config == null:
 		return _upgrade_display_name(building_id)
 
-	var cost := int(config.field(&"upgrade_cost", 0))
+	var cost: int = int(config.upgrade_cost)
 	var build_time_ticks := _upgrade_build_time_ticks(config, _is_refinery_dock_id(building_id))
 	var build_seconds := build_time_ticks / UpgradeQueueScript.BUILD_TICKS_PER_SECOND
 	return "%s\nCost: %d\nBuild: %.1fs" % [_upgrade_display_name(building_id), cost, build_seconds]
@@ -480,8 +479,8 @@ func _upgrade_build_time_ticks(config: Resource, refinery_dock: bool) -> float:
 	if config == null:
 		return DEFAULT_GLOBAL_UPGRADE_BUILD_TIME_TICKS
 	if refinery_dock:
-		return maxf(float(config.field(&"upgrade_build_time", DEFAULT_DOCK_UPGRADE_BUILD_TIME_TICKS)), 1.0)
-	var build_time := float(config.field(&"build_time", 0.0))
+		return maxf(config.upgrade_build_time_ticks if config.upgrade_build_time_ticks > 0.0 else DEFAULT_DOCK_UPGRADE_BUILD_TIME_TICKS, 1.0)
+	var build_time: float = float(config.build_time_ticks)
 	if build_time > 0.0:
 		return build_time
 	var resource_build_time := _linked_resource_build_time(config)
@@ -489,35 +488,18 @@ func _upgrade_build_time_ticks(config: Resource, refinery_dock: bool) -> float:
 
 
 func _linked_resource_build_time(config: Resource) -> float:
-	if not is_inside_tree():
-		return 0.0
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		return 0.0
-	var resource_links = config.link(&"resources", [])
-	if not (resource_links is Array):
-		return 0.0
-	for entry in resource_links:
-		if not (entry is Dictionary):
-			continue
-		var target_id := StringName(String(entry.get("target", "")))
-		if target_id == &"":
-			continue
-		for entity_type in [&"building", &"unit"]:
-			var linked_config: Resource = rules.call("get_entity", entity_type, target_id)
-			if linked_config == null:
-				continue
-			var build_time := float(linked_config.field(&"build_time", 0.0))
-			if build_time > 0.0:
-				return build_time
+	for target_id in config.linked_unit_ids:
+		var building_definition := _building_definition_catalog.definition(target_id)
+		if building_definition != null and building_definition.build_time_ticks > 0.0:
+			return building_definition.build_time_ticks
+		var unit_definition := _unit_definition_catalog.definition_for(target_id)
+		if unit_definition != null and unit_definition.build_time_ticks > 0.0:
+			return unit_definition.build_time_ticks
 	return 0.0
 
 
 func _building_config(building_id: StringName) -> Resource:
-	var rules := get_node_or_null("/root/Rules")
-	if rules == null:
-		return null
-	return rules.call("building", building_id)
+	return _building_definition_catalog.definition(building_id)
 
 
 func _players():

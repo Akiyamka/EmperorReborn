@@ -18,6 +18,11 @@ var source_texture_dir := MODEL_TEXTURE_DIR
 var texture_output_dir := ""
 var fps := 20.0
 var world_scale := 0.0625
+# Unit/building muzzle meshes are hidden outside authored Fire clips. A
+# standalone TurretMuzzleFlash XBF is itself the short-lived effect, so its
+# `bigflash` geometry must retain the source visibility.
+var bake_embedded_muzzle_flash_visibility := true
+var stationary_clip_loops := true
 
 # Frame rate of the baked animated-texture sequences (frames of the atlas
 # advanced per second by the fx_frame animation tracks).
@@ -80,6 +85,35 @@ func build(xbf_path: String) -> PackedScene:
 	var root := Node3D.new()
 	root.name = _scene_name_from_path(xbf_path)
 	root.scale = Vector3.ONE * world_scale
+	# Keep the original FX definitions on the converted scene. Their event
+	# frames determine burst particle counts, while bank parameter 06 supplies
+	# particle size in source coordinates. Runtime effects can therefore use
+	# authored data instead of unit-specific casing constants.
+	var baked_fx_banks: Array = xbf.fx_banks.duplicate(true)
+	for bank_value: Variant in baked_fx_banks:
+		var bank := bank_value as Dictionary
+		bank["world_particle_size"] = float(bank.get("particle_size", 0.0)) * world_scale
+		# Source gravity is authored per squared 20 Hz update. Keep the signed
+		# positive-down convention; runtime applies it along world DOWN.
+		bank["world_gravity"] = float(bank.get("gravity", 0.0)) \
+			* world_scale * 20.0 * 20.0
+	root.set_meta("xbf_world_scale", world_scale)
+	root.set_meta("xbf_fx_format_version", xbf.fx_format_version)
+	root.set_meta("xbf_fx_bank_table_version", xbf.fx_bank_table_version)
+	root.set_meta("xbf_fx_banks", baked_fx_banks)
+	root.set_meta("xbf_fx_event_frame_count", xbf.fx_event_frame_count)
+	root.set_meta("xbf_fx_event_object_count", xbf.fx_event_object_count)
+	root.set_meta("xbf_fx_event_master", xbf.fx_event_master)
+	root.set_meta("xbf_fx_event_counts", xbf.fx_event_counts)
+	root.set_meta("xbf_fx_events", xbf.fx_events.duplicate(true))
+	root.set_meta("xbf_fx_events_complete", xbf.fx_events_complete)
+	# FX event frames are absolute in the source timeline. Runtime needs the
+	# authored clip ranges to align bank emissions with sliced Fire_0 animations.
+	root.set_meta("xbf_animation_entries", xbf.animation_entries.duplicate(true))
+	# A small set of source files uses event payload variants that are not yet
+	# decoded. Preserve the complete original block as well, so conversion is
+	# lossless even when xbf_fx_events_complete is false.
+	root.set_meta("xbf_fx_event_raw_data", xbf.fx_event_raw_data)
 
 	var anim := Animation.new()
 	anim.resource_name = "idle"
@@ -184,7 +218,7 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 		var hidden_source_component := _is_hidden_source_mesh_component(raw_name, mesh_index)
 		mesh_instance.visible = not (
 			_is_effect_object(raw_name)
-			or is_muzzle_flash
+			or (is_muzzle_flash and bake_embedded_muzzle_flash_visibility)
 			or raw_name == COLLISION_OBJECT_NAME
 			or hidden_source_component
 		)
@@ -194,7 +228,7 @@ func _build_object_node(object: Dictionary, texture_names: PackedStringArray, no
 			mesh_instance.set_meta("collision_mesh", true)
 		content_root.add_child(mesh_instance)
 		var mesh_path := "%s/%s" % [content_path, mesh_instance.name]
-		if is_muzzle_flash:
+		if is_muzzle_flash and bake_embedded_muzzle_flash_visibility:
 			_muzzle_flash_mesh_paths.append(mesh_path)
 		# Vertex-animated objects deliberately remain a single component, so
 		# each animation frame can still replace one complete ArrayMesh.
@@ -1220,7 +1254,9 @@ func _slice_animation(source: Animation, entry: Dictionary, target_paths := {}) 
 	var clip := Animation.new()
 	clip.resource_name = _clip_name(String(entry["name"]))
 	clip.length = maxf((end_frame - start_frame + 1) / fps, 1.0 / fps)
-	clip.loop_mode = Animation.LOOP_LINEAR if _is_looping_clip(clip.resource_name) else Animation.LOOP_NONE
+	var should_loop := _is_looping_clip(clip.resource_name) \
+		and (stationary_clip_loops or clip.resource_name != &"Stationary")
+	clip.loop_mode = Animation.LOOP_LINEAR if should_loop else Animation.LOOP_NONE
 	var target_object_id := int(entry.get("target_object_id", entry.get("zero2", 0)))
 
 	for source_track in source.get_track_count():

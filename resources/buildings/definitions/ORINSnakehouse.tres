@@ -1,0 +1,36 @@
+[gd_resource type="Resource" script_class="BuildingDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/buildings/building_definition.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+config_id = &"ORINSnakehouse"
+legacy_name = &"ORINSnakehouse"
+house_id = &"Incidental"
+building_group_id = &""
+cost = 100
+build_time_ticks = 0
+health = 1000
+shield_health = 0
+armour_type = &"Light"
+tech_level = 1
+power_used = 0
+power_generated = 0
+can_be_primary = false
+is_construction_yard = false
+upgraded_primary_required = false
+primary_building_ids = []
+secondary_building_ids = []
+roles = []
+occupy_rows = ["ddbdd", "dbbbd", "dbbbd", "bbbbb", "bbbbb", "bbbbb", "bbbbb"]
+deploy_points = []
+linked_unit_ids = []
+survivor_count = 0
+turret_id = &""
+upgrade_tech_level = 0
+upgrade_cost = 0
+upgrade_build_time_ticks = 0
+model_name = "OR_IN_Snake"
+icon_path = ""
+icon_grey_path = ""
+sidebar_type = &""

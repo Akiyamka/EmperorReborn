@@ -1,4 +1,5 @@
 extends SceneTree
+
 ## docs/mechanics/production.md section 4 "Upgrades" (+ section 5 tech tree
 ## link). Covers the parts that do not need a live BuildingUpgradeController
 ## (queue/order math, dock layout math, player-owned purchase state, applying
@@ -13,6 +14,7 @@ const BuildingUpgradeControllerScript := preload("res://scripts/buildings/buildi
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -434,23 +436,22 @@ func _test_automatic_refinery_upgrade(token: int, local_player: PlayerData) -> i
 
 
 func _test_missing_survivor_count(token: int) -> int:
-	var rules = root.get_node("Rules")
 	var building := BuildingScript.new()
-	building.building_config = rules.building(&"ATWall")
+	building.config_id = &"ATWall"
 	_expect(BuildingSurvivorsScript._survivor_count(building) == 0, "a building without NumInfantryWhenGone must not invent a survivor")
-	building.building_config = rules.building(&"ATSmWindtrap")
+	building.config_id = &"ATSmWindtrap"
 	_expect(BuildingSurvivorsScript._survivor_count(building) == 1, "an explicit NumInfantryWhenGone value must still be honored")
 	building.free()
 	return token
 
 
 func _test_dock_upgrade_build_time(token: int) -> int:
-	var rules = root.get_node("Rules")
+	var definitions := BuildingDefinitionCatalogScript.new()
 	var controller := BuildingUpgradeControllerScript.new()
 	root.add_child(controller)
 	var no_ids: Array[StringName] = []
 	controller.setup(no_ids)
-	var dock_config: Resource = rules.building(&"ATRefineryDock")
+	var dock_config: Resource = definitions.definition(&"ATRefineryDock")
 	_expect(
 		is_equal_approx(controller._upgrade_build_time_ticks(dock_config, true), 720.0),
 		"refinery docks must use Rules.txt UpgradeBuildTime instead of ordinary BuildTime"
@@ -502,7 +503,7 @@ func _test_player_purchase_state(token: int, local_player: PlayerData) -> int:
 ## (not ATBarracks, already purchased by the previous case on this same
 ## shared local_player) to stay independent of case order.
 func _test_purchase_propagates_end_to_end(token: int, local_player: PlayerData) -> int:
-	var rules = root.get_node("Rules")
+	var definitions := BuildingDefinitionCatalogScript.new()
 
 	var existing_con_yard := BuildingScript.new()
 	existing_con_yard.config_id = &"ATConYard"
@@ -527,7 +528,7 @@ func _test_purchase_propagates_end_to_end(token: int, local_player: PlayerData) 
 	root.add_child(secondary_barracks)
 
 	var tree := TechnologyTreeScript.new()
-	var turret_config: Resource = rules.building(&"ATRocketTurret")
+	var turret_config: Resource = definitions.definition(&"ATRocketTurret")
 	var owned: Array[Node] = [existing_con_yard, later_con_yard, secondary_barracks]
 	_expect(
 		tree.is_available(turret_config, local_player, owned),
