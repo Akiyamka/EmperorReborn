@@ -383,6 +383,9 @@ func _copy_animation_tracks(source: Animation, target: Animation, path_prefix: S
 		var track := target.add_track(source.track_get_type(source_track))
 		target.track_set_path(track, NodePath("%s/%s" % [path_prefix, String(source.track_get_path(source_track))]))
 		target.track_set_interpolation_type(track, source.track_get_interpolation_type(source_track))
+		target.track_set_interpolation_loop_wrap(
+			track, source.track_get_interpolation_loop_wrap(source_track)
+		)
 		if source.track_get_type(source_track) == Animation.TYPE_VALUE:
 			target.value_track_set_update_mode(track, source.value_track_get_update_mode(source_track))
 
