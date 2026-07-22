@@ -16,6 +16,9 @@ extends Resource
 @export var acceptable_yaw: float = 1.0
 @export var acceptable_pitch: float = 1.0
 @export var bullet_count: int = 1
+## Zero leaves projectile timing to the authored fire animation.
+@export var burst_shot_count: int = 0
+## Rule ticks between launcher shots. Zero fires the configured burst together.
+@export var burst_interval_ticks: float = 0.0
 @export var disabled_when_deployed: bool
 @export var disabled_when_undeployed: bool
-

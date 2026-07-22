@@ -33,6 +33,14 @@ GAME_SETTINGS_PATH = ROOT / "resources/rules/game_settings.tres"
 SPICE_DEFINITION_PATH = ROOT / "resources/world/spice_mound.tres"
 CONFIG_RE = re.compile(r'^config_id = &"([^"]+)"$', re.MULTILINE)
 MODEL_RE = re.compile(r'path="(res://assets/converted/models/[^"]+\.(?:scn|tscn))"')
+BURST_CONFIGS = {
+    # Model animation tracks do not encode these launcher events. Values are
+    # authored in 20 Hz rule ticks.
+    "HKMissileTankBarrage": (12, 3.0),
+    "ORAPCBase": (2, 5.0),
+    "HKDevastatorGun": (2, 0.0),
+    "HKDevastatorMissile": (3, 7.5),
+}
 
 
 def godot_string(value: str) -> str:
@@ -272,6 +280,12 @@ def turret_text(row: sqlite3.Row, muzzle_scene_path: str) -> str:
         f"disabled_when_deployed = {bool_text(row['turret_disable_if_unit_deployed'])}",
         f"disabled_when_undeployed = {bool_text(row['turret_disable_if_unit_undeployed'])}",
     ]
+    burst_config = BURST_CONFIGS.get(str(row["name"]))
+    if burst_config is not None:
+        properties.extend([
+            f"burst_shot_count = {burst_config[0]}",
+            f"burst_interval_ticks = {burst_config[1]:.6g}",
+        ])
     for prop, column in [
         ("minimum_yaw", "turret_min_y_rotation"),
         ("maximum_yaw", "turret_max_y_rotation"),

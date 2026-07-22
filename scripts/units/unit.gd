@@ -924,6 +924,9 @@ func _fire_animation_binding(weapon_index: int) -> Dictionary:
 func _authored_fire_shot_times(
 		player: AnimationPlayer, animation: Animation, turret
 	) -> Array[float]:
+	var configured_burst := _configured_burst_shot_times(animation, turret)
+	if not configured_burst.is_empty():
+		return configured_burst
 	var fallback: Array[float] = [
 		minf(1.0 / BAKED_MODEL_FRAMES_PER_SECOND, animation.length)
 	]
@@ -973,6 +976,25 @@ func _authored_fire_shot_times(
 	var result: Array[float] = []
 	for event in events:
 		result.append(float(event["time"]))
+	return result
+
+
+func _configured_burst_shot_times(animation: Animation, turret) -> Array[float]:
+	if turret.firing_config == null:
+		return []
+	var count := int(turret.firing_config.burst_shot_count)
+	if count <= 0:
+		return []
+	var first_shot_time := minf(1.0 / BAKED_MODEL_FRAMES_PER_SECOND, animation.length)
+	var interval_seconds := maxf(
+		float(turret.firing_config.burst_interval_ticks), 0.0
+	) / RULE_COMBAT_TICKS_PER_SECOND
+	var result: Array[float] = []
+	for index in count:
+		result.append(minf(
+			first_shot_time + float(index) * interval_seconds,
+			animation.length
+		))
 	return result
 
 

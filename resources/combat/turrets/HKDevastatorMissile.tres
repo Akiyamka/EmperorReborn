@@ -17,5 +17,7 @@ acceptable_pitch = 1
 bullet_count = 1
 disabled_when_deployed = false
 disabled_when_undeployed = false
+burst_shot_count = 3
+burst_interval_ticks = 7.5
 minimum_yaw = -190
 maximum_yaw = 190

@@ -17,3 +17,5 @@ acceptable_pitch = 1
 bullet_count = 1
 disabled_when_deployed = false
 disabled_when_undeployed = false
+burst_shot_count = 2
+burst_interval_ticks = 0

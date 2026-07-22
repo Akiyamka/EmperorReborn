@@ -23,6 +23,13 @@ const ATMongooseModelScene := preload(
 const ATMinotaurusModelScene := preload(
 	"res://assets/converted/models/AT_minotaurus_H0/AT_minotaurus_H0.scn"
 )
+const HKMissileModelScene := preload(
+	"res://assets/converted/models/HK_missile_H0/HK_missile_H0.scn"
+)
+const HKDevastatorModelScene := preload(
+	"res://assets/converted/models/HK_devastator_H0/HK_devastator_H0.scn"
+)
+const ORAPCModelScene := preload("res://assets/converted/models/Or_apc_H0/Or_apc_H0.scn")
 const ORLaserTankModelScene := preload(
 	"res://assets/converted/models/OR_Lasertank_H0/OR_Lasertank_H0.scn"
 )
@@ -169,6 +176,7 @@ func _initialize() -> void:
 	_run_case("turret recenters smoothly after attack is replaced by move", _test_turret_recenter_after_move)
 	_run_case("unit model replacement rebinds its turret", _test_unit_turret_rebind)
 	_run_case("unit attack orders validate targets, fire, and pursue", _test_unit_attack_order)
+	_run_case("launcher fire clips schedule every projectile before reload", _test_launcher_fire_sequences)
 	_run_case("pursuit enters a stable firing range", _test_far_attack_pursuit)
 	_run_case("building state replacement rebinds its turret", _test_building_turret_rebind)
 	_run_case("building damage visuals use equal health bands", _test_building_damage_visual_states)
@@ -1847,6 +1855,56 @@ func _test_unit_attack_order() -> void:
 	infantry.free()
 	minotaurus.free()
 	unit.free()
+
+
+func _test_launcher_fire_sequences() -> void:
+	var definitions := [
+		[&"HKMissile", HKMissileModelScene],
+		[&"ORAPC", ORAPCModelScene],
+		[&"HKDevastator", HKDevastatorModelScene],
+	]
+	for definition in definitions:
+		var launcher = UnitScene.instantiate()
+		launcher.config_id = definition[0]
+		root.add_child(launcher)
+		launcher.replace_visual_scene(definition[1])
+		var player := launcher.get_node("VisualRoot").find_child(
+			"AnimationPlayer", true, false
+		) as AnimationPlayer
+		var animation := player.get_animation(&"Fire_0")
+		for turret in launcher.combat_turrets:
+			var shot_times: Array[float] = launcher._authored_fire_shot_times(player, animation, turret)
+			var configured_count := int(turret.firing_config.burst_shot_count)
+			_expect(
+				configured_count == turret.muzzle_count(),
+				"%s weapon %d must explicitly configure every launcher projectile" % [
+					definition[0], turret.weapon_index()
+				]
+			)
+			_expect(
+				shot_times.size() == configured_count,
+				"%s weapon %d must schedule every configured burst shot" % [
+					definition[0], turret.weapon_index()
+				]
+			)
+			if shot_times.size() >= 2:
+				_expect(
+					is_equal_approx(
+						shot_times[1] - shot_times[0],
+						float(turret.firing_config.burst_interval_ticks) \
+							/ UnitScript.RULE_COMBAT_TICKS_PER_SECOND
+					),
+					"%s weapon %d must use its configured burst interval" % [
+						definition[0], turret.weapon_index()
+					]
+				)
+			_expect(
+				shot_times.back() <= animation.length,
+				"%s weapon %d must complete its burst inside Fire_0" % [
+					definition[0], turret.weapon_index()
+				]
+			)
+		launcher.free()
 
 
 func _test_far_attack_pursuit() -> void:
