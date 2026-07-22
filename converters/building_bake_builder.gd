@@ -9,6 +9,10 @@ const DEFAULT_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
 const BUILDING_RULES_DIR := "res://assets/converted/rules/buildings"
 ## One occupy cell spans 2.0 world units (Building.OCCUPY_CELL_WORLD_SPAN).
 const OCCUPY_CELL_WORLD_SPAN := 2.0
+## Building art is authored slightly smaller than the placement pitch used by
+## the original renderer. AT_Helipad's 64x96-unit Mesh_00 is the calibration
+## reference: adjacent 2x3 pads occupy 72x108 model units, giving 9/8.
+const BUILDING_WORLD_SCALE := 0.0625 * 1.125
 
 const STATE_DEFS: Array[Dictionary] = [
 	{"name": "construction", "node": "Build", "suffix": "_hc"},
@@ -31,7 +35,7 @@ var building_model_dir := BUILDING_MODEL_DIR
 var source_texture_dir := DEFAULT_TEXTURE_DIR
 var texture_output_dir := ""
 var fps := 20.0
-var world_scale := 0.0625
+var world_scale := BUILDING_WORLD_SCALE
 var source_prefix := ""
 
 var missing_textures: PackedStringArray = []
