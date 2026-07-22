@@ -1,6 +1,7 @@
 extends SceneTree
 
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
+const BuildingBakeBuilderScript := preload("res://converters/building_bake_builder.gd")
 const ATBarracksScene := preload("res://assets/converted/buildings/ATBarracks/ATBarracks.scn")
 const PlacementArrowScene := preload("res://assets/converted/placement/build_arrow.scn")
 
@@ -46,6 +47,7 @@ func _initialize() -> void:
 	_run_case("failed placement keeps active state", _test_failed_placement_keeps_active)
 	_run_case("footprint occupancy and single spawn handoff", _test_occupancy_and_single_spawn)
 	_run_case("construction completes only after construct animation", _test_construction_waits_for_animation)
+	_run_case("building art uses the Helipad-calibrated scale", _test_building_art_scale)
 	_run_case("placement rotation turns footprint and spawned building", _test_rotated_placement)
 	_run_case("unmaterialed preview mesh gets fallback material", _test_unmaterialed_preview_mesh_gets_fallback_material)
 	_run_case("placement arrow keeps its white fill from either camera side", _test_arrow_white_fill)
@@ -213,6 +215,64 @@ func _test_construction_waits_for_animation(token: int) -> int:
 
 	_free_pair(pair)
 	return token
+
+
+func _test_building_art_scale(token: int) -> int:
+	var builder = BuildingBakeBuilderScript.new()
+	_expect(
+		is_equal_approx(builder.world_scale, 0.0703125),
+		"every building conversion must use the shared 9/8 scale correction"
+	)
+	var scene: PackedScene = builder.build(&"ATHelipad")
+	_expect(scene != null, "the Helipad scale reference must convert successfully")
+	if scene == null:
+		return token
+	var helipad := scene.instantiate() as Node3D
+	var helipad_idle := helipad.get_node_or_null("States/Idle") as Node3D
+	_expect(
+		helipad_idle != null and is_equal_approx(
+			helipad_idle.scale.x, BuildingBakeBuilderScript.BUILDING_WORLD_SCALE
+		),
+		"ATHelipad must use the shared calibrated building scale"
+	)
+	var pad_size := _largest_named_mesh_size(helipad, &"Mesh_00")
+	_expect(
+		absf(pad_size.x - 4.5) < 0.01 and absf(pad_size.z - 6.75) < 0.01,
+		"ATHelipad Mesh_00 must span 4.5x6.75 world units (got %s)" % pad_size
+	)
+	helipad.free()
+	return token
+
+
+func _largest_named_mesh_size(root: Node3D, mesh_name: StringName) -> Vector3:
+	var largest := Vector3.ZERO
+	var largest_area := 0.0
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not (node is MeshInstance3D) or node.name != mesh_name:
+			continue
+		var mesh_instance := node as MeshInstance3D
+		if mesh_instance.mesh == null:
+			continue
+		var bounds: AABB = _relative_transform(mesh_instance, root) * mesh_instance.get_aabb()
+		var area := bounds.size.x * bounds.size.z
+		if area > largest_area:
+			largest_area = area
+			largest = bounds.size
+	return largest
+
+
+func _relative_transform(node: Node3D, ancestor: Node3D) -> Transform3D:
+	var result := Transform3D.IDENTITY
+	var current: Node = node
+	while current != null and current != ancestor:
+		if current is Node3D:
+			result = (current as Node3D).transform * result
+		current = current.get_parent()
+	return result
 
 
 func _test_rotated_placement(token: int) -> int:

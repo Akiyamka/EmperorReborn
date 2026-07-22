@@ -85,6 +85,6 @@ func _usage(error: String) -> void:
 	print("  --source res://assets/raw_original_content/3DDATA/Buildings")
 	print("  --textures res://assets/raw_original_content/3DDATA/Textures")
 	print("  --output res://assets/converted/buildings/ATBarracks/ATBarracks.scn")
-	print("  --world-scale 0.0625")
+	print("  --world-scale %.7f" % BuildingBakeBuilderScript.BUILDING_WORLD_SCALE)
 	print("  --fps 20")
 	quit(1)
