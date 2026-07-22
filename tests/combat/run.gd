@@ -29,6 +29,9 @@ const ORLaserTankModelScene := preload(
 const HKGunTurretScene := preload(
 	"res://assets/converted/buildings/HKGunTurret/HKGunTurret.scn"
 )
+const ATWallScene := preload(
+	"res://assets/converted/buildings/ATWall/ATWall.scn"
+)
 
 var _assertions := 0
 var _failures := 0
@@ -168,6 +171,7 @@ func _initialize() -> void:
 	_run_case("unit attack orders validate targets, fire, and pursue", _test_unit_attack_order)
 	_run_case("pursuit enters a stable firing range", _test_far_attack_pursuit)
 	_run_case("building state replacement rebinds its turret", _test_building_turret_rebind)
+	_run_case("building damage visuals use equal health bands", _test_building_damage_visual_states)
 	_run_case("units and buildings expose rules-backed combat armour", _test_combat_targets)
 	_run_case("shields absorb resolved combat damage before health", _test_shield_absorption)
 
@@ -1913,6 +1917,29 @@ func _test_building_turret_rebind() -> void:
 		_expect(projectiles[0].bullet.id() == &"HKGunTurret_B", "the building API must use its rules bullet")
 		projectiles[0].free()
 	building.free()
+
+
+func _test_building_damage_visual_states() -> void:
+	var turret = HKGunTurretScene.instantiate() as Building
+	root.add_child(turret)
+	_expect(turret.current_state == &"idle", "a healthy building must use Idle")
+	turret.health = turret.max_health * (2.0 / 3.0)
+	_expect(turret.current_state == &"damage1", "the second of three equal health bands must use Damage1")
+	turret.health = turret.max_health * (1.0 / 3.0)
+	_expect(turret.current_state == &"damage2", "the final health band must use Damage2")
+	turret.health = turret.max_health
+	_expect(turret.current_state == &"idle", "restoring full health must return to Idle")
+	turret.free()
+
+	var wall = ATWallScene.instantiate() as Building
+	root.add_child(wall)
+	_expect(wall.get_node_or_null("States/Damage1") == null, "fixture must cover a missing Damage1 state")
+	wall.health = wall.max_health * 0.5
+	_expect(
+		wall.current_state == &"damage2",
+		"a sole Damage2 state must be the damaged band rather than requiring Damage1"
+	)
+	wall.free()
 
 
 func _test_combat_targets() -> void:

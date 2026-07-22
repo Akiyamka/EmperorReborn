@@ -69,6 +69,7 @@ var health := 0.0:
 		health = clampf(value, 0.0, max_health)
 		health_changed.emit(health, max_health)
 		_refresh_generated_energy()
+		_refresh_health_visual_state()
 var shields := 0.0:
 	set(value):
 		shields = clampf(value, 0.0, max_shields)
@@ -423,6 +424,47 @@ func play_state(state: StringName) -> void:
 		var child_state := StringName(String(child.get_meta("state", child.name.to_lower())))
 		child.visible = child_state == state
 	_bind_combat_turrets(_state_root(state))
+
+
+## Idle is the single undamaged health band. Every available DamageN state is
+## one further equally sized band, ordered by its numeric suffix.  The source
+## assets occasionally omit Damage1 while retaining Damage2; those are still
+## valid two-band buildings (Idle, Damage2), so state numbers are ordering only
+## and never used as band indices.
+func _refresh_health_visual_state() -> void:
+	if not is_inside_tree() or max_health <= 0.0:
+		return
+	var damage_states := _damage_visual_states()
+	var state_count := damage_states.size() + 1
+	var damaged_fraction := 1.0 - health / max_health
+	var state_index := clampi(floori(damaged_fraction * state_count), 0, state_count - 1)
+	var desired_state: StringName = &"idle"
+	if state_index > 0:
+		desired_state = damage_states[state_index - 1]
+	if desired_state != current_state:
+		play_state(desired_state)
+
+
+func _damage_visual_states() -> Array[StringName]:
+	var states_root := get_node_or_null("States")
+	if states_root == null:
+		return []
+	var numbered_states: Array[Dictionary] = []
+	for child in states_root.get_children():
+		var state_name := String(child.get_meta("state", child.name.to_lower()))
+		if not state_name.begins_with("damage"):
+			continue
+		var suffix := state_name.trim_prefix("damage")
+		if not suffix.is_valid_int():
+			continue
+		numbered_states.append({"name": StringName(state_name), "number": suffix.to_int()})
+	numbered_states.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
+		return int(left["number"]) < int(right["number"])
+	)
+	var result: Array[StringName] = []
+	for state in numbered_states:
+		result.append(state["name"])
+	return result
 
 
 func _state_root(state: StringName) -> Node3D:
