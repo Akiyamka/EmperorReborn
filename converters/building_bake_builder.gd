@@ -183,6 +183,7 @@ func _build_state_node(state_def: Dictionary, xbf_path: String) -> Node3D:
 	builder.texture_output_dir = texture_output_dir
 	builder.fps = fps
 	builder.world_scale = world_scale
+	builder.bake_attachment_bank_effects = true
 
 	var scene: PackedScene = builder.build(xbf_path)
 	if scene == null:
