@@ -241,6 +241,11 @@ func _parse_fx_events(bytes: PackedByteArray) -> void:
 		for event_index in fx_event_counts[frame]:
 			var parsed := _parse_fx_event(bytes, offset, event_limit)
 			if parsed.is_empty():
+				# Keep the valid prefix: several shipped models switch to an
+				# undecoded payload variant after their ordinary bank events. The
+				# completeness flag still prevents consumers which require the
+				# whole table from using this partial schedule.
+				fx_events = parsed_events
 				return
 			offset = int(parsed["next_offset"])
 			var event: Dictionary = parsed["event"]
@@ -466,7 +471,25 @@ func _is_attachment_name(value: String) -> bool:
 	return value.begins_with("~~") \
 		or value.begins_with("::") \
 		or value.begins_with(">>") \
-		or value.to_lower().begins_with("#muzzle")
+		or value.to_lower().begins_with("#muzzle") \
+		or is_light_attachment_name(value)
+
+
+static func is_light_attachment_name(value: String) -> bool:
+	var lower := value.to_lower()
+	if not lower.begins_with("#"):
+		return false
+	var light_position := lower.rfind("light")
+	if light_position < 1:
+		return false
+	var suffix := lower.substr(light_position + 5)
+	if suffix.is_empty():
+		return true
+	for index in suffix.length():
+		var code := suffix.unicode_at(index)
+		if code < 48 or code > 57:
+			return false
+	return true
 
 
 func _is_animation_name(value: String) -> bool:

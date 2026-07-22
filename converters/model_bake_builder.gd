@@ -22,6 +22,10 @@ var world_scale := 0.0625
 # standalone TurretMuzzleFlash XBF is itself the short-lived effect, so its
 # `bigflash` geometry must retain the source visibility.
 var bake_embedded_muzzle_flash_visibility := true
+## Building # meshes referenced by XBF FX events are attachment markers, not
+## model geometry. BuildingBakeBuilder enables this so their authored bank
+## events become billboard effects in the packed state scenes.
+var bake_attachment_bank_effects := false
 var stationary_clip_loops := true
 
 # Frame rate of the baked animated-texture sequences (frames of the atlas
@@ -60,6 +64,8 @@ var _scrolling_texture_shaders := {}
 var _shield_shader: Shader
 var _has_shield_fx_marker := false
 var _muzzle_flash_mesh_paths := PackedStringArray()
+var _attachment_fx_paths := PackedStringArray()
+var _attachment_fx_names := {}
 var _source_file_name := ""
 
 
@@ -76,11 +82,14 @@ func build(xbf_path: String) -> PackedScene:
 	_scrolling_texture_shaders.clear()
 	_has_shield_fx_marker = false
 	_muzzle_flash_mesh_paths = PackedStringArray()
+	_attachment_fx_paths = PackedStringArray()
+	_attachment_fx_names.clear()
 
 	var xbf = ModelXbfScript.load_file(xbf_path)
 	if xbf == null:
 		return null
 	_prepare_animated_texture_sequences(xbf.fx_strings)
+	_prepare_attachment_fx_names(xbf)
 
 	var root := Node3D.new()
 	root.name = _scene_name_from_path(xbf_path)
@@ -131,14 +140,20 @@ func build(xbf_path: String) -> PackedScene:
 		)
 		root.add_child(child)
 		max_frame = maxi(max_frame, _object_animation_length(object))
+	var attachment_fx: Array[Dictionary] = []
+	if bake_attachment_bank_effects:
+		attachment_fx = _build_attachment_bank_effects(root, xbf)
+		max_frame = maxi(max_frame, xbf.fx_event_frame_count)
 
 	# Build the library even when nothing produced a track: the FX table can
 	# still declare a named entry (e.g. H3's "Explode", 50 frames) purely as a
 	# duration/timing cue with no baked per-object motion, and dropping the
 	# AnimationPlayer here would silently throw that duration away, collapsing
 	# the state to ~1 frame downstream in BuildingBakeBuilder.
-	if anim.get_track_count() > 0 or not _pending_frame_tracks.is_empty() or not xbf.animation_entries.is_empty():
+	if anim.get_track_count() > 0 or not _pending_frame_tracks.is_empty() \
+	or not xbf.animation_entries.is_empty() or not attachment_fx.is_empty():
 		anim.length = maxf(max_frame / fps, 1.0 / fps)
+		_add_attachment_fx_tracks(anim, attachment_fx)
 		_add_shader_fx_tracks(anim)
 		var library := AnimationLibrary.new()
 		for entry: Dictionary in xbf.animation_entries:
@@ -228,10 +243,12 @@ func _build_object_node(
 		# Keep its mesh in the converted scene so Unit and Building can make
 		# the matching physics shape at runtime.
 		var is_muzzle_flash := _is_muzzle_flash_object(raw_name)
+		var is_bank_attachment := _is_bank_attachment_object(raw_name)
 		var hidden_source_component := _is_hidden_source_mesh_component(raw_name, mesh_index)
 		mesh_instance.visible = not (
 			_is_effect_object(raw_name)
 			or (is_muzzle_flash and bake_embedded_muzzle_flash_visibility)
+			or (is_bank_attachment and bake_attachment_bank_effects)
 			or raw_name == COLLISION_OBJECT_NAME
 			or hidden_source_component
 		)
@@ -1056,6 +1073,189 @@ func _is_muzzle_flash_object(object_name: String) -> bool:
 	return object_name.to_lower().contains("bigflash")
 
 
+func _prepare_attachment_fx_names(xbf) -> void:
+	var bank_ids := {}
+	for bank: Dictionary in xbf.fx_banks:
+		bank_ids[String(bank.get("id", ""))] = true
+	for event: Dictionary in xbf.fx_events:
+		var attachment := String(event.get("attachment", ""))
+		if attachment.begins_with("#") \
+		and bank_ids.has(String(event.get("bank_id", ""))):
+			_attachment_fx_names[attachment.to_lower()] = true
+
+
+func _is_bank_attachment_object(object_name: String) -> bool:
+	return _attachment_fx_names.has(object_name.to_lower())
+
+
+func _build_attachment_bank_effects(root: Node3D, xbf) -> Array[Dictionary]:
+	var banks_by_id := {}
+	for bank: Dictionary in xbf.fx_banks:
+		banks_by_id[String(bank.get("id", ""))] = bank
+	var grouped_events := {}
+	for event: Dictionary in xbf.fx_events:
+		var attachment := String(event.get("attachment", ""))
+		if not attachment.begins_with("#"):
+			continue
+		var bank_id := String(event.get("bank_id", ""))
+		if not banks_by_id.has(bank_id):
+			continue
+		var key := "%s\n%s" % [attachment, bank_id]
+		if not grouped_events.has(key):
+			grouped_events[key] = []
+		(grouped_events[key] as Array).append(event)
+
+	var result: Array[Dictionary] = []
+	for key: String in grouped_events:
+		var separator := key.find("\n")
+		var attachment := key.substr(0, separator)
+		var bank_id := key.substr(separator + 1)
+		var marker := _find_original_node(root, attachment)
+		if marker == null:
+			continue
+		var bank := banks_by_id[bank_id] as Dictionary
+		var meshes := _attachment_fx_mesh_frames(bank)
+		if meshes.is_empty():
+			continue
+		var visual := MeshInstance3D.new()
+		visual.name = _unique_sibling_node_name("AttachmentFX", _existing_child_names(marker))
+		visual.mesh = meshes[0]
+		visual.visible = false
+		visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		visual.set_meta("xbf_fx_attachment", attachment)
+		visual.set_meta("xbf_fx_bank_id", bank_id)
+		visual.set_meta("xbf_fx_texture", String(bank.get("texture", "")))
+		visual.set_meta("xbf_fx_particle_size", float(bank.get("particle_size", 0.0)))
+		visual.set_meta(
+			"xbf_fx_world_particle_size",
+			float(bank.get("particle_size", 0.0)) * world_scale
+		)
+		marker.add_child(visual)
+		var path := String(root.get_path_to(visual))
+		_attachment_fx_paths.append(path)
+		result.append({
+			"path": path,
+			"meshes": meshes,
+			"events": grouped_events[key],
+		})
+	return result
+
+
+func _attachment_fx_mesh_frames(bank: Dictionary) -> Array[QuadMesh]:
+	var frame_names := _attachment_fx_frame_names(bank)
+	var result: Array[QuadMesh] = []
+	# StandardMaterial3D's billboard transform faces the camera in world space
+	# and does not retain the converted model root's scale like an ordinary
+	# mesh. Bake the XBF particle size into world units here; otherwise a source
+	# size such as 12 renders as a 12-world-unit flare instead of 0.75 at 1/16.
+	var world_size := maxf(
+		float(bank.get("particle_size", 0.0)) * world_scale,
+		0.01 * world_scale
+	)
+	var colors := bank.get("int_parameters_7_11", PackedInt32Array()) as PackedInt32Array
+	var tint := Color.WHITE
+	if colors.size() >= 3:
+		tint = Color(
+			clampf(float(colors[0]) / 255.0, 0.0, 1.0),
+			clampf(float(colors[1]) / 255.0, 0.0, 1.0),
+			clampf(float(colors[2]) / 255.0, 0.0, 1.0),
+		)
+	for frame_index in frame_names.size():
+		var texture_path := _ensure_model_texture(frame_names[frame_index])
+		if texture_path.is_empty():
+			return []
+		var texture := _load_png_texture(texture_path)
+		if texture == null:
+			return []
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		material.albedo_texture = texture
+		material.albedo_color = Color(
+			tint.r, tint.g, tint.b, _fx_bank_frame_opacity(bank, frame_index)
+		)
+		var quad := QuadMesh.new()
+		quad.size = Vector2.ONE * world_size
+		quad.material = material
+		result.append(quad)
+	return result
+
+
+func _attachment_fx_frame_names(bank: Dictionary) -> PackedStringArray:
+	var texture_name := String(bank.get("texture", ""))
+	var discovered := _animated_texture_frames(texture_name)
+	var frame_count := maxi(int(bank.get("texture_frame_count", 1)), 1)
+	if not discovered.is_empty():
+		if discovered.size() > frame_count:
+			discovered.resize(frame_count)
+		return discovered
+	var result := PackedStringArray()
+	if not texture_name.get_extension().is_empty():
+		result.append(texture_name)
+		return result
+	for frame_index in frame_count:
+		result.append(texture_name + str(frame_index) + ".tga")
+	return result
+
+
+func _fx_bank_frame_opacity(bank: Dictionary, frame_index: int) -> float:
+	var trailing := bank.get("trailing_words", PackedInt32Array()) as PackedInt32Array
+	if trailing.size() < 2:
+		return 1.0
+	return clampf(
+		float(trailing[0] + trailing[1] * frame_index) / 255.0,
+		0.0, 1.0
+	)
+
+
+func _find_original_node(node: Node, original_name: String) -> Node3D:
+	if node is Node3D and String(node.get_meta("original_name", "")).nocasecmp_to(original_name) == 0:
+		return node as Node3D
+	for child in node.get_children():
+		var found := _find_original_node(child, original_name)
+		if found != null:
+			return found
+	return null
+
+
+func _add_attachment_fx_tracks(anim: Animation, effects: Array[Dictionary]) -> void:
+	for effect: Dictionary in effects:
+		var path := String(effect["path"])
+		var visibility_track := anim.add_track(Animation.TYPE_VALUE)
+		anim.track_set_path(visibility_track, NodePath("%s:visible" % path))
+		anim.track_set_interpolation_type(visibility_track, Animation.INTERPOLATION_NEAREST)
+		anim.value_track_set_update_mode(visibility_track, Animation.UPDATE_DISCRETE)
+		anim.track_insert_key(visibility_track, 0.0, false)
+		for event: Dictionary in effect["events"]:
+			var action := String(event.get("action", ""))
+			if action != "start" and action != "stop":
+				continue
+			anim.track_insert_key(
+				visibility_track,
+				float(event.get("frame", 0)) / fps,
+				action == "start"
+			)
+
+		var meshes := effect["meshes"] as Array[QuadMesh]
+		if meshes.size() <= 1:
+			continue
+		var mesh_track := anim.add_track(Animation.TYPE_VALUE)
+		anim.track_set_path(mesh_track, NodePath("%s:mesh" % path))
+		anim.track_set_interpolation_type(mesh_track, Animation.INTERPOLATION_NEAREST)
+		anim.value_track_set_update_mode(mesh_track, Animation.UPDATE_DISCRETE)
+		var key_count := int(ceilf(anim.length * TEXTURE_FX_FPS))
+		for frame_index in key_count + 1:
+			anim.track_insert_key(
+				mesh_track,
+				frame_index / TEXTURE_FX_FPS,
+				meshes[frame_index % meshes.size()]
+			)
+
+
 func _is_animated_shield_texture(texture_name: String) -> bool:
 	return _is_animated_texture(texture_name) and _has_shield_fx_marker and texture_name.get_file().to_lower().contains("shield")
 
@@ -1306,8 +1506,30 @@ func _slice_animation(source: Animation, entry: Dictionary, target_paths := {}) 
 				source.track_get_key_value(source_track, key_index),
 				source.track_get_key_transition(source_track, key_index)
 			)
+	_seed_clip_attachment_fx_tracks(clip, source, start_time)
 	_add_clip_muzzle_flash_visibility(clip, String(entry.get("name", "")), source, start_time, end_time)
 	return clip
+
+
+func _seed_clip_attachment_fx_tracks(
+		clip: Animation, source: Animation, start_time: float
+	) -> void:
+	for path in _attachment_fx_paths:
+		for property_name in ["visible", "mesh"]:
+			var track_path := NodePath("%s:%s" % [path, property_name])
+			var source_track := source.find_track(track_path, Animation.TYPE_VALUE)
+			if source_track < 0:
+				continue
+			var value: Variant = source.value_track_interpolate(source_track, start_time)
+			if value == null:
+				continue
+			var clip_track := clip.find_track(track_path, Animation.TYPE_VALUE)
+			if clip_track < 0:
+				clip_track = clip.add_track(Animation.TYPE_VALUE)
+				clip.track_set_path(clip_track, track_path)
+				clip.track_set_interpolation_type(clip_track, Animation.INTERPOLATION_NEAREST)
+				clip.value_track_set_update_mode(clip_track, Animation.UPDATE_DISCRETE)
+			clip.track_insert_key(clip_track, 0.0, value)
 
 
 func _clip_target_paths(objects: Array[Dictionary], animation_entries: Array[Dictionary]) -> Dictionary:

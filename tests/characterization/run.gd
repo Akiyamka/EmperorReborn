@@ -43,6 +43,7 @@ func _initialize() -> void:
 	)
 	_run_case("XBF loop boundaries preserve authored snaps", _test_xbf_loop_boundaries)
 	_run_case("XBF FX banks retain parameters and event frames", _test_xbf_fx_banks)
+	_run_case("building markers bake authored attachment FX banks", _test_building_attachment_effects)
 	_run_case("building transition clips retain authored action names", _test_building_transition_clips)
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
 	_run_case("XBF mirrored inside-out meshes are re-oriented", _test_mirrored_mesh_orientation)
@@ -704,6 +705,174 @@ func _fx_emissions_during(
 			result += maxi(frame - int(active_frames[attachment]) - 1, 1)
 			active_frames.erase(attachment)
 	return result
+
+
+func _test_building_attachment_effects() -> bool:
+	var source_path := (
+		"res://assets/raw_original_content/3DDATA/Buildings/at_helipad_H0.XbF"
+	)
+	var xbf = ModelXbfScript.load_file(source_path)
+	_expect(
+		xbf != null and xbf.attachment_names.has("#light01"),
+		"the XBF parser must classify #lightNN objects as attachment markers"
+	)
+
+	var builder = ModelBakeBuilderScript.new()
+	builder.bake_attachment_bank_effects = true
+	var scene: PackedScene = builder.build(source_path)
+	_expect(scene != null, "AT Helipad H0 must build with attachment-bank effects")
+	if scene == null:
+		return true
+	var root := scene.instantiate()
+	var marker := _find_original_node_exact(root, "#light01")
+	_expect(marker != null, "AT Helipad must retain its #light01 transform anchor")
+	if marker == null:
+		root.free()
+		return true
+	var source_mesh := _plain_mesh_descendant(marker)
+	var effect := _attachment_fx_child(marker)
+	_expect(
+		source_mesh == null or not source_mesh.visible,
+		"the authored #light01 cube must be hidden"
+	)
+	_expect(effect != null, "#light01 must receive its authored FX-bank visual")
+	if effect != null:
+		_expect(
+			String(effect.get_meta("xbf_fx_texture", "")) == "!Dlight"
+			and is_equal_approx(float(effect.get_meta("xbf_fx_particle_size", 0.0)), 12.0),
+			"the light visual must retain the source Dlight texture and bank size"
+		)
+		var quad := effect.mesh as QuadMesh
+		var material := quad.material as StandardMaterial3D if quad != null else null
+		_expect(
+			material != null
+			and material.billboard_mode == BaseMaterial3D.BILLBOARD_ENABLED
+			and material.blend_mode == BaseMaterial3D.BLEND_MODE_ADD,
+			"the replacement light must be an additive billboard"
+		)
+		_expect(
+			quad != null and quad.size.is_equal_approx(Vector2.ONE * 0.75)
+			and is_equal_approx(
+				float(effect.get_meta("xbf_fx_world_particle_size", 0.0)), 0.75
+			),
+			"the billboard size must be converted from XBF units into world units"
+		)
+		var player := root.get_node_or_null("AnimationPlayer") as AnimationPlayer
+		var timeline := player.get_animation(&"timeline") if player != null else null
+		var track_path := NodePath("%s:visible" % String(root.get_path_to(effect)))
+		var track := timeline.find_track(track_path, Animation.TYPE_VALUE) \
+			if timeline != null else -1
+		_expect(track >= 0, "the light billboard must have an authored visibility track")
+		if track >= 0:
+			var times: Array[float] = []
+			var values: Array[bool] = []
+			for key_index in timeline.track_get_key_count(track):
+				times.append(timeline.track_get_key_time(track, key_index))
+				values.append(bool(timeline.track_get_key_value(track, key_index)))
+			_expect(
+				times == [0.0, 1.0, 2.0, 3.0, 4.0]
+				and values == [false, true, false, true, false],
+				"#light01 must blink on the XBF start/stop frames"
+			)
+	root.free()
+
+	var partial = ModelXbfScript.load_file(
+		"res://assets/raw_original_content/3DDATA/Buildings/HK_Factory_H0.xbf"
+	)
+	var retained_partial_light := false
+	if partial != null:
+		for event: Dictionary in partial.fx_events:
+			if String(event.get("attachment", "")) == "#light01":
+				retained_partial_light = true
+				break
+	_expect(
+		partial != null and not partial.fx_events_complete
+		and retained_partial_light,
+		"valid light events before an undecoded payload must remain available"
+	)
+	var smoke_builder = ModelBakeBuilderScript.new()
+	smoke_builder.bake_attachment_bank_effects = true
+	var smoke_scene: PackedScene = smoke_builder.build(
+		"res://assets/raw_original_content/3DDATA/Buildings/hk_hanger_H0.xbf"
+	)
+	_expect(smoke_scene != null, "HK Hanger H0 must build non-light attachment effects")
+	if smoke_scene != null:
+		var smoke_root := smoke_scene.instantiate()
+		var smoke_marker := _find_original_node_exact(smoke_root, "#smoke01")
+		var smoke_fx := _attachment_fx_child(smoke_marker) if smoke_marker != null else null
+		_expect(
+			smoke_fx != null
+			and not String(smoke_fx.get_meta("xbf_fx_texture", "")).is_empty(),
+			"#smoke01 must receive its authored smoke bank"
+		)
+		var smoke_source := _plain_mesh_descendant(smoke_marker) \
+			if smoke_marker != null else null
+		_expect(
+			smoke_source == null or not smoke_source.visible,
+			"the authored #smoke01 marker geometry must be hidden"
+		)
+		smoke_root.free()
+
+	var starport_source := (
+		"res://assets/raw_original_content/3DDATA/Buildings/AT_StarPort_H0.XbF"
+	)
+	var starport_xbf = ModelXbfScript.load_file(starport_source)
+	_expect(
+		starport_xbf != null
+		and starport_xbf.attachment_names.has("#centrelight")
+		and starport_xbf.attachment_names.has("#Landinglight01")
+		and starport_xbf.attachment_names.has("#runwaylight10"),
+		"compound Starport light names must be classified as attachments"
+	)
+	var starport_builder = ModelBakeBuilderScript.new()
+	starport_builder.bake_attachment_bank_effects = true
+	var starport_scene: PackedScene = starport_builder.build(starport_source)
+	_expect(starport_scene != null, "AT Starport H0 must build its named light effects")
+	if starport_scene != null:
+		var starport_root := starport_scene.instantiate()
+		var centre := _find_original_node_exact(starport_root, "#centrelight")
+		var runway := _find_original_node_exact(starport_root, "#runwaylight10")
+		var centre_fx := _attachment_fx_child(centre) if centre != null else null
+		var runway_fx := _attachment_fx_child(runway) if runway != null else null
+		_expect(
+			centre_fx != null
+			and String(centre_fx.get_meta("xbf_fx_texture", "")) == "!%RFlash",
+			"AT Starport centre/landing markers must receive their red flash bank"
+		)
+		_expect(
+			runway_fx != null
+			and String(runway_fx.get_meta("xbf_fx_texture", "")) == "=!%GFlash",
+			"AT Starport runway markers must receive their green flash bank"
+		)
+		starport_root.free()
+	return true
+
+
+func _find_original_node_exact(node: Node, original_name: String) -> Node3D:
+	if node is Node3D and String(node.get_meta("original_name", "")) == original_name:
+		return node as Node3D
+	for child in node.get_children():
+		var found := _find_original_node_exact(child, original_name)
+		if found != null:
+			return found
+	return null
+
+
+func _attachment_fx_child(marker: Node) -> MeshInstance3D:
+	for child in marker.get_children():
+		if child is MeshInstance3D and child.has_meta("xbf_fx_bank_id"):
+			return child as MeshInstance3D
+	return null
+
+
+func _plain_mesh_descendant(node: Node) -> MeshInstance3D:
+	for child in node.get_children():
+		if child is MeshInstance3D and not child.has_meta("xbf_fx_bank_id"):
+			return child as MeshInstance3D
+		var found := _plain_mesh_descendant(child)
+		if found != null:
+			return found
+	return null
 
 
 func _test_building_transition_clips() -> bool:
