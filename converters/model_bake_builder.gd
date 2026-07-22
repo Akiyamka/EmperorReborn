@@ -1540,11 +1540,29 @@ func _clip_target_paths(objects: Array[Dictionary], animation_entries: Array[Dic
 			referenced_ids[target_id] = true
 
 	var paths := {}
+	_collect_clip_target_paths(objects, ".", referenced_ids, paths)
+	return paths
+
+
+## Refinery pads are normally top-level objects, but OR/HK place them below
+## the shared ~~0 shell. Mirror the node-path construction in
+## _build_object_node() so an FX entry's target id filters the right branch in
+## either layout.
+func _collect_clip_target_paths(
+		objects: Array[Dictionary], parent_path: String, referenced_ids: Dictionary, paths: Dictionary
+	) -> void:
+	var sibling_names := {}
 	for object: Dictionary in objects:
+		var node_name := _unique_sibling_node_name(String(object.name), sibling_names)
+		var node_path := "%s/%s" % [parent_path, node_name] if parent_path != "." else node_name
 		var target_id := _top_level_target_id(String(object.name))
 		if target_id > 0 and referenced_ids.has(target_id):
-			paths[target_id] = _safe_node_name(String(object.name))
-	return paths
+			paths[target_id] = node_path
+
+		var content_path := node_path
+		if _object_animation_is_consistently_mirrored(object):
+			content_path = "%s/%s" % [node_path, MIRRORED_CONTENT_NODE_NAME]
+		_collect_clip_target_paths(object.children, content_path, referenced_ids, paths)
 
 
 func _top_level_target_id(object_name: String) -> int:

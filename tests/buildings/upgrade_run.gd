@@ -256,45 +256,50 @@ func _test_upgrade_effects_filters(token: int, _local_player: PlayerData) -> int
 
 
 func _test_refinery_dock_states(token: int) -> int:
-	var scene := load("res://assets/converted/buildings/ATRefinery/ATRefinery.scn") as PackedScene
+	for refinery_id in [&"ATRefinery", &"ORRefinery", &"HKRefinery"]:
+		_test_refinery_dock_states_for(refinery_id)
+	return token
+
+
+func _test_refinery_dock_states_for(refinery_id: StringName) -> void:
+	var scene := load("res://assets/converted/buildings/%s/%s.scn" % [refinery_id, refinery_id]) as PackedScene
 	var refinery := scene.instantiate() as Building
 	root.add_child(refinery)
 
 	var player := refinery.get_node_or_null("States/Idle/AnimationPlayer") as AnimationPlayer
 	var first_pad := refinery.find_child("_3SmallPad01", true, false) as Node3D
 	var second_pad := refinery.find_child("_4SmallPad02", true, false) as Node3D
-	_expect(player != null, "the refinery idle model must expose its dock AnimationPlayer")
-	_expect(first_pad != null and second_pad != null, "both built-in refinery pads must exist")
+	_expect(player != null, "%s idle model must expose its dock AnimationPlayer" % refinery_id)
+	_expect(first_pad != null and second_pad != null, "%s must contain both built-in refinery pads" % refinery_id)
 	if player == null or first_pad == null or second_pad == null:
 		refinery.free()
-		return token
+		return
 
 	var first_initial := first_pad.transform
 	var second_initial := second_pad.transform
-	_expect(refinery.dock_count() == 0 and refinery.can_add_dock(), "a refinery must begin in the no-upgrades state")
-	_expect(refinery.add_refinery_dock_upgrade(), "the first dock state transition must succeed")
-	_expect(player.current_animation == &"Refinery_Pad_1", "the first upgrade must animate _3SmallPad01")
+	_expect(refinery.dock_count() == 0 and refinery.can_add_dock(), "%s must begin in the no-upgrades state" % refinery_id)
+	_expect(refinery.add_refinery_dock_upgrade(), "%s first dock state transition must succeed" % refinery_id)
+	_expect(player.current_animation == &"Refinery_Pad_1", "%s first upgrade must animate _3SmallPad01" % refinery_id)
 	player.advance(player.get_animation(&"Refinery_Pad_1").length + 0.1)
 	var first_final := first_pad.transform
-	_expect(not first_final.is_equal_approx(first_initial), "the first pad must finish in its unfolded pose")
-	_expect(second_pad.transform.is_equal_approx(second_initial), "the first upgrade must not move _4SmallPad02")
+	_expect(not first_final.is_equal_approx(first_initial), "%s first pad must finish in its unfolded pose" % refinery_id)
+	_expect(second_pad.transform.is_equal_approx(second_initial), "%s first upgrade must not move _4SmallPad02" % refinery_id)
 
-	_expect(refinery.add_refinery_dock_upgrade(), "the second dock state transition must succeed")
-	_expect(player.current_animation == &"Refinery_Pad_2", "the second upgrade must animate _4SmallPad02")
+	_expect(refinery.add_refinery_dock_upgrade(), "%s second dock state transition must succeed" % refinery_id)
+	_expect(player.current_animation == &"Refinery_Pad_2", "%s second upgrade must animate _4SmallPad02" % refinery_id)
 	player.advance(player.get_animation(&"Refinery_Pad_2").length + 0.1)
 	var second_final := second_pad.transform
-	_expect(not second_final.is_equal_approx(second_initial), "the second pad must finish in its unfolded pose")
-	_expect(first_pad.transform.is_equal_approx(first_final), "opening the second pad must preserve the first pad's final pose")
+	_expect(not second_final.is_equal_approx(second_initial), "%s second pad must finish in its unfolded pose" % refinery_id)
+	_expect(first_pad.transform.is_equal_approx(first_final), "%s opening the second pad must preserve the first pad's final pose" % refinery_id)
 	player.advance(1.0)
 	_expect(
 		first_pad.transform.is_equal_approx(first_final) and second_pad.transform.is_equal_approx(second_final),
-		"both dock animations must remain at their final transforms"
+		"%s both dock animations must remain at their final transforms" % refinery_id
 	)
-	_expect(refinery.dock_count() == 2 and not refinery.can_add_dock(), "state 2 must be the refinery's maximum")
-	_expect(not refinery.add_refinery_dock_upgrade(), "a third dock state must be rejected")
+	_expect(refinery.dock_count() == 2 and not refinery.can_add_dock(), "%s state 2 must be the refinery maximum" % refinery_id)
+	_expect(not refinery.add_refinery_dock_upgrade(), "%s must reject a third dock state" % refinery_id)
 
 	refinery.free()
-	return token
 
 
 func _test_refinery_dock_reservations(token: int) -> int:
