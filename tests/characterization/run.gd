@@ -41,6 +41,7 @@ func _initialize() -> void:
 		"XBF duplicate sibling animations keep independent paths",
 		_test_duplicate_object_animation_paths
 	)
+	_run_case("XBF loop boundaries preserve authored snaps", _test_xbf_loop_boundaries)
 	_run_case("XBF FX banks retain parameters and event frames", _test_xbf_fx_banks)
 	_run_case("building transition clips retain authored action names", _test_building_transition_clips)
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
@@ -427,6 +428,64 @@ func _collect_nodes_with_original_suffix(
 		result.append(node as Node3D)
 	for child in node.get_children():
 		_collect_nodes_with_original_suffix(child, suffix, result)
+
+
+func _test_xbf_loop_boundaries() -> bool:
+	var paths := [
+		"res://assets/raw_original_content/UI0001/CURSORS/CU_Select_H0.xbf",
+		"res://assets/raw_original_content/3DDATA/Buildings/at_factory_H0.xbf",
+		"res://assets/raw_original_content/3DDATA/Buildings/at_hanger_H0.xbf",
+		"res://assets/raw_original_content/3DDATA/Buildings/AT_conyard_H0.XbF",
+	]
+	for path: String in paths:
+		var builder = ModelBakeBuilderScript.new()
+		var scene: PackedScene = builder.build(path)
+		_expect(scene != null, "%s must build" % path.get_file())
+		if scene == null:
+			continue
+		var root := scene.instantiate()
+		var player := root.get_node_or_null("AnimationPlayer") as AnimationPlayer
+		_expect(player != null, "%s must expose animation tracks" % path.get_file())
+		if player == null:
+			root.free()
+			continue
+		var transform_tracks := 0
+		for animation_name in player.get_animation_list():
+			var animation := player.get_animation(animation_name)
+			for track in animation.get_track_count():
+				if not String(animation.track_get_path(track)).ends_with(":transform"):
+					continue
+				transform_tracks += 1
+				_expect(
+					not animation.track_get_interpolation_loop_wrap(track),
+					"%s/%s track %s must snap at the loop boundary"
+						% [path.get_file(), animation_name, animation.track_get_path(track)]
+				)
+		_expect(transform_tracks > 0, "%s must contain transform tracks" % path.get_file())
+		root.free()
+
+	var building_builder = BuildingBakeBuilderScript.new()
+	var building_scene: PackedScene = building_builder.build(&"ATFactory")
+	_expect(building_scene != null, "ATFactory wrapper must build")
+	if building_scene != null:
+		var building_root := building_scene.instantiate()
+		var state_player := building_root.get_node_or_null("StatePlayer") as AnimationPlayer
+		var idle := state_player.get_animation(&"idle") if state_player != null else null
+		_expect(idle != null, "ATFactory wrapper must expose its idle animation")
+		if idle != null:
+			var copied_transform_tracks := 0
+			for track in idle.get_track_count():
+				if not String(idle.track_get_path(track)).ends_with(":transform"):
+					continue
+				copied_transform_tracks += 1
+				_expect(
+					not idle.track_get_interpolation_loop_wrap(track),
+					"ATFactory wrapper track %s must retain the snap boundary"
+						% idle.track_get_path(track)
+				)
+			_expect(copied_transform_tracks > 0, "ATFactory idle must copy transform tracks")
+		building_root.free()
+	return true
 
 
 func _test_xbf_animation_table_variants() -> bool:

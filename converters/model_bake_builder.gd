@@ -1077,6 +1077,12 @@ func _add_animation_track(
 	var track := anim.add_track(Animation.TYPE_VALUE)
 	anim.track_set_path(track, NodePath("%s:transform" % node_path))
 	anim.track_set_interpolation_type(track, Animation.INTERPOLATION_LINEAR)
+	# XBF clips include the final authored pose, followed by an implicit snap
+	# back to their first pose at the loop boundary. Godot enables interpolation
+	# across that boundary by default, which turns the snap into a visible
+	# one-frame rewind whenever the two poses differ (CU_Select, building lights,
+	# and similar tracks). Hold the final key until the loop wraps instead.
+	anim.track_set_interpolation_loop_wrap(track, false)
 
 	var frame_ids := frames.keys()
 	frame_ids.sort()
@@ -1284,6 +1290,9 @@ func _slice_animation(source: Animation, entry: Dictionary, target_paths := {}) 
 		var track := clip.add_track(source.track_get_type(source_track))
 		clip.track_set_path(track, source.track_get_path(source_track))
 		clip.track_set_interpolation_type(track, source.track_get_interpolation_type(source_track))
+		clip.track_set_interpolation_loop_wrap(
+			track, source.track_get_interpolation_loop_wrap(source_track)
+		)
 		if source.track_get_type(source_track) == Animation.TYPE_VALUE:
 			clip.value_track_set_update_mode(track, source.value_track_get_update_mode(source_track))
 
