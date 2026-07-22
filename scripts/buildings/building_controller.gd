@@ -6,6 +6,7 @@ signal building_option_state_changed(option_state: BuildingOptionState)
 signal resources_changed(credits: int, energy: int)
 signal sell_mode_changed(active: bool)
 signal wall_mode_changed(active: bool)
+signal repair_mode_changed(active: bool)
 
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
@@ -19,6 +20,11 @@ const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/buildi
 const GameSettingsCatalogScript := preload("res://scripts/rules/game_settings_catalog.gd")
 
 const DEFAULT_BUILD_RADIUS_TILES := 6
+## Building repair runs on the original game's 25 Hz rules clock.  Rules.txt
+## defines RepairRate as health per ten of these ticks.
+const RULE_TICKS_PER_SECOND := 25.0
+const REPAIR_TICK_INTERVAL_SECONDS := 10.0 / RULE_TICKS_PER_SECOND
+const REPAIR_COST_FRACTION := 1.0 / 3.0
 const WALL_BUILDING_GROUP := "Wall"
 const DOUBLE_CLICK_THRESHOLD_MS := 350
 const PLACEMENT_ROTATION_DRAG_THRESHOLD := 8.0
@@ -41,6 +47,13 @@ var _building_queue: BuildingQueue = BuildingQueueScript.new()
 var _building_placement: BuildingPlacement = BuildingPlacementScript.new()
 var _local_player_resource: PlayerData
 var _sell_mode := false
+var _repair_mode := false
+## Per-building fractional-credit carry.  Credits are integral, but repair
+## prices are proportional to health restored, so retaining this remainder
+## makes a sequence of repair ticks cost exactly the intended amount (rounded
+## down only if the player cancels before the next whole credit is due).
+var _repair_credit_carry: Dictionary = {}
+var _repair_tick_elapsed := 0.0
 var _selling_building: Node3D
 var _wall_line_mode := false
 var _wall_line_start_cell = null
@@ -89,6 +102,7 @@ func setup(
 	_refresh_building_option_states()
 	sell_mode_changed.emit(_sell_mode)
 	wall_mode_changed.emit(_wall_line_mode)
+	repair_mode_changed.emit(_repair_mode)
 
 
 func process(delta: float) -> void:
@@ -99,6 +113,7 @@ func process(delta: float) -> void:
 			_building_availability[building_id] = building_available
 			_refresh_building_option_states()
 	_process_building_order(delta)
+	_process_repairs(delta)
 	if _building_placement.is_active():
 		var pointer_position := (
 			_placement_press_position
@@ -109,6 +124,17 @@ func process(delta: float) -> void:
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
+	if _repair_mode:
+		if not (event is InputEventMouseButton and event.pressed):
+			return false
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			_try_toggle_building_repair(event.position)
+			return true
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			_set_repair_mode(false)
+			return true
+		return false
+
 	if _sell_mode:
 		if not (event is InputEventMouseButton and event.pressed):
 			return false
@@ -207,7 +233,7 @@ func handle_command(command: StringName) -> bool:
 			_set_sell_mode(not _sell_mode)
 			return true
 		&"Repair":
-			status_changed.emit("Command: Repair (not implemented)")
+			_set_repair_mode(not _repair_mode)
 			return true
 	return false
 
@@ -230,6 +256,7 @@ func _set_sell_mode(active: bool) -> void:
 	_update_mode_cursor()
 	sell_mode_changed.emit(active)
 	if active:
+		_set_repair_mode(false)
 		_set_wall_line_mode(false)
 		_cancel_building_placement()
 		status_changed.emit("Sell mode: select one of your buildings")
@@ -243,12 +270,107 @@ func _set_wall_line_mode(active: bool, building_id: StringName = &"") -> void:
 	_wall_line_building_id = building_id if active else &""
 	wall_mode_changed.emit(active)
 	if active:
+		_set_repair_mode(false)
 		_set_sell_mode(false)
 		_cancel_building_placement()
 		status_changed.emit("Wall mode: click the line start, then the line end")
 	else:
 		status_changed.emit("Wall mode canceled")
 	_refresh_building_option_states()
+
+
+func _set_repair_mode(active: bool) -> void:
+	if _repair_mode == active:
+		return
+	_repair_mode = active
+	_update_mode_cursor()
+	repair_mode_changed.emit(active)
+	if active:
+		if _sell_mode:
+			_set_sell_mode(false)
+		if _wall_line_mode:
+			_set_wall_line_mode(false)
+		_cancel_building_placement()
+		status_changed.emit("Repair mode: right-click a damaged building; left-click to exit")
+	else:
+		status_changed.emit("Repair mode canceled")
+
+
+func _try_toggle_building_repair(screen_position: Vector2) -> void:
+	var hit := _raycast(screen_position, 2)
+	var building := _find_building(hit.get("collider") as Node)
+	if building == null:
+		status_changed.emit("Select one of your damaged buildings to repair")
+		return
+	var players = _players()
+	if players == null or not building.has_method("is_owned_by") or not building.call("is_owned_by", players.local_player_id):
+		status_changed.emit("You can only repair your own buildings")
+		return
+	if not &"health" in building or not &"max_health" in building or float(building.get("health")) >= float(building.get("max_health")):
+		status_changed.emit("Only damaged buildings can be repaired")
+		return
+	var repairing := bool(building.get("is_repairing")) if &"is_repairing" in building else false
+	if repairing:
+		_set_building_repairing(building, false)
+		status_changed.emit("%s repair canceled" % _building_name(building))
+		return
+	_set_building_repairing(building, true)
+	status_changed.emit("%s repair started" % _building_name(building))
+
+
+func _process_repairs(delta: float) -> void:
+	_repair_tick_elapsed += delta
+	if _repair_tick_elapsed < REPAIR_TICK_INTERVAL_SECONDS:
+		return
+	var ticks := floori(_repair_tick_elapsed / REPAIR_TICK_INTERVAL_SECONDS)
+	_repair_tick_elapsed -= float(ticks) * REPAIR_TICK_INTERVAL_SECONDS
+	for _tick in ticks:
+		_process_repair_tick()
+
+
+func _process_repair_tick() -> void:
+	var settings := _game_settings_catalog.settings()
+	var repair_health := float(settings.building_repair_rate) if settings != null else 12.0
+	for node in get_tree().get_nodes_in_group("buildings"):
+		var building := node as Node3D
+		if building == null or not (&"is_repairing" in building and bool(building.get("is_repairing"))):
+			continue
+		var max_health := float(building.get("max_health")) if &"max_health" in building else 0.0
+		var missing_health := maxf(max_health - float(building.get("health")), 0.0) if &"health" in building else 0.0
+		if max_health <= 0.0 or missing_health <= 0.0:
+			_set_building_repairing(building, false)
+			continue
+		var restored := minf(repair_health, missing_health)
+		var repair_cost := _repair_cost_for_health(building, restored, max_health)
+		var carry := float(_repair_credit_carry.get(building.get_instance_id(), 0.0)) + repair_cost
+		var charge := floori(carry)
+		var player := _local_player()
+		if charge > 0 and (player == null or not player.spend_money(charge)):
+			continue
+		_repair_credit_carry[building.get_instance_id()] = carry - float(charge)
+		building.set("health", float(building.get("health")) + restored)
+		if float(building.get("health")) >= max_health:
+			_set_building_repairing(building, false)
+
+
+func _repair_cost_for_health(building: Node3D, restored_health: float, max_health: float) -> float:
+	var config = building.get("building_config")
+	if config == null:
+		config = _building_config(StringName(String(building.get("config_id"))))
+	var building_cost := float(config.cost) if config != null else 0.0
+	return restored_health / max_health * building_cost * REPAIR_COST_FRACTION
+
+
+func _set_building_repairing(building: Node3D, active: bool) -> void:
+	if &"is_repairing" in building:
+		building.set("is_repairing", active)
+	if not active:
+		_repair_credit_carry.erase(building.get_instance_id())
+
+
+func _building_name(building: Node3D) -> String:
+	var id := String(building.get("config_id"))
+	return id if not id.is_empty() else building.name
 
 
 func _on_wall_line_click(screen_position: Vector2) -> void:
@@ -341,6 +463,16 @@ func _update_mode_cursor() -> void:
 		)
 		cursors.set_override(BUILDING_MODE_CURSOR_OVERRIDE, cursor, 50)
 		return
+	if _repair_mode:
+		var hit := _raycast(get_viewport().get_mouse_position(), 2)
+		var building := _find_building(hit.get("collider") as Node)
+		var cursor := (
+			CursorManagerScript.CursorType.REPAIR
+			if _can_repair_building(building)
+			else CursorManagerScript.CursorType.CANT_REPAIR
+		)
+		cursors.set_override(BUILDING_MODE_CURSOR_OVERRIDE, cursor, 50)
+		return
 	if _building_placement.is_active() or _wall_line_mode or _wall_chain != null:
 		cursors.set_override(
 			BUILDING_MODE_CURSOR_OVERRIDE, CursorManagerScript.CursorType.POINTER, 50
@@ -357,6 +489,13 @@ func _can_sell_building(building: Node3D) -> bool:
 		and building.has_method("is_owned_by")
 		and building.call("is_owned_by", players.local_player_id)
 	)
+
+
+func _can_repair_building(building: Node3D) -> bool:
+	return _can_sell_building(building) \
+		and &"health" in building \
+		and &"max_health" in building \
+		and float(building.get("health")) < float(building.get("max_health"))
 
 
 func _cursor_manager() -> Variant:

@@ -5,3 +5,4 @@
 [resource]
 script = ExtResource("1_definition")
 max_building_placement_tile_dist = 6
+building_repair_rate = 12.0

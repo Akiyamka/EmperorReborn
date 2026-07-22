@@ -43,10 +43,11 @@ enum CursorType {
 	DN6,
 	GATHER,
 	CANT_DEPLOY,
+	CANT_REPAIR,
 }
 
 const ORIGINAL_CURSOR_COUNT := 33
-const CURSOR_COUNT := 35
+const CURSOR_COUNT := 36
 const EDGE_SCROLL_OVERRIDE := &"edge_scroll"
 const CURSOR_CANVAS_LAYER := 128
 const CURSOR_NORMAL_RENDER_LAYER := 1
@@ -97,6 +98,7 @@ const CURSOR_MODEL_KEYS := {
 	CursorType.DN6: &"dn6",
 	CursorType.GATHER: &"gather",
 	CursorType.CANT_DEPLOY: &"cant_deploy",
+	CursorType.CANT_REPAIR: &"cant_repair",
 }
 
 const SCROLL_CURSORS := {

@@ -18,6 +18,7 @@ signal construction_completed
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
+const REPAIR_EFFECT_SCENE := preload("res://assets/converted/ui/cursor_models/repair.scn")
 
 const COLLISION_OBJECT_NAME := "#~~0"
 const RALLY_POINT_CLEARANCE := 1.5
@@ -75,6 +76,12 @@ var shields := 0.0:
 		shields = clampf(value, 0.0, max_shields)
 var is_selected := false
 var is_hovered := false
+var is_repairing := false:
+	set(value):
+		if is_repairing == value:
+			return
+		is_repairing = value
+		_refresh_repair_effect()
 var rally_point := Vector3.ZERO
 var combat_turrets: Array = []
 
@@ -100,6 +107,7 @@ var _scroll_fx_meshes: Array[MeshInstance3D] = []
 var _scroll_fx_time := 0.0
 var _generated_energy := 0
 var _selection_halo
+var _repair_effect: Node3D
 var _has_rally_point := false
 var _refinery_dock_users: Dictionary = {}
 var _refinery_dock_cooldowns: Dictionary = {}
@@ -936,6 +944,32 @@ func _add_selection_halo() -> void:
 	_selection_halo.name = "SelectionHalo"
 	add_child(_selection_halo)
 	_selection_halo.configure(self, _selection_radius(), _selection_position())
+	_refresh_repair_effect()
+
+
+## The original repair marker reuses the animated repair cursor. It cannot be
+## a child of SelectionHalo: that node intentionally hides itself unless its
+## building is selected or hovered, whereas an active repair marker is always
+## visible.
+func _refresh_repair_effect() -> void:
+	if not is_instance_valid(_repair_effect):
+		_repair_effect = null
+	if not is_repairing:
+		if _repair_effect != null:
+			_repair_effect.queue_free()
+			_repair_effect = null
+		return
+	if _selection_halo == null or _repair_effect != null:
+		return
+	_repair_effect = REPAIR_EFFECT_SCENE.instantiate() as Node3D
+	if _repair_effect == null:
+		return
+	_repair_effect.name = "RepairEffect"
+	_repair_effect.position = _selection_position() + Vector3(0.0, 0.02, 0.0)
+	# Cursor assets are authored at screen-cursor scale; they must not inherit a
+	# large factory's halo diameter or they overwhelm the building.
+	_repair_effect.scale = Vector3.ONE * 0.08
+	add_child(_repair_effect)
 
 
 func _selection_radius() -> float:

@@ -31,7 +31,7 @@ func _test_model_catalog(cursors) -> void:
 		CursorManagerScript.ORIGINAL_CURSOR_COUNT == 33,
 		"the original Cursor Test.txt ordering must retain all 33 entries"
 	)
-	_expect(cursors.cursor_count() == 35, "the two remake semantic states must remain appended")
+	_expect(cursors.cursor_count() == 36, "the remake semantic states must remain appended")
 	_expect(
 		CursorManagerScript.CURSOR_MODEL_KEYS.size() == cursors.cursor_count(),
 		"every semantic cursor must map to a 3D model key"

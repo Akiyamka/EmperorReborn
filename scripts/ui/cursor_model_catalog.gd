@@ -17,6 +17,7 @@ const MODEL_FILES := {
 	&"select": "CU_Select_H0.xbf",
 	&"infantry_rock": "CU_Enter_H0.xbf",
 	&"cant_sell": "CU_Cant_Sell_H0.xbf",
+	&"cant_repair": "CU_Cant_Repair_H0.xbf",
 	&"target_ability": "CU_Move_Map_H0.xbf",
 	&"dn3": "CU_Move_Map_H0.xbf",
 	&"sell": "CU_Sell_H0.xbf",

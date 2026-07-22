@@ -580,10 +580,17 @@ def main() -> int:
             args.check,
         ) and ok
 
-        placement_distance = connection.execute("SELECT max_building_placement_tile_dist FROM general_settings WHERE id=1").fetchone()[0]
+        settings = connection.execute(
+            "SELECT max_building_placement_tile_dist, repair_rate FROM general_settings WHERE id=1"
+        ).fetchone()
+        placement_distance = settings[0] if settings is not None else 6
+        repair_rate = settings[1] if settings is not None else 12
         ok = write_or_check(GAME_SETTINGS_PATH, resource_text(
             "GameSettings", "res://scripts/rules/game_settings.gd",
-            [f"max_building_placement_tile_dist = {int(placement_distance or 6)}"],
+            [
+                f"max_building_placement_tile_dist = {int(placement_distance or 6)}",
+                f"building_repair_rate = {float(repair_rate or 12):.1f}",
+            ],
         ), args.check) and ok
         spice = connection.execute("""
             SELECT s.*, e.name AS explosion_name FROM spice_mound_types s
