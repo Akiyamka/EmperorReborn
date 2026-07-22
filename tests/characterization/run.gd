@@ -790,6 +790,39 @@ func _test_building_light_attachments() -> bool:
 		and retained_partial_light,
 		"valid light events before an undecoded payload must remain available"
 	)
+
+	var starport_source := (
+		"res://assets/raw_original_content/3DDATA/Buildings/AT_StarPort_H0.XbF"
+	)
+	var starport_xbf = ModelXbfScript.load_file(starport_source)
+	_expect(
+		starport_xbf != null
+		and starport_xbf.attachment_names.has("#centrelight")
+		and starport_xbf.attachment_names.has("#Landinglight01")
+		and starport_xbf.attachment_names.has("#runwaylight10"),
+		"compound Starport light names must be classified as attachments"
+	)
+	var starport_builder = ModelBakeBuilderScript.new()
+	starport_builder.bake_attachment_bank_effects = true
+	var starport_scene: PackedScene = starport_builder.build(starport_source)
+	_expect(starport_scene != null, "AT Starport H0 must build its named light effects")
+	if starport_scene != null:
+		var starport_root := starport_scene.instantiate()
+		var centre := _find_original_node_exact(starport_root, "#centrelight")
+		var runway := _find_original_node_exact(starport_root, "#runwaylight10")
+		var centre_fx := _attachment_fx_child(centre) if centre != null else null
+		var runway_fx := _attachment_fx_child(runway) if runway != null else null
+		_expect(
+			centre_fx != null
+			and String(centre_fx.get_meta("xbf_fx_texture", "")) == "!%RFlash",
+			"AT Starport centre/landing markers must receive their red flash bank"
+		)
+		_expect(
+			runway_fx != null
+			and String(runway_fx.get_meta("xbf_fx_texture", "")) == "=!%GFlash",
+			"AT Starport runway markers must receive their green flash bank"
+		)
+		starport_root.free()
 	return true
 
 

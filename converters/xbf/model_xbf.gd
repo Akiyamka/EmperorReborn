@@ -477,9 +477,12 @@ func _is_attachment_name(value: String) -> bool:
 
 static func is_light_attachment_name(value: String) -> bool:
 	var lower := value.to_lower()
-	if not lower.begins_with("#light"):
+	if not lower.begins_with("#"):
 		return false
-	var suffix := lower.substr(6)
+	var light_position := lower.rfind("light")
+	if light_position < 1:
+		return false
+	var suffix := lower.substr(light_position + 5)
 	if suffix.is_empty():
 		return true
 	for index in suffix.length():
