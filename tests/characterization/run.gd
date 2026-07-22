@@ -43,7 +43,7 @@ func _initialize() -> void:
 	)
 	_run_case("XBF loop boundaries preserve authored snaps", _test_xbf_loop_boundaries)
 	_run_case("XBF FX banks retain parameters and event frames", _test_xbf_fx_banks)
-	_run_case("building light markers bake authored FX banks", _test_building_light_attachments)
+	_run_case("building markers bake authored attachment FX banks", _test_building_attachment_effects)
 	_run_case("building transition clips retain authored action names", _test_building_transition_clips)
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
 	_run_case("XBF mirrored inside-out meshes are re-oriented", _test_mirrored_mesh_orientation)
@@ -707,7 +707,7 @@ func _fx_emissions_during(
 	return result
 
 
-func _test_building_light_attachments() -> bool:
+func _test_building_attachment_effects() -> bool:
 	var source_path := (
 		"res://assets/raw_original_content/3DDATA/Buildings/at_helipad_H0.XbF"
 	)
@@ -790,6 +790,28 @@ func _test_building_light_attachments() -> bool:
 		and retained_partial_light,
 		"valid light events before an undecoded payload must remain available"
 	)
+	var smoke_builder = ModelBakeBuilderScript.new()
+	smoke_builder.bake_attachment_bank_effects = true
+	var smoke_scene: PackedScene = smoke_builder.build(
+		"res://assets/raw_original_content/3DDATA/Buildings/hk_hanger_H0.xbf"
+	)
+	_expect(smoke_scene != null, "HK Hanger H0 must build non-light attachment effects")
+	if smoke_scene != null:
+		var smoke_root := smoke_scene.instantiate()
+		var smoke_marker := _find_original_node_exact(smoke_root, "#smoke01")
+		var smoke_fx := _attachment_fx_child(smoke_marker) if smoke_marker != null else null
+		_expect(
+			smoke_fx != null
+			and not String(smoke_fx.get_meta("xbf_fx_texture", "")).is_empty(),
+			"#smoke01 must receive its authored smoke bank"
+		)
+		var smoke_source := _plain_mesh_descendant(smoke_marker) \
+			if smoke_marker != null else null
+		_expect(
+			smoke_source == null or not smoke_source.visible,
+			"the authored #smoke01 marker geometry must be hidden"
+		)
+		smoke_root.free()
 
 	var starport_source := (
 		"res://assets/raw_original_content/3DDATA/Buildings/AT_StarPort_H0.XbF"

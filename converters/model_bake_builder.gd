@@ -22,9 +22,9 @@ var world_scale := 0.0625
 # standalone TurretMuzzleFlash XBF is itself the short-lived effect, so its
 # `bigflash` geometry must retain the source visibility.
 var bake_embedded_muzzle_flash_visibility := true
-## Building #light meshes are attachment markers for XBF FX banks, not model
-## geometry. BuildingBakeBuilder enables this so their authored bank events
-## become billboard lights in the packed state scenes.
+## Building # meshes referenced by XBF FX events are attachment markers, not
+## model geometry. BuildingBakeBuilder enables this so their authored bank
+## events become billboard effects in the packed state scenes.
 var bake_attachment_bank_effects := false
 var stationary_clip_loops := true
 
@@ -65,6 +65,7 @@ var _shield_shader: Shader
 var _has_shield_fx_marker := false
 var _muzzle_flash_mesh_paths := PackedStringArray()
 var _attachment_fx_paths := PackedStringArray()
+var _attachment_fx_names := {}
 var _source_file_name := ""
 
 
@@ -82,11 +83,13 @@ func build(xbf_path: String) -> PackedScene:
 	_has_shield_fx_marker = false
 	_muzzle_flash_mesh_paths = PackedStringArray()
 	_attachment_fx_paths = PackedStringArray()
+	_attachment_fx_names.clear()
 
 	var xbf = ModelXbfScript.load_file(xbf_path)
 	if xbf == null:
 		return null
 	_prepare_animated_texture_sequences(xbf.fx_strings)
+	_prepare_attachment_fx_names(xbf)
 
 	var root := Node3D.new()
 	root.name = _scene_name_from_path(xbf_path)
@@ -240,12 +243,12 @@ func _build_object_node(
 		# Keep its mesh in the converted scene so Unit and Building can make
 		# the matching physics shape at runtime.
 		var is_muzzle_flash := _is_muzzle_flash_object(raw_name)
-		var is_light_attachment := _is_light_attachment_object(raw_name)
+		var is_bank_attachment := _is_bank_attachment_object(raw_name)
 		var hidden_source_component := _is_hidden_source_mesh_component(raw_name, mesh_index)
 		mesh_instance.visible = not (
 			_is_effect_object(raw_name)
 			or (is_muzzle_flash and bake_embedded_muzzle_flash_visibility)
-			or (is_light_attachment and bake_attachment_bank_effects)
+			or (is_bank_attachment and bake_attachment_bank_effects)
 			or raw_name == COLLISION_OBJECT_NAME
 			or hidden_source_component
 		)
@@ -1070,8 +1073,19 @@ func _is_muzzle_flash_object(object_name: String) -> bool:
 	return object_name.to_lower().contains("bigflash")
 
 
-func _is_light_attachment_object(object_name: String) -> bool:
-	return ModelXbfScript.is_light_attachment_name(object_name)
+func _prepare_attachment_fx_names(xbf) -> void:
+	var bank_ids := {}
+	for bank: Dictionary in xbf.fx_banks:
+		bank_ids[String(bank.get("id", ""))] = true
+	for event: Dictionary in xbf.fx_events:
+		var attachment := String(event.get("attachment", ""))
+		if attachment.begins_with("#") \
+		and bank_ids.has(String(event.get("bank_id", ""))):
+			_attachment_fx_names[attachment.to_lower()] = true
+
+
+func _is_bank_attachment_object(object_name: String) -> bool:
+	return _attachment_fx_names.has(object_name.to_lower())
 
 
 func _build_attachment_bank_effects(root: Node3D, xbf) -> Array[Dictionary]:
@@ -1081,7 +1095,7 @@ func _build_attachment_bank_effects(root: Node3D, xbf) -> Array[Dictionary]:
 	var grouped_events := {}
 	for event: Dictionary in xbf.fx_events:
 		var attachment := String(event.get("attachment", ""))
-		if not _is_light_attachment_object(attachment):
+		if not attachment.begins_with("#"):
 			continue
 		var bank_id := String(event.get("bank_id", ""))
 		if not banks_by_id.has(bank_id):
@@ -1199,7 +1213,7 @@ func _fx_bank_frame_opacity(bank: Dictionary, frame_index: int) -> float:
 
 
 func _find_original_node(node: Node, original_name: String) -> Node3D:
-	if node is Node3D and String(node.get_meta("original_name", "")) == original_name:
+	if node is Node3D and String(node.get_meta("original_name", "")).nocasecmp_to(original_name) == 0:
 		return node as Node3D
 	for child in node.get_children():
 		var found := _find_original_node(child, original_name)
