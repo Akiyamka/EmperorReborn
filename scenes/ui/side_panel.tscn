@@ -121,6 +121,14 @@ layout_mode = 2
 unique_name_in_owner = true
 layout_mode = 2
 
+[node name="PagePrevious" type="Button" parent="BottomBlock/BottomColumn/SecondaryTabs"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(32, 32)
+layout_mode = 2
+focus_mode = 0
+text = "<"
+tooltip_text = "Previous production page"
+
 [node name="Upgrades" type="Button" parent="BottomBlock/BottomColumn/SecondaryTabs"]
 custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
@@ -136,6 +144,14 @@ size_flags_horizontal = 3
 toggle_mode = true
 text = "Starport"
 script = ExtResource("2_panel_tab")
+
+[node name="PageNext" type="Button" parent="BottomBlock/BottomColumn/SecondaryTabs"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(32, 32)
+layout_mode = 2
+focus_mode = 0
+text = ">"
+tooltip_text = "Next production page"
 
 [node name="ProductionRow" type="HBoxContainer" parent="BottomBlock/BottomColumn"]
 layout_mode = 2
