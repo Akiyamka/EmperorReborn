@@ -99,7 +99,9 @@ func _apply() -> void:
 	if _icon_rect == null:
 		return
 
-	_icon_rect.visible = icon_colored != null
+	# Disabled technology keeps its physical grid cell but exposes no icon.
+	# This is what makes authored roster positions stable as tech unlocks.
+	_icon_rect.visible = icon_colored != null and state != State.DISABLED
 	_icon_rect.texture = icon_colored
 	_quantity.text = str(quantity) if quantity > 0 else ""
 	_quantity.visible = quantity > 0

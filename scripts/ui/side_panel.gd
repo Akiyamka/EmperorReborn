@@ -13,6 +13,7 @@ const ICON_TEXTURE_ROOT := "res://assets/raw_original_content/3DDATA/Textures"
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+const SidebarRosterLayoutScript := preload("res://scripts/ui/sidebar_roster_layout.gd")
 
 ## All five tabs switch the content of the same production grid,
 ## so exactly one of them is active at a time.
@@ -56,6 +57,7 @@ var _entity_tabs: Dictionary = {}
 var _pages_by_tab: Dictionary = {}
 var _unit_definition_catalog := UnitSceneCatalogScript.new()
 var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+var _roster_layout := SidebarRosterLayoutScript.new()
 var _credits_amount := 0
 var _energy_amount := 0
 var _sell_mode_active := false
@@ -115,6 +117,26 @@ func configure_building_options(building_ids: Array[StringName]) -> void:
 		var tab := _art_tab_for_entity(building_id, Tab.BUILDINGS)
 		var tab_ids: Array = _building_option_ids_by_tab.get(tab, [])
 		tab_ids.append(building_id)
+		_building_option_ids_by_tab[tab] = tab_ids
+	if is_node_ready():
+		_rebuild_queue_grid()
+
+
+func configure_ordered_roster(
+		candidate_ids: Array[StringName], house_pages: Array, subhouse_ids: Array
+) -> void:
+	var ordered_ids_by_tab: Dictionary = _roster_layout.arrange_by_tab(
+		candidate_ids, house_pages, subhouse_ids,
+		func(entity_id: StringName) -> Tab: return _art_tab_for_entity(entity_id, Tab.BUILDINGS),
+		func(entity_id: StringName) -> Resource:
+			var unit := _unit_definition_catalog.definition_for(entity_id)
+			return unit if unit != null else _building_definition_catalog.definition(entity_id)
+	)
+	_building_option_ids = candidate_ids.duplicate()
+	_building_option_ids_by_tab.clear()
+	_entity_tabs.clear()
+	for tab in [Tab.INFANTRY, Tab.VEHICLES, Tab.BUILDINGS]:
+		var tab_ids: Array = ordered_ids_by_tab.get(tab, [])
 		_building_option_ids_by_tab[tab] = tab_ids
 	if is_node_ready():
 		_rebuild_queue_grid()
@@ -201,7 +223,9 @@ func _apply_building_option_state(option_state: BuildingOptionState) -> void:
 
 	# Technology prerequisites remove unavailable options from the panel;
 	# grey icons remain reserved for queue-specific blocking states.
-	slot.visible = option_state.state != BuildingOptionStateScript.State.DISABLED
+	# A roster position is an address, not a compact list item.  Keep disabled
+	# slots in GridContainer so later icons cannot slide into their cell.
+	slot.visible = true
 	slot.state = _queue_slot_state(option_state.state)
 	slot.progress = option_state.progress
 	slot.status_text = option_state.status_text
@@ -405,7 +429,7 @@ func _on_slot_pressed(button_index: int, quantity: int, slot_index: int) -> void
 		return
 	var tab_ids := _building_ids_for_tab(active_tab)
 	var paged_index := _active_page() * QUEUE_PAGE_SIZE + slot_index
-	if paged_index < 0 or paged_index >= tab_ids.size():
+	if paged_index < 0 or paged_index >= tab_ids.size() or StringName(tab_ids[paged_index]) == &"":
 		return
 	building_intent_pressed.emit(tab_ids[paged_index], button_index, quantity)
 

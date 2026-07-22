@@ -30,6 +30,25 @@ func _initialize() -> void:
 	panel._rebuild_queue_grid()
 	_expect(panel._building_slot(&"ORBarracks") != null, "an Ordos option is reachable on its page")
 
+	panel.configure_ordered_roster(ids, [&"Atreides"], [&"Fremen"])
+	building_ids = panel._building_ids_for_tab(SidePanel.Tab.BUILDINGS)
+	_expect(
+		building_ids.slice(0, 3) == [&"ATSmWindtrap", &"ATBarracks", &"ATWall"],
+		"the first building row follows Rules.txt: Windtrap, Barracks, Wall"
+	)
+	_expect(
+		building_ids.slice(12, 15).has(&"FRCamp"),
+		"selected sub-house buildings occupy the dynamic final row"
+	)
+
+	panel.configure_ordered_roster(ids, [&"Atreides", &"Harkonnen"], [&"Fremen"])
+	building_ids = panel._building_ids_for_tab(SidePanel.Tab.BUILDINGS)
+	_expect(
+		building_ids.slice(SidePanel.QUEUE_PAGE_SIZE, SidePanel.QUEUE_PAGE_SIZE + 3)
+		== [&"", &"HKBarracks", &""],
+		"a captured House keeps authored cells while grouped duplicates stay hidden"
+	)
+
 	panel.free()
 	if _failures > 0:
 		printerr("SidePanel pagination tests: %d failures after %d assertions" % [_failures, _assertions])

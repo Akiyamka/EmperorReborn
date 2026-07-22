@@ -118,9 +118,20 @@ func _requirements(config: Resource, primary: bool) -> Array:
 func _owned_buildings(buildings: Array[Node], player_id: int) -> Array[Node]:
 	var result: Array[Node] = []
 	for building in buildings:
-		if is_instance_valid(building) and int(building.get("owner_player_id")) == player_id:
+		if is_instance_valid(building) \
+		and int(building.get("owner_player_id")) == player_id \
+		and _is_construction_complete(building):
 			result.append(building)
 	return result
+
+
+## A placed MCV becomes a Construction Yard node before its unfold animation
+## has completed.  It must not satisfy tech prerequisites until that lifecycle
+## signal has fired.  Lightweight test doubles and legacy nodes without the
+## contract remain treated as complete.
+func _is_construction_complete(building: Node) -> bool:
+	return not building.has_method("is_construction_complete") \
+		or bool(building.call("is_construction_complete"))
 
 
 func _has_any_building(requirements: Array, buildings: Array[Node]) -> bool:

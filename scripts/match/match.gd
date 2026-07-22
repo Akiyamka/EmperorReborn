@@ -47,6 +47,7 @@ var _upgrade_option_ids: Array[StringName] = []
 ## through UnitRosterController.
 var _unit_option_ids: Array[StringName] = []
 var _unit_roster_controller: UnitRosterController
+var _sidebar_house_pages: Array[StringName] = []
 var _unit_definition_catalog := UnitSceneCatalogScript.new()
 var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 var _match_snapshot
@@ -69,6 +70,7 @@ func _ready() -> void:
 	_wall_building_ids = _local_player_wall_building_ids()
 	_upgrade_option_ids = _local_player_upgrade_option_ids()
 	_unit_option_ids = _local_player_unit_option_ids()
+	_sidebar_house_pages = [_local_player_house_id()]
 	_setup_unit_navigation_system()
 	_setup_navigation_grid_debug()
 	_setup_unit_deployment_controller()
@@ -111,7 +113,9 @@ func _setup_building_controller() -> void:
 	# Units live in the same grid as buildings -- the panel sorts every id
 	# into its tab by art sidebar_type -- but only building ids go to
 	# BuildingController below; unit clicks route to UnitRosterController.
-	side_panel.configure_building_options(building_grid_ids + _unit_option_ids)
+	side_panel.configure_ordered_roster(
+		building_grid_ids + _unit_option_ids, _sidebar_house_pages, _local_player_subhouse_ids()
+	)
 	_building_controller = BuildingControllerScript.new()
 	_building_controller.name = "BuildingController"
 	add_child(_building_controller)
@@ -226,6 +230,7 @@ func _snap_to_ground(point: Vector3) -> Vector3:
 
 
 func _process(delta: float) -> void:
+	_refresh_sidebar_house_pages()
 	if _building_controller != null:
 		_building_controller.process(delta)
 	if _unit_command_controller != null:
@@ -351,6 +356,51 @@ func _local_player_building_option_ids() -> Array[StringName]:
 		return []
 
 	return _building_definition_catalog.buildable_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+
+
+func _local_player_house_id() -> StringName:
+	var players = _players()
+	var local_player = players.player(LOCAL_PLAYER_ID) if players != null else null
+	return local_player.house_id if local_player != null else &""
+
+
+func _local_player_subhouse_ids() -> Array[StringName]:
+	var players = _players()
+	var local_player = players.player(LOCAL_PLAYER_ID) if players != null else null
+	return local_player.subhouse_ids.duplicate() if local_player != null else []
+
+
+## Great-House pages are allocated at the instant the local player gains a
+## foreign Construction Yard.  They are deliberately never reordered when a
+## yard is later lost: a page is a stable sidebar address for that captured
+## technology tree.
+func _refresh_sidebar_house_pages() -> void:
+	var buildings_root := get_node_or_null("Buildings")
+	if buildings_root == null:
+		return
+	var changed := false
+	for building in buildings_root.get_children():
+		if int(building.get("owner_player_id")) != LOCAL_PLAYER_ID:
+			continue
+		if building.has_method("is_construction_complete") \
+		and not bool(building.call("is_construction_complete")):
+			continue
+		var definition := _building_definition_catalog.definition(
+			StringName(String(building.get("config_id")))
+		)
+		if definition == null or not definition.is_construction_yard:
+			continue
+		var house_id: StringName = definition.house_id
+		if house_id.is_empty() or house_id in _sidebar_house_pages:
+			continue
+		_sidebar_house_pages.append(house_id)
+		changed = true
+	if not changed:
+		return
+	var building_grid_ids := _building_option_ids + _wall_building_ids
+	side_panel.configure_ordered_roster(
+		building_grid_ids + _unit_option_ids, _sidebar_house_pages, _local_player_subhouse_ids()
+	)
 
 
 func _local_player_wall_building_ids() -> Array[StringName]:

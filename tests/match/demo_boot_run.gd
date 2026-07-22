@@ -685,12 +685,12 @@ func _test_unit_roster_availability() -> void:
 	var infantry_slot = side_panel._building_slot(&"ATInfantry")
 	var kindjal_slot = side_panel._building_slot(&"ATKindjal")
 	_expect(
-		infantry_slot != null and not infantry_slot.visible,
-		"ATInfantry must start hidden -- the fixture has no Barracks yet"
+		infantry_slot != null and infantry_slot.visible and infantry_slot.disabled,
+		"ATInfantry must retain its fixed empty slot before a Barracks exists"
 	)
 	_expect(
-		kindjal_slot != null and not kindjal_slot.visible,
-		"ATKindjal must start hidden without a Barracks"
+		kindjal_slot != null and kindjal_slot.visible and kindjal_slot.disabled,
+		"ATKindjal must retain its fixed empty slot without a Barracks"
 	)
 
 	var barracks_scene := load("res://assets/converted/buildings/ATBarracks/ATBarracks.scn") as PackedScene
@@ -706,12 +706,12 @@ func _test_unit_roster_availability() -> void:
 	infantry_slot = side_panel._building_slot(&"ATInfantry")
 	kindjal_slot = side_panel._building_slot(&"ATKindjal")
 	_expect(
-		infantry_slot != null and not infantry_slot.visible,
-		"ATInfantry must stay hidden while the owned Barracks is still being built"
+		infantry_slot != null and infantry_slot.visible and infantry_slot.disabled,
+		"ATInfantry must retain its slot while the owned Barracks is being built"
 	)
 	_expect(
-		kindjal_slot != null and not kindjal_slot.visible,
-		"ATKindjal has upgraded_primary_required and must stay hidden behind an unupgraded Barracks"
+		kindjal_slot != null and kindjal_slot.visible and kindjal_slot.disabled,
+		"ATKindjal must retain its slot behind an unupgraded Barracks"
 	)
 	var roster = match_instance.get_node("UnitRosterController") as UnitRosterController
 	roster.handle_unit_intent(&"ATInfantry", MOUSE_BUTTON_LEFT)
