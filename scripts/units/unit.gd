@@ -1449,7 +1449,29 @@ func _movement_animation_speed_scale() -> float:
 func _refresh_owner_visuals() -> void:
 	var color := _owner_team_color()
 	for mesh_instance in _mesh_instances():
-		mesh_instance.set_instance_shader_parameter("team_color", color)
+		if _mesh_declares_team_color(mesh_instance):
+			mesh_instance.set_instance_shader_parameter("team_color", color)
+
+
+func _mesh_declares_team_color(mesh_instance: MeshInstance3D) -> bool:
+	var materials: Array[Material] = []
+	if mesh_instance.material_override != null:
+		materials.append(mesh_instance.material_override)
+	if mesh_instance.material_overlay != null:
+		materials.append(mesh_instance.material_overlay)
+	if mesh_instance.mesh != null:
+		for surface_index in mesh_instance.mesh.get_surface_count():
+			var material := mesh_instance.get_surface_override_material(surface_index)
+			if material == null:
+				material = mesh_instance.mesh.surface_get_material(surface_index)
+			if material != null:
+				materials.append(material)
+	for material in materials:
+		if material is ShaderMaterial:
+			var shader := (material as ShaderMaterial).shader
+			if shader != null and "instance uniform vec4 team_color" in shader.code:
+				return true
+	return false
 
 
 func _owner_team_color() -> Color:
