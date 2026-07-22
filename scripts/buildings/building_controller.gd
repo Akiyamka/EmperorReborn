@@ -285,13 +285,37 @@ func _try_sell_building(screen_position: Vector2) -> void:
 
 	_selling_building = building
 	_set_sell_mode(false)
+	# Technology and production only count completed buildings. A selling
+	# building remains visible until its transition finishes, but must stop
+	# satisfying prerequisites the instant its sale begins.
+	if building.has_method("begin_construction"):
+		building.call("begin_construction")
+	_refresh_building_option_states()
 	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
 	if player != null and player.has_animation(&"sell"):
 		var sell_animation := player.get_animation(&"sell")
 		if sell_animation != null:
 			sell_animation.loop_mode = Animation.LOOP_NONE
-		player.animation_finished.connect(_on_sold_building_animation_finished.bind(building), CONNECT_ONE_SHOT)
+		player.animation_finished.connect(
+			_on_sold_building_animation_finished.bind(building, &"sell"), CONNECT_ONE_SHOT
+		)
 		_play_building_state(building, &"sell")
+		return
+	if player != null and player.has_animation(&"construct"):
+		var construct_animation := player.get_animation(&"construct")
+		if construct_animation != null:
+			construct_animation.loop_mode = Animation.LOOP_NONE
+		player.animation_finished.connect(
+			_on_sold_building_animation_finished.bind(building, &"construct"), CONNECT_ONE_SHOT
+		)
+		# Most converted buildings have no authored sell transition. Reversing
+		# construct preserves the original build-up/disassembly visual instead.
+		# Go through Building.play_state first: it exposes the Build state node,
+		# which is otherwise still hidden while the backwards player is at its end.
+		_play_building_state(building, &"construct")
+		player.seek(construct_animation.length if construct_animation != null else 0.0, true)
+		player.play_backwards(&"construct")
+		player.advance(0.0)
 		return
 
 	_finish_selling_building(building)
@@ -341,8 +365,10 @@ func _cursor_manager() -> Variant:
 	return get_node_or_null("/root/Cursors")
 
 
-func _on_sold_building_animation_finished(animation_name: StringName, building: Node3D) -> void:
-	if animation_name != &"sell":
+func _on_sold_building_animation_finished(
+		animation_name: StringName, building: Node3D, sale_animation: StringName
+	) -> void:
+	if animation_name != sale_animation:
 		return
 	_finish_selling_building(building)
 

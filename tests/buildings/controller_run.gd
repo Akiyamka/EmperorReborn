@@ -59,6 +59,7 @@ func _initialize() -> void:
 	_run_case("freed controller leaves no resource forwarding", _test_free_disconnects_resource_forwarding.bind(local_player))
 	_run_case("failed completed wall segment refunds paid credits", _test_completed_wall_refund.bind(local_player))
 	_run_case("building sale plays the authored sell transition", _test_sale_animation.bind(local_player))
+	_run_case("building sale reverses construct without an authored sell transition", _test_sale_construct_fallback.bind(local_player))
 	_run_case(
 		"losing and restoring a prerequisite building toggles menu availability",
 		_test_availability_reacts_to_prerequisite_loss.bind(local_player)
@@ -196,11 +197,44 @@ func _test_sale_animation(token: int, local_player: PlayerData) -> int:
 	controller._try_sell_building(Vector2.ZERO)
 	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
 	_expect(player != null and player.current_animation == &"sell", "sale must play the authored sell clip")
+	_expect(not building.is_construction_complete(), "a selling building must stop satisfying technology prerequisites immediately")
 	_expect(not building.is_queued_for_deletion(), "the building must remain until sell finishes")
 	if player != null:
 		player.animation_finished.emit(&"sell")
 	_expect(building.is_queued_for_deletion(), "sell completion must remove the building")
 	_expect(local_player.money == money_before + 1000, "sell completion must retain the half-cost refund")
+
+	controller.free()
+	building.free()
+	return token
+
+
+func _test_sale_construct_fallback(token: int, local_player: PlayerData) -> int:
+	var controller := SaleController.new()
+	root.add_child(controller)
+	_setup_without_assets(controller)
+	var building := Building.new()
+	building.owner_player_id = local_player.player_id
+	var player := AnimationPlayer.new()
+	player.name = "StatePlayer"
+	var library := AnimationLibrary.new()
+	var construct := Animation.new()
+	construct.length = 1.0
+	library.add_animation(&"construct", construct)
+	player.add_animation_library(&"", library)
+	building.add_child(player)
+	root.add_child(building)
+	var collider := Node.new()
+	building.add_child(collider)
+	controller.raycast_hit = {"collider": collider}
+
+	controller._try_sell_building(Vector2.ZERO)
+	_expect(player.current_animation == &"construct", "sale fallback must play construct")
+	_expect(is_equal_approx(player.current_animation_position, construct.length), "sale fallback must start at the end of construct")
+	_expect(player.get_playing_speed() < 0.0, "sale fallback must reverse construct")
+	_expect(not building.is_queued_for_deletion(), "the building must remain until reversed construct finishes")
+	player.animation_finished.emit(&"construct")
+	_expect(building.is_queued_for_deletion(), "reversed construct completion must remove the building")
 
 	controller.free()
 	building.free()
