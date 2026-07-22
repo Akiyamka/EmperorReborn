@@ -563,8 +563,11 @@ def main() -> int:
             # Converted models negate source Z when moving from Emperor's
             # left-handed space to Godot. Runtime footprint row 0 points toward
             # -Z, so mirror the source matrix to keep its skirt/apron on the
-            # model's converted +Z side. This matches converters/import_rules.gd.
+            # model's converted +Z side.
             occupy.reverse()
+            # Converted building assets are horizontally mirrored relative to
+            # the source Occupy notation.
+            occupy = [row[::-1] for row in occupy]
             links = unit_list(connection, "SELECT target_name FROM entity_resource_links WHERE entity_type='building' AND entity_id=? ORDER BY seq", int(building["id"]))
             primary = unit_list(connection, "SELECT b.name FROM building_requires_primary link JOIN buildings b ON b.id=link.required_building_id WHERE link.building_id=? ORDER BY link.rowid", int(building["id"]))
             secondary = unit_list(connection, "SELECT b.name FROM building_requires_secondary link JOIN buildings b ON b.id=link.required_building_id WHERE link.building_id=? ORDER BY link.rowid", int(building["id"]))

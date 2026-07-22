@@ -48,7 +48,7 @@ func _initialize() -> void:
 	await _run_case("completed units emerge from primary building toward rally point", _test_unit_production_rally_and_primary)
 	await _run_case("real match units execute forced friendly attack orders", _test_real_forced_friendly_attack)
 	await _run_case("real harvester completes a refinery unload trip", _test_real_harvester_unload_trip)
-	await _run_case("occupy matrices are Z-mirrored to match converted models", _test_occupy_rows_are_mirrored)
+	await _run_case("occupy matrices match converted model orientation", _test_occupy_rows_are_mirrored)
 
 	if _failures > 0:
 		printerr("Match integration tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -1121,4 +1121,14 @@ func _test_occupy_rows_are_mirrored() -> void:
 	_expect(
 		String(occupy_rows[0]) != "sssss" and String(occupy_rows[9]) == "sssss",
 		"ATConYard's skirt rows must be mirrored to the matrix end (+Z, the converted model's apron side)"
+	)
+
+	var hk_palace: Resource = catalog.definition(&"HKPalace")
+	_expect(hk_palace != null, "HKPalace native definition must exist")
+	if hk_palace == null:
+		return
+	var hk_rows: Array = hk_palace.occupy_rows
+	_expect(
+		hk_rows.size() == 7 and String(hk_rows[0]) == "nnnnbbbbn" and String(hk_rows[6]) == "nnnnnbbnn",
+		"HKPalace's footprint must mirror both source axes with its converted model"
 	)

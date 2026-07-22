@@ -98,13 +98,12 @@ func build(building_id: StringName) -> PackedScene:
 
 ## Source models are not authored around the occupy-matrix centre, while the
 ## runtime lays the matrix out symmetrically around the building's position.
-## The authored #~~0 collision volume outlines the building's physical body,
-## and its rear (-Z) face is flush with the matrix's rear edge - the front
-## face is unreliable because porches/aprons overhang the skirt. So the model
-## is shifted to put the collision's rear edge on the matrix's rear edge, and
-## centred on X where the matrix is always symmetric. The idle (H0) state
-## carries the canonical volume; the SLCT selection volume stands in for
-## models without one, mirroring Building's own collision-source fallback.
+## The authored selectable footprint's rear (-Z) face is flush with the
+## matrix's rear edge; its front face is unreliable because porches/aprons
+## overhang the skirt. The model is shifted to put that rear edge on the
+## matrix and centred on X where the matrix is always symmetric. The idle
+## (H0) state carries the canonical volume, selected through Building's
+## shared SLCT → #~~0 fallback API.
 func _footprint_alignment_offset(building_id: StringName, state_nodes: Array[Node3D]) -> Vector3:
 	var idle: Node3D = null
 	for node in state_nodes:
@@ -112,9 +111,7 @@ func _footprint_alignment_offset(building_id: StringName, state_nodes: Array[Nod
 			idle = node
 	if idle == null:
 		return Vector3.ZERO
-	var bounds_variant: Variant = _collision_points_bounds(idle, "#~~0", false)
-	if bounds_variant == null:
-		bounds_variant = _collision_points_bounds(idle, "slct", true)
+	var bounds_variant: Variant = _collision_sources_bounds(idle)
 	if bounds_variant == null:
 		return Vector3.ZERO
 	var bounds := bounds_variant as AABB
@@ -136,27 +133,16 @@ func _occupy_depth(building_id: StringName) -> int:
 	return (config.call("list", &"occupy_rows") as Array).size()
 
 
-## Returns the AABB of every matching descendant's collision_points in the
-## state node's parent space (the space the States offset is applied in), or
-## null when no descendant carries a usable volume.
-func _collision_points_bounds(idle: Node3D, original_name: String, prefix_match: bool):
+## Returns the AABB of the same authored footprint selected by Building at
+## runtime, in the state node's parent space (where the States offset applies).
+func _collision_sources_bounds(idle: Node3D):
 	var bounds := AABB()
 	var has_bounds := false
-	var stack: Array = [idle]
-	while not stack.is_empty():
-		var node: Node = stack.pop_back()
-		for child in node.get_children():
-			stack.push_back(child)
-		if not (node is Node3D):
-			continue
-		var source_name := String(node.get_meta("original_name", "")).to_lower()
-		var matches := source_name.begins_with(original_name) if prefix_match else source_name == original_name
-		if not matches:
-			continue
-		var points: PackedVector3Array = node.get_meta("collision_points", PackedVector3Array())
+	for source in BuildingScript.collision_sources_for(idle):
+		var points: PackedVector3Array = source.get_meta("collision_points", PackedVector3Array())
 		if points.size() < 4:
 			continue
-		var to_states := _transform_relative_to_parent_of(node, idle)
+		var to_states := _transform_relative_to_parent_of(source, idle)
 		for point in points:
 			var local := to_states * point
 			if has_bounds:

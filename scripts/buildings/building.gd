@@ -319,28 +319,36 @@ func _add_selection_collision() -> void:
 
 
 func _collision_sources() -> Array[Node3D]:
-	var result: Array[Node3D] = []
 	# A building packs several visual damage states, each with its own #~~0.
-	# Its footprint is the H0 (Idle) volume, rather than the union of hidden
-	# construction/destruction-state volumes.
+	# The footprint is always taken from H0 (Idle), not hidden damage states.
 	var idle_state := get_node_or_null("States/Idle")
 	var source_root: Node = idle_state if idle_state != null else self
-	_collect_collision_sources(source_root, COLLISION_OBJECT_NAME, result)
+	return collision_sources_for(source_root, true)
+
+
+## Returns the authored selectable footprint below source_root. Models which
+## provide SLCT use it directly; #~~0 is retained for legacy models without
+## an explicit selection volume. This API is shared by runtime collision and
+## building-scene baking so their footprint decisions cannot diverge.
+static func collision_sources_for(source_root: Node, hide_source_meshes := false) -> Array[Node3D]:
+	var result: Array[Node3D] = []
+	_collect_collision_sources(source_root, "slct", result, true, hide_source_meshes)
 	if result.is_empty():
-		_collect_collision_sources(source_root, "slct", result, true)
+		_collect_collision_sources(source_root, COLLISION_OBJECT_NAME, result, false, hide_source_meshes)
 	return result
 
 
-func _collect_collision_sources(node: Node, original_name: String, result: Array[Node3D], prefix_match := false) -> void:
+static func _collect_collision_sources(node: Node, original_name: String, result: Array[Node3D], prefix_match := false, hide_source_meshes := false) -> void:
 	if node is Node3D and _is_collision_source(node, original_name, prefix_match):
-		_hide_collision_meshes(node)
+		if hide_source_meshes:
+			_hide_collision_meshes(node)
 		result.append(node)
 		return
 	for child in node.get_children():
-		_collect_collision_sources(child, original_name, result, prefix_match)
+		_collect_collision_sources(child, original_name, result, prefix_match, hide_source_meshes)
 
 
-func _is_collision_source(node: Node3D, original_name: String, prefix_match: bool) -> bool:
+static func _is_collision_source(node: Node3D, original_name: String, prefix_match: bool) -> bool:
 	var source_name := String(node.get_meta("original_name", ""))
 	var matches := source_name.to_lower().begins_with(original_name) if prefix_match else source_name == original_name
 	var points: PackedVector3Array = node.get_meta("collision_points", PackedVector3Array())
@@ -371,7 +379,7 @@ func _collision_bounds_points(source: Node3D) -> PackedVector3Array:
 	return bounds
 
 
-func _hide_collision_meshes(node: Node) -> void:
+static func _hide_collision_meshes(node: Node) -> void:
 	for child in node.get_children():
 		if child is MeshInstance3D and child.has_meta("collision_mesh"):
 			child.visible = false
