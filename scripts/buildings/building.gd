@@ -854,10 +854,31 @@ func _owner_team_color() -> Color:
 
 
 func _apply_team_color(node: Node, color: Color) -> void:
-	if node is MeshInstance3D:
+	if node is MeshInstance3D and _mesh_declares_team_color(node as MeshInstance3D):
 		node.set_instance_shader_parameter("team_color", color)
 	for child in node.get_children():
 		_apply_team_color(child, color)
+
+
+func _mesh_declares_team_color(mesh_instance: MeshInstance3D) -> bool:
+	var materials: Array[Material] = []
+	if mesh_instance.material_override != null:
+		materials.append(mesh_instance.material_override)
+	if mesh_instance.material_overlay != null:
+		materials.append(mesh_instance.material_overlay)
+	if mesh_instance.mesh != null:
+		for surface_index in mesh_instance.mesh.get_surface_count():
+			var material := mesh_instance.get_surface_override_material(surface_index)
+			if material == null:
+				material = mesh_instance.mesh.surface_get_material(surface_index)
+			if material != null:
+				materials.append(material)
+	for material in materials:
+		if material is ShaderMaterial:
+			var shader := (material as ShaderMaterial).shader
+			if shader != null and "instance uniform vec4 team_color" in shader.code:
+				return true
+	return false
 
 
 func _add_selection_halo() -> void:

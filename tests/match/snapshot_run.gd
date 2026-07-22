@@ -63,6 +63,18 @@ func _initialize() -> void:
 			and _mesh_team_color(shield_meshes[0]).is_equal_approx(restored_unit.owner_player().team_color),
 		"restored OrdosAPC visual should retain its owner's team color"
 	)
+	var ordinary_building_mesh := _mesh_without_team_color_uniform(restored_building)
+	var ordinary_unit_mesh := _mesh_without_team_color_uniform(restored_unit)
+	_expect(
+		ordinary_building_mesh != null
+			and ordinary_building_mesh.get_instance_shader_parameter("team_color") == null,
+		"owner color refresh should not attach an unknown instance uniform to ordinary building meshes"
+	)
+	_expect(
+		ordinary_unit_mesh != null
+			and ordinary_unit_mesh.get_instance_shader_parameter("team_color") == null,
+		"owner color refresh should not attach an unknown instance uniform to ordinary unit meshes"
+	)
 
 	snapshot.erase()
 	restored.queue_free()
@@ -103,3 +115,34 @@ func _shield_meshes(unit: Unit) -> Array[MeshInstance3D]:
 func _mesh_team_color(mesh: MeshInstance3D) -> Color:
 	var value: Variant = mesh.get_instance_shader_parameter("team_color")
 	return value as Color if value is Color else Color.TRANSPARENT
+
+
+func _mesh_without_team_color_uniform(root: Node) -> MeshInstance3D:
+	if root == null:
+		return null
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		if not _mesh_has_team_color_shader(mesh):
+			return mesh
+	return null
+
+
+func _mesh_has_team_color_shader(mesh: MeshInstance3D) -> bool:
+	var materials: Array[Material] = []
+	if mesh.material_override != null:
+		materials.append(mesh.material_override)
+	if mesh.material_overlay != null:
+		materials.append(mesh.material_overlay)
+	if mesh.mesh != null:
+		for surface_index in mesh.mesh.get_surface_count():
+			var material := mesh.get_surface_override_material(surface_index)
+			if material == null:
+				material = mesh.mesh.surface_get_material(surface_index)
+			if material != null:
+				materials.append(material)
+	for material in materials:
+		if material is ShaderMaterial:
+			var shader := (material as ShaderMaterial).shader
+			if shader != null and "instance uniform vec4 team_color" in shader.code:
+				return true
+	return false
