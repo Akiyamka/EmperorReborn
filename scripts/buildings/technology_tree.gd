@@ -18,7 +18,8 @@ const UNIT_SECONDARY_REQUIREMENTS := &"secondary_buildings"
 const UNLIMITED_TECH_LEVEL := -1
 var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 var _houses_by_building_group: Dictionary = {}
-var _building_group_houses_loaded := false
+var _great_house_ids: Array[StringName] = []
+var _building_house_metadata_loaded := false
 
 
 func is_available(
@@ -30,7 +31,7 @@ func is_available(
 	if config == null or player == null:
 		return false
 	var owned_buildings := _owned_buildings(buildings, player.player_id)
-	if not _belongs_to_player_house(config, player, owned_buildings):
+	if not _passes_house_flags(config, player, owned_buildings):
 		return false
 	var tech_level := int(config.tech_level)
 	if max_tech_level != UNLIMITED_TECH_LEVEL and tech_level > max_tech_level:
@@ -47,46 +48,58 @@ func is_available(
 	return _has_any_building(_requirements(config, false), owned_buildings)
 
 
-func _belongs_to_player_house(config: Resource, player, owned_buildings: Array[Node]) -> bool:
+func _passes_house_flags(config: Resource, player, owned_buildings: Array[Node]) -> bool:
 	var required_house: StringName = config.house_id
-	if (
-		String(required_house).is_empty()
-		or required_house == player.house_id
-		or player.has_subhouse(required_house)
-	):
+	if String(required_house).is_empty():
 		return true
+	# A production building determines which units its current owner can train.
+	# This intentionally includes captured sub-house buildings: the sub-house
+	# flag controls construction of the building, not use of an existing one.
+	if config is UnitDefinitionScript:
+		return true
+	if not _is_great_house(required_house):
+		return player.has_subhouse(required_house)
 
-	# Capturing a rival Great House's Construction Yard grants that House's
-	# building tree. Keep the exception building-only: owning a ConYard does not
-	# turn the player into that House for unit or sub-house availability.
-	if not config is BuildingDefinitionScript:
-		return false
+	# Great-House identity is not a player-level technology gate. Ordinary
+	# building/unit prerequisites decide which tree is usable. Grouped building
+	# representatives need one extra data check because several equivalent
+	# House variants intentionally collapse into one menu slot.
+	if config is BuildingDefinitionScript and config.building_group_id != &"":
+		return _owned_con_yard_has_building_group(owned_buildings, config.building_group_id)
+	return true
+
+
+func _is_great_house(house_id: StringName) -> bool:
+	if not _building_house_metadata_loaded:
+		_load_building_house_metadata()
+	return house_id in _great_house_ids
+
+
+func _owned_con_yard_has_building_group(
+		owned_buildings: Array[Node], building_group_id: StringName
+		) -> bool:
+	if not _building_house_metadata_loaded:
+		_load_building_house_metadata()
+	var group_houses: Array = _houses_by_building_group.get(building_group_id, [])
 	for building in owned_buildings:
 		var definition = _building_definition_catalog.definition(
 			StringName(String(building.get("config_id")))
 		)
-		if definition == null or not definition.is_construction_yard:
-			continue
-		if definition.house_id == required_house:
-			return true
-		if config.building_group_id != &"" and _house_has_building_group(
-			definition.house_id, config.building_group_id
-		):
+		if definition != null and definition.is_construction_yard \
+		and definition.house_id in group_houses:
 			return true
 	return false
 
 
-func _house_has_building_group(house_id: StringName, building_group_id: StringName) -> bool:
-	if not _building_group_houses_loaded:
-		_load_building_group_houses()
-	return house_id in _houses_by_building_group.get(building_group_id, [])
-
-
-func _load_building_group_houses() -> void:
-	_building_group_houses_loaded = true
+func _load_building_house_metadata() -> void:
+	_building_house_metadata_loaded = true
 	for config_id in _building_definition_catalog.all_ids():
 		var definition = _building_definition_catalog.definition(config_id)
-		if definition == null or definition.building_group_id == &"":
+		if definition == null:
+			continue
+		if definition.is_construction_yard and definition.house_id not in _great_house_ids:
+			_great_house_ids.append(definition.house_id)
+		if definition.building_group_id == &"":
 			continue
 		var houses: Array = _houses_by_building_group.get(definition.building_group_id, [])
 		if definition.house_id not in houses:

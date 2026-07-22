@@ -62,6 +62,10 @@ walls, and helipads), the native House visual is preferred; the variants remain 
 interchangeable. House-specific buildings outside a group keep separate slots.
 
 Faction ownership is not a “player type,” but an initial set of flags.
+Consequently, a Great House's `house_id` is not itself a runtime technology-tree
+gate: owned prerequisite buildings determine access. For sub-houses, `house_id`
+gates construction of their building, but not use of an existing captured
+production building; its owned prerequisite unlocks the corresponding units.
 
 ---
 

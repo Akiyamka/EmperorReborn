@@ -89,10 +89,9 @@ func producible_unit_ids(house_id: StringName, subhouse_ids: Array[StringName]) 
 		var definition := definition_for(config_id)
 		if definition == null or definition.cost <= 0 or definition.primary_building_ids.is_empty():
 			continue
-		if definition.house_id != &"" \
-		and definition.house_id != house_id \
-		and definition.house_id not in subhouse_ids:
-			continue
+		# Keep every producible unit as a candidate. TechnologyTree hides it
+		# until the player owns one of its production prerequisites, allowing a
+		# captured Great-House or sub-house building to expose its own roster.
 		result.append(config_id)
 	result.sort()
 	return result

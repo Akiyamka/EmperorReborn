@@ -3,6 +3,9 @@ extends SceneTree
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
+const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
+const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -56,6 +59,35 @@ func _initialize() -> void:
 		not tree.is_available(catalog.definition(&"HKBarracks"), player, [at_yard, windtrap]),
 		"Harkonnen tree locks again without HKConYard"
 	)
+	var harkonnen_unit := UnitDefinitionScript.new()
+	harkonnen_unit.house_id = &"Harkonnen"
+	harkonnen_unit.primary_building_ids = [&"HKBarracks"]
+	var hk_barracks := BuildingStub.new(&"HKBarracks", 1)
+	_expect(
+		tree.is_available(harkonnen_unit, player, [hk_barracks]),
+		"Great-House units use production prerequisites without checking the player's starting House"
+	)
+	var ix_unit_ids := UnitSceneCatalogScript.new().producible_unit_ids(
+		player.house_id, player.subhouse_ids
+	)
+	_expect(
+		ix_unit_ids.has(&"IXInfiltrator") and ix_unit_ids.has(&"IXProjector"),
+		"unselected sub-house units remain in the candidate roster for captured production buildings"
+	)
+	var ix_res_centre := BuildingStub.new(&"IXResCentre", 1)
+	var ix_unit := UnitDefinitionScript.new()
+	ix_unit.house_id = &"Ix"
+	ix_unit.primary_building_ids = [&"IXResCentre"]
+	_expect(
+		tree.is_available(ix_unit, player, [ix_res_centre]),
+		"a captured sub-house production building unlocks its units"
+	)
+	var ix_building := BuildingDefinitionScript.new()
+	ix_building.house_id = &"Ix"
+	_expect(
+		not tree.is_available(ix_building, player, []),
+		"an unselected sub-house building itself remains unavailable for construction"
+	)
 	var ordos_player = PlayerDataScript.new()
 	ordos_player.configure(2, "Ordos", Color.WHITE, &"Ordos")
 	var hk_yard_for_ordos := BuildingStub.new(&"HKConYard", 2)
@@ -76,6 +108,8 @@ func _initialize() -> void:
 	hk_yard_for_ordos.free()
 	ordos_yard.free()
 	hk_hanger_for_ordos.free()
+	hk_barracks.free()
+	ix_res_centre.free()
 
 	if _failures > 0:
 		printerr("Multiple-ConYard techtree tests: %d failures after %d assertions" % [_failures, _assertions])
