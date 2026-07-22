@@ -750,6 +750,13 @@ func _test_building_light_attachments() -> bool:
 			and material.blend_mode == BaseMaterial3D.BLEND_MODE_ADD,
 			"the replacement light must be an additive billboard"
 		)
+		_expect(
+			quad != null and quad.size.is_equal_approx(Vector2.ONE * 0.75)
+			and is_equal_approx(
+				float(effect.get_meta("xbf_fx_world_particle_size", 0.0)), 0.75
+			),
+			"the billboard size must be converted from XBF units into world units"
+		)
 		var player := root.get_node_or_null("AnimationPlayer") as AnimationPlayer
 		var timeline := player.get_animation(&"timeline") if player != null else null
 		var track_path := NodePath("%s:visible" % String(root.get_path_to(effect)))

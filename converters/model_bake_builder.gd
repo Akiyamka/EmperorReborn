@@ -1130,7 +1130,14 @@ func _build_attachment_bank_effects(root: Node3D, xbf) -> Array[Dictionary]:
 func _attachment_fx_mesh_frames(bank: Dictionary) -> Array[QuadMesh]:
 	var frame_names := _attachment_fx_frame_names(bank)
 	var result: Array[QuadMesh] = []
-	var source_size := maxf(float(bank.get("particle_size", 0.0)), 0.01)
+	# StandardMaterial3D's billboard transform faces the camera in world space
+	# and does not retain the converted model root's scale like an ordinary
+	# mesh. Bake the XBF particle size into world units here; otherwise a source
+	# size such as 12 renders as a 12-world-unit flare instead of 0.75 at 1/16.
+	var world_size := maxf(
+		float(bank.get("particle_size", 0.0)) * world_scale,
+		0.01 * world_scale
+	)
 	var colors := bank.get("int_parameters_7_11", PackedInt32Array()) as PackedInt32Array
 	var tint := Color.WHITE
 	if colors.size() >= 3:
@@ -1158,7 +1165,7 @@ func _attachment_fx_mesh_frames(bank: Dictionary) -> Array[QuadMesh]:
 			tint.r, tint.g, tint.b, _fx_bank_frame_opacity(bank, frame_index)
 		)
 		var quad := QuadMesh.new()
-		quad.size = Vector2.ONE * source_size
+		quad.size = Vector2.ONE * world_size
 		quad.material = material
 		result.append(quad)
 	return result
