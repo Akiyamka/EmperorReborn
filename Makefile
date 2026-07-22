@@ -27,9 +27,11 @@ godot-test:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/characterization/run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/camera/run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/ui/cursor_run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/ui/side_panel_pagination_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/placement_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/controller_run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/techtree_multiple_conyards_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/primary_building_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/upgrade_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/rules/run.gd

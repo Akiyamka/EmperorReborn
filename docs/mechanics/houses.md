@@ -55,6 +55,12 @@ available to every player**, but parts of it are hidden by three independent fil
 - unmet tech-tree conditions (prerequisites `[Rules]`);
 - sub-house flags (unlocked in the story or selected in skirmish).
 
+Great-House building variants listed in `[BuildingGroupTypes]` share one construction-menu
+slot: the source comment defines the group as a way to stop duplicate icons. When several
+Construction Yards expose equivalent variants (windtraps, outposts, refineries, starports,
+walls, and helipads), the native House visual is preferred; the variants remain functionally
+interchangeable. House-specific buildings outside a group keep separate slots.
+
 Faction ownership is not a “player type,” but an initial set of flags.
 
 ---

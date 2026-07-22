@@ -7,6 +7,7 @@ extends Control
 
 const QUEUE_GRID_COLUMNS := 3
 const QUEUE_GRID_ROWS := 5
+const QUEUE_PAGE_SIZE := QUEUE_GRID_COLUMNS * QUEUE_GRID_ROWS
 const QUEUE_SLOT_SIZE := Vector2(64, 64)
 const ICON_TEXTURE_ROOT := "res://assets/raw_original_content/3DDATA/Textures"
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
@@ -34,6 +35,8 @@ signal upgrade_intent_pressed(upgrade_id: StringName, button_index: int)
 @onready var _queue_tabs: VBoxContainer = %QueueTabs
 @onready var _secondary_tabs: HBoxContainer = %SecondaryTabs
 @onready var _commands: HBoxContainer = %CommandButtons
+@onready var _page_previous: Button = %PagePrevious
+@onready var _page_next: Button = %PageNext
 
 var active_tab: Tab = Tab.INFANTRY
 ## Indexed by Tab enum: Infantry, Vehicles, Buildings, Upgrades, Starport.
@@ -50,6 +53,7 @@ var _upgrade_option_states: Dictionary = {}
 var _icon_paths_by_filename: Dictionary = {}
 var _icon_textures: Dictionary = {}
 var _entity_tabs: Dictionary = {}
+var _pages_by_tab: Dictionary = {}
 var _unit_definition_catalog := UnitSceneCatalogScript.new()
 var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 var _credits_amount := 0
@@ -70,6 +74,8 @@ func _ready() -> void:
 	for button in _commands.get_children():
 		if button is Button:
 			button.pressed.connect(_on_command_pressed.bind(StringName(button.name)))
+	_page_previous.pressed.connect(_change_page.bind(-1))
+	_page_next.pressed.connect(_change_page.bind(1))
 
 	_set_active_tab(Tab.INFANTRY)
 	_apply_resources()
@@ -168,6 +174,13 @@ func _set_active_tab(tab: Tab) -> void:
 	_rebuild_queue_grid()
 
 
+func _change_page(direction: int) -> void:
+	var page_count := _active_page_count()
+	var page := clampi(_active_page() + direction, 0, maxi(page_count - 1, 0))
+	_pages_by_tab[active_tab] = page
+	_rebuild_queue_grid()
+
+
 func _on_command_pressed(command: StringName) -> void:
 	command_pressed.emit(command)
 
@@ -237,20 +250,56 @@ func _rebuild_queue_grid() -> void:
 		_queue_grid.remove_child(child)
 		child.queue_free()
 
-	for index in QUEUE_GRID_COLUMNS * QUEUE_GRID_ROWS:
+	for index in QUEUE_PAGE_SIZE:
 		var slot := QueueSlot.new()
 		slot.custom_minimum_size = QUEUE_SLOT_SIZE
 		slot.tooltip_text = "Slot %d (empty)" % index
 		slot.intent_pressed.connect(_on_slot_pressed.bind(index))
 		_queue_grid.add_child(slot)
 
+	_clamp_active_page()
 	if active_tab == Tab.UPGRADES:
-		for slot_index in _upgrade_option_ids.size():
-			_configure_upgrade_slot(slot_index, _upgrade_option_ids[slot_index])
+		var page_ids := _page_slice(_upgrade_option_ids)
+		for slot_index in page_ids.size():
+			_configure_upgrade_slot(slot_index, page_ids[slot_index])
 	else:
-		var tab_ids := _building_ids_for_tab(active_tab)
-		for slot_index in tab_ids.size():
-			_configure_building_slot(slot_index, tab_ids[slot_index])
+		var page_ids := _page_slice(_building_ids_for_tab(active_tab))
+		for slot_index in page_ids.size():
+			_configure_building_slot(slot_index, page_ids[slot_index])
+	_update_page_buttons()
+
+
+func _page_slice(ids: Array) -> Array:
+	var first := _active_page() * QUEUE_PAGE_SIZE
+	return ids.slice(first, mini(first + QUEUE_PAGE_SIZE, ids.size()))
+
+
+func _active_page() -> int:
+	return int(_pages_by_tab.get(active_tab, 0))
+
+
+func _active_page_count() -> int:
+	var option_count := (
+		_upgrade_option_ids.size()
+		if active_tab == Tab.UPGRADES
+		else _building_ids_for_tab(active_tab).size()
+	)
+	return maxi(1, ceili(float(option_count) / float(QUEUE_PAGE_SIZE)))
+
+
+func _clamp_active_page() -> void:
+	_pages_by_tab[active_tab] = clampi(_active_page(), 0, _active_page_count() - 1)
+
+
+func _update_page_buttons() -> void:
+	var page_count := _active_page_count()
+	var page := _active_page()
+	_page_previous.visible = page_count > 1
+	_page_next.visible = page_count > 1
+	_page_previous.disabled = page <= 0
+	_page_next.disabled = page >= page_count - 1
+	_page_previous.tooltip_text = "Previous production page (%d/%d)" % [page + 1, page_count]
+	_page_next.tooltip_text = "Next production page (%d/%d)" % [page + 1, page_count]
 
 
 func _configure_building_slot(
@@ -338,25 +387,27 @@ func _building_slot(building_id: StringName) -> QueueSlot:
 	var tab := _art_tab_for_entity(building_id, Tab.BUILDINGS)
 	if tab != active_tab:
 		return null
-	var slot_index := _building_ids_for_tab(tab).find(building_id)
+	var slot_index := _building_ids_for_tab(tab).find(building_id) - _active_page() * QUEUE_PAGE_SIZE
 	return get_slot(slot_index)
 
 
 func _upgrade_slot(upgrade_id: StringName) -> QueueSlot:
-	var slot_index := _upgrade_option_ids.find(upgrade_id)
+	var slot_index := _upgrade_option_ids.find(upgrade_id) - _active_page() * QUEUE_PAGE_SIZE
 	return get_slot(slot_index)
 
 
 func _on_slot_pressed(button_index: int, quantity: int, slot_index: int) -> void:
 	if active_tab == Tab.UPGRADES:
-		if slot_index < 0 or slot_index >= _upgrade_option_ids.size():
+		var paged_index := _active_page() * QUEUE_PAGE_SIZE + slot_index
+		if paged_index < 0 or paged_index >= _upgrade_option_ids.size():
 			return
-		upgrade_intent_pressed.emit(_upgrade_option_ids[slot_index], button_index)
+		upgrade_intent_pressed.emit(_upgrade_option_ids[paged_index], button_index)
 		return
 	var tab_ids := _building_ids_for_tab(active_tab)
-	if slot_index < 0 or slot_index >= tab_ids.size():
+	var paged_index := _active_page() * QUEUE_PAGE_SIZE + slot_index
+	if paged_index < 0 or paged_index >= tab_ids.size():
 		return
-	building_intent_pressed.emit(tab_ids[slot_index], button_index, quantity)
+	building_intent_pressed.emit(tab_ids[paged_index], button_index, quantity)
 
 
 func _building_ids_for_tab(tab: Tab) -> Array:
