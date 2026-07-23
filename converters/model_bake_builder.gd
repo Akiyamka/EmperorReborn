@@ -214,11 +214,19 @@ func _build_object_node(
 		# A few source models have no #~~0 root. Their SLCT object is still an
 		# authored selection/collision volume, and is the runtime fallback.
 		node.set_meta("collision_points", _collision_points(object.positions))
-	elif raw_name == "#^^0":
+	# A few original models pad this marker with a trailing byte (for example
+	# HK Engineer's "#^^0~").  The marker prefix is still unambiguous and
+	# carries the same authored selection-halo attachment.
+	elif raw_name.begins_with("#^^0"):
 		node.set_meta("halo_anchor", true)
 		node.set_meta("halo_anchor_bounds", _object_bounds(object.positions))
 	var child_path: String = "%s/%s" % [node_path, node.name] if node_path != "." else node.name
-	_add_animation_track(anim, child_path, object, uses_mirrored_content)
+	# Halo anchors are static UI attachment points sampled once at spawn
+	# (Unit._add_selection_halo); baking per-frame animation onto them would
+	# make the selection halo's position and size depend on whichever pose
+	# happens to be playing at the moment the unit spawns.
+	if not node.has_meta("halo_anchor"):
+		_add_animation_track(anim, child_path, object, uses_mirrored_content)
 
 	var content_root := node
 	var content_path := child_path

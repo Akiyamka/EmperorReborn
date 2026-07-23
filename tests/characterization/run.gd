@@ -36,6 +36,7 @@ func _initialize() -> void:
 	_run_case("TechnologyTree building requirements", _test_technology_tree_building_requirements)
 	_run_case("TechnologyTree unit requirements", _test_technology_tree_unit_requirements)
 	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
+	_run_case("XBF padded halo anchor", _test_padded_halo_anchor)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
 	_run_case(
 		"XBF duplicate sibling animations keep independent paths",
@@ -352,6 +353,34 @@ func _test_xbf_vertex_animation_scale() -> bool:
 		var relative_error := animated_bounds.size.distance_to(static_bounds.size) / maxf(static_bounds.size.length(), 0.0001)
 		_expect(relative_error < 0.02, "%s animated body must preserve the authored scale" % String(model_case[0]).get_file())
 	return true
+
+
+func _test_padded_halo_anchor() -> bool:
+	var builder = ModelBakeBuilderScript.new()
+	var scene: PackedScene = builder.build(
+		"res://assets/raw_original_content/3DDATA/Units/HK_Engineer_H0.xbf"
+	)
+	_expect(scene != null, "HK Engineer model must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate() as Node3D
+	var anchor := _find_node_with_meta(root, "halo_anchor")
+	_expect(anchor != null, "HK Engineer's padded #^^0 marker must become a halo anchor")
+	if anchor != null:
+		var bounds: AABB = anchor.get_meta("halo_anchor_bounds")
+		_expect(bounds.size.x > 100.0, "HK Engineer halo anchor must retain its authored bounds")
+	root.free()
+	return true
+
+
+func _find_node_with_meta(node: Node, key: String) -> Node3D:
+	if node is Node3D and node.has_meta(key):
+		return node as Node3D
+	for child in node.get_children():
+		var found := _find_node_with_meta(child, key)
+		if found != null:
+			return found
+	return null
 
 
 func _find_xbf_object(objects: Array[Dictionary], expected_name: String) -> Dictionary:
