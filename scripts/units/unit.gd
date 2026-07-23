@@ -4,6 +4,7 @@ class_name Unit
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
+const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
 static var _definition_catalog := UnitSceneCatalogScript.new()
 
 signal owner_changed(player_id: int)
@@ -126,6 +127,7 @@ var _visual_slope_target_basis := Basis.IDENTITY
 var _last_terrain_normal := Vector3.UP
 var _uses_mech_gait := false
 var _mech_gait_elapsed := 0.0
+var _flight_controller: UnitFlightController = null
 var _is_deploying := false
 var _deployment_aligning := false
 var _deployment_alignment_direction := Vector3.ZERO
@@ -207,6 +209,9 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if _flight_controller != null and _flight_controller.flight_is_taking_off():
+		_flight_controller.advance(delta)
+		return
 	if _is_deploying:
 		velocity = Vector3.ZERO
 		if _deployment_aligning:
@@ -238,12 +243,15 @@ func _physics_process(delta: float) -> void:
 	_set_movement_animation(not velocity.is_zero_approx(), animation_speed_scale)
 	_advance_mech_gait(delta, animation_speed_scale)
 	move_and_slide()
-	_snap_to_terrain()
+	_snap_to_terrain(delta)
 
 
 ## `exit_point` is a mandatory first waypoint (a production building's front
 ## exit): the unit walks straight to it before regular routing takes over.
 func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
+	if _flight_controller != null and _flight_controller.flight_is_landed():
+		_flight_controller.begin_takeoff_toward(world_position, exit_point)
+		return
 	if _navigation_managed and _navigation_system != null:
 		_navigation_system.command_move([self], world_position, _navigation_system.MoveMode.FREE, exit_point)
 		return
@@ -258,6 +266,98 @@ func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 	_has_pending_navigation_order = true
 	target_position = Vector3(world_position.x, global_position.y, world_position.z)
 	_set_movement_animation(global_position.distance_to(target_position) > arrival_radius)
+
+
+## Called only by UnitRosterController right after producing a flying unit:
+## the unit exits the hangar already posed at frame 0 of Takeoff, climbs
+## straight up to its cruise altitude, and only then moves toward `rally_point`.
+## Non-flying units fall back to an ordinary move order.
+func begin_hangar_takeoff(rally_point: Vector3, exit_point: Vector3) -> bool:
+	if _flight_controller == null:
+		move_to(rally_point, exit_point)
+		return true
+	_flight_controller.begin_hangar_takeoff(rally_point, exit_point)
+	return true
+
+
+## True for every flight phase except grounded/landed. Used by the nav system
+## (duck-typed, see UnitLocalAvoidance/UnitNavigationPlanner) to ignore
+## buildings, and internally to route movement/animation through the
+## flight controller. Always false for non-flying units.
+func flight_is_airborne_phase() -> bool:
+	return _flight_controller != null and _flight_controller.flight_is_airborne_phase()
+
+
+## True while grounded/landed (including a flying unit that has not yet taken
+## off). This is the seam a later combat pass wires into combat_is_airborne()
+## so a landed plane counts as a ground unit for targeting — not done here.
+func flight_is_landed() -> bool:
+	return _flight_controller == null or _flight_controller.flight_is_landed()
+
+
+## Only Ornithopters (ammo-replenish docking) or carriers (pickup sequence) may
+## ever leave cruise/hover to land; every other CanFly unit rejects this and
+## only ever takes off once, at spawn. No AI calls this yet in this pass —
+## `allowed_cells` mirrors the command_dock exception shape for the follow-up
+## pass that issues real land orders.
+func flight_request_land(target_position: Vector3, allowed_cells: Dictionary = {}) -> bool:
+	return _flight_controller != null and _flight_controller.flight_request_land(target_position, allowed_cells)
+
+
+## Called by UnitLocalAvoidance when two air agents' lateral paths converge —
+## blends this unit's altitude toward cruise_altitude + value.
+func flight_set_vertical_offset(value: float) -> void:
+	if _flight_controller != null:
+		_flight_controller.flight_set_vertical_offset(value)
+
+
+## Pickup sequence stubs — phases/clips exist and are individually triggerable;
+## nothing drives them automatically yet (follow-up carryall-AI pass).
+func flight_begin_pickup_sequence() -> void:
+	if _flight_controller != null:
+		_flight_controller.flight_begin_pickup_sequence()
+
+
+func flight_advance_pickup(next_sub_phase: int) -> void:
+	if _flight_controller != null:
+		_flight_controller.flight_advance_pickup(next_sub_phase)
+
+
+func flight_complete_pickup_sequence() -> void:
+	if _flight_controller != null:
+		_flight_controller.flight_complete_pickup_sequence()
+
+
+## Ensures `name` is the active animation on the first player that has it,
+## restarting playback only if it isn't already current (mirrors
+## _set_movement_animation's MOVING_ANIMATION idiom, unlike
+## _start_deployment_animation which always restarts) — safe to call every
+## tick. Returns the player it played on, or null if no player has the clip.
+func flight_play_clip(clip_name: StringName, loop: bool, speed_scale: float = 1.0) -> AnimationPlayer:
+	for player in _animation_players:
+		if not player.has_animation(clip_name):
+			continue
+		var animation := player.get_animation(clip_name)
+		if animation != null:
+			animation.loop_mode = Animation.LOOP_LINEAR if loop else Animation.LOOP_NONE
+		if player.current_animation != clip_name:
+			player.stop()
+			player.play(clip_name)
+		player.speed_scale = speed_scale
+		return player
+	return null
+
+
+## Same lookup idiom as _mech_move_cycle_duration(): the authored clip length
+## if any player has it, else `fallback`.
+func flight_clip_length(clip_name: StringName, fallback: float) -> float:
+	for player in _animation_players:
+		if not player.has_animation(clip_name):
+			continue
+		var animation := player.get_animation(clip_name)
+		if animation != null and animation.length > 0.0:
+			return animation.length
+	return fallback
 
 
 ## Called by UnitNavigationSystem before it mutates an agent's route. Units may
@@ -333,6 +433,9 @@ func _navigation_collision_half_extents() -> Vector2:
 
 
 func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
+	if _flight_controller != null and _flight_controller.flight_is_taking_off():
+		_flight_controller.advance(delta)
+		return
 	if _is_deploying:
 		velocity = Vector3.ZERO
 		_set_navigation_debug_direction(Vector3.ZERO)
@@ -355,7 +458,7 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 	# Applying the exact fixed navigation delta avoids depending on physics-frame
 	# frequency and keeps command replays stable.
 	global_position += velocity * delta
-	_snap_to_terrain()
+	_snap_to_terrain(delta)
 
 
 ## The navigation solver must see the phase speed before avoidance is resolved;
@@ -403,7 +506,17 @@ func navigation_blocked_by_enemy(enemies: Array[Node3D]) -> void:
 		navigation_enemy_encountered.emit(enemies)
 
 
-func _snap_to_terrain() -> void:
+func _snap_to_terrain(delta: float = 0.0) -> void:
+	if _flight_controller != null:
+		_flight_controller.advance(delta)
+		return
+	_terrain_snap_body()
+
+
+## Extracted so a landed/grounded flying unit (UnitFlightController.advance)
+## sits on real terrain/apron height exactly like a ground unit; airborne
+## flight phases bypass this entirely (fixed cruise altitude, no terrain-follow).
+func _terrain_snap_body() -> void:
 	# Units are moved horizontally, then projected back onto the terrain mesh.
 	# Keeping this independent of CharacterBody's floor state lets authored unit
 	# collision volumes remain usable for selection while the unit follows every
@@ -472,6 +585,8 @@ func aligns_visual_to_terrain_slope() -> bool:
 
 
 func _slope_speed_multiplier(direction: Vector3, delta: float) -> float:
+	if _flight_controller != null and _flight_controller.flight_is_airborne_phase():
+		return 1.0
 	var current_hit := _terrain_hit_at(global_position)
 	if current_hit.is_empty():
 		return 1.0
@@ -1256,6 +1371,12 @@ func _apply_unit_definition() -> void:
 	max_shields = float(unit_definition.shield_health)
 	armour_type = unit_definition.armour_type
 	_configure_combat_turrets()
+	if unit_definition.can_fly:
+		if _flight_controller == null:
+			_flight_controller = UnitFlightControllerScript.new()
+		_flight_controller.configure(self, unit_definition)
+	else:
+		_flight_controller = null
 
 
 func _configure_combat_turrets() -> void:
@@ -1327,6 +1448,9 @@ func _prepare_idle_animations() -> void:
 
 
 func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
+	if _flight_controller != null and _flight_controller.flight_is_airborne_phase():
+		_flight_controller.set_cruise_moving(is_moving, speed_scale)
+		return
 	if _fire_sequence_active:
 		if not is_moving:
 			return
@@ -1413,6 +1537,8 @@ func _idle_animations(player: AnimationPlayer) -> Array[StringName]:
 
 
 func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:
+	if _flight_controller != null and _flight_controller.notify_animation_finished(animation_name, player):
+		return
 	if (
 		_fire_sequence_active
 		and player == _fire_sequence_player

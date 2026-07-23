@@ -38,6 +38,9 @@ extends Resource
 @export var turn_rate: float
 @export var infantry: bool
 @export var can_fly: bool
+@export var ornithoptor: bool
+@export var carryall: bool
+@export var advanced_carryall: bool
 @export var can_move_any_direction: bool
 @export var terrain_ids: Array[StringName] = []
 

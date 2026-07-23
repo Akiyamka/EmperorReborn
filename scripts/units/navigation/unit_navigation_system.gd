@@ -1011,8 +1011,9 @@ func _agent_cell_passable(
 	var pass_mask := int(agent["pass_mask"])
 	if runtime_map.is_passable(cell, pass_mask, clearance, terrain_mask):
 		return true
+	var ignore_buildings := pass_mask == MapNavigationGrid.PASS_AIR and UnitLocalAvoidance._agent_is_airborne(agent)
 	var allowed: Dictionary = agent.get("allowed_cells", {})
-	if allowed.is_empty():
+	if allowed.is_empty() and not ignore_buildings:
 		return false
 	for y in range(-clearance, clearance + 1):
 		for x in range(-clearance, clearance + 1):
@@ -1021,7 +1022,7 @@ func _agent_cell_passable(
 				return false
 			if terrain_mask != 0 and (terrain_mask & (1 << runtime_map.grid.terrain_at(sample))) == 0:
 				return false
-			if runtime_map.is_blocked(sample) and not allowed.has(sample):
+			if runtime_map.is_blocked(sample) and not ignore_buildings and not allowed.has(sample):
 				return false
 	return true
 
@@ -1037,8 +1038,12 @@ func _agent_cell_stoppable(
 	var pass_mask := int(agent["pass_mask"])
 	if runtime_map.is_stoppable(cell, pass_mask, clearance, terrain_mask):
 		return true
+	# Airborne flyers ignore both building occupancy and no-stop aprons — those
+	# exist to keep ground traffic clear of building entrances/docks, not to
+	# restrict where a cruising/hovering aircraft may hold position.
+	var ignore_buildings := pass_mask == MapNavigationGrid.PASS_AIR and UnitLocalAvoidance._agent_is_airborne(agent)
 	var allowed: Dictionary = agent.get("allowed_cells", {})
-	if allowed.is_empty():
+	if allowed.is_empty() and not ignore_buildings:
 		return false
 	for y in range(-clearance, clearance + 1):
 		for x in range(-clearance, clearance + 1):
@@ -1047,7 +1052,8 @@ func _agent_cell_stoppable(
 				return false
 			if terrain_mask != 0 and (terrain_mask & (1 << runtime_map.grid.terrain_at(sample))) == 0:
 				return false
-			if (runtime_map.is_blocked(sample) or runtime_map.is_no_stop(sample)) and not allowed.has(sample):
+			if (runtime_map.is_blocked(sample) or runtime_map.is_no_stop(sample)) \
+			and not ignore_buildings and not allowed.has(sample):
 				return false
 	return true
 
@@ -1647,7 +1653,11 @@ func _profile_for(unit: Node3D) -> Dictionary:
 		int(ceil(rotation_radius / maxf(minf(cell_size.x, cell_size.y), 0.001))) - 1
 	)
 	var pass_mask := MapNavigationGrid.PASS_AIR if can_fly else (MapNavigationGrid.PASS_INFANTRY if infantry else MapNavigationGrid.PASS_VEHICLE)
-	var terrain_mask := _terrain_mask(config.terrain_ids if config != null else [])
+	# A flying unit's authored Terrain list constrains only where it may land,
+	# never where it may fly — leave it unrestricted here so routing never
+	# detours around terrain types (e.g. InfantryRock) that only matter to
+	# ground movement classes.
+	var terrain_mask := 0 if can_fly else _terrain_mask(config.terrain_ids if config != null else [])
 	# `size` is the side of the unit's square footprint in navigation cells;
 	# destinations are always the center of a free size x size cell block.
 	var footprint := maxi(1, roundi(size))

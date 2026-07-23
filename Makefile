@@ -40,6 +40,7 @@ godot-test:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/deployment_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/unit_scene_catalog_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/harvester_run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/flight_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/demo_boot_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/snapshot_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/maps/run.gd

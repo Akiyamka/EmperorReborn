@@ -1,0 +1,313 @@
+extends SceneTree
+## Flying-unit movement/altitude/avoidance/animation-state-machine tests.
+## Follows the _expect/_run_case convention from tests/units/deployment_run.gd
+## and the FakeUnit duck-typed-Node3D convention from tests/navigation/run.gd.
+
+const UnitScene := preload("res://scenes/units/unit.tscn")
+const ATOrniScene := preload("res://scenes/units/at_orni.tscn")
+const UnitNavigationMapScript := preload("res://scripts/units/navigation/unit_navigation_map.gd")
+const UnitNavigationPlannerScript := preload("res://scripts/units/navigation/unit_navigation_planner.gd")
+const UnitLocalAvoidanceScript := preload("res://scripts/units/navigation/unit_local_avoidance.gd")
+const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
+
+var _assertions := 0
+var _failures := 0
+var _current_case := ""
+
+
+## Duck-typed test double for the vertical-avoidance and building-ignoring
+## tests: only implements the flight-facing surface UnitLocalAvoidance calls
+## via has_method()/call(), not a real UnitFlightController.
+class FakeFlyingUnit extends Node3D:
+	var airborne := true
+	var last_vertical_offset := 0.0
+
+	func flight_is_airborne_phase() -> bool:
+		return airborne
+
+	func flight_set_vertical_offset(value: float) -> void:
+		last_vertical_offset = value
+
+
+func _initialize() -> void:
+	await process_frame
+	_run_case("generated UnitDefinitions carry the correct flight flags", _test_definition_flags)
+	_run_case("a flight controller exists only for CanFly units", _test_flight_controller_gating)
+	_run_case("hangar spawn climbs straight up to height_offset then moves out", _test_hangar_takeoff_sequence)
+	_run_case("a non-Ornithopter, non-carrier flyer can never land", _test_non_ornithopter_never_lands)
+	_run_case("an Ornithopter can land, then take off again on its next order", _test_ornithopter_land_takeoff_round_trip)
+	_run_case("converging air agents separate vertically, then decay back to level", _test_vertical_avoidance)
+	_run_case("buildings block routes/collision only while landing, not at cruise", _test_buildings_ignored_at_cruise)
+	if _failures > 0:
+		printerr("Flight tests: %d failures after %d assertions" % [_failures, _assertions])
+		quit(1)
+		return
+	print("Flight tests: %d assertions passed" % _assertions)
+	quit(0)
+
+
+func _run_case(case_name: String, test: Callable) -> void:
+	_current_case = case_name
+	var failures_before := _failures
+	test.call()
+	if _failures == failures_before:
+		print("PASS: %s" % case_name)
+
+
+func _test_definition_flags() -> void:
+	var at_orni := load("res://resources/units/definitions/ATOrni.tres")
+	var hk_gunship := load("res://resources/units/definitions/HKGunship.tres")
+	var carryall := load("res://resources/units/definitions/Carryall.tres")
+	var atadv_carryall := load("res://resources/units/definitions/ATADVCarryall.tres")
+	var stunt := load("res://resources/units/definitions/StuntATADVCarryall.tres")
+
+	_expect(bool(at_orni.can_fly) and bool(at_orni.ornithoptor),
+		"ATOrni must fly and be an Ornithopter")
+	_expect(not bool(at_orni.carryall) and not bool(at_orni.advanced_carryall),
+		"ATOrni must not be any kind of carryall")
+	_expect(bool(hk_gunship.ornithoptor), "HKGunship must be an Ornithopter")
+	_expect(bool(carryall.carryall) and not bool(carryall.ornithoptor),
+		"Carryall must be a plain carryall, not an Ornithopter")
+	_expect(bool(atadv_carryall.advanced_carryall) and not bool(atadv_carryall.carryall),
+		"ATADVCarryall must be an advanced carryall, not a plain one")
+	_expect(not bool(stunt.can_fly),
+		"StuntATADVCarryall is a cosmetic ground-locked variant and must not fly")
+
+
+func _test_flight_controller_gating() -> void:
+	var flyer := ATOrniScene.instantiate()
+	root.add_child(flyer)
+	_expect(flyer.has_method("flight_is_airborne_phase"), "Unit must expose flight_is_airborne_phase")
+	_expect(not flyer.flight_is_airborne_phase(), "a freshly spawned flyer starts grounded, not airborne")
+	_expect(flyer.flight_is_landed(), "a freshly spawned flyer counts as landed")
+	flyer.free()
+
+	var ground := UnitScene.instantiate()
+	root.add_child(ground)
+	ground.setup(&"ATInfantry")
+	_expect(not ground.flight_is_airborne_phase(), "a ground unit is never airborne")
+	_expect(ground.flight_is_landed(), "a ground unit is always considered landed")
+	ground.free()
+
+
+func _test_hangar_takeoff_sequence() -> void:
+	var flyer: Unit = ATOrniScene.instantiate()
+	root.add_child(flyer)
+	# ATOrni's authored turn_rate is slow and can_move_any_direction is false;
+	# bypass turning entirely (an instance-only override, not the shared
+	# UnitDefinition resource) so this test isolates takeoff/cruise altitude
+	# and animation behavior from unrelated turn-rate timing.
+	flyer.can_move_any_direction = true
+	# Far enough that 20 ticks of forward movement never gets within
+	# arrival_radius of it — a near rally point oscillates back and forth
+	# across arrival_radius every tick (velocity*delta far exceeds the radius),
+	# flickering between Move and Hover non-deterministically.
+	var rally: Vector3 = flyer.global_position + Vector3(1000.0, 0.0, 0.0)
+	flyer.begin_hangar_takeoff(rally, Vector3.INF)
+
+	var player := _first_player_with(flyer, &"Takeoff")
+	_expect(player != null, "the converted Ornithopter model must have a Takeoff clip")
+	if player != null:
+		_expect(player.current_animation == &"Takeoff", "hangar takeoff must play Takeoff immediately")
+
+	var last_y: float = flyer.global_position.y
+	var climbed := false
+	for i in 20:
+		flyer._physics_process(0.2)
+		_expect(flyer.global_position.y >= last_y - 0.0001,
+			"altitude must climb monotonically during takeoff")
+		if flyer.global_position.y > last_y + 0.0001:
+			climbed = true
+		last_y = flyer.global_position.y
+
+	_expect(climbed, "altitude must have actually increased during takeoff")
+	_expect(is_equal_approx(flyer.global_position.y,
+		float(flyer.unit_definition.height_offset) * UnitFlightControllerScript.HEIGHT_OFFSET_WORLD_SCALE),
+		"takeoff must finish exactly at the scaled absolute height_offset")
+	_expect(flyer.flight_is_airborne_phase(), "the unit must be cruising once the climb completes")
+	if player != null:
+		_expect(player.current_animation == &"Move",
+			"once cruising toward the rally point, the animation must switch to Move")
+	flyer.free()
+
+
+func _test_non_ornithopter_never_lands() -> void:
+	var flyer: Unit = UnitScene.instantiate()
+	root.add_child(flyer)
+	flyer.setup(&"ATADP")
+	_expect(bool(flyer.unit_definition.can_fly)
+		and not bool(flyer.unit_definition.ornithoptor)
+		and not bool(flyer.unit_definition.carryall)
+		and not bool(flyer.unit_definition.advanced_carryall),
+		"ATADP must fly but carry none of the landing-capable flags")
+
+	flyer.begin_hangar_takeoff(flyer.global_position, Vector3.INF)
+	_fast_forward_takeoff(flyer)
+	_expect(flyer.flight_is_airborne_phase(), "must reach cruise before testing the landing gate")
+
+	var accepted: bool = flyer.flight_request_land(flyer.global_position, {})
+	_expect(not accepted, "a non-Ornithopter, non-carrier flyer must reject a landing request")
+	_expect(flyer.flight_is_airborne_phase(), "the rejected landing request must leave the unit airborne")
+	flyer.free()
+
+
+func _test_ornithopter_land_takeoff_round_trip() -> void:
+	var flyer: Unit = ATOrniScene.instantiate()
+	root.add_child(flyer)
+	flyer.begin_hangar_takeoff(flyer.global_position, Vector3.INF)
+	_fast_forward_takeoff(flyer)
+	_expect(flyer.flight_is_airborne_phase(), "must reach cruise before requesting a landing")
+
+	# No terrain collider exists in this synthetic test, so _sample_ground_altitude
+	# falls back to the target position's own Y — give it a ground-level Y (0.0)
+	# rather than the flyer's current cruise-altitude Y, or there is nothing to
+	# descend to.
+	var land_target: Vector3 = Vector3(flyer.global_position.x + 5.0, 0.0, flyer.global_position.z)
+	var accepted: bool = flyer.flight_request_land(land_target, {})
+	_expect(accepted, "an Ornithopter must be allowed to request a landing")
+
+	var player := _first_player_with(flyer, &"Land")
+	if player != null:
+		_expect(player.current_animation == &"Land", "landing must play Land immediately")
+
+	var last_y: float = flyer.global_position.y
+	var descended := false
+	for i in 20:
+		flyer._physics_process(0.2)
+		_expect(flyer.global_position.y <= last_y + 0.0001,
+			"altitude must descend monotonically while landing")
+		if flyer.global_position.y < last_y - 0.0001:
+			descended = true
+		last_y = flyer.global_position.y
+
+	_expect(descended, "altitude must have actually decreased while landing")
+	_expect(flyer.flight_is_landed(), "the unit must be landed once the descent completes")
+
+	var far_target: Vector3 = flyer.global_position + Vector3(30.0, 0.0, 0.0)
+	flyer.move_to(far_target)
+	_expect(flyer.flight_is_airborne_phase(), "ordering a landed flyer to move must start a fresh takeoff")
+	if player != null:
+		_expect(player.current_animation == &"Takeoff", "re-launch must play Takeoff again")
+	_fast_forward_takeoff(flyer)
+	_expect(is_equal_approx(flyer.global_position.y,
+		float(flyer.unit_definition.height_offset) * UnitFlightControllerScript.HEIGHT_OFFSET_WORLD_SCALE),
+		"re-launch must climb back to the scaled absolute height_offset")
+	flyer.free()
+
+
+func _test_vertical_avoidance() -> void:
+	var avoidance := UnitLocalAvoidanceScript.new()
+	var low_id := FakeFlyingUnit.new()
+	root.add_child(low_id)
+	var high_id := FakeFlyingUnit.new()
+	root.add_child(high_id)
+	var agent_low := {"id": 1, "unit": low_id, "pass_mask": MapNavigationGrid.PASS_AIR}
+	var agent_high := {"id": 2, "unit": high_id, "pass_mask": MapNavigationGrid.PASS_AIR}
+
+	avoidance._resolve_vertical_conflict(agent_low, [agent_high])
+	_expect(is_equal_approx(low_id.last_vertical_offset, UnitLocalAvoidanceScript.VERTICAL_SEPARATION_OFFSET),
+		"the lower agent id must take the positive (fly-over) offset")
+	avoidance._resolve_vertical_conflict(agent_high, [agent_low])
+	_expect(is_equal_approx(high_id.last_vertical_offset, -UnitLocalAvoidanceScript.VERTICAL_SEPARATION_OFFSET),
+		"the higher agent id must take the negative (fly-under) offset")
+
+	avoidance._decay_vertical_offset(agent_low)
+	_expect(is_equal_approx(low_id.last_vertical_offset, 0.0),
+		"clearing the conflict must retarget the offset back to zero")
+
+	# The controller blends toward the target exponentially rather than
+	# snapping — verify it actually moves partway, then converges to ~0.
+	var controller := UnitFlightControllerScript.new()
+	controller.flight_set_vertical_offset(UnitLocalAvoidanceScript.VERTICAL_SEPARATION_OFFSET)
+	controller._advance_vertical_avoidance(0.1)
+	_expect(controller._vertical_avoidance_offset > 0.0
+		and controller._vertical_avoidance_offset < UnitLocalAvoidanceScript.VERTICAL_SEPARATION_OFFSET,
+		"the blend must move partway toward the target on a single tick, not snap")
+	controller.flight_set_vertical_offset(0.0)
+	for i in 30:
+		controller._advance_vertical_avoidance(0.2)
+	_expect(absf(controller._vertical_avoidance_offset) < 0.01,
+		"the offset must decay back toward zero once clear")
+
+	low_id.free()
+	high_id.free()
+
+
+func _test_buildings_ignored_at_cruise() -> void:
+	var grid := _make_grid()
+	var runtime_map := UnitNavigationMapScript.new()
+	runtime_map.setup(grid)
+	var blocked_cell := Vector2i(10, 10)
+	runtime_map.replace_blocked_cells({blocked_cell: true})
+
+	var planner := UnitNavigationPlannerScript.new()
+	planner.setup(runtime_map)
+	_expect(planner.is_open(blocked_cell, MapNavigationGrid.PASS_AIR, 0),
+		"route planning must treat a building-occupied cell as open for an air pass mask")
+	_expect(not planner.is_open(blocked_cell, MapNavigationGrid.PASS_VEHICLE, 0),
+		"route planning must still treat the same cell as blocked for a ground pass mask")
+
+	var avoidance := UnitLocalAvoidanceScript.new()
+	avoidance.setup(runtime_map)
+	var flyer := FakeFlyingUnit.new()
+	root.add_child(flyer)
+	var agent := {
+		"pass_mask": MapNavigationGrid.PASS_AIR,
+		"terrain_mask": 0,
+		"allowed_cells": {},
+		"unit": flyer,
+	}
+	flyer.airborne = true
+	_expect(not avoidance._cell_is_solid(agent, blocked_cell),
+		"a cruising flyer must not treat the building cell as solid")
+	flyer.airborne = false
+	_expect(avoidance._cell_is_solid(agent, blocked_cell),
+		"a landed/landing flyer must treat the building cell as solid again")
+	flyer.free()
+
+
+func _fast_forward_takeoff(unit: Node3D) -> void:
+	# 20 * 0.2s = 4.0s, comfortably past both the authored clip length and the
+	# DEFAULT_TAKEOFF_SECONDS/DEFAULT_LAND_SECONDS fallback.
+	for i in 20:
+		unit._physics_process(0.2)
+
+
+func _first_player_with(unit: Node3D, clip_name: StringName) -> AnimationPlayer:
+	for node in unit.find_children("*", "AnimationPlayer", true, false):
+		var player := node as AnimationPlayer
+		if player.has_animation(clip_name):
+			return player
+	return null
+
+
+func _make_grid() -> MapNavigationGrid:
+	var total := MapNavigationGrid.NAV_SIZE * MapNavigationGrid.NAV_SIZE
+	var cpf := PackedInt32Array()
+	var terrain := PackedInt32Array()
+	var source_x := PackedInt32Array()
+	var source_y := PackedInt32Array()
+	var spice := PackedByteArray()
+	var pass_mask := PackedInt32Array()
+	var movement_cost := PackedFloat32Array()
+	var buildable := PackedByteArray()
+	for array in [cpf, terrain, source_x, source_y, spice, pass_mask, movement_cost, buildable]:
+		array.resize(total)
+	terrain.fill(MapNavigationGrid.TERRAIN_ROCK)
+	pass_mask.fill(MapNavigationGrid.PASS_GROUND | MapNavigationGrid.PASS_AIR)
+	movement_cost.fill(1.0)
+	buildable.fill(1)
+	var grid := MapNavigationGrid.new()
+	grid.load_generated(
+		"test", AABB(Vector3.ZERO, Vector3(256.0, 1.0, 256.0)), 1.0,
+		cpf, terrain, source_x, source_y, spice, pass_mask, movement_cost, buildable, {}, {}
+	)
+	return grid
+
+
+func _expect(condition: bool, message: String) -> void:
+	_assertions += 1
+	if condition:
+		return
+	_failures += 1
+	printerr("FAIL: %s: %s" % [_current_case, message])

@@ -428,6 +428,8 @@ CREATE TABLE units (
     can_die                          INTEGER,  -- bool
     cant_be_leeched                   INTEGER,  -- bool
     advanced_carryall                 INTEGER,  -- bool
+    ornithoptor                        INTEGER,  -- bool
+    carryall                           INTEGER,  -- bool
     projectable                       INTEGER,  -- bool
     circles                           INTEGER,  -- bool
     selectable                        INTEGER,  -- bool

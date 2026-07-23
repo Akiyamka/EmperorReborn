@@ -171,7 +171,10 @@ func _spawn_completed_unit(unit_id: StringName, production_building_id: StringNa
 	# The exit point walks the unit straight out through the building's front
 	# before regular routing toward the rally point takes over.
 	var exit_point: Vector3 = building.call("production_exit_position") if building.has_method("production_exit_position") else Vector3.INF
-	unit.move_to(rally_point, exit_point)
+	if unit.has_method("begin_hangar_takeoff") and unit.unit_definition != null and bool(unit.unit_definition.can_fly):
+		unit.begin_hangar_takeoff(rally_point, exit_point)
+	else:
+		unit.move_to(rally_point, exit_point)
 	return true
 
 
