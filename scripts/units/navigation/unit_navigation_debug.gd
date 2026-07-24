@@ -15,6 +15,11 @@ const MARKER_MIN_RADIUS := 0.28
 const MARKER_SEGMENTS := 20
 
 var _mesh_instance: MeshInstance3D
+var _mesh: ImmediateMesh
+var _route_material: StandardMaterial3D
+var _waypoint_material: StandardMaterial3D
+var _look_ahead_material: StandardMaterial3D
+var _destination_material: StandardMaterial3D
 var _has_geometry := false
 var _enabled := false
 
@@ -27,6 +32,11 @@ func _ready() -> void:
 	_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mesh_instance.extra_cull_margin = 1000.0
 	add_child(_mesh_instance)
+	_mesh = ImmediateMesh.new()
+	_route_material = _make_material(ROUTE_COLOR)
+	_waypoint_material = _make_material(WAYPOINT_COLOR)
+	_look_ahead_material = _make_material(LOOK_AHEAD_COLOR)
+	_destination_material = _make_material(DESTINATION_COLOR)
 	visible = _enabled
 
 
@@ -68,13 +78,16 @@ func update_agents(snapshots: Array[Dictionary]) -> void:
 		if destination.is_finite():
 			_append_ring(destination_vertices, destination, marker_radius * 1.25, width * 1.5)
 			_append_cross(destination_vertices, destination, marker_radius * 0.72, width * 1.25)
-	var mesh := ImmediateMesh.new()
-	_append_surface(mesh, route_vertices, ROUTE_COLOR)
-	_append_surface(mesh, waypoint_vertices, WAYPOINT_COLOR)
-	_append_surface(mesh, look_ahead_vertices, LOOK_AHEAD_COLOR)
-	_append_surface(mesh, destination_vertices, DESTINATION_COLOR)
-	_has_geometry = mesh.get_surface_count() > 0
-	_mesh_instance.mesh = mesh if _has_geometry else null
+	# Debug routes change every navigation tick. Reusing one mesh and four
+	# materials avoids accumulating hundreds of render-server resources per
+	# second while a selected crowd continuously changes steering direction.
+	_mesh.clear_surfaces()
+	_append_surface(_mesh, route_vertices, _route_material)
+	_append_surface(_mesh, waypoint_vertices, _waypoint_material)
+	_append_surface(_mesh, look_ahead_vertices, _look_ahead_material)
+	_append_surface(_mesh, destination_vertices, _destination_material)
+	_has_geometry = _mesh.get_surface_count() > 0
+	_mesh_instance.mesh = _mesh if _has_geometry else null
 
 
 func has_geometry() -> bool:
@@ -83,13 +96,13 @@ func has_geometry() -> bool:
 
 func _clear_geometry() -> void:
 	_has_geometry = false
+	if _mesh != null:
+		_mesh.clear_surfaces()
 	if _mesh_instance != null:
 		_mesh_instance.mesh = null
 
 
-func _append_surface(mesh: ImmediateMesh, vertices: PackedVector3Array, color: Color) -> void:
-	if vertices.is_empty():
-		return
+func _make_material(color: Color) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -97,6 +110,16 @@ func _append_surface(mesh: ImmediateMesh, vertices: PackedVector3Array, color: C
 	material.no_depth_test = true
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material.render_priority = 19
+	return material
+
+
+func _append_surface(
+		mesh: ImmediateMesh,
+		vertices: PackedVector3Array,
+		material: StandardMaterial3D
+	) -> void:
+	if vertices.is_empty():
+		return
 	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, material)
 	for vertex in vertices:
 		mesh.surface_add_vertex(vertex)

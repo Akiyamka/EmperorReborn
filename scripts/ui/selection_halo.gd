@@ -26,6 +26,8 @@ var _is_selected := false
 var _is_hovered := false
 var _layers := {}
 var _movement_arrow: MeshInstance3D
+var _movement_arrow_mesh: ImmediateMesh
+var _movement_arrow_material: StandardMaterial3D
 var _movement_direction := Vector3.ZERO
 var _movement_debug_visible := false
 var _indicator_radius := 1.0
@@ -175,24 +177,27 @@ func _add_movement_arrow() -> void:
 	_movement_arrow.extra_cull_margin = 2.0
 	_movement_arrow.position.y = 0.03
 	add_child(_movement_arrow)
+	_movement_arrow_mesh = ImmediateMesh.new()
+	_movement_arrow_material = StandardMaterial3D.new()
+	_movement_arrow_material.albedo_color = MOVEMENT_DIRECTION_COLOR
+	_movement_arrow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_movement_arrow_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_movement_arrow_material.no_depth_test = true
+	_movement_arrow_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_movement_arrow_material.render_priority = 20
 	_rebuild_movement_arrow()
 
 
 func _rebuild_movement_arrow() -> void:
 	if _movement_arrow == null:
 		return
+	_movement_arrow_mesh.clear_surfaces()
 	if _movement_direction.is_zero_approx():
 		_movement_arrow.mesh = null
 		return
-	var material := StandardMaterial3D.new()
-	material.albedo_color = MOVEMENT_DIRECTION_COLOR
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.no_depth_test = true
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.render_priority = 20
-	var mesh := ImmediateMesh.new()
-	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, material)
+	_movement_arrow_mesh.surface_begin(
+		Mesh.PRIMITIVE_TRIANGLES, _movement_arrow_material
+	)
 	var direction := _movement_direction
 	var lateral := Vector3(-direction.z, 0.0, direction.x)
 	var start_distance := maxf(_indicator_radius * 0.65, 0.3)
@@ -205,11 +210,15 @@ func _rebuild_movement_arrow() -> void:
 	var neck := tip - direction * head_length
 	var shaft_left := lateral * shaft_half_width
 	var head_left := lateral * head_half_width
-	_add_arrow_triangle(mesh, start - shaft_left, neck - shaft_left, neck + shaft_left)
-	_add_arrow_triangle(mesh, start - shaft_left, neck + shaft_left, start + shaft_left)
-	_add_arrow_triangle(mesh, neck - head_left, tip, neck + head_left)
-	mesh.surface_end()
-	_movement_arrow.mesh = mesh
+	_add_arrow_triangle(
+		_movement_arrow_mesh, start - shaft_left, neck - shaft_left, neck + shaft_left
+	)
+	_add_arrow_triangle(
+		_movement_arrow_mesh, start - shaft_left, neck + shaft_left, start + shaft_left
+	)
+	_add_arrow_triangle(_movement_arrow_mesh, neck - head_left, tip, neck + head_left)
+	_movement_arrow_mesh.surface_end()
+	_movement_arrow.mesh = _movement_arrow_mesh
 
 
 func _add_arrow_triangle(mesh: ImmediateMesh, a: Vector3, b: Vector3, c: Vector3) -> void:

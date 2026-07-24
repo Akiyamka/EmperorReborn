@@ -304,6 +304,14 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 	halo.set_movement_debug_visible(true)
 	_expect(movement_arrow.visible and movement_arrow.mesh != null,
 		"an enabled debug layer must expose the selected unit's final navigation course")
+	var arrow_mesh: Mesh = movement_arrow.mesh
+	for index in 40:
+		var angle := TAU * float(index) / 40.0
+		halo.set_movement_direction(Vector3(cos(angle), 0.0, sin(angle)))
+	_expect(
+		movement_arrow.mesh == arrow_mesh,
+		"changing debug course arrows must refill one mesh instead of allocating GPU resources"
+	)
 	halo.set_movement_debug_visible(false)
 	_expect(not movement_arrow.visible, "disabling debug layers must hide the navigation course arrow")
 	halo.set_movement_debug_visible(true)

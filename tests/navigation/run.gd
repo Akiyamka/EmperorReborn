@@ -152,6 +152,8 @@ func _initialize() -> void:
 	_test_slide_around_stopped_friend(grid)
 	_test_group_convergence(grid)
 	_test_group_rounds_sharp_corner(grid)
+	_test_bunched_group_reverses_at_corner(grid)
+	_test_dense_group_rounds_solid_region(grid)
 	_test_large_pair_keeps_lanes_at_shared_corner(grid)
 	_test_yield_behaviour(grid)
 	_test_command_overrides_yield(grid)
@@ -776,6 +778,13 @@ func _test_selected_unit_navigation_debug(grid: MapNavigationGrid) -> void:
 	_expect(debug.has_geometry() and geometry.mesh != null \
 		and geometry.mesh.get_surface_count() >= 4,
 		"enabled diagnostics must draw route, waypoint, look-ahead, and destination surfaces")
+	var debug_mesh: Mesh = geometry.mesh
+	for _iteration in 20:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(
+		geometry.mesh == debug_mesh,
+		"route diagnostics must update one reusable mesh instead of allocating a GPU resource every tick"
+	)
 	navigation.set_debug_enabled(false)
 	_expect(not debug.visible and not debug.has_geometry(),
 		"disabling navigation diagnostics must hide and clear every route marker")
@@ -1519,8 +1528,18 @@ func _test_group_rounds_sharp_corner(grid: MapNavigationGrid) -> void:
 		unit.global_position = Vector3(60.0 + float(index % 5), 0.0, 90.0 + float(index / 5))
 		units.append(unit)
 	var assignments := navigation.command_move(units, Vector3(60.5, 0.0, 140.5), NavigationSystemScript.MoveMode.FREE)
+	var maximum_tick_usec := 0
+	var maximum_tick_index := 0
 	for _iteration in 1200:
+		var tick_start := Time.get_ticks_usec()
 		navigation.call("_navigation_tick", 0.05)
+		var tick_usec := Time.get_ticks_usec() - tick_start
+		if tick_usec > maximum_tick_usec:
+			maximum_tick_usec = tick_usec
+			maximum_tick_index = _iteration
+	print("Sharp-corner crowd: max tick %.2f ms at %d" % [
+		float(maximum_tick_usec) / 1000.0, maximum_tick_index
+	])
 	for assignment in assignments:
 		var unit: Node3D = assignment["unit"]
 		var slot: Vector3 = assignment["position"]
@@ -1529,6 +1548,105 @@ func _test_group_rounds_sharp_corner(grid: MapNavigationGrid) -> void:
 		_expect(unit.global_position.distance_to(slot) < 10.0,
 			"no unit of a group rounding a sharp corner may be left behind in a jam (dist %.1f, pos %.1f,%.1f slot %.1f,%.1f)" % [
 				unit.global_position.distance_to(slot), unit.global_position.x, unit.global_position.z, slot.x, slot.z])
+
+	navigation.queue_free()
+	for unit in units:
+		unit.queue_free()
+
+
+## Reproduction order matters: a group already travelling in spaced lanes is
+## cheap to reverse. First converge it onto one shared corner, then reverse
+## the whole compressed queue by 180 degrees while avoidance contacts are
+## active.
+func _test_bunched_group_reverses_at_corner(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation must initialize for the bunched reversal regression")
+	var walls := {}
+	for x in range(40, 121):
+		walls[Vector2i(x, 100)] = true
+	navigation.runtime_map.replace_blocked_cells(walls)
+
+	var units: Array[FakeUnit] = []
+	for index in 20:
+		var unit := FakeUnit.new()
+		root.add_child(unit)
+		unit.global_position = Vector3(60.0 + float(index % 5), 0.0, 90.0 + float(index / 5))
+		units.append(unit)
+	navigation.command_move(
+		units, Vector3(60.5, 0.0, 140.5), NavigationSystemScript.MoveMode.FREE
+	)
+	# The original sharp-corner benchmark reaches maximum contact around tick
+	# 55. Stop just after the queue has compressed at the shared waypoint.
+	for _iteration in 55:
+		navigation.call("_navigation_tick", 0.05)
+
+	navigation.command_move(
+		units, Vector3(60.5, 0.0, 80.5), NavigationSystemScript.MoveMode.FREE
+	)
+	var maximum_tick_usec := 0
+	var maximum_tick_index := 0
+	for tick in 300:
+		var tick_start := Time.get_ticks_usec()
+		navigation.call("_navigation_tick", 0.05)
+		var tick_usec := Time.get_ticks_usec() - tick_start
+		if tick_usec > maximum_tick_usec:
+			maximum_tick_usec = tick_usec
+			maximum_tick_index = tick
+	print("Bunched 180-degree reversal: max tick %.2f ms at %d" % [
+		float(maximum_tick_usec) / 1000.0, maximum_tick_index
+	])
+
+	navigation.queue_free()
+	for unit in units:
+		unit.queue_free()
+
+
+## A long final leg around a large solid region used to gather every obstacle
+## in a distance-squared square for every unit and every visibility probe.
+## The spike began only when the crowd advanced onto that common final leg.
+func _test_dense_group_rounds_solid_region(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation must initialize for the solid-region performance regression")
+	var blocked := {}
+	for y in range(80, 151):
+		for x in range(60, 141):
+			blocked[Vector2i(x, y)] = true
+	navigation.runtime_map.replace_blocked_cells(blocked)
+
+	var units: Array[FakeUnit] = []
+	for index in 16:
+		var unit := FakeUnit.new()
+		root.add_child(unit)
+		unit.global_position = Vector3(88.5 + float(index % 4), 0.0, 72.5 + float(index / 4))
+		units.append(unit)
+	var command_start := Time.get_ticks_usec()
+	navigation.command_move(
+		units, Vector3(90.5, 0.0, 165.5), NavigationSystemScript.MoveMode.FREE
+	)
+	var command_usec := Time.get_ticks_usec() - command_start
+
+	var maximum_tick_usec := 0
+	var maximum_tick_index := 0
+	for tick in 600:
+		var tick_start := Time.get_ticks_usec()
+		navigation.call("_navigation_tick", 0.05)
+		var tick_usec := Time.get_ticks_usec() - tick_start
+		if tick_usec > maximum_tick_usec:
+			maximum_tick_usec = tick_usec
+			maximum_tick_index = tick
+	print("Solid-region crowd: max tick %.2f ms at %d" % [
+		float(maximum_tick_usec) / 1000.0, maximum_tick_index
+	])
+	print("Solid-region crowd: command %.2f ms" % (float(command_usec) / 1000.0))
+	_expect(
+		maximum_tick_usec < 100_000,
+		"a dense group entering a long final leg must not create a 3-FPS navigation tick (%.2f ms)" \
+			% (float(maximum_tick_usec) / 1000.0)
+	)
 
 	navigation.queue_free()
 	for unit in units:

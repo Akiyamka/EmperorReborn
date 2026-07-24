@@ -11,6 +11,13 @@ extends RefCounted
 
 var _facade: Node
 
+## Continuous swept-disc visibility gathers nearby obstacle cells in a square
+## around the unit. That is exact and cheap for local corner look-ahead, but a
+## long final chord next to a large cliff makes the square grow as distance².
+## Beyond this many cells use the linear A* grid corridor check; actual motion
+## remains guarded by the continuous short-step terrain sweep in avoidance.
+const CONTINUOUS_CHORD_MAX_CELLS := 8.0
+
 
 func setup(facade: Node) -> void:
 	_facade = facade
@@ -236,6 +243,12 @@ func path_chord_is_clear(agent: Dictionary, from: Vector3, to: Vector3) -> bool:
 	# short movement tick but must not declare an arbitrary long look-ahead chord
 	# clear through the building it is leaving.
 	if not agent_cell_passable(agent, _facade.runtime_map.grid.world_to_grid(from), 0):
+		return has_clear_line(from, to, agent)
+	var cell_size: Vector2 = _facade.runtime_map.grid.cell_size()
+	var cell_width := maxf(minf(cell_size.x, cell_size.y), 0.001)
+	var chord := to - from
+	chord.y = 0.0
+	if chord.length() > cell_width * CONTINUOUS_CHORD_MAX_CELLS:
 		return has_clear_line(from, to, agent)
 	return _facade.avoidance.terrain_sweep_fraction(agent, to - from) >= 0.999
 
