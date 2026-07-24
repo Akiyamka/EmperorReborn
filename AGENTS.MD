@@ -14,3 +14,14 @@ When implementing building converters, examples such as `ATBarracks` should use 
 
 ## Code Rules
 - Dont put all logic in single file main.gd
+- Prefer explicit `const XScript := preload("res://...")` over a bare reference
+  to another script's `class_name` (e.g. `SomeClass.SOME_CONST`). A bare
+  global-name reference hides the dependency — it won't show up when grepping
+  a file for its `preload`s — and if the referenced script fails to compile
+  (a deleted constant, a typo), the failure can surface as an unrelated error
+  somewhere else in the project instead of a clear error at the actual
+  dependency site. This bit us once: removing a constant from
+  `unit_local_avoidance.gd` broke unrelated combat tests, because `unit.gd`
+  referenced `UnitNavigationSystem.MoveMode.FREE` by bare global name with no
+  preload, and Godot's global `class_name` table doesn't recover cleanly when
+  one script in the chain fails to parse.

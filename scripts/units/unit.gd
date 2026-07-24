@@ -5,6 +5,7 @@ const SpatialOrientationScript := preload("res://scripts/world/spatial_orientati
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
+const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 static var _definition_catalog := UnitSceneCatalogScript.new()
 
 signal owner_changed(player_id: int)
@@ -1161,7 +1162,7 @@ func _advance_attack_pursuit(target_world_position: Vector3, delta: float) -> vo
 	var move_issued := true
 	if _navigation_managed and _navigation_system != null:
 		var assignments: Array = _navigation_system.command_move(
-			[self], target_world_position, UnitNavigationSystem.MoveMode.FREE
+			[self], target_world_position, UnitNavigationSystemScript.MoveMode.FREE
 		)
 		move_issued = not assignments.is_empty()
 	else:
