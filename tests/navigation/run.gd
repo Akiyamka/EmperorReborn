@@ -1043,6 +1043,13 @@ func _test_long_steering_arc_does_not_periodically_stop(grid: MapNavigationGrid)
 	root.add_child(navigation)
 	navigation.set_physics_process(false)
 	_expect(navigation.setup(grid), "navigation system must initialize for sustained steering arcs")
+	_expect(
+		not navigation.avoidance.turn_rate_stabilization_enabled,
+		"navigation-side turn-rate stabilization must stay disabled for the runtime comparison"
+	)
+	# This white-box scenario still exercises the dormant implementation so it
+	# remains safe to switch back on after the gameplay comparison.
+	navigation.avoidance.turn_rate_stabilization_enabled = true
 	var unit := FakeTurningUnit.new(3.0)
 	unit.move_speed = 4.0
 	unit.facing = Vector3.RIGHT
@@ -1082,6 +1089,7 @@ func _test_far_target_large_bearing_starts_driven_arc(grid: MapNavigationGrid) -
 	root.add_child(navigation)
 	navigation.set_physics_process(false)
 	_expect(navigation.setup(grid), "navigation system must initialize for far-bearing arcs")
+	navigation.avoidance.turn_rate_stabilization_enabled = true
 	var unit := FakeTurningUnit.new(3.0)
 	unit.move_speed = 4.0
 	unit.facing = Vector3.RIGHT
@@ -1308,6 +1316,23 @@ func _test_missed_waypoint_advances_through_route_gate(grid: MapNavigationGrid) 
 		"a unit already across the outgoing waypoint gate must advance monotonically")
 	_expect(desired.normalized().dot(Vector3.BACK) > 0.9,
 		"a missed waypoint must keep steering along the outgoing route, not back to its centre")
+	var world_path: Array[Vector3] = [
+		grid.grid_to_world(corner_cell + Vector2i(-10, 0)),
+		corner,
+		grid.grid_to_world(corner_cell + Vector2i(0, 10)),
+	]
+	agent["route_lane_offset"] = 6.0
+	agent["route_lane_min"] = -6.0
+	agent["route_lane_max"] = 6.0
+	agent["_lane_rebase_index"] = 1
+	agent["_lane_rebase_side"] = 0
+	var outer_lane_position := corner + Vector3(6.0, 0.0, 1.0)
+	_expect(
+		int(navigation.call(
+			"_advanced_path_index", agent, world_path, 1, outer_lane_position, unit.move_speed
+		)) == 2,
+		"an outer group lane must cross the waypoint gate without curving back to its centre"
+	)
 
 	navigation.queue_free()
 	unit.queue_free()

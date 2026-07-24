@@ -15,6 +15,10 @@ const OrcaAvoidanceScript := preload("res://scripts/units/navigation/ground/orca
 var runtime_map = null
 var stabilizer := SteeringStabilizerScript.new()
 var orca := OrcaAvoidanceScript.new()
+## Temporary comparison switch. The authored chassis TurnRate is still
+## enforced by Unit.navigation_step(); false only removes the navigation-side
+## pre-rotation that bends successive steering targets into a driven arc.
+var turn_rate_stabilization_enabled := true
 
 
 func setup(source_runtime_map) -> void:
@@ -59,6 +63,9 @@ func stabilize_velocity(
 		nearby: Array,
 		resolved: Dictionary
 	) -> Vector3:
+	if not turn_rate_stabilization_enabled:
+		agent["steering_turn_in_place"] = false
+		return proposed
 	return stabilizer.stabilize_velocity(agent, proposed, delta, nearby, resolved)
 
 

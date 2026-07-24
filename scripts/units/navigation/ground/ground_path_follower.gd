@@ -17,6 +17,10 @@ var _facade: Node
 ## Beyond this many cells use the linear A* grid corridor check; actual motion
 ## remains guarded by the continuous short-step terrain sweep in avoidance.
 const CONTINUOUS_CHORD_MAX_CELLS := 8.0
+const LANE_SIDE_BOTH_OPEN := 0
+const LANE_SIDE_POSITIVE := 1
+const LANE_SIDE_NEGATIVE := -1
+const LANE_SIDE_NEITHER_OPEN := 2
 
 
 func setup(facade: Node) -> void:
@@ -120,7 +124,7 @@ func advanced_path_index(
 	# reverses the commanded heading every tick. Covering at least one tick's
 	# travel keeps a single overshooting step inside the capture disc.
 	var capture := maxf(maxf(0.35, float(agent["radius"]) * 0.4), speed / UnitNavigationSystem.NAVIGATION_TICK_RATE)
-	var corridor := maxf(float(agent["radius"]) * 2.0, cell_width * 1.5)
+	var base_corridor := maxf(float(agent["radius"]) * 2.0, cell_width * 1.5)
 	while result < path.size() - 1:
 		var waypoint: Vector3 = path[result]
 		var next: Vector3 = path[result + 1]
@@ -137,7 +141,12 @@ func advanced_path_index(
 		relative.y = 0.0
 		var along := relative.dot(outgoing)
 		var lateral := (relative - outgoing * clampf(along, 0.0, length)).length()
-		if relative.length() <= capture or (along > 0.0 and lateral <= corridor):
+		# Group lanes deliberately carry outer units past the waypoint away
+		# from the A* centre line. The waypoint gate must cover that complete
+		# cross-section; otherwise an outer unit crosses on its assigned lane,
+		# fails the centre-only test, and curves back to touch the old point.
+		var lane_corridor := base_corridor + absf(_effective_lane_offset(agent, result))
+		if relative.length() <= capture or (along > 0.0 and lateral <= lane_corridor):
 			result += 1
 			continue
 		break
@@ -179,11 +188,7 @@ func path_lane_target(
 	# position to flip the verdict right back), not just visual jitter. Decide
 	# once per segment, cached by `path_index`, and hold it until the agent
 	# actually advances past this waypoint.
-	const SIDE_BOTH_OPEN := 0
-	const SIDE_POSITIVE := 1
-	const SIDE_NEGATIVE := -1
-	const SIDE_NEITHER_OPEN := 2
-	var side := int(agent.get("_lane_rebase_side", SIDE_BOTH_OPEN))
+	var side := int(agent.get("_lane_rebase_side", LANE_SIDE_BOTH_OPEN))
 	if int(agent.get("_lane_rebase_index", -1)) != path_index:
 		var probe_distance := maxf(lane_span, float(agent["radius"]) * 0.75)
 		var positive := base_target + lateral * probe_distance
@@ -191,21 +196,17 @@ func path_lane_target(
 		var positive_open := has_clear_line(base_target, positive, agent)
 		var negative_open := has_clear_line(base_target, negative, agent)
 		if positive_open and not negative_open:
-			side = SIDE_POSITIVE
+			side = LANE_SIDE_POSITIVE
 		elif negative_open and not positive_open:
-			side = SIDE_NEGATIVE
+			side = LANE_SIDE_NEGATIVE
 		elif not positive_open and not negative_open:
-			side = SIDE_NEITHER_OPEN
+			side = LANE_SIDE_NEITHER_OPEN
 		else:
-			side = SIDE_BOTH_OPEN
+			side = LANE_SIDE_BOTH_OPEN
 		agent["_lane_rebase_side"] = side
 		agent["_lane_rebase_index"] = path_index
-	var lane_offset := float(agent.get("route_lane_offset", 0.0))
-	if side == SIDE_POSITIVE:
-		lane_offset -= lane_min
-	elif side == SIDE_NEGATIVE:
-		lane_offset -= lane_max
-	elif side == SIDE_NEITHER_OPEN:
+	var lane_offset := _effective_lane_offset(agent, path_index)
+	if side == LANE_SIDE_NEITHER_OPEN:
 		return base_target
 	# Merge back into the unit's exact destination instead of carrying a lane
 	# offset into the final parking block.
@@ -229,6 +230,20 @@ func path_lane_target(
 		else:
 			blocked = probe
 	return safe
+
+
+func _effective_lane_offset(agent: Dictionary, path_index: int) -> float:
+	var lane_offset := float(agent.get("route_lane_offset", 0.0))
+	if int(agent.get("_lane_rebase_index", -1)) != path_index:
+		return lane_offset
+	var side := int(agent.get("_lane_rebase_side", LANE_SIDE_BOTH_OPEN))
+	if side == LANE_SIDE_POSITIVE:
+		lane_offset -= float(agent.get("route_lane_min", 0.0))
+	elif side == LANE_SIDE_NEGATIVE:
+		lane_offset -= float(agent.get("route_lane_max", 0.0))
+	elif side == LANE_SIDE_NEITHER_OPEN:
+		return 0.0
+	return lane_offset
 
 
 func path_chord_is_clear(agent: Dictionary, from: Vector3, to: Vector3) -> bool:
