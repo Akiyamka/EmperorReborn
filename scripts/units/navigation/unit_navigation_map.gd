@@ -8,6 +8,10 @@ var revision := 0
 
 var _blocked := PackedByteArray()
 var _no_stop := PackedByteArray()
+## Cell indices touched by the most recent `replace_blocked_cells` call that
+## actually changed something. Lets callers reroute only the agents whose
+## route passes through the change instead of every commanded agent.
+var _changed_cells := PackedInt32Array()
 
 
 func setup(source_grid: MapNavigationGrid) -> bool:
@@ -30,11 +34,23 @@ func replace_blocked_cells(cells: Dictionary, no_stop_cells: Dictionary = {}) ->
 	var next := _bytes_from_cells(cells)
 	var next_no_stop := _bytes_from_cells(no_stop_cells)
 	if next == _blocked and next_no_stop == _no_stop:
+		_changed_cells = PackedInt32Array()
 		return false
+	var changed := PackedInt32Array()
+	for index in _blocked.size():
+		if next[index] != _blocked[index] or next_no_stop[index] != _no_stop[index]:
+			changed.append(index)
 	_blocked = next
 	_no_stop = next_no_stop
+	_changed_cells = changed
 	revision += 1
 	return true
+
+
+## Cell indices whose blocked/no-stop state changed on the most recent
+## `replace_blocked_cells` call that returned true. Empty otherwise.
+func changed_cells() -> PackedInt32Array:
+	return _changed_cells
 
 
 func _bytes_from_cells(cells: Dictionary) -> PackedByteArray:

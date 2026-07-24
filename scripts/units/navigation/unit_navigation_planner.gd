@@ -22,6 +22,11 @@ func prewarm(pass_mask: int, clearance_cells: int, allowed_terrain_mask := 0) ->
 	_profile(pass_mask, clearance_cells, allowed_terrain_mask)
 
 
+## Cells around a redirected target are searched for a substitute within this
+## many Chebyshev rings before giving up and falling back to the (expensive)
+## allow_partial_path flood.
+const UNREACHABLE_REDIRECT_RADIUS := 64
+
 ## Returns grid cells from start to target inclusive. When the target is
 ## unreachable the path leads to the closest reachable cell, matching the
 ## original game's "walk as far as possible" behaviour. Empty when no start
@@ -49,7 +54,39 @@ func find_path(
 	if snapped_target.x < 0:
 		snapped_target = snapped_start
 	var astar: AStarGrid2D = profile["astar"]
-	return astar.get_id_path(snapped_start, snapped_target, true)
+	var region: PackedInt32Array = profile["region"]
+	var start_index := _index_of(snapped_start)
+	var target_index := _index_of(snapped_target)
+	if start_index >= 0 and target_index >= 0 and region[start_index] != region[target_index]:
+		# The target sits in a different connected component: get_id_path with
+		# allow_partial_path=true would flood the whole reachable component
+		# (tens of thousands of cells) before giving up. Redirect to the
+		# nearest cell that shares the start's region instead — same "walk as
+		# far as possible" UX, without the flood.
+		var substitute := _cached_redirect(profile, snapped_target, region[start_index])
+		if substitute.x >= 0:
+			return astar.get_id_path(snapped_start, substitute, false)
+		# Nothing reachable within the capped search radius — safety net:
+		# fall back to the original flooding behaviour rather than returning
+		# an empty/wrong path.
+		return astar.get_id_path(snapped_start, snapped_target, true)
+	return astar.get_id_path(snapped_start, snapped_target, false)
+
+
+## Redirects for a given (target cell, start region) pair are cached on the
+## profile so repeated orders to the same unreachable target do not re-run the
+## ring search every time. The cache is reset whenever the profile's solid map
+## (and therefore its region labels) is rebuilt.
+func _cached_redirect(profile: Dictionary, target_cell: Vector2i, start_region: int) -> Vector2i:
+	var cache: Dictionary = profile["redirect_cache"]
+	var key := "%d:%d" % [_index_of(target_cell), start_region]
+	if cache.has(key):
+		return cache[key]
+	var substitute := _nearest_region(
+		profile["solid"], profile["region"], target_cell, start_region, UNREACHABLE_REDIRECT_RADIUS
+	)
+	cache[key] = substitute
+	return substitute
 
 
 func is_open(cell: Vector2i, pass_mask: int, clearance_cells: int, allowed_terrain_mask := 0) -> bool:
@@ -102,7 +139,13 @@ func _build_profile(pass_mask: int, clearance_cells: int, allowed_terrain_mask: 
 	for index in solid.size():
 		if solid[index] != 0:
 			astar.set_point_solid(_cell_of(index), true)
-	return {"astar": astar, "solid": solid, "revision": _map.revision}
+	return {
+		"astar": astar,
+		"solid": solid,
+		"region": _compute_regions(solid),
+		"redirect_cache": {},
+		"revision": _map.revision,
+	}
 
 
 func _refresh_profile(profile: Dictionary, pass_mask: int, clearance_cells: int, allowed_terrain_mask: int) -> void:
@@ -113,6 +156,10 @@ func _refresh_profile(profile: Dictionary, pass_mask: int, clearance_cells: int,
 		if solid[index] != previous[index]:
 			astar.set_point_solid(_cell_of(index), solid[index] != 0)
 	profile["solid"] = solid
+	# Region labels and the ring-search redirect cache are only valid for the
+	# solid map they were derived from; a changed solid map invalidates both.
+	profile["region"] = _compute_regions(solid)
+	(profile["redirect_cache"] as Dictionary).clear()
 	profile["revision"] = _map.revision
 
 
@@ -218,6 +265,83 @@ func _nearest_stoppable(
 				and (ignore_no_stop or no_stop[index] == 0 or stoppable_no_stop_cells.has(candidate)):
 					return candidate
 	return Vector2i(-1, -1)
+
+
+## Nearest cell (Chebyshev ring search) whose connected-component label
+## matches `target_region`. Used to redirect an unreachable target to the
+## closest point actually reachable from the querying start cell, instead of
+## flooding the whole reachable component to discover that the same thing.
+func _nearest_region(
+		solid: PackedByteArray,
+		region: PackedInt32Array,
+		origin: Vector2i,
+		target_region: int,
+		max_radius: int
+	) -> Vector2i:
+	var origin_index := _index_of(origin)
+	if origin_index >= 0 and solid[origin_index] == 0 and region[origin_index] == target_region:
+		return origin
+	for radius in range(1, max_radius + 1):
+		for x in range(-radius, radius + 1):
+			for y in [-radius, radius]:
+				var candidate := origin + Vector2i(x, y)
+				var index := _index_of(candidate)
+				if index >= 0 and region[index] == target_region:
+					return candidate
+		for y in range(-radius + 1, radius):
+			for x in [-radius, radius]:
+				var candidate := origin + Vector2i(x, y)
+				var index := _index_of(candidate)
+				if index >= 0 and region[index] == target_region:
+					return candidate
+	return Vector2i(-1, -1)
+
+
+## Labels every open cell with a connected-component id via iterative 4-way
+## flood fill (0 = solid/unlabeled). 4-connectivity is sufficient even though
+## the A* grid also allows diagonal steps: DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+## only takes a diagonal when both adjacent cardinal cells are open, so any
+## cell reachable diagonally is already reachable through those same two
+## cardinal neighbours.
+func _compute_regions(solid: PackedByteArray) -> PackedInt32Array:
+	var size := MapNavigationGrid.NAV_SIZE
+	var total := size * size
+	var region := PackedInt32Array()
+	region.resize(total)
+	region.fill(0)
+	var label := 0
+	var stack: Array[int] = []
+	for start_index in total:
+		if solid[start_index] != 0 or region[start_index] != 0:
+			continue
+		label += 1
+		region[start_index] = label
+		stack.append(start_index)
+		while not stack.is_empty():
+			var index: int = stack.pop_back()
+			var x := index % size
+			var y := index / size
+			if x > 0:
+				var left := index - 1
+				if solid[left] == 0 and region[left] == 0:
+					region[left] = label
+					stack.append(left)
+			if x < size - 1:
+				var right := index + 1
+				if solid[right] == 0 and region[right] == 0:
+					region[right] = label
+					stack.append(right)
+			if y > 0:
+				var up := index - size
+				if solid[up] == 0 and region[up] == 0:
+					region[up] = label
+					stack.append(up)
+			if y < size - 1:
+				var down := index + size
+				if solid[down] == 0 and region[down] == 0:
+					region[down] = label
+					stack.append(down)
+	return region
 
 
 func _index_of(cell: Vector2i) -> int:

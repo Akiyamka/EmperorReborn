@@ -109,6 +109,7 @@ func _initialize() -> void:
 	_test_dock_order_has_per_unit_building_access(grid)
 	_test_building_marker_navigation_semantics(grid)
 	_test_map_change_prunes_freed_units(grid)
+	_test_blocker_change_reroutes_direct_path_agent(grid)
 	_test_blocked_target_uses_unit_approach_side(grid)
 	_test_rotated_building_blockers(grid)
 	_test_interior_escape(grid)
@@ -447,6 +448,62 @@ func _test_map_change_prunes_freed_units(grid: MapNavigationGrid) -> void:
 		"a blocker-map replan must prune agents whose units were already freed"
 	)
 	match_root.free()
+
+
+## Regression guard: a commanded agent whose order resolves to a clear
+## straight line (`direct_path == true`) has no stored A* corridor to diff a
+## blocker change against. If a wall drops squarely across that direct line
+## after the order was issued, the diff-based reroute filter must still
+## notice (by re-checking line-of-sight, not by consulting the — necessarily
+## empty — corridor) and queue the agent for a real replan, instead of
+## leaving it steering forever at a straight-line target it can no longer
+## reach.
+func _test_blocker_change_reroutes_direct_path_agent(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation must initialize for the direct-path reroute regression test")
+
+	var unit := FakeUnit.new()
+	root.add_child(unit)
+	unit.global_position = Vector3(40.5, 0.0, 40.5)
+	var destination := Vector3(80.5, 0.0, 40.5)
+	navigation.command_move([unit], destination)
+	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
+	_expect(
+		bool(agent["direct_path"]),
+		"an open-field order must resolve to a direct line before the wall exists"
+	)
+
+	# A wall dropped squarely across the straight line: thick enough that the
+	# unit can no longer cross it, but narrow along y so a route around either
+	# end still exists in the open field.
+	var wall := {}
+	for x in range(58, 62):
+		for y in range(20, 60):
+			wall[Vector2i(x, y)] = true
+	_expect(
+		navigation.runtime_map.replace_blocked_cells(wall),
+		"the wall must register as a blocked-cell change"
+	)
+	navigation.call("_replan_after_map_change")
+	navigation.call("_navigation_tick", 0.05)
+
+	agent = navigation._agents[unit.get_instance_id()]
+	_expect(
+		not bool(agent["direct_path"]),
+		"a wall crossing the stored direct line must be detected and clear the stale direct-path flag"
+	)
+
+	for _iteration in 400:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(
+		unit.global_position.distance_to(destination) < 2.0,
+		"the unit must route around the new wall instead of stalling against its stale direct line"
+	)
+
+	navigation.queue_free()
+	unit.queue_free()
 
 
 func _test_blocked_target_uses_unit_approach_side(grid: MapNavigationGrid) -> void:

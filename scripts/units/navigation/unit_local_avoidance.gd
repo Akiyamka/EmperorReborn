@@ -10,6 +10,13 @@ extends RefCounted
 const CONTACT_BUFFER := 0.05
 const STEERING_LOOKAHEAD_SECONDS := 0.4
 const SQUEEZE_SPEED_FACTOR := 0.5
+## The squeeze pass re-evaluates every candidate a second time (this time only
+## against hard/enemy blockers) whenever the first pass finds no escape. Doing
+## that every tick doubles per-tick candidate-evaluation cost for the whole
+## time a unit stays blocked. It only needs to run on the tick a unit first
+## becomes blocked, then periodically afterward to notice a change in the
+## surroundings — this is that period, in ticks.
+const SQUEEZE_THROTTLE_TICKS := 3
 const SEPARATION_STIFFNESS := 2.5
 const SEPARATION_MAX_SPEED_FACTOR := 0.35
 const FRIEND_COMFORT_RADIUS_FACTOR := 0.35
@@ -80,6 +87,8 @@ func prewarm(pass_mask: int, terrain_mask: int) -> void:
 func reset_agent(agent: Dictionary) -> void:
 	_clear_preference(agent)
 	agent["steering_turn_in_place"] = false
+	agent["squeeze_blocked_streak"] = 0
+	agent["squeeze_cache"] = {}
 
 
 func _clear_preference(agent: Dictionary) -> void:
@@ -124,26 +133,40 @@ func resolve_velocity(
 	var velocity: Vector3 = full["velocity"]
 	var chosen: Dictionary = full
 	if not bool(full["has_escape"]):
-		var hard_blockers := []
-		for other in blockers:
-			if _are_enemies(unit, other["unit"]):
-				hard_blockers.append(other)
-		var squeeze := _evaluate_candidates(
-			agent,
-			pressured_desired,
-			desired.normalized(),
-			delta,
-			hard_blockers,
-			resolved,
-			terrain,
-			SQUEEZE_SPEED_FACTOR,
-			preferred_direction,
-			preferred_side,
-			dampen_course
-		)
-		if bool(squeeze["has_escape"]):
+		# Throttle the second (squeeze) pass: run it the first tick the unit is
+		# found blocked, then only every SQUEEZE_THROTTLE_TICKS-th tick after
+		# that while it stays blocked, reusing the last squeeze result on the
+		# ticks in between. A unit stuck against an unreachable/blocked target
+		# would otherwise pay this doubled candidate-evaluation cost every
+		# single tick for as long as it remains stuck.
+		var blocked_streak := int(agent.get("squeeze_blocked_streak", 0)) + 1
+		agent["squeeze_blocked_streak"] = blocked_streak
+		var squeeze: Dictionary = agent.get("squeeze_cache", {})
+		if blocked_streak == 1 or blocked_streak % SQUEEZE_THROTTLE_TICKS == 0 or squeeze.is_empty():
+			var hard_blockers := []
+			for other in blockers:
+				if _are_enemies(unit, other["unit"]):
+					hard_blockers.append(other)
+			squeeze = _evaluate_candidates(
+				agent,
+				pressured_desired,
+				desired.normalized(),
+				delta,
+				hard_blockers,
+				resolved,
+				terrain,
+				SQUEEZE_SPEED_FACTOR,
+				preferred_direction,
+				preferred_side,
+				dampen_course
+			)
+			agent["squeeze_cache"] = squeeze
+		if bool(squeeze.get("has_escape", false)):
 			velocity = squeeze["velocity"]
 			chosen = squeeze
+	else:
+		agent["squeeze_blocked_streak"] = 0
+		agent["squeeze_cache"] = {}
 	var chosen_direction: Vector3 = chosen["direction"]
 	var avoidance_active := not pressure.is_zero_approx() or bool(chosen["avoidance_active"])
 	if avoidance_active and not chosen_direction.is_zero_approx():
