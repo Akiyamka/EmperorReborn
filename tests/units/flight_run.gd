@@ -38,6 +38,7 @@ func _initialize() -> void:
 	_run_case("a non-Ornithopter, non-carrier flyer can never land", _test_non_ornithopter_never_lands)
 	_run_case("an Ornithopter can land, then take off again on its next order", _test_ornithopter_land_takeoff_round_trip)
 	_run_case("converging air agents separate vertically, then decay back to level", _test_vertical_avoidance)
+	_run_case("cruise altitude reacts slowly to narrow terrain peaks", _test_cruise_altitude_inertia)
 	_run_case("buildings block routes/collision only while landing, not at cruise", _test_buildings_ignored_at_cruise)
 	if _failures > 0:
 		printerr("Flight tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -140,8 +141,9 @@ func _test_hangar_takeoff_sequence() -> void:
 
 	_expect(climbed, "altitude must have actually increased during takeoff")
 	_expect(is_equal_approx(flyer.global_position.y,
-		float(flyer.unit_definition.height_offset) * UnitFlightControllerScript.HEIGHT_OFFSET_WORLD_SCALE),
-		"takeoff must finish exactly at the scaled absolute height_offset")
+		UnitFlightControllerScript.BASE_FLIGHT_ALTITUDE
+		+ float(flyer.unit_definition.height_offset) * UnitFlightControllerScript.HEIGHT_OFFSET_WORLD_SCALE),
+		"takeoff must finish at the base flight level plus scaled height_offset above ground")
 	_expect(flyer.flight_is_airborne_phase(), "the unit must be cruising once the climb completes")
 	if player != null:
 		_expect(player.current_animation == &"Move",
@@ -208,8 +210,9 @@ func _test_ornithopter_land_takeoff_round_trip() -> void:
 		_expect(player.current_animation == &"Takeoff", "re-launch must play Takeoff again")
 	_fast_forward_takeoff(flyer)
 	_expect(is_equal_approx(flyer.global_position.y,
-		float(flyer.unit_definition.height_offset) * UnitFlightControllerScript.HEIGHT_OFFSET_WORLD_SCALE),
-		"re-launch must climb back to the scaled absolute height_offset")
+		UnitFlightControllerScript.BASE_FLIGHT_ALTITUDE
+		+ float(flyer.unit_definition.height_offset) * UnitFlightControllerScript.HEIGHT_OFFSET_WORLD_SCALE),
+		"re-launch must climb back to the base flight level plus scaled height_offset above ground")
 	flyer.free()
 
 
@@ -249,6 +252,23 @@ func _test_vertical_avoidance() -> void:
 
 	low_id.free()
 	high_id.free()
+
+
+func _test_cruise_altitude_inertia() -> void:
+	var response := UnitFlightControllerScript.TERRAIN_ALTITUDE_RESPONSE
+	var altitude := 16.0
+	var peak_target := 36.0
+	var brief_peak_seconds := 0.2
+	var blend := 1.0 - exp(-response * brief_peak_seconds)
+	altitude = lerpf(altitude, peak_target, blend)
+	_expect(altitude < 18.0,
+		"a narrow 20-unit terrain peak must not make an aircraft climb sharply")
+
+	var hover_seconds := 20.0
+	blend = 1.0 - exp(-response * hover_seconds)
+	altitude = lerpf(altitude, peak_target, blend)
+	_expect(altitude > 35.0,
+		"an aircraft hovering above high terrain must eventually approach its terrain-relative altitude")
 
 
 ## Duck-typed stand-in for the facade methods AirNavigation.desired_velocity

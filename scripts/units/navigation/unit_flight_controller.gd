@@ -37,18 +37,23 @@ const DEFAULT_LAND_SECONDS := 1.5
 ## Mirrors Unit.SLOPE_ALIGNMENT_RESPONSE's role: exponential blend rate toward
 ## the vertical-avoidance target set by UnitLocalAvoidance.
 const VERTICAL_AVOIDANCE_RESPONSE := 4.0
-## Rules.txt HeightOffset is authored in map tiles, like combat_bullet.gd's
-## MaxRange/MinRange (that script's RULE_TILE_WORLD_SPAN = 2.0, 1 tile = 2
-## world units) — but the plain tile conversion still flew too low in real
-## gameplay testing against actual building/terrain heights on converted
-## maps, so this is tuned an additional ×2 beyond that baseline.
-const HEIGHT_OFFSET_WORLD_SCALE := 4.0
+## Aircraft should not trace every narrow ridge in the terrain. A deliberately
+## slow exponential response gives cruising aircraft strong vertical inertia:
+## brief height changes barely affect them, while a hovering aircraft still
+## settles toward the correct terrain-relative altitude over several seconds.
+const TERRAIN_ALTITUDE_RESPONSE := 0.2
+## Shared flight level above the terrain. This is kept separate from the
+## per-unit Rules.txt HeightOffset so the common altitude can be tuned without
+## exaggerating the small differences between aircraft types.
+const BASE_FLIGHT_ALTITUDE := 24.0
+## HeightOffset uses the same source-coordinate space as converted models and
+## terrain: sixteen source units correspond to one Godot world unit.
+const HEIGHT_OFFSET_WORLD_SCALE := 0.0625
 
 var phase: Phase = Phase.GROUNDED
-## Absolute world Y, identical for every unit of a given type regardless of
-## where it took off — every unit of the same type flies at the same height,
-## matching the original game. Set once in configure() and never recomputed
-## from local terrain.
+## Current world-space target altitude. During flight it is recomputed from
+## the static terrain mesh directly below the unit plus `height_offset`;
+## buildings are excluded by Unit._terrain_hit_at()'s terrain-only mask.
 var cruise_altitude := 0.0
 var ground_altitude := 0.0
 var height_offset := 0.0
@@ -74,7 +79,7 @@ var _transition_clip: StringName = &""
 func configure(unit, unit_definition) -> void:
 	_unit = unit
 	height_offset = float(unit_definition.height_offset) * HEIGHT_OFFSET_WORLD_SCALE
-	cruise_altitude = height_offset
+	cruise_altitude = _unit.global_position.y + BASE_FLIGHT_ALTITUDE + height_offset
 	ornithoptor = bool(unit_definition.ornithoptor)
 	carryall = bool(unit_definition.carryall)
 	advanced_carryall = bool(unit_definition.advanced_carryall)
@@ -137,6 +142,7 @@ func _start_takeoff(move_target: Vector3, exit_point: Vector3) -> void:
 	phase = Phase.TAKING_OFF
 	_phase_elapsed = 0.0
 	ground_altitude = _sample_ground_altitude(_unit.global_position)
+	cruise_altitude = ground_altitude + BASE_FLIGHT_ALTITUDE + height_offset
 	_unit.flight_play_clip(TAKEOFF_ANIMATION, false, 1.0)
 
 
@@ -214,6 +220,7 @@ func advance(delta: float) -> void:
 		return
 	if phase == Phase.CRUISING or phase == Phase.HOVERING:
 		_advance_vertical_avoidance(delta)
+		_advance_cruise_altitude(delta)
 		_unit.global_position.y = cruise_altitude + _vertical_avoidance_offset
 		_unit._set_visual_slope_target(Vector3.UP)
 		return
@@ -261,6 +268,14 @@ func _advance_vertical_avoidance(delta: float) -> void:
 		return
 	var blend := clampf(1.0 - exp(-VERTICAL_AVOIDANCE_RESPONSE * delta), 0.0, 1.0)
 	_vertical_avoidance_offset = lerpf(_vertical_avoidance_offset, _vertical_avoidance_target, blend)
+
+
+func _advance_cruise_altitude(delta: float) -> void:
+	if delta <= 0.0:
+		return
+	var target_altitude := _sample_flight_altitude(_unit.global_position)
+	var blend := clampf(1.0 - exp(-TERRAIN_ALTITUDE_RESPONSE * delta), 0.0, 1.0)
+	cruise_altitude = lerpf(cruise_altitude, target_altitude, blend)
 
 
 ## Fly<->Hover sub-FSM, only relevant while phase is CRUISING/HOVERING — the
@@ -317,3 +332,13 @@ func _sample_ground_altitude(position: Vector3) -> float:
 	if hit.is_empty():
 		return position.y
 	return (hit["position"] as Vector3).y
+
+
+func _sample_flight_altitude(position: Vector3) -> float:
+	var hit: Dictionary = _unit._terrain_hit_at(position)
+	if hit.is_empty():
+		# Synthetic scenes and off-map flight may have no terrain collider.
+		# Preserve the current base altitude instead of adding the offset again
+		# on every frame.
+		return position.y - _vertical_avoidance_offset
+	return (hit["position"] as Vector3).y + BASE_FLIGHT_ALTITUDE + height_offset
