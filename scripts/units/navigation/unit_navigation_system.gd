@@ -580,9 +580,10 @@ func _advanced_path_index(
 		agent: Dictionary,
 		path: Array,
 		path_index: int,
-		position: Vector3
+		position: Vector3,
+		speed := 0.0
 	) -> int:
-	return path_follower.advanced_path_index(agent, path, path_index, position)
+	return path_follower.advanced_path_index(agent, path, path_index, position, speed)
 
 
 ## Preserve the group's cross-route order while several A* paths share a

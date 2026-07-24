@@ -8,14 +8,6 @@ extends RefCounted
 
 var _facade: Node
 
-## Radius-aware funnel post-processing (`path_funnel.gd`) replaces the old
-## corner-simplified grid waypoints with a small set of world-space apex
-## points. Kept as a rollback switch for one stage; `simplify_path`/agent
-## `path` keep being computed either way (route-ready checks, corridor diffing
-## and debug all still key off it, and it is the fallback source of steering
-## points when this is off).
-const USE_FUNNEL := true
-
 
 func setup(facade: Node) -> void:
 	_facade = facade
@@ -31,6 +23,10 @@ func route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void
 	agent["corridor"] = PackedInt32Array()
 	agent["path_points"] = [] as Array[Vector3]
 	agent["direct_path"] = false
+	# A fresh route's segment 0 must not inherit a lane-rebase side cached
+	# for the previous route's own segment 0 (see path_lane_target).
+	agent["_lane_rebase_index"] = -1
+	agent["_lane_rebase_side"] = 0
 	if (agent["exit_point"] as Vector3).is_finite():
 		return
 	agent["direct_path"] = _facade._has_clear_line(from, destination, agent)
@@ -50,8 +46,7 @@ func route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void
 		for index in raw_path.size():
 			corridor[index] = _facade.runtime_map.grid.cell_index(raw_path[index])
 		agent["corridor"] = corridor
-		if USE_FUNNEL:
-			agent["path_points"] = _facade.path_funnel.build(raw_path, agent, from, destination)
+		agent["path_points"] = _facade.path_funnel.build(raw_path, agent, from, destination)
 
 
 ## AStarGrid2D returns every crossed cell. Keeping that raw list made every
@@ -89,9 +84,9 @@ func simplify_path(raw_path: Array[Vector2i], agent: Dictionary) -> Array[Vector
 
 ## World-space waypoints the follower actually steers toward. Normally the
 ## funnel output computed by `route_agent`; falls back to mapping the compact
-## grid `path` through `grid_to_world` when funnel points were never computed
-## (USE_FUNNEL off, or an agent whose `path` a test set directly without
-## going through `route_agent`).
+## grid `path` through `grid_to_world` when `path_points` was never computed
+## (an agent whose `path` a test set directly without going through
+## `route_agent`, so it never got a funnel pass at all).
 func path_points_for(agent: Dictionary) -> Array[Vector3]:
 	var path_points: Array[Vector3] = agent.get("path_points", [])
 	if not path_points.is_empty():
@@ -145,7 +140,7 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 		if path_index == 0 and path_points.size() > 1:
 			path_index = 1
 		path_index = clampi(path_index, 0, path_points.size() - 1)
-		path_index = _facade._advanced_path_index(agent, path_points, path_index, unit.global_position)
+		path_index = _facade._advanced_path_index(agent, path_points, path_index, unit.global_position, speed)
 		agent["path_index"] = path_index
 		var steering_target: Vector3 = _facade._path_steering_target(
 			agent, path_points, path_index, unit.global_position, speed
@@ -203,78 +198,126 @@ func is_en_route(agent: Dictionary) -> bool:
 ## Per-agent steering resolution for one navigation tick, in the exact order
 ## the facade's `_ordered_agents()` list provides (determinism: yield/claim/
 ## resolved-position bookkeeping all depend on this order being stable).
+##
+## ORCA needs every neighbour's avoidance line built from the *same* instant
+## (a precondition of reciprocity): a two-phase split keeps every agent's
+## position frozen at the tick's start while `_new_velocity` is computed for
+## the whole set, then applies the results (separation/stabilize/
+## `navigation_step`) in a second pass, in the exact same id order both times.
 func tick(delta: float, ordered: Array[Dictionary], buckets: Dictionary) -> void:
 	var largest_radius := 0.0
 	for value in ordered:
 		largest_radius = maxf(largest_radius, float(value["radius"]))
-	var resolved_positions: Dictionary = {}
+	# Phase 1 (compute): every agent still sits at its start-of-tick position,
+	# so neighbour lines built here are mutually consistent regardless of
+	# iteration order.
 	for agent in ordered:
 		var unit: Node3D = agent["unit"]
-		var desired := desired_velocity(agent)
+		agent["_tick_start_position"] = unit.global_position
+		agent["_v_pref"] = desired_velocity(agent)
+	for agent in ordered:
+		var unit: Node3D = agent["unit"]
 		var nearby: Array = _facade._nearby_agents(
 			unit.global_position,
 			buckets,
 			float(agent["radius"]) + largest_radius
 		)
 		var result: Dictionary = _facade.avoidance.resolve_velocity(
-			agent, desired, delta, nearby, resolved_positions
+			agent, agent["_v_pref"], delta, nearby, {}
 		)
-		var velocity: Vector3 = result["velocity"]
-		if desired.length_squared() > 0.01 and velocity.length_squared() < 0.01:
-			agent["blocked_time"] = float(agent["blocked_time"]) + delta
-		else:
-			agent["blocked_time"] = 0.0
-			agent["reported_enemy"] = false
-		if float(agent["blocked_time"]) >= UnitNavigationSystem.ENEMY_BLOCK_SECONDS and not bool(agent["reported_enemy"]):
-			var enemies: Array[Node3D] = result["enemies"]
-			if not enemies.is_empty():
-				agent["reported_enemy"] = true
-				_facade.enemy_blocked.emit(unit, enemies)
-				if unit.has_method("navigation_blocked_by_enemy"):
-					unit.call("navigation_blocked_by_enemy", enemies)
-		if float(agent["blocked_time"]) >= UnitNavigationSystem.FRIENDLY_YIELD_TRIGGER_SECONDS:
-			for friend in result["friends"]:
-				request_yield(friend, yield_direction(unit, friend, desired))
-		if float(agent["yield_remaining"]) > 0.0:
-			agent["yield_remaining"] = maxf(0.0, float(agent["yield_remaining"]) - delta)
-			if is_zero_approx(float(agent["yield_remaining"])):
-				if int(agent["command_id"]) > 0:
-					# A commanded unit owns a unique reserved block nobody else
-					# will claim: walk back to it once the passer is through.
-					route_agent(agent, unit.global_position, agent["destination"])
-				else:
-					# An idle unit displaced off a choke point must not return
-					# (it would displace the passer forever); it parks on the
-					# nearest free grid block instead.
-					agent["destination"] = _facade._snapped_parking(agent, unit.global_position + velocity * delta)
-					agent["reserved"] = true
-					route_agent(agent, unit.global_position, agent["destination"])
-		# Elastic overlap resolution normally lets overlapping units push each
-		# other apart. A held unit, however, owns its exact position (for example
-		# a harvester unloading on a refinery pad); only the other agent may move
-		# to resolve an overlap with it.
-		var separation: Vector3 = Vector3.ZERO if bool(agent["hold"]) \
-			else _facade.avoidance.separation_velocity(agent, nearby)
-		if not separation.is_zero_approx():
-			var total: Vector3 = (velocity + separation).limit_length(_facade._unit_speed(unit))
-			# Separation may cross friends, but it must not turn the already-safe
-			# steering result into motion through an enemy or forbidden terrain.
-			if _facade.avoidance.motion_is_passable(agent, total * delta) \
-			and _facade.avoidance.enemy_sweep_fraction(
-				agent, total * delta, nearby, resolved_positions
-			) >= 0.999:
-				velocity = total
-				# An idle unit has no spot to defend; it goes where it is pushed
-				# instead of fighting its way back into the overlap.
-				if int(agent["command_id"]) <= 0 and not bool(agent["hold"]):
-					agent["destination"] = unit.global_position + velocity * delta
-		velocity = _facade.avoidance.stabilize_velocity(
-			agent, velocity, delta, nearby, resolved_positions
+		agent["_new_velocity"] = result["velocity"]
+		agent["_enemies"] = result["enemies"]
+		agent["_friends"] = result["friends"]
+	# Phase 2 (apply): separation/passability/stabilize + navigation_step, in
+	# the same order; `orca_velocity` is then the tick's actually-achieved
+	# velocity (not `_new_velocity`), so a turn-in-place tick correctly
+	# reports near-zero motion to next tick's reciprocal lines.
+	var resolved_positions: Dictionary = {}
+	for agent in ordered:
+		var unit: Node3D = agent["unit"]
+		var desired: Vector3 = agent["_v_pref"]
+		var velocity: Vector3 = agent["_new_velocity"]
+		var nearby: Array = _facade._nearby_agents(
+			unit.global_position,
+			buckets,
+			float(agent["radius"]) + largest_radius
 		)
-		_facade._agents[unit.get_instance_id()] = agent
-		if unit.has_method("navigation_step"):
-			unit.call("navigation_step", velocity, delta)
-		# Unit may spend this update turning in place when its rules do not allow
-		# simultaneous translation and rotation. Record the actual position so
-		# later swept-disc checks do not reserve movement that never happened.
-		resolved_positions[unit.get_instance_id()] = unit.global_position
+		_apply_resolved_velocity(
+			delta, agent, unit, desired, velocity,
+			agent["_enemies"], agent["_friends"], nearby, resolved_positions
+		)
+		var start_position: Vector3 = agent["_tick_start_position"]
+		agent["orca_velocity"] = (unit.global_position - start_position) / delta
+
+
+## Shared apply step (phase 2): blocked/enemy reporting, yield expiry, elastic
+## separation, non-holonomic stabilization, and the actual `navigation_step`.
+func _apply_resolved_velocity(
+		delta: float,
+		agent: Dictionary,
+		unit: Node3D,
+		desired: Vector3,
+		velocity_in: Vector3,
+		enemies: Array[Node3D],
+		friends: Array[Node3D],
+		nearby: Array,
+		resolved_positions: Dictionary
+	) -> void:
+	var velocity := velocity_in
+	if desired.length_squared() > 0.01 and velocity.length_squared() < 0.01:
+		agent["blocked_time"] = float(agent["blocked_time"]) + delta
+	else:
+		agent["blocked_time"] = 0.0
+		agent["reported_enemy"] = false
+	if float(agent["blocked_time"]) >= UnitNavigationSystem.ENEMY_BLOCK_SECONDS and not bool(agent["reported_enemy"]):
+		if not enemies.is_empty():
+			agent["reported_enemy"] = true
+			_facade.enemy_blocked.emit(unit, enemies)
+			if unit.has_method("navigation_blocked_by_enemy"):
+				unit.call("navigation_blocked_by_enemy", enemies)
+	if float(agent["blocked_time"]) >= UnitNavigationSystem.FRIENDLY_YIELD_TRIGGER_SECONDS:
+		for friend in friends:
+			request_yield(friend, yield_direction(unit, friend, desired))
+	if float(agent["yield_remaining"]) > 0.0:
+		agent["yield_remaining"] = maxf(0.0, float(agent["yield_remaining"]) - delta)
+		if is_zero_approx(float(agent["yield_remaining"])):
+			if int(agent["command_id"]) > 0:
+				# A commanded unit owns a unique reserved block nobody else
+				# will claim: walk back to it once the passer is through.
+				route_agent(agent, unit.global_position, agent["destination"])
+			else:
+				# An idle unit displaced off a choke point must not return
+				# (it would displace the passer forever); it parks on the
+				# nearest free grid block instead.
+				agent["destination"] = _facade._snapped_parking(agent, unit.global_position + velocity * delta)
+				agent["reserved"] = true
+				route_agent(agent, unit.global_position, agent["destination"])
+	# Elastic overlap resolution normally lets overlapping units push each
+	# other apart. A held unit, however, owns its exact position (for example
+	# a harvester unloading on a refinery pad); only the other agent may move
+	# to resolve an overlap with it.
+	var separation: Vector3 = Vector3.ZERO if bool(agent["hold"]) \
+		else _facade.avoidance.separation_velocity(agent, nearby)
+	if not separation.is_zero_approx():
+		var total: Vector3 = (velocity + separation).limit_length(_facade._unit_speed(unit))
+		# Separation may cross friends, but it must not turn the already-safe
+		# steering result into motion through an enemy or forbidden terrain.
+		if _facade.avoidance.motion_is_passable(agent, total * delta) \
+		and _facade.avoidance.enemy_sweep_fraction(
+			agent, total * delta, nearby, resolved_positions
+		) >= 0.999:
+			velocity = total
+			# An idle unit has no spot to defend; it goes where it is pushed
+			# instead of fighting its way back into the overlap.
+			if int(agent["command_id"]) <= 0 and not bool(agent["hold"]):
+				agent["destination"] = unit.global_position + velocity * delta
+	velocity = _facade.avoidance.stabilize_velocity(
+		agent, velocity, delta, nearby, resolved_positions
+	)
+	_facade._agents[unit.get_instance_id()] = agent
+	if unit.has_method("navigation_step"):
+		unit.call("navigation_step", velocity, delta)
+	# Unit may spend this update turning in place when its rules do not allow
+	# simultaneous translation and rotation. Record the actual position so
+	# later swept-disc checks do not reserve movement that never happened.
+	resolved_positions[unit.get_instance_id()] = unit.global_position

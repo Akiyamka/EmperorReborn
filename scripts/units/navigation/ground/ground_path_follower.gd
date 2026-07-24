@@ -33,7 +33,26 @@ func path_steering_target(
 	if path_index >= path.size() - 1:
 		var destination: Vector3 = agent["destination"]
 		destination.y = position.y
-		return destination if path_chord_is_clear(agent, position, destination) else current
+		if path_chord_is_clear(agent, position, destination):
+			return destination
+		if not path_chord_is_clear(agent, position, current):
+			return current
+		# A larger single-tick displacement (e.g. ORCA squeezing at up to full
+		# cruise speed through a choke point) can land right on the boundary
+		# where the destination chord clears on one tick and not the next.
+		# Snapping straight back to `current` on the losing tick reverses the
+		# commanded direction outright — bisect toward the furthest safe point
+		# instead, the same way the look-ahead branch below already does, so
+		# the target degrades smoothly rather than flipping.
+		var safe := current
+		var blocked := destination
+		for _iteration in 8:
+			var probe := safe.lerp(blocked, 0.5)
+			if path_chord_is_clear(agent, position, probe):
+				safe = probe
+			else:
+				blocked = probe
+		return safe
 	var look_ahead := path_look_ahead_distance(agent, speed)
 	var first_leg := current - position
 	first_leg.y = 0.0
@@ -80,12 +99,20 @@ func advanced_path_index(
 		agent: Dictionary,
 		path: Array,
 		path_index: int,
-		position: Vector3
+		position: Vector3,
+		speed := 0.0
 	) -> int:
 	var result := path_index
 	var cell_size: Vector2 = _facade.runtime_map.grid.cell_size()
 	var cell_width := maxf(minf(cell_size.x, cell_size.y), 0.001)
-	var capture := maxf(0.35, float(agent["radius"]) * 0.4)
+	# A step-based avoidance backend (ORCA) can drive a full-speed tick's
+	# worth of displacement straight through a waypoint's old fixed capture
+	# radius without ever landing inside it — position samples land just
+	# short one tick and just past the next, so the follower keeps aiming
+	# at the same never-quite-captured point from alternating sides, which
+	# reverses the commanded heading every tick. Covering at least one tick's
+	# travel keeps a single overshooting step inside the capture disc.
+	var capture := maxf(maxf(0.35, float(agent["radius"]) * 0.4), speed / UnitNavigationSystem.NAVIGATION_TICK_RATE)
 	var corridor := maxf(float(agent["radius"]) * 2.0, cell_width * 1.5)
 	while result < path.size() - 1:
 		var waypoint: Vector3 = path[result]
@@ -136,17 +163,42 @@ func path_lane_target(
 		return base_target
 	forward = forward.normalized()
 	var lateral := forward.cross(Vector3.UP).normalized()
-	var probe_distance := maxf(lane_span, float(agent["radius"]) * 0.75)
-	var positive := base_target + lateral * probe_distance
-	var negative := base_target - lateral * probe_distance
-	var positive_open := has_clear_line(base_target, positive, agent)
-	var negative_open := has_clear_line(base_target, negative, agent)
+	# Which side is open is a geometric fact about this waypoint's corner, not
+	# something to re-judge from the agent's exact fractional position every
+	# tick: a corner tight enough that only one side's probe clears can flip
+	# which side reads "open" for a sub-metre position change, re-aiming the
+	# whole lane rebase to the opposite side and back — a stable two-point
+	# limit cycle (a full-speed step lands close enough to the previous tick's
+	# position to flip the verdict right back), not just visual jitter. Decide
+	# once per segment, cached by `path_index`, and hold it until the agent
+	# actually advances past this waypoint.
+	const SIDE_BOTH_OPEN := 0
+	const SIDE_POSITIVE := 1
+	const SIDE_NEGATIVE := -1
+	const SIDE_NEITHER_OPEN := 2
+	var side := int(agent.get("_lane_rebase_side", SIDE_BOTH_OPEN))
+	if int(agent.get("_lane_rebase_index", -1)) != path_index:
+		var probe_distance := maxf(lane_span, float(agent["radius"]) * 0.75)
+		var positive := base_target + lateral * probe_distance
+		var negative := base_target - lateral * probe_distance
+		var positive_open := has_clear_line(base_target, positive, agent)
+		var negative_open := has_clear_line(base_target, negative, agent)
+		if positive_open and not negative_open:
+			side = SIDE_POSITIVE
+		elif negative_open and not positive_open:
+			side = SIDE_NEGATIVE
+		elif not positive_open and not negative_open:
+			side = SIDE_NEITHER_OPEN
+		else:
+			side = SIDE_BOTH_OPEN
+		agent["_lane_rebase_side"] = side
+		agent["_lane_rebase_index"] = path_index
 	var lane_offset := float(agent.get("route_lane_offset", 0.0))
-	if positive_open and not negative_open:
+	if side == SIDE_POSITIVE:
 		lane_offset -= lane_min
-	elif negative_open and not positive_open:
+	elif side == SIDE_NEGATIVE:
 		lane_offset -= lane_max
-	elif not positive_open and not negative_open:
+	elif side == SIDE_NEITHER_OPEN:
 		return base_target
 	# Merge back into the unit's exact destination instead of carrying a lane
 	# offset into the final parking block.

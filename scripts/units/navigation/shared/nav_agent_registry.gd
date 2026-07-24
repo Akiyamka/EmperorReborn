@@ -55,8 +55,11 @@ func register_unit(agents: Dictionary, unit: Node3D, debug_enabled: bool) -> int
 		"blocked_time": 0.0,
 		"reported_enemy": false,
 		"avoidance_direction": Vector3.ZERO,
-		"avoidance_side": 0,
 		"steering_turn_in_place": false,
+		# ORCA backend: last tick's actually-achieved velocity (used, not
+		# `v_pref`, when building this tick's reciprocal avoidance lines —
+		# see `ground/orca_avoidance.gd`).
+		"orca_velocity": Vector3.ZERO,
 		"steering_target": unit.global_position,
 		# Units issued one group order keep their initial cross-route ordering.
 		# The compact A* paths may share a corner cell, but the runtime follower
