@@ -28,7 +28,7 @@ func path_steering_target(
 		position: Vector3,
 		speed: float
 	) -> Vector3:
-	var current: Vector3 = _facade.runtime_map.grid.grid_to_world(path[path_index])
+	var current: Vector3 = path[path_index]
 	current.y = position.y
 	if path_index >= path.size() - 1:
 		var destination: Vector3 = agent["destination"]
@@ -43,7 +43,7 @@ func path_steering_target(
 	var cursor := current
 	var candidate := current
 	for index in range(path_index + 1, path.size()):
-		var endpoint: Vector3 = _facade.runtime_map.grid.grid_to_world(path[index])
+		var endpoint: Vector3 = path[index]
 		endpoint.y = position.y
 		var segment := endpoint - cursor
 		segment.y = 0.0
@@ -88,8 +88,8 @@ func advanced_path_index(
 	var capture := maxf(0.35, float(agent["radius"]) * 0.4)
 	var corridor := maxf(float(agent["radius"]) * 2.0, cell_width * 1.5)
 	while result < path.size() - 1:
-		var waypoint: Vector3 = _facade.runtime_map.grid.grid_to_world(path[result])
-		var next: Vector3 = _facade.runtime_map.grid.grid_to_world(path[result + 1])
+		var waypoint: Vector3 = path[result]
+		var next: Vector3 = path[result + 1]
 		waypoint.y = position.y
 		next.y = position.y
 		var outgoing := next - waypoint

@@ -46,6 +46,7 @@ func register_unit(agents: Dictionary, unit: Node3D, debug_enabled: bool) -> int
 		# change actually crosses this agent's route (see
 		# `_agent_route_intersects`). Empty while on a direct line.
 		"corridor": PackedInt32Array(),
+		"path_points": [] as Array[Vector3],
 		"destination": unit.global_position,
 		"command_id": 0,
 		"mode": UnitNavigationSystem.MoveMode.FREE,

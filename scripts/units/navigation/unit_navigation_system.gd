@@ -14,6 +14,7 @@ const GroundSlotAllocatorScript := preload("res://scripts/units/navigation/groun
 const GroundPathFollowerScript := preload("res://scripts/units/navigation/ground/ground_path_follower.gd")
 const NavBlockerTrackerScript := preload("res://scripts/units/navigation/shared/nav_blocker_tracker.gd")
 const GroundNavigationScript := preload("res://scripts/units/navigation/ground/ground_navigation.gd")
+const PathFunnelScript := preload("res://scripts/units/navigation/ground/path_funnel.gd")
 const AirNavigationScript := preload("res://scripts/units/navigation/air/air_navigation.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
@@ -63,6 +64,7 @@ var registry := NavAgentRegistryScript.new()
 var spatial_hash := NavSpatialHashScript.new()
 var slot_allocator := GroundSlotAllocatorScript.new()
 var path_follower := GroundPathFollowerScript.new()
+var path_funnel := PathFunnelScript.new()
 var blocker_tracker := NavBlockerTrackerScript.new()
 var ground_navigation := GroundNavigationScript.new()
 var air_navigation := AirNavigationScript.new()
@@ -102,6 +104,7 @@ func setup(source_grid: MapNavigationGrid) -> bool:
 	registry.setup(self)
 	slot_allocator.setup(self)
 	path_follower.setup(self)
+	path_funnel.setup(self)
 	blocker_tracker.setup(self)
 	ground_navigation.setup(self)
 	air_navigation.setup(self)
@@ -526,10 +529,10 @@ func _refresh_navigation_debug() -> void:
 		else:
 			var path: Array = agent["path"]
 			if not path.is_empty():
-				var path_index := clampi(int(agent["path_index"]), 0, path.size() - 1)
-				for index in range(path_index, path.size()):
-					var point: Vector3 = runtime_map.grid.grid_to_world(path[index])
-					point = _debug_height(point, height)
+				var path_points: Array = ground_navigation.path_points_for(agent)
+				var path_index := clampi(int(agent["path_index"]), 0, path_points.size() - 1)
+				for index in range(path_index, path_points.size()):
+					var point: Vector3 = _debug_height(path_points[index], height)
 					if route.back().distance_squared_to(point) > 0.0001:
 						route.append(point)
 				if route.size() > 1:

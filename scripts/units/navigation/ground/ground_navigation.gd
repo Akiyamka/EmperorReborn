@@ -8,6 +8,14 @@ extends RefCounted
 
 var _facade: Node
 
+## Radius-aware funnel post-processing (`path_funnel.gd`) replaces the old
+## corner-simplified grid waypoints with a small set of world-space apex
+## points. Kept as a rollback switch for one stage; `simplify_path`/agent
+## `path` keep being computed either way (route-ready checks, corridor diffing
+## and debug all still key off it, and it is the fallback source of steering
+## points when this is off).
+const USE_FUNNEL := true
+
 
 func setup(facade: Node) -> void:
 	_facade = facade
@@ -21,6 +29,7 @@ func route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void
 	agent["path"] = [] as Array[Vector2i]
 	agent["path_index"] = 0
 	agent["corridor"] = PackedInt32Array()
+	agent["path_points"] = [] as Array[Vector3]
 	agent["direct_path"] = false
 	if (agent["exit_point"] as Vector3).is_finite():
 		return
@@ -41,6 +50,8 @@ func route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void
 		for index in raw_path.size():
 			corridor[index] = _facade.runtime_map.grid.cell_index(raw_path[index])
 		agent["corridor"] = corridor
+		if USE_FUNNEL:
+			agent["path_points"] = _facade.path_funnel.build(raw_path, agent, from, destination)
 
 
 ## AStarGrid2D returns every crossed cell. Keeping that raw list made every
@@ -73,6 +84,22 @@ func simplify_path(raw_path: Array[Vector2i], agent: Dictionary) -> Array[Vector
 			furthest_visible = probe_index
 		result.append(turns[furthest_visible])
 		anchor_index = furthest_visible
+	return result
+
+
+## World-space waypoints the follower actually steers toward. Normally the
+## funnel output computed by `route_agent`; falls back to mapping the compact
+## grid `path` through `grid_to_world` when funnel points were never computed
+## (USE_FUNNEL off, or an agent whose `path` a test set directly without
+## going through `route_agent`).
+func path_points_for(agent: Dictionary) -> Array[Vector3]:
+	var path_points: Array[Vector3] = agent.get("path_points", [])
+	if not path_points.is_empty():
+		return path_points
+	var path: Array = agent["path"]
+	var result: Array[Vector3] = []
+	for cell in path:
+		result.append(_facade.runtime_map.grid.grid_to_world(cell))
 	return result
 
 
@@ -113,16 +140,18 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 	if bool(agent["direct_path"]):
 		direction = offset.normalized()
 	elif not path.is_empty():
+		var path_points := path_points_for(agent)
 		var path_index := int(agent["path_index"])
-		if path_index == 0 and path.size() > 1:
+		if path_index == 0 and path_points.size() > 1:
 			path_index = 1
-		path_index = _facade._advanced_path_index(agent, path, path_index, unit.global_position)
+		path_index = clampi(path_index, 0, path_points.size() - 1)
+		path_index = _facade._advanced_path_index(agent, path_points, path_index, unit.global_position)
 		agent["path_index"] = path_index
 		var steering_target: Vector3 = _facade._path_steering_target(
-			agent, path, path_index, unit.global_position, speed
+			agent, path_points, path_index, unit.global_position, speed
 		)
 		steering_target = _facade._path_lane_target(
-			agent, path, path_index, unit.global_position, steering_target, speed
+			agent, path_points, path_index, unit.global_position, steering_target, speed
 		)
 		agent["steering_target"] = steering_target
 		direction = unit.global_position.direction_to(steering_target)
