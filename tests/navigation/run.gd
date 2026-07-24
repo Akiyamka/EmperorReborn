@@ -126,6 +126,7 @@ func _initialize() -> void:
 	_test_no_stop_cells(grid)
 	_test_unit_navigation_order_api(grid)
 	_test_disconnected_island_orders(grid)
+	_test_distributed_targets_avoid_disconnected_island(grid)
 	_test_group_move_redirects_landed_flyer(grid)
 	_test_dock_order_has_per_unit_building_access(grid)
 	_test_building_marker_navigation_semantics(grid)
@@ -266,6 +267,46 @@ func _test_disconnected_island_orders(grid: MapNavigationGrid) -> void:
 	navigation.queue_free()
 	stranded.queue_free()
 	reachable.queue_free()
+
+
+func _test_distributed_targets_avoid_disconnected_island(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for distributed island targets")
+	# The clicked cell at (120, 100) is reachable, but the compact group's
+	# shape-preserving +2-cell aim lands on the isolated cell at (122, 100).
+	var island := Vector2i(122, 100)
+	navigation.runtime_map.replace_blocked_cells({
+		island + Vector2i.LEFT: true,
+		island + Vector2i.RIGHT: true,
+		island + Vector2i.UP: true,
+		island + Vector2i.DOWN: true,
+	})
+	var units: Array[FakeUnit] = []
+	for x in [100.5, 102.5, 104.5, 106.5]:
+		var unit := FakeUnit.new()
+		root.add_child(unit)
+		unit.global_position = Vector3(x, 0.0, 100.5)
+		units.append(unit)
+	var target := Vector3(120.5, 0.0, 100.5)
+	var assignments := navigation.command_move(units, target)
+	_expect(assignments.size() == units.size(), "a reachable group order must retain every unit")
+	for assignment in assignments:
+		var unit: Node3D = assignment["unit"]
+		var assigned_cell: Vector2i = grid.world_to_grid(assignment["position"])
+		_expect(
+			assigned_cell != island,
+			"automatic endpoint distribution must not assign an enclosed island"
+		)
+		_expect(
+			not bool(navigation.agent_debug(unit).get("route_unreachable", false)),
+			"every automatically distributed endpoint must be reachable"
+		)
+
+	navigation.queue_free()
+	for unit in units:
+		unit.queue_free()
 
 
 ## Group orders reach the facade through UnitNavigationSystem.command_move

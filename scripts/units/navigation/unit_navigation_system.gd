@@ -833,11 +833,20 @@ func _ground_target_is_reachable(
 	) -> bool:
 	var span: int = int(agent["footprint"])
 	var anchor: Vector2i = _parking_anchor(world_target, span)
+	return _ground_anchor_is_reachable(
+		agent, anchor, unit.global_position, allow_no_stop
+	)
+
+
+func _ground_anchor_is_reachable(
+		agent: Dictionary, anchor: Vector2i, from: Vector3, allow_no_stop := false
+	) -> bool:
+	var span: int = int(agent["footprint"])
 	var target_center := _block_center(anchor, span)
 	var target_cell: Vector2i = runtime_map.grid.world_to_grid(target_center)
 	var stoppable_no_stop_cells := {target_cell: true} if allow_no_stop else {}
 	return planner.is_reachable(
-		runtime_map.grid.world_to_grid(unit.global_position),
+		runtime_map.grid.world_to_grid(from),
 		target_cell,
 		int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"]),
 		stoppable_no_stop_cells

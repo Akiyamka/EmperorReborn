@@ -184,7 +184,10 @@ func shared_target_assignments(agents: Dictionary, units: Array[Node3D], world_t
 		var preferred := parking_anchor(aim, span)
 		var anchor := claim_passable_anchor(preferred, agent, occupied, unit.global_position) \
 			if allow_no_stop else approach_anchor(preferred, agent, unit.global_position)
-		var position := block_center(anchor, span) if anchor.x >= 0 else aim
+		# Never fall back to the unvalidated spread aim: it may be a free cell
+		# inside a disconnected island. Staying put is the safe fallback when
+		# the bounded slot search cannot find a reachable candidate.
+		var position := block_center(anchor, span) if anchor.x >= 0 else unit.global_position
 		position.y = world_target.y
 		var vacate_no_stop := anchor.x >= 0 and not block_stoppable(anchor, span, agent)
 		result.append({
@@ -192,7 +195,7 @@ func shared_target_assignments(agents: Dictionary, units: Array[Node3D], world_t
 			"agent_id": agent["id"],
 			"slot_id": index,
 			"position": position,
-			"available": true,
+			"available": anchor.x >= 0,
 			"claim_center": world_target if gather else position,
 			"vacate_no_stop": vacate_no_stop,
 		})
@@ -306,7 +309,8 @@ func claim_radius_for(agents: Dictionary, units: Array[Node3D]) -> float:
 
 
 func find_slot(preferred: Vector2i, agent: Dictionary, occupied: Array[Dictionary]) -> Vector2i:
-	return claim_anchor(preferred, agent, occupied, block_center(preferred, int(agent["footprint"])))
+	var unit: Node3D = agent["unit"]
+	return claim_anchor(preferred, agent, occupied, unit.global_position)
 
 
 ## Initial FREE-move aim selection. Walks outward from a blocked target toward
@@ -326,7 +330,8 @@ func approach_anchor(preferred: Vector2i, agent: Dictionary, from: Vector3) -> V
 				roundi(float(delta.y) * weight)
 			)
 			var candidate := preferred + offset
-			if block_stoppable(candidate, span, agent):
+			if block_stoppable(candidate, span, agent) \
+			and anchor_reachable(candidate, agent, from):
 				return candidate
 	return claim_anchor(preferred, agent, [], from)
 
@@ -343,6 +348,8 @@ func claim_anchor(preferred: Vector2i, agent: Dictionary, occupied: Array[Dictio
 		for offset in ring_offsets(radius):
 			var anchor := preferred + offset
 			if not block_stoppable(anchor, span, agent):
+				continue
+			if not anchor_reachable(anchor, agent, from):
 				continue
 			var blocked := false
 			for other in occupied:
@@ -376,6 +383,8 @@ func claim_passable_anchor(
 			var anchor := preferred + offset
 			if not block_passable(anchor, span, agent):
 				continue
+			if not anchor_reachable(anchor, agent, from, true):
+				continue
 			var occupied_block := false
 			for other in occupied:
 				if blocks_conflict(anchor, span, other["anchor"], int(other["span"])):
@@ -390,6 +399,16 @@ func claim_passable_anchor(
 		if best.x >= 0:
 			return best
 	return Vector2i(-1, -1)
+
+
+## Passability alone is insufficient for an automatically distributed target:
+## an otherwise free block may belong to a nearby enclosed navigation island.
+## Keep every generated aim/parking block in the querying unit's connected
+## component, just like the exact player-click validation does.
+func anchor_reachable(
+		anchor: Vector2i, agent: Dictionary, from: Vector3, allow_no_stop := false
+	) -> bool:
+	return _facade._ground_anchor_is_reachable(agent, anchor, from, allow_no_stop)
 
 
 func block_passable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
@@ -431,13 +450,18 @@ func parking_anchor(point: Vector3, span: int) -> Vector2i:
 	return _facade.runtime_map.grid.world_to_grid(point - Vector3(cell.x * shift, 0.0, cell.y * shift))
 
 
-## Nearest free grid-aligned block center for the agent, avoiding every other
-## agent's reserved parking block. Falls back to `point` when nothing is free.
+## Nearest reachable grid-aligned block center for the agent, avoiding every
+## other agent's reserved parking block. Falls back to the current position
+## when nothing is free.
 func snapped_parking(agents: Dictionary, agent: Dictionary, point: Vector3) -> Vector3:
 	var span := int(agent["footprint"])
-	var anchor := claim_anchor(parking_anchor(point, span), agent, reserved_blocks(agents, agent), point)
+	var unit: Node3D = agent["unit"]
+	var anchor := claim_anchor(
+		parking_anchor(point, span), agent, reserved_blocks(agents, agent),
+		unit.global_position
+	)
 	if anchor.x < 0:
-		return point
+		return unit.global_position
 	var parked := block_center(anchor, span)
 	parked.y = point.y
 	return parked
