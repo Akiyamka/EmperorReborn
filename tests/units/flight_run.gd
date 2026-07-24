@@ -34,7 +34,7 @@ func _initialize() -> void:
 	await process_frame
 	_run_case("generated UnitDefinitions carry the correct flight flags", _test_definition_flags)
 	_run_case("a flight controller exists only for CanFly units", _test_flight_controller_gating)
-	_run_case("hangar spawn climbs straight up to height_offset then moves out", _test_hangar_takeoff_sequence)
+	_run_case("hangar spawn moves outside before climbing to height_offset", _test_hangar_takeoff_sequence)
 	_run_case("a non-Ornithopter, non-carrier flyer can never land", _test_non_ornithopter_never_lands)
 	_run_case("an Ornithopter can land, then take off again on its next order", _test_ornithopter_land_takeoff_round_trip)
 	_run_case("converging air agents separate vertically, then decay back to level", _test_vertical_avoidance)
@@ -104,12 +104,29 @@ func _test_hangar_takeoff_sequence() -> void:
 	# across arrival_radius every tick (velocity*delta far exceeds the radius),
 	# flickering between Move and Hover non-deterministically.
 	var rally: Vector3 = flyer.global_position + Vector3(1000.0, 0.0, 0.0)
-	flyer.begin_hangar_takeoff(rally, Vector3.INF)
+	var exit_point: Vector3 = flyer.global_position + Vector3(4.0, 0.0, 0.0)
+	flyer.begin_hangar_takeoff(rally, exit_point)
 
 	var player := _first_player_with(flyer, &"Takeoff")
 	_expect(player != null, "the converted Ornithopter model must have a Takeoff clip")
 	if player != null:
-		_expect(player.current_animation == &"Takeoff", "hangar takeoff must play Takeoff immediately")
+		_expect(player.current_animation == &"Move", "a hangar spawn must move toward its exit before Takeoff")
+
+	var spawn_y: float = flyer.global_position.y
+	var moved_out := false
+	for i in 100:
+		flyer._physics_process(0.05)
+		if flyer._flight_controller.flight_is_taking_off():
+			moved_out = true
+			break
+		_expect(is_equal_approx(flyer.global_position.y, spawn_y),
+			"the aircraft must remain at spawn height while leaving the hangar")
+
+	_expect(moved_out, "the aircraft must reach the hangar exit and begin Takeoff")
+	_expect(flyer.global_position.distance_to(exit_point) <= flyer.arrival_radius + 0.001,
+		"Takeoff must begin only after the aircraft reaches the building exit")
+	if player != null:
+		_expect(player.current_animation == &"Takeoff", "reaching the hangar exit must start Takeoff")
 
 	var last_y: float = flyer.global_position.y
 	var climbed := false

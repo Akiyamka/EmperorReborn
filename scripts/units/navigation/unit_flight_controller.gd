@@ -9,6 +9,7 @@ extends RefCounted
 
 enum Phase {
 	GROUNDED,
+	HANGAR_EXIT,
 	TAKING_OFF,
 	CRUISING,
 	HOVERING,
@@ -84,7 +85,7 @@ func configure(unit, unit_definition) -> void:
 
 
 func flight_is_airborne_phase() -> bool:
-	return phase != Phase.GROUNDED and phase != Phase.LANDED
+	return phase != Phase.GROUNDED and phase != Phase.HANGAR_EXIT and phase != Phase.LANDED
 
 
 func flight_is_landed() -> bool:
@@ -93,6 +94,10 @@ func flight_is_landed() -> bool:
 
 func flight_is_taking_off() -> bool:
 	return phase == Phase.TAKING_OFF
+
+
+func flight_controls_transition() -> bool:
+	return phase == Phase.HANGAR_EXIT or phase == Phase.TAKING_OFF
 
 
 func can_enter_ornithopter_land_cycle() -> bool:
@@ -105,7 +110,20 @@ func can_enter_pickup_sequence() -> bool:
 
 ## Called only by UnitRosterController right after spawn (Unit.begin_hangar_takeoff).
 func begin_hangar_takeoff(rally_point: Vector3, exit_point: Vector3) -> void:
-	_start_takeoff(rally_point, exit_point)
+	_post_takeoff_move_target = rally_point
+	_post_takeoff_exit_point = Vector3.INF
+	if not exit_point.is_finite():
+		_start_takeoff(rally_point, Vector3.INF)
+		return
+	var exit_offset: Vector3 = exit_point - _unit.global_position
+	exit_offset.y = 0.0
+	if exit_offset.length() <= float(_unit.arrival_radius):
+		_start_takeoff(rally_point, Vector3.INF)
+		return
+	_post_takeoff_exit_point = exit_point
+	phase = Phase.HANGAR_EXIT
+	_phase_elapsed = 0.0
+	_unit._set_movement_animation(true)
 
 
 ## Called from Unit.move_to() when a landed flyer receives a new order.
@@ -179,6 +197,9 @@ func advance(delta: float) -> void:
 	if phase == Phase.GROUNDED or phase == Phase.LANDED:
 		_unit._terrain_snap_body()
 		return
+	if phase == Phase.HANGAR_EXIT:
+		_advance_hangar_exit(delta)
+		return
 	if phase == Phase.TAKING_OFF:
 		_advance_vertical_transition(
 			delta, TAKEOFF_ANIMATION, DEFAULT_TAKEOFF_SECONDS,
@@ -197,6 +218,20 @@ func advance(delta: float) -> void:
 		_unit._set_visual_slope_target(Vector3.UP)
 		return
 	# Pickup sub-phases: stub only, no automatic advancement this pass.
+
+
+func _advance_hangar_exit(delta: float) -> void:
+	var exit_offset: Vector3 = _post_takeoff_exit_point - _unit.global_position
+	exit_offset.y = 0.0
+	var distance: float = exit_offset.length()
+	var arrival := float(_unit.arrival_radius)
+	if distance > arrival and delta > 0.0:
+		var step: float = minf(float(_unit.navigation_move_speed()) * delta, distance)
+		_unit.global_position += exit_offset / distance * step
+		_unit._terrain_snap_body()
+		_unit._set_movement_animation(true)
+		return
+	_start_takeoff(_post_takeoff_move_target, Vector3.INF)
 
 
 func _advance_vertical_transition(

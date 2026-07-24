@@ -210,7 +210,7 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if _flight_controller != null and _flight_controller.flight_is_taking_off():
+	if _flight_controller != null and _flight_controller.flight_controls_transition():
 		_flight_controller.advance(delta)
 		return
 	if _is_deploying:
@@ -270,8 +270,8 @@ func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 
 
 ## Called only by UnitRosterController right after producing a flying unit:
-## the unit exits the hangar already posed at frame 0 of Takeoff, climbs
-## straight up to its cruise altitude, and only then moves toward `rally_point`.
+## the unit first moves along the apron to `exit_point`, then takes off clear of
+## the producer and moves toward `rally_point`.
 ## Non-flying units fall back to an ordinary move order.
 func begin_hangar_takeoff(rally_point: Vector3, exit_point: Vector3) -> bool:
 	if _flight_controller == null:
@@ -434,7 +434,7 @@ func _navigation_collision_half_extents() -> Vector2:
 
 
 func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
-	if _flight_controller != null and _flight_controller.flight_is_taking_off():
+	if _flight_controller != null and _flight_controller.flight_controls_transition():
 		_flight_controller.advance(delta)
 		return
 	if _is_deploying:
