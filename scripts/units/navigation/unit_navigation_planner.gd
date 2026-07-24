@@ -72,6 +72,34 @@ func find_path(
 	return astar.get_id_path(snapped_start, snapped_target, false)
 
 
+## Cheap connected-component query for an already-built movement profile.
+## This is deliberately separate from find_path(): callers can reject an
+## impossible order before mutating the unit, while route_agent uses it as a
+## final safety guard for internal orders that bypass can_move_to().
+func is_reachable(
+		start_cell: Vector2i,
+		target_cell: Vector2i,
+		pass_mask: int,
+		clearance_cells: int,
+		allowed_terrain_mask := 0,
+		stoppable_no_stop_cells: Dictionary = {}
+	) -> bool:
+	var profile := _profile(pass_mask, clearance_cells, allowed_terrain_mask)
+	if profile.is_empty():
+		return false
+	var solid: PackedByteArray = profile["solid"]
+	var snapped_start := _nearest_open(solid, start_cell, 8)
+	if snapped_start.x < 0:
+		return false
+	var snapped_target := _nearest_stoppable(
+		solid, target_cell, 24, stoppable_no_stop_cells
+	)
+	if snapped_target.x < 0:
+		return false
+	var region: PackedInt32Array = profile["region"]
+	return region[_index_of(snapped_start)] == region[_index_of(snapped_target)]
+
+
 ## Redirects for a given (target cell, start region) pair are cached on the
 ## profile so repeated orders to the same unreachable target do not re-run the
 ## ring search every time. The cache is reset whenever the profile's solid map

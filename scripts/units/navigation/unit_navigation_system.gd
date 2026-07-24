@@ -173,12 +173,8 @@ func can_move_to(units: Array, world_target: Vector3) -> bool:
 			if air_navigation.in_bounds(world_target):
 				return true
 			continue
-		var span: int = int(agent["footprint"])
-		var anchor: Vector2i = _parking_anchor(world_target, span)
-		if allow_no_stop:
-			if _block_passable(anchor, span, agent):
-				return true
-		elif _block_stoppable(anchor, span, agent):
+		if _ground_target_is_legal(agent, world_target, allow_no_stop) \
+		and _ground_target_is_reachable(unit, agent, world_target, allow_no_stop):
 			return true
 	return false
 
@@ -211,6 +207,24 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 			unit.call("move_to", world_target, exit_point)
 		else:
 			remaining.append(unit)
+	ordered = remaining
+	# Reject an exact, otherwise legal ground destination when it belongs to a
+	# different connected component. Doing this before prepare_navigation_order
+	# keeps an impossible click from cancelling the unit's current gameplay
+	# action. Blocked clicks are retained: slot allocation deliberately turns
+	# those into a reachable approach point on the unit's side of the obstacle.
+	remaining = []
+	var clicked_no_stop: bool = runtime_map.grid != null \
+		and runtime_map.is_no_stop(runtime_map.grid.world_to_grid(world_target))
+	for unit in ordered:
+		var agent: Dictionary = _movement_probe_for(unit)
+		var is_air := int(agent["pass_mask"]) == MapNavigationGrid.PASS_AIR \
+			and registry.domain_for({"pass_mask": agent["pass_mask"], "unit": unit}) == NavAgentRegistryScript.Domain.AIR
+		if not is_air \
+		and _ground_target_is_legal(agent, world_target, clicked_no_stop) \
+		and not _ground_target_is_reachable(unit, agent, world_target, clicked_no_stop):
+			continue
+		remaining.append(unit)
 	ordered = remaining
 	var prepared: Array[Node3D] = []
 	for unit in ordered:
@@ -805,6 +819,29 @@ func _agent_for(unit: Node3D) -> Dictionary:
 
 func _movement_probe_for(unit: Node3D) -> Dictionary:
 	return registry.movement_probe_for(_agents, unit)
+
+
+func _ground_target_is_legal(agent: Dictionary, world_target: Vector3, allow_no_stop: bool) -> bool:
+	var span: int = int(agent["footprint"])
+	var anchor: Vector2i = _parking_anchor(world_target, span)
+	return _block_passable(anchor, span, agent) if allow_no_stop \
+		else _block_stoppable(anchor, span, agent)
+
+
+func _ground_target_is_reachable(
+		unit: Node3D, agent: Dictionary, world_target: Vector3, allow_no_stop := false
+	) -> bool:
+	var span: int = int(agent["footprint"])
+	var anchor: Vector2i = _parking_anchor(world_target, span)
+	var target_center := _block_center(anchor, span)
+	var target_cell: Vector2i = runtime_map.grid.world_to_grid(target_center)
+	var stoppable_no_stop_cells := {target_cell: true} if allow_no_stop else {}
+	return planner.is_reachable(
+		runtime_map.grid.world_to_grid(unit.global_position),
+		target_cell,
+		int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"]),
+		stoppable_no_stop_cells
+	)
 
 
 func _profile_for(unit: Node3D) -> Dictionary:

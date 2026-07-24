@@ -125,6 +125,7 @@ func _initialize() -> void:
 	_test_synchronous_paths(grid)
 	_test_no_stop_cells(grid)
 	_test_unit_navigation_order_api(grid)
+	_test_disconnected_island_orders(grid)
 	_test_group_move_redirects_landed_flyer(grid)
 	_test_dock_order_has_per_unit_building_access(grid)
 	_test_building_marker_navigation_semantics(grid)
@@ -212,6 +213,57 @@ func _test_unit_navigation_order_api(grid: MapNavigationGrid) -> void:
 
 	navigation.queue_free()
 	unit.queue_free()
+
+
+func _test_disconnected_island_orders(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for island reachability")
+	var wall := {}
+	for y in MapNavigationGrid.NAV_SIZE:
+		wall[Vector2i(128, y)] = true
+	navigation.runtime_map.replace_blocked_cells(wall)
+
+	var stranded := FakeUnit.new()
+	root.add_child(stranded)
+	stranded.global_position = Vector3(100.5, 0.0, 100.5)
+	var unreachable_target := Vector3(150.5, 0.0, 100.5)
+	_expect(
+		not navigation.can_move_to([stranded], unreachable_target),
+		"a legal cell on another navigation island must be rejected by the cursor query"
+	)
+	var rejected := navigation.command_move([stranded], unreachable_target)
+	_expect(rejected.is_empty(), "a unit must not receive an order to another navigation island")
+	_expect(
+		stranded.prepared_navigation_targets.is_empty(),
+		"an unreachable island order must be rejected before it mutates the unit action"
+	)
+	for _iteration in 100:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(
+		stranded.global_position == Vector3(100.5, 0.0, 100.5),
+		"a rejected island order must not make the unit walk into the separating wall"
+	)
+
+	var reachable := FakeUnit.new()
+	root.add_child(reachable)
+	reachable.global_position = Vector3(145.5, 0.0, 100.5)
+	var mixed := navigation.command_move([stranded, reachable], unreachable_target)
+	_expect(
+		mixed.size() == 1 and (mixed[0]["unit"] as Node3D) == reachable,
+		"a mixed-island group order must retain only units connected to the target"
+	)
+	for _iteration in 100:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(
+		reachable.global_position.distance_to(unreachable_target) < 1.0,
+		"the reachable member of a mixed-island group must still execute the order"
+	)
+
+	navigation.queue_free()
+	stranded.queue_free()
+	reachable.queue_free()
 
 
 ## Group orders reach the facade through UnitNavigationSystem.command_move

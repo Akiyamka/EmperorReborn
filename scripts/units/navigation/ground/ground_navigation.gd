@@ -29,14 +29,23 @@ func route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void
 	agent["_lane_rebase_side"] = 0
 	if (agent["exit_point"] as Vector3).is_finite():
 		return
+	var stoppable_no_stop_cells: Dictionary = agent.get("allowed_cells", {}).duplicate()
+	if bool(agent.get("vacate_no_stop", false)):
+		stoppable_no_stop_cells[_facade.runtime_map.grid.world_to_grid(destination)] = true
+	var start_cell: Vector2i = _facade.runtime_map.grid.world_to_grid(from)
+	var target_cell: Vector2i = _facade.runtime_map.grid.world_to_grid(destination)
+	if not _facade.planner.is_reachable(
+			start_cell, target_cell,
+			int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"]),
+			stoppable_no_stop_cells
+	):
+		agent["route_unreachable"] = true
+		return
+	agent["route_unreachable"] = false
 	agent["direct_path"] = _facade._has_clear_line(from, destination, agent)
 	if not bool(agent["direct_path"]):
-		var stoppable_no_stop_cells: Dictionary = agent.get("allowed_cells", {}).duplicate()
-		if bool(agent.get("vacate_no_stop", false)):
-			stoppable_no_stop_cells[_facade.runtime_map.grid.world_to_grid(destination)] = true
 		var raw_path: Array[Vector2i] = _facade.planner.find_path(
-			_facade.runtime_map.grid.world_to_grid(from),
-			_facade.runtime_map.grid.world_to_grid(destination),
+			start_cell, target_cell,
 			int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"]),
 			stoppable_no_stop_cells
 		)
