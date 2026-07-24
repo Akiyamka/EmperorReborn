@@ -13,6 +13,9 @@ signal status_changed(status: String)
 signal unit_option_state_changed(option_state: BuildingOptionState)
 
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
+const BuildingDefinitionCatalogScript := preload(
+	"res://scripts/buildings/building_definition_catalog.gd"
+)
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
@@ -37,6 +40,7 @@ var _production_queues: Dictionary = {}
 ## allowing the documented 100-unit production queue.
 var _pending_unit_ids: Dictionary = {}
 var _unit_scene_catalog := UnitSceneCatalogScript.new()
+var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 
 
 func setup(unit_ids: Array[StringName]) -> void:
@@ -194,6 +198,12 @@ func _production_building_id(config: Resource) -> StringName:
 	primary_buildings.assign(config.primary_building_ids)
 	var player := _local_player()
 	var player_id := player.player_id if player != null else -1
+	if player != null:
+		for building_id in primary_buildings:
+			var definition := _building_definition_catalog.definition(building_id)
+			if definition != null and definition.house_id == player.house_id \
+			and _production_building_for(building_id, player_id) != null:
+				return building_id
 	for building_id in primary_buildings:
 		if _production_building_for(building_id, player_id) != null:
 			return building_id

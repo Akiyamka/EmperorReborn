@@ -45,6 +45,7 @@ func _initialize() -> void:
 	await _run_case("upgrade panel only lists buildings with an upgrade defined", _test_upgrade_panel_matches_controller)
 	await _run_case("upgrade slot appears after its building is placed later", _test_upgrade_availability_polls)
 	await _run_case("unit slots follow prerequisite buildings and their upgrades", _test_unit_roster_availability)
+	await _run_case("shared units prefer their owner's native production building", _test_shared_unit_native_producer)
 	await _run_case("completed units emerge from primary building toward rally point", _test_unit_production_rally_and_primary)
 	await _run_case("real match units execute forced friendly attack orders", _test_real_forced_friendly_attack)
 	await _run_case("real harvester completes a refinery unload trip", _test_real_harvester_unload_trip)
@@ -860,6 +861,39 @@ func _test_unit_production_rally_and_primary() -> void:
 	_expect(
 		roster._unit_queue_size(&"ATBarracks") == 0,
 		"shift+right click must not reduce the unit queue below zero"
+	)
+
+	match_instance.queue_free()
+
+
+func _test_shared_unit_native_producer() -> void:
+	var match_instance := MatchFixtureScene.instantiate()
+	get_root().add_child(match_instance)
+	await process_frame
+	await process_frame
+
+	var buildings := match_instance.get_node("Buildings") as Node3D
+	var harkonnen_factory_scene := load(
+		"res://assets/converted/buildings/HKFactory/HKFactory.scn"
+	) as PackedScene
+	var atreides_factory_scene := load(
+		"res://assets/converted/buildings/ATFactory/ATFactory.scn"
+	) as PackedScene
+	var harkonnen_factory := harkonnen_factory_scene.instantiate() as Building
+	var atreides_factory := atreides_factory_scene.instantiate() as Building
+	buildings.add_child(harkonnen_factory)
+	buildings.add_child(atreides_factory)
+	harkonnen_factory.setup(&"HKFactory")
+	atreides_factory.setup(&"ATFactory")
+	harkonnen_factory.set_owner_player_id(1)
+	atreides_factory.set_owner_player_id(1)
+	await process_frame
+
+	var roster = match_instance.get_node("UnitRosterController") as UnitRosterController
+	var harvester_definition: Resource = roster._unit_scene_catalog.definition_for(&"Harvester")
+	_expect(
+		roster._production_building_id(harvester_definition) == &"ATFactory",
+		"an Atreides player must prefer ATFactory over an owned captured HKFactory"
 	)
 
 	match_instance.queue_free()
