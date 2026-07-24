@@ -6,6 +6,11 @@ extends RefCounted
 ## Dictionaries are reference types, so this module receives it as a parameter
 ## on every call instead of holding its own copy.
 
+## GROUND also covers a flying unit that is currently grounded/landed: it acts
+## as a stationary hold-obstacle for ground avoidance until it takes off again
+## (see `domain_for`), never as a routed ground agent.
+enum Domain { GROUND, AIR }
+
 var _facade: Node
 var _next_agent_id := 1
 
@@ -78,10 +83,16 @@ func register_unit(agents: Dictionary, unit: Node3D, debug_enabled: bool) -> int
 		# refinery pad. Ordinary commands always clear it.
 		"allowed_cells": {},
 	}
+	agent["domain"] = domain_for(agent)
 	agents[key] = agent
 	_next_agent_id += 1
-	_facade.planner.prewarm(int(profile["pass_mask"]), int(profile["clearance"]), int(profile["terrain_mask"]))
-	_facade.avoidance.prewarm(int(profile["pass_mask"]), int(profile["terrain_mask"]))
+	# A flying unit never routes through the ground A*/avoidance grid profile
+	# (airborne: its own straight-line air pipeline; grounded: a stationary
+	# hold-obstacle that never plans a route) — prewarming one for it would
+	# just be a wasted grid bake.
+	if int(profile["pass_mask"]) != MapNavigationGrid.PASS_AIR:
+		_facade.planner.prewarm(int(profile["pass_mask"]), int(profile["clearance"]), int(profile["terrain_mask"]))
+		_facade.avoidance.prewarm(int(profile["pass_mask"]), int(profile["terrain_mask"]))
 	unit.set_meta(&"navigation_agent_id", agent["id"])
 	if unit.has_method("set_navigation_managed"):
 		unit.call("set_navigation_managed", true)
@@ -201,3 +212,24 @@ func set_agent_rotation_envelope(agent: Dictionary, active: bool) -> void:
 	agent["terrain_radius"] = agent["rotation_radius"] if active else agent["radius"]
 	agent["clearance"] = agent["rotation_clearance"] \
 		if active else agent["body_clearance"]
+
+
+## AIR only while a flying agent is actually taking off/cruising/hovering/
+## landing; a landed (or non-flying) unit is GROUND, regardless of pass mask —
+## it sits still and participates in ground avoidance as a hold-obstacle
+## instead of being routed by either pipeline. Recomputed every tick: takeoff/
+## landing transitions only last ~1.5s, so this is cheap enough to just always
+## reflect the unit's live flight phase instead of caching it across an order.
+func domain_for(agent: Dictionary) -> int:
+	if int(agent["pass_mask"]) != MapNavigationGrid.PASS_AIR:
+		return Domain.GROUND
+	var unit: Node3D = agent.get("unit")
+	if unit != null and unit.has_method("flight_is_airborne_phase") \
+	and not bool(unit.call("flight_is_airborne_phase")):
+		return Domain.GROUND
+	return Domain.AIR
+
+
+func update_domains(agents_list: Array[Dictionary]) -> void:
+	for agent in agents_list:
+		agent["domain"] = domain_for(agent)

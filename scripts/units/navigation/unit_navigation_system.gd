@@ -14,6 +14,7 @@ const GroundSlotAllocatorScript := preload("res://scripts/units/navigation/groun
 const GroundPathFollowerScript := preload("res://scripts/units/navigation/ground/ground_path_follower.gd")
 const NavBlockerTrackerScript := preload("res://scripts/units/navigation/shared/nav_blocker_tracker.gd")
 const GroundNavigationScript := preload("res://scripts/units/navigation/ground/ground_navigation.gd")
+const AirNavigationScript := preload("res://scripts/units/navigation/air/air_navigation.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 static var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
@@ -64,6 +65,7 @@ var slot_allocator := GroundSlotAllocatorScript.new()
 var path_follower := GroundPathFollowerScript.new()
 var blocker_tracker := NavBlockerTrackerScript.new()
 var ground_navigation := GroundNavigationScript.new()
+var air_navigation := AirNavigationScript.new()
 
 var _agents: Dictionary = {}
 var _next_command_id := 1
@@ -102,6 +104,7 @@ func setup(source_grid: MapNavigationGrid) -> bool:
 	path_follower.setup(self)
 	blocker_tracker.setup(self)
 	ground_navigation.setup(self)
+	air_navigation.setup(self)
 	_refresh_building_blockers()
 	if is_inside_tree():
 		for node in get_tree().get_nodes_in_group("units"):
@@ -162,6 +165,11 @@ func can_move_to(units: Array, world_target: Vector3) -> bool:
 		if unit == null:
 			continue
 		var agent: Dictionary = _movement_probe_for(unit)
+		if int(agent["pass_mask"]) == MapNavigationGrid.PASS_AIR \
+		and registry.domain_for({"pass_mask": agent["pass_mask"], "unit": unit}) == NavAgentRegistryScript.Domain.AIR:
+			if air_navigation.in_bounds(world_target):
+				return true
+			continue
 		var span: int = int(agent["footprint"])
 		var anchor: Vector2i = _parking_anchor(world_target, span)
 		if allow_no_stop:
@@ -187,6 +195,20 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 	ordered.sort_custom(func(a: Node3D, b: Node3D) -> bool:
 		return int(a.get_meta(&"navigation_agent_id", 0)) < int(b.get_meta(&"navigation_agent_id", 0))
 	)
+	# A landed flyer swept into a group selection never went through
+	# Unit.move_to() (command controllers call this facade directly), so its
+	# own takeoff redirect never ran. Peel it off here and let it take off
+	# through the normal single-unit path instead of being routed as ground.
+	var remaining: Array[Node3D] = []
+	for unit in ordered:
+		var config = unit.get("unit_definition")
+		var flies := config != null and bool(config.can_fly)
+		if flies and unit.has_method("flight_is_landed") and bool(unit.call("flight_is_landed")) \
+		and unit.has_method("move_to"):
+			unit.call("move_to", world_target, exit_point)
+		else:
+			remaining.append(unit)
+	ordered = remaining
 	var prepared: Array[Node3D] = []
 	for unit in ordered:
 		if unit.has_method("prepare_navigation_order") \
@@ -199,6 +221,8 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 	# Slot selection must use ordinary movement rules. In particular, a unit's
 	# previous refinery-dock exception must not make that dock look like a legal
 	# permanent destination for its next player order.
+	var ground_units: Array[Node3D] = []
+	var air_units: Array[Node3D] = []
 	for unit in ordered:
 		var agent: Dictionary = _agents[unit.get_instance_id()]
 		avoidance.reset_agent(agent)
@@ -206,13 +230,22 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		agent["allowed_cells"] = {}
 		agent["vacate_no_stop"] = false
 		agent["departure_access"] = false
+		agent["domain"] = registry.domain_for(agent)
 		_agents[unit.get_instance_id()] = agent
+		if int(agent["domain"]) == NavAgentRegistryScript.Domain.AIR:
+			air_units.append(unit)
+		else:
+			ground_units.append(unit)
 
 	var command_id := _next_command_id
 	_next_command_id += 1
 	var group_speed := _slowest_speed(ordered) if mode == MoveMode.FORMATION else INF
-	var assignments := _assign_slots(ordered, world_target, mode) \
-		if mode == MoveMode.FORMATION else _shared_target_assignments(ordered, world_target)
+	var assignments: Array[Dictionary] = []
+	if not ground_units.is_empty():
+		assignments += _assign_slots(ground_units, world_target, mode) \
+			if mode == MoveMode.FORMATION else _shared_target_assignments(ground_units, world_target)
+	if not air_units.is_empty():
+		assignments += air_navigation.target_assignments(_agents, air_units, world_target)
 	var claim_radius := _claim_radius_for(ordered)
 	for assignment in assignments:
 		var unit: Node3D = assignment["unit"]
@@ -242,7 +275,7 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		_agents[unit.get_instance_id()] = agent
 		if unit.has_method("set_navigation_destination"):
 			unit.call("set_navigation_destination", assignment["position"])
-	_assign_route_lanes(ordered, world_target)
+	_assign_route_lanes(ground_units, world_target)
 	_command_log.append({
 		"tick": _navigation_tick_index,
 		"command_id": command_id,
@@ -355,7 +388,11 @@ func stop(unit: Node3D) -> void:
 ## While an exit point is pending the unit is steered straight at it instead;
 ## routing takes over from there once it is reached.
 func _route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void:
-	ground_navigation.route_agent(agent, from, destination)
+	agent["domain"] = registry.domain_for(agent)
+	if int(agent["domain"]) == NavAgentRegistryScript.Domain.AIR:
+		air_navigation.route_agent(agent, from, destination)
+	else:
+		ground_navigation.route_agent(agent, from, destination)
 
 
 ## AStarGrid2D returns every crossed cell. Keeping that raw list made every
@@ -423,8 +460,16 @@ func _navigation_tick(delta: float) -> void:
 	_prune_agents()
 	_process_reroute_queue()
 	var ordered := _ordered_agents()
-	var claimants: Array[Dictionary] = []
+	registry.update_domains(ordered)
+	var ground_agents: Array[Dictionary] = []
+	var air_agents: Array[Dictionary] = []
 	for agent in ordered:
+		if int(agent["domain"]) == NavAgentRegistryScript.Domain.AIR:
+			air_agents.append(agent)
+		else:
+			ground_agents.append(agent)
+	var claimants: Array[Dictionary] = []
+	for agent in ground_agents:
 		_release_departure_access_if_clear(agent)
 		if not bool(agent["reserved"]):
 			claimants.append(agent)
@@ -439,13 +484,18 @@ func _navigation_tick(delta: float) -> void:
 	)
 	for agent in claimants:
 		_try_claim_slot(agent)
-	_uncross_assignments(ordered)
-	var buckets := _build_spatial_hash(ordered)
-	ground_navigation.tick(delta, ordered, buckets)
+	_uncross_assignments(ground_agents)
+	var ground_buckets := _build_spatial_hash(ground_agents)
+	ground_navigation.tick(delta, ground_agents, ground_buckets)
+	if not air_agents.is_empty():
+		var air_buckets := _build_spatial_hash(air_agents)
+		air_navigation.tick(delta, air_agents, air_buckets)
 	_refresh_navigation_debug()
 
 
 func _desired_velocity(agent: Dictionary) -> Vector3:
+	if int(agent.get("domain", NavAgentRegistryScript.Domain.GROUND)) == NavAgentRegistryScript.Domain.AIR:
+		return air_navigation.desired_velocity(agent)
 	return ground_navigation.desired_velocity(agent)
 
 

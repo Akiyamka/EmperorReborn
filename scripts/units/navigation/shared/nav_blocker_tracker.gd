@@ -6,6 +6,8 @@ extends RefCounted
 ## queue through a budgeted per-tick reroute so a single building change never
 ## bursts every commanded agent's A* in one frame.
 
+const NavAgentRegistryScript := preload("res://scripts/units/navigation/shared/nav_agent_registry.gd")
+
 var _facade: Node
 
 
@@ -61,6 +63,11 @@ func replan_after_map_change() -> void:
 	for key in _facade._agents.keys():
 		var agent: Dictionary = _facade._agents[key]
 		if int(agent["command_id"]) <= 0:
+			continue
+		# Air agents never route through the grid at all (see
+		# air/air_navigation.gd) — a building-blocker change can never
+		# invalidate their route.
+		if _facade.registry.domain_for(agent) == NavAgentRegistryScript.Domain.AIR:
 			continue
 		if agent_route_intersects(agent, changed_lookup) and not _facade._reroute_queue.has(key):
 			_facade._reroute_queue.append(key)

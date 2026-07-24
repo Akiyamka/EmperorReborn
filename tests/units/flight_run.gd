@@ -8,6 +8,7 @@ const ATOrniScene := preload("res://scenes/units/at_orni.tscn")
 const UnitNavigationMapScript := preload("res://scripts/units/navigation/unit_navigation_map.gd")
 const UnitNavigationPlannerScript := preload("res://scripts/units/navigation/unit_navigation_planner.gd")
 const UnitLocalAvoidanceScript := preload("res://scripts/units/navigation/unit_local_avoidance.gd")
+const AirNavigationScript := preload("res://scripts/units/navigation/air/air_navigation.gd")
 const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
 
 var _assertions := 0
@@ -196,7 +197,7 @@ func _test_ornithopter_land_takeoff_round_trip() -> void:
 
 
 func _test_vertical_avoidance() -> void:
-	var avoidance := UnitLocalAvoidanceScript.new()
+	var air := AirNavigationScript.new()
 	var low_id := FakeFlyingUnit.new()
 	root.add_child(low_id)
 	var high_id := FakeFlyingUnit.new()
@@ -204,24 +205,24 @@ func _test_vertical_avoidance() -> void:
 	var agent_low := {"id": 1, "unit": low_id, "pass_mask": MapNavigationGrid.PASS_AIR}
 	var agent_high := {"id": 2, "unit": high_id, "pass_mask": MapNavigationGrid.PASS_AIR}
 
-	avoidance._resolve_vertical_conflict(agent_low, [agent_high])
-	_expect(is_equal_approx(low_id.last_vertical_offset, UnitLocalAvoidanceScript.VERTICAL_SEPARATION_OFFSET),
+	air._resolve_vertical_conflict(agent_low, [agent_high])
+	_expect(is_equal_approx(low_id.last_vertical_offset, AirNavigationScript.VERTICAL_SEPARATION_OFFSET),
 		"the lower agent id must take the positive (fly-over) offset")
-	avoidance._resolve_vertical_conflict(agent_high, [agent_low])
-	_expect(is_equal_approx(high_id.last_vertical_offset, -UnitLocalAvoidanceScript.VERTICAL_SEPARATION_OFFSET),
+	air._resolve_vertical_conflict(agent_high, [agent_low])
+	_expect(is_equal_approx(high_id.last_vertical_offset, -AirNavigationScript.VERTICAL_SEPARATION_OFFSET),
 		"the higher agent id must take the negative (fly-under) offset")
 
-	avoidance._decay_vertical_offset(agent_low)
+	air._decay_vertical_offset(agent_low)
 	_expect(is_equal_approx(low_id.last_vertical_offset, 0.0),
 		"clearing the conflict must retarget the offset back to zero")
 
 	# The controller blends toward the target exponentially rather than
 	# snapping — verify it actually moves partway, then converges to ~0.
 	var controller := UnitFlightControllerScript.new()
-	controller.flight_set_vertical_offset(UnitLocalAvoidanceScript.VERTICAL_SEPARATION_OFFSET)
+	controller.flight_set_vertical_offset(AirNavigationScript.VERTICAL_SEPARATION_OFFSET)
 	controller._advance_vertical_avoidance(0.1)
 	_expect(controller._vertical_avoidance_offset > 0.0
-		and controller._vertical_avoidance_offset < UnitLocalAvoidanceScript.VERTICAL_SEPARATION_OFFSET,
+		and controller._vertical_avoidance_offset < AirNavigationScript.VERTICAL_SEPARATION_OFFSET,
 		"the blend must move partway toward the target on a single tick, not snap")
 	controller.flight_set_vertical_offset(0.0)
 	for i in 30:
@@ -233,6 +234,18 @@ func _test_vertical_avoidance() -> void:
 	high_id.free()
 
 
+## Duck-typed stand-in for the facade methods AirNavigation.desired_velocity
+## actually needs (arrival_tolerance/_unit_speed) — deliberately not a real
+## UnitNavigationSystem, since the whole point of this test is that the air
+## pipeline never touches the grid at all.
+class FakeAirFacade extends RefCounted:
+	func arrival_tolerance(_unit: Node3D) -> float:
+		return 0.2
+
+	func _unit_speed(_unit: Node3D) -> float:
+		return 5.0
+
+
 func _test_buildings_ignored_at_cruise() -> void:
 	var grid := _make_grid()
 	var runtime_map := UnitNavigationMapScript.new()
@@ -242,27 +255,30 @@ func _test_buildings_ignored_at_cruise() -> void:
 
 	var planner := UnitNavigationPlannerScript.new()
 	planner.setup(runtime_map)
-	_expect(planner.is_open(blocked_cell, MapNavigationGrid.PASS_AIR, 0),
-		"route planning must treat a building-occupied cell as open for an air pass mask")
 	_expect(not planner.is_open(blocked_cell, MapNavigationGrid.PASS_VEHICLE, 0),
-		"route planning must still treat the same cell as blocked for a ground pass mask")
+		"route planning must still treat the building cell as blocked for a ground pass mask")
 
-	var avoidance := UnitLocalAvoidanceScript.new()
-	avoidance.setup(runtime_map)
+	# Air no longer builds a grid profile or consults ground solidity at all —
+	# its steering is a straight line to the destination regardless of what
+	# blocks ground traffic there (see air/air_navigation.gd).
+	var air := AirNavigationScript.new()
+	air.setup(FakeAirFacade.new())
 	var flyer := FakeFlyingUnit.new()
 	root.add_child(flyer)
+	flyer.global_position = grid.grid_to_world(Vector2i(8, 10))
+	var destination := grid.grid_to_world(Vector2i(12, 10))
 	var agent := {
-		"pass_mask": MapNavigationGrid.PASS_AIR,
-		"terrain_mask": 0,
-		"allowed_cells": {},
 		"unit": flyer,
+		"id": 1,
+		"pass_mask": MapNavigationGrid.PASS_AIR,
+		"hold": false,
+		"destination": destination,
 	}
-	flyer.airborne = true
-	_expect(not avoidance._cell_is_solid(agent, blocked_cell),
-		"a cruising flyer must not treat the building cell as solid")
-	flyer.airborne = false
-	_expect(avoidance._cell_is_solid(agent, blocked_cell),
-		"a landed/landing flyer must treat the building cell as solid again")
+	var velocity: Vector3 = air.desired_velocity(agent)
+	var direct := destination - flyer.global_position
+	direct.y = 0.0
+	_expect(not velocity.is_zero_approx() and velocity.normalized().is_equal_approx(direct.normalized()),
+		"a flying agent must steer straight through a cell that blocks ground traffic")
 	flyer.free()
 
 

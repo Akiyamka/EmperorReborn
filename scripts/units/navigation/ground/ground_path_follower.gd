@@ -312,9 +312,8 @@ func agent_cell_passable(
 	var pass_mask := int(agent["pass_mask"])
 	if _facade.runtime_map.is_passable(cell, pass_mask, clearance, terrain_mask):
 		return true
-	var ignore_buildings := pass_mask == MapNavigationGrid.PASS_AIR and UnitLocalAvoidance._agent_is_airborne(agent)
 	var allowed: Dictionary = agent.get("allowed_cells", {})
-	if allowed.is_empty() and not ignore_buildings:
+	if allowed.is_empty():
 		return false
 	for y in range(-clearance, clearance + 1):
 		for x in range(-clearance, clearance + 1):
@@ -323,7 +322,7 @@ func agent_cell_passable(
 				return false
 			if terrain_mask != 0 and (terrain_mask & (1 << _facade.runtime_map.grid.terrain_at(sample))) == 0:
 				return false
-			if _facade.runtime_map.is_blocked(sample) and not ignore_buildings and not allowed.has(sample):
+			if _facade.runtime_map.is_blocked(sample) and not allowed.has(sample):
 				return false
 	return true
 
@@ -339,12 +338,8 @@ func agent_cell_stoppable(
 	var pass_mask := int(agent["pass_mask"])
 	if _facade.runtime_map.is_stoppable(cell, pass_mask, clearance, terrain_mask):
 		return true
-	# Airborne flyers ignore both building occupancy and no-stop aprons — those
-	# exist to keep ground traffic clear of building entrances/docks, not to
-	# restrict where a cruising/hovering aircraft may hold position.
-	var ignore_buildings := pass_mask == MapNavigationGrid.PASS_AIR and UnitLocalAvoidance._agent_is_airborne(agent)
 	var allowed: Dictionary = agent.get("allowed_cells", {})
-	if allowed.is_empty() and not ignore_buildings:
+	if allowed.is_empty():
 		return false
 	for y in range(-clearance, clearance + 1):
 		for x in range(-clearance, clearance + 1):
@@ -354,6 +349,6 @@ func agent_cell_stoppable(
 			if terrain_mask != 0 and (terrain_mask & (1 << _facade.runtime_map.grid.terrain_at(sample))) == 0:
 				return false
 			if (_facade.runtime_map.is_blocked(sample) or _facade.runtime_map.is_no_stop(sample)) \
-			and not ignore_buildings and not allowed.has(sample):
+			and not allowed.has(sample):
 				return false
 	return true

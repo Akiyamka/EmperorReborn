@@ -47,10 +47,9 @@ func find_path(
 	if snapped_start.x < 0:
 		return []
 	# No-stop cells are open for transit, but the final path cell must still be
-	# a legal place to park — except for airborne flyers, which need no
-	# ground-traffic apron clearance at all.
-	var ignore_no_stop := pass_mask == MapNavigationGrid.PASS_AIR
-	var snapped_target := _nearest_stoppable(solid, target_cell, 24, stoppable_no_stop_cells, ignore_no_stop)
+	# a legal place to park. Air agents never call find_path at all — they fly
+	# a straight line clamped to the map bounds (see air/air_navigation.gd).
+	var snapped_target := _nearest_stoppable(solid, target_cell, 24, stoppable_no_stop_cells)
 	if snapped_target.x < 0:
 		snapped_target = snapped_start
 	var astar: AStarGrid2D = profile["astar"]
@@ -126,15 +125,14 @@ func _build_profile(pass_mask: int, clearance_cells: int, allowed_terrain_mask: 
 	astar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	astar.update()
 	# Movement cost is a ground-surface concept (e.g. ramps are weighted to
-	# steer wheeled/tracked traffic) — airborne agents ignore terrain entirely
-	# and should always take the geometrically shortest route, not one biased
-	# toward/away from ground-authored costs.
-	if pass_mask != MapNavigationGrid.PASS_AIR:
-		var movement_cost: PackedFloat32Array = _map.grid.movement_cost
-		for index in movement_cost.size():
-			var weight := movement_cost[index]
-			if weight > 0.0 and not is_equal_approx(weight, 1.0):
-				astar.set_point_weight_scale(_cell_of(index), weight)
+	# steer wheeled/tracked traffic). Only ground pass masks ever build a
+	# profile at all — air agents fly a straight line and never call find_path
+	# (see air/air_navigation.gd) — so no per-pass-mask branch is needed here.
+	var movement_cost: PackedFloat32Array = _map.grid.movement_cost
+	for index in movement_cost.size():
+		var weight := movement_cost[index]
+		if weight > 0.0 and not is_equal_approx(weight, 1.0):
+			astar.set_point_weight_scale(_cell_of(index), weight)
 	var solid := _solid_map(pass_mask, clearance_cells, allowed_terrain_mask)
 	for index in solid.size():
 		if solid[index] != 0:
@@ -169,13 +167,10 @@ func _solid_map(pass_mask: int, clearance_cells: int, allowed_terrain_mask: int)
 	var static_pass: PackedInt32Array = _map.grid.pass_mask
 	var terrain: PackedInt32Array = _map.grid.terrain_type
 	var blocked: PackedByteArray = _map.blocked_cells()
-	# Airborne agents fly over buildings; only landing/docking cares about
-	# occupancy, and that goes through the allowed_cells exception mechanism.
-	var ignore_buildings := pass_mask == MapNavigationGrid.PASS_AIR
 	var solid := PackedByteArray()
 	solid.resize(total)
 	for index in total:
-		if (static_pass[index] & pass_mask) == 0 or (not ignore_buildings and blocked[index] != 0):
+		if (static_pass[index] & pass_mask) == 0 or blocked[index] != 0:
 			solid[index] = 1
 		elif allowed_terrain_mask != 0 and (allowed_terrain_mask & (1 << terrain[index])) == 0:
 			solid[index] = 1

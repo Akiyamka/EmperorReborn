@@ -34,12 +34,6 @@ const MIN_ROUTE_PROGRESS_DOT := -0.001
 const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
 const OBSTACLE_BUCKET_CELLS := 8
 
-## Air-air vertical avoidance: fixed altitude offset (world units) each side of
-## a converging pair of flying agents takes to fly over/under the other. The
-## flight controller blends the agent's actual altitude toward this target
-## (and decays it back toward 0 once clear) with its own response rate.
-const VERTICAL_SEPARATION_OFFSET := 3.0
-
 ## Small angles let large round bodies slide along a boundary instead of
 ## alternating between two coarse, mutually blocking detours.
 const CANDIDATE_ANGLES := [
@@ -176,38 +170,11 @@ func resolve_velocity(
 			agent["avoidance_side"] = chosen_side
 	else:
 		_clear_preference(agent)
-	if int(agent["pass_mask"]) == MapNavigationGrid.PASS_AIR and avoidance_active:
-		_resolve_vertical_conflict(agent, blockers)
-	else:
-		_decay_vertical_offset(agent)
 	return {
 		"velocity": velocity,
 		"enemies": full["enemies"],
 		"friends": full["friends"],
 	}
-
-
-## Deterministic 2-way split: each conflicting air-air pair independently
-## agrees on who goes high/low by comparing stable agent ids, so neither side
-## needs the other's decision synchronized. Not a full N-way stack solver —
-## only pairwise conflicts the lateral solver already flagged are resolved.
-func _resolve_vertical_conflict(agent: Dictionary, blockers: Array) -> void:
-	var unit: Node3D = agent["unit"]
-	var agent_id := int(agent["id"])
-	for other in blockers:
-		if int(other["pass_mask"]) != MapNavigationGrid.PASS_AIR:
-			continue
-		var offset := VERTICAL_SEPARATION_OFFSET if agent_id < int(other["id"]) else -VERTICAL_SEPARATION_OFFSET
-		if unit.has_method("flight_set_vertical_offset"):
-			unit.call("flight_set_vertical_offset", offset)
-		return
-	_decay_vertical_offset(agent)
-
-
-func _decay_vertical_offset(agent: Dictionary) -> void:
-	var unit: Node3D = agent["unit"]
-	if unit != null and unit.has_method("flight_set_vertical_offset"):
-		unit.call("flight_set_vertical_offset", 0.0)
 
 
 func _evaluate_candidates(
@@ -742,8 +709,6 @@ func _cell_is_solid(agent: Dictionary, cell: Vector2i) -> bool:
 	var terrain_mask := int(agent["terrain_mask"])
 	if terrain_mask != 0 and (terrain_mask & (1 << grid.terrain_at(cell))) == 0:
 		return true
-	if pass_mask == MapNavigationGrid.PASS_AIR and _agent_is_airborne(agent):
-		return false
 	return runtime_map.is_blocked(cell) and not (agent.get("allowed_cells", {}) as Dictionary).has(cell)
 
 
@@ -759,9 +724,8 @@ func _agent_cell_passable(
 	var pass_mask := int(agent["pass_mask"])
 	if runtime_map.is_passable(cell, pass_mask, clearance, terrain_mask):
 		return true
-	var ignore_buildings := pass_mask == MapNavigationGrid.PASS_AIR and _agent_is_airborne(agent)
 	var allowed: Dictionary = agent.get("allowed_cells", {})
-	if allowed.is_empty() and not ignore_buildings:
+	if allowed.is_empty():
 		return false
 	for y in range(-clearance, clearance + 1):
 		for x in range(-clearance, clearance + 1):
@@ -771,17 +735,9 @@ func _agent_cell_passable(
 			if terrain_mask != 0 \
 			and (terrain_mask & (1 << runtime_map.grid.terrain_at(sample))) == 0:
 				return false
-			if runtime_map.is_blocked(sample) and not ignore_buildings and not allowed.has(sample):
+			if runtime_map.is_blocked(sample) and not allowed.has(sample):
 				return false
 	return true
-
-
-## True while a flying agent is cruising/hovering (as opposed to taking off,
-## landing, landed, or grounded) — buildings only matter to it near the ground.
-static func _agent_is_airborne(agent: Dictionary) -> bool:
-	var unit: Node3D = agent.get("unit")
-	return unit != null and unit.has_method("flight_is_airborne_phase") \
-		and bool(unit.call("flight_is_airborne_phase"))
 
 
 static func _are_enemies(a: Node3D, b: Node3D) -> bool:

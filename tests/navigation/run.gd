@@ -93,6 +93,25 @@ class FakeTurningUnit extends FakeUnit:
 		global_position += value * delta
 
 
+## Duck-typed stand-in for a landed CanFly unit (see Unit.move_to/flight_is_landed):
+## only implements the flight-facing surface command_move's takeoff redirect
+## checks, not a real UnitFlightController.
+class FakeLandedFlyer extends FakeUnit:
+	var landed := true
+	var move_to_calls: Array[Vector3] = []
+
+	func _init(size := 1.0) -> void:
+		super(size, false)
+		unit_definition.can_fly = true
+
+	func flight_is_landed() -> bool:
+		return landed
+
+	func move_to(world_position: Vector3, _exit_point := Vector3.INF) -> void:
+		move_to_calls.append(world_position)
+		landed = false
+
+
 class FakeBuilding extends Node3D:
 	var building_definition := BuildingDefinitionScript.new()
 
@@ -106,6 +125,7 @@ func _initialize() -> void:
 	_test_synchronous_paths(grid)
 	_test_no_stop_cells(grid)
 	_test_unit_navigation_order_api(grid)
+	_test_group_move_redirects_landed_flyer(grid)
 	_test_dock_order_has_per_unit_building_access(grid)
 	_test_building_marker_navigation_semantics(grid)
 	_test_map_change_prunes_freed_units(grid)
@@ -192,6 +212,44 @@ func _test_unit_navigation_order_api(grid: MapNavigationGrid) -> void:
 
 	navigation.queue_free()
 	unit.queue_free()
+
+
+## Group orders reach the facade through UnitNavigationSystem.command_move
+## directly (command controllers call it, not Unit.move_to()), so a landed
+## flyer swept into the selection never got the takeoff redirect that
+## move_to() applies for a single-unit order. command_move must peel it off
+## and redirect it through move_to() itself, leaving the rest of the group
+## routed normally.
+func _test_group_move_redirects_landed_flyer(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for the mixed-domain group order test")
+
+	var flyer := FakeLandedFlyer.new()
+	root.add_child(flyer)
+	flyer.global_position = Vector3(90.5, 0.0, 100.5)
+	var ground_unit := FakeUnit.new()
+	root.add_child(ground_unit)
+	ground_unit.global_position = Vector3(92.5, 0.0, 100.5)
+
+	var target := Vector3(100.5, 0.0, 100.5)
+	var assignments := navigation.command_move([flyer, ground_unit], target)
+
+	_expect(flyer.move_to_calls.size() == 1 and flyer.move_to_calls[0] == target,
+		"a landed flyer swept into a group order must be redirected through move_to (takeoff) instead of routed")
+	_expect(not flyer.landed, "the redirect must actually begin the flyer's takeoff")
+	_expect(assignments.size() == 1 and (assignments[0]["unit"] as Node3D) == ground_unit,
+		"only the ground unit receives a slot assignment from the same group order")
+
+	for _iteration in 100:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(ground_unit.global_position.distance_to(target) < 1.0,
+		"the ground unit in the mixed group must still move normally")
+
+	navigation.queue_free()
+	flyer.queue_free()
+	ground_unit.queue_free()
 
 
 func _test_synchronous_paths(grid: MapNavigationGrid) -> void:
