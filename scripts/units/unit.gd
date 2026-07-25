@@ -51,13 +51,6 @@ const IDLE_ANIMATION_PREFIX := "Idle"
 const DEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
 	&"Deploy", &"Deploying", &"Unpack", &"Move_Stop"
 ]
-## A converted Move clip contains a complete left/right gait cycle. Each half
-## alternates an authored walking-speed phase with the slower MechSpeed pause.
-const MECH_STEPS_PER_MOVE_CYCLE := 2.0
-const MECH_STEP_RISE_START := 0.38
-const MECH_STEP_RISE_END := 0.46
-const MECH_STEP_FALL_START := 0.47
-const MECH_STEP_FALL_END := 0.63
 const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
 const ATTACK_REPATH_INTERVAL_SECONDS := 0.25
 const ATTACK_REPATH_DISTANCE := 0.5
@@ -128,6 +121,9 @@ var _visual_slope_target_basis := Basis.IDENTITY
 var _last_terrain_normal := Vector3.UP
 var _uses_mech_gait := false
 var _mech_gait_elapsed := 0.0
+var _mech_motion_profile: Array[Dictionary] = []
+var _mech_authored_average_speed := 0.0
+var _mech_motion_cycle_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
 var _flight_controller: UnitFlightController = null
 var _is_deploying := false
 var _deployment_aligning := false
@@ -168,6 +164,7 @@ func _ready() -> void:
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_animation_players = _collect_animation_players()
+	_refresh_mech_motion_profile()
 	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
@@ -241,7 +238,10 @@ func _physics_process(delta: float) -> void:
 
 	_set_navigation_debug_direction(requested_velocity)
 	var animation_speed_scale := _movement_animation_speed_scale()
-	_set_movement_animation(not velocity.is_zero_approx(), animation_speed_scale)
+	_set_movement_animation(
+		not velocity.is_zero_approx() or _mech_is_authored_pause_with_move_order(),
+		animation_speed_scale
+	)
 	_advance_mech_gait(delta, animation_speed_scale)
 	move_and_slide()
 	_snap_to_terrain(delta)
@@ -453,7 +453,10 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 		if not can_move_any_direction and not heading_reached:
 			velocity = Vector3.ZERO
 	var animation_speed_scale := _movement_animation_speed_scale()
-	_set_movement_animation(not velocity.is_zero_approx(), animation_speed_scale)
+	_set_movement_animation(
+		not velocity.is_zero_approx() or _mech_is_authored_pause_with_move_order(),
+		animation_speed_scale
+	)
 	_advance_mech_gait(delta, animation_speed_scale)
 	# Unit/unit collision has already been resolved centrally as swept discs.
 	# Applying the exact fixed navigation delta avoids depending on physics-frame
@@ -468,14 +471,9 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 func navigation_move_speed() -> float:
 	if not _uses_mech_gait:
 		return move_speed
-	var cycle_duration := _mech_move_cycle_duration()
-	var cycle_phase := fposmod(_mech_gait_elapsed, cycle_duration) / cycle_duration
-	var step_phase := fposmod(cycle_phase * MECH_STEPS_PER_MOVE_CYCLE, 1.0)
-	# Smoothstep keeps the two rule-defined speeds intact away from the short
-	# transition windows while preventing an abrupt velocity change at a footfall.
-	var rise := smoothstep(MECH_STEP_RISE_START, MECH_STEP_RISE_END, step_phase)
-	var fall := 1.0 - smoothstep(MECH_STEP_FALL_START, MECH_STEP_FALL_END, step_phase)
-	return lerpf(mech_speed, move_speed, rise * fall)
+	if _mech_motion_profile.is_empty():
+		return mech_speed
+	return _mech_authored_phase_speed() * _mech_gait_cadence()
 
 
 func _advance_mech_gait(delta: float, animation_speed_scale: float) -> void:
@@ -489,6 +487,8 @@ func _advance_mech_gait(delta: float, animation_speed_scale: float) -> void:
 
 
 func _mech_move_cycle_duration() -> float:
+	if not _mech_motion_profile.is_empty():
+		return _mech_motion_cycle_seconds
 	for player in _animation_players:
 		if not player.has_animation(MOVING_ANIMATION):
 			continue
@@ -496,6 +496,109 @@ func _mech_move_cycle_duration() -> float:
 		if animation != null and animation.length > 0.0:
 			return animation.length
 	return DEFAULT_MECH_MOVE_CYCLE_SECONDS
+
+
+func _mech_authored_phase_speed() -> float:
+	if _mech_motion_profile.is_empty():
+		return mech_speed
+	var phase := fposmod(_mech_gait_elapsed, _mech_motion_cycle_seconds)
+	var result := float(_mech_motion_profile[0]["speed"])
+	for key in _mech_motion_profile:
+		if float(key["time"]) > phase + 0.000001:
+			break
+		result = float(key["speed"])
+	return maxf(result, 0.0)
+
+
+func _mech_gait_cadence() -> float:
+	if _mech_motion_profile.is_empty() or _mech_authored_average_speed <= 0.0:
+		return 1.0
+	return mech_speed / _mech_authored_average_speed
+
+
+func _mech_is_authored_pause_with_move_order() -> bool:
+	return _uses_mech_gait \
+		and not _mech_motion_profile.is_empty() \
+		and _mech_authored_phase_speed() <= 0.0 \
+		and global_position.distance_to(target_position) > arrival_radius
+
+
+func _refresh_mech_motion_profile() -> void:
+	_mech_motion_profile.clear()
+	_mech_authored_average_speed = 0.0
+	_mech_motion_cycle_seconds = DEFAULT_MECH_MOVE_CYCLE_SECONDS
+	if not _uses_mech_gait or visual_root == null:
+		return
+	var model_root := _find_xbf_motion_root(visual_root)
+	if model_root == null:
+		return
+	var move_entry := {}
+	for entry_value: Variant in model_root.get_meta("xbf_animation_entries", []):
+		var entry := entry_value as Dictionary
+		if String(entry.get("name", "")).strip_edges() == String(MOVING_ANIMATION):
+			move_entry = entry
+			break
+	if move_entry.is_empty():
+		return
+	var start_frame := int(move_entry.get("start_frame", -1))
+	var end_frame := int(move_entry.get("end_frame", -1))
+	if start_frame < 0 or end_frame < start_frame:
+		return
+	_mech_motion_cycle_seconds = (
+		float(end_frame - start_frame + 1) / BAKED_MODEL_FRAMES_PER_SECOND
+	)
+	for event_value: Variant in model_root.get_meta("xbf_fx_events", []):
+		var event := event_value as Dictionary
+		var frame := int(event.get("frame", -1))
+		if int(event.get("type", -1)) != 11 \
+		or frame < start_frame or frame > end_frame:
+			continue
+		var speed := _xbf_scalar_event_value(event)
+		if speed < 0.0:
+			continue
+		_mech_motion_profile.append({
+			"time": float(frame - start_frame) / BAKED_MODEL_FRAMES_PER_SECOND,
+			"speed": speed,
+		})
+	_mech_motion_profile.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return float(a["time"]) < float(b["time"])
+	)
+	if _mech_motion_profile.is_empty() \
+	or not is_zero_approx(float(_mech_motion_profile[0]["time"])):
+		_mech_motion_profile.clear()
+		return
+	var distance_per_cycle := 0.0
+	for index in _mech_motion_profile.size():
+		var segment_start := float(_mech_motion_profile[index]["time"])
+		var segment_end := _mech_motion_cycle_seconds
+		if index + 1 < _mech_motion_profile.size():
+			segment_end = float(_mech_motion_profile[index + 1]["time"])
+		distance_per_cycle += float(_mech_motion_profile[index]["speed"]) \
+			* maxf(segment_end - segment_start, 0.0)
+	_mech_authored_average_speed = distance_per_cycle / _mech_motion_cycle_seconds
+	if _mech_authored_average_speed <= 0.0:
+		_mech_motion_profile.clear()
+
+
+func _find_xbf_motion_root(node: Node) -> Node:
+	if node.has_meta("xbf_animation_entries") and node.has_meta("xbf_fx_events"):
+		return node
+	for child in node.get_children():
+		var found := _find_xbf_motion_root(child)
+		if found != null:
+			return found
+	return null
+
+
+static func _xbf_scalar_event_value(event: Dictionary) -> float:
+	if event.has("value"):
+		return float(event["value"])
+	var payload: Variant = event.get("raw_payload")
+	if not payload is PackedByteArray or (payload as PackedByteArray).size() != 8:
+		return -1.0
+	var buffer := StreamPeerBuffer.new()
+	buffer.data_array = payload as PackedByteArray
+	return buffer.get_double()
 
 
 func navigation_blocked_by_enemy(enemies: Array[Node3D]) -> void:
@@ -653,6 +756,7 @@ func setup(unit_id: StringName) -> void:
 		return
 
 	_apply_unit_definition()
+	_refresh_mech_motion_profile()
 	health = max_health
 	shields = max_shields
 	_set_visual_slope_target(_last_terrain_normal)
@@ -672,6 +776,7 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 	_shield_meshes = _collect_shield_meshes()
 	_scroll_fx_meshes = _collect_scroll_fx_meshes()
 	_animation_players = _collect_animation_players()
+	_refresh_mech_motion_profile()
 	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
@@ -1362,9 +1467,7 @@ func _apply_unit_definition() -> void:
 
 	move_speed = float(unit_definition.speed)
 	mech_speed = maxf(float(unit_definition.mech_speed), 0.0)
-	_uses_mech_gait = unit_definition.mech \
-		and mech_speed > 0.0 \
-		and not is_equal_approx(mech_speed, move_speed)
+	_uses_mech_gait = unit_definition.mech and mech_speed > 0.0
 	_mech_gait_elapsed = 0.0
 	turn_rate = maxf(float(unit_definition.turn_rate), 0.0)
 	can_move_any_direction = unit_definition.can_move_any_direction
@@ -1590,6 +1693,11 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 
 func _movement_animation_speed_scale() -> float:
 	var phase_speed := navigation_move_speed()
+	if _uses_mech_gait and not _mech_motion_profile.is_empty():
+		var cadence := _mech_gait_cadence()
+		if _mech_authored_phase_speed() <= 0.0:
+			return cadence
+		return cadence * velocity.length() / maxf(phase_speed, 0.000001)
 	if phase_speed <= 0.0:
 		return 1.0
 	return velocity.length() / phase_speed

@@ -15,6 +15,9 @@ const ATMongooseModelScene := preload(
 const ATMinotaurusModelScene := preload(
 	"res://assets/converted/models/AT_minotaurus_H0/AT_minotaurus_H0.scn"
 )
+const HKDevastatorModelScene := preload(
+	"res://assets/converted/models/HK_devastator_H0/HK_devastator_H0.scn"
+)
 
 ## Regression test for a startup-ordering bug: Match._enter_tree() used to
 ## compute the building-panel roster via Rules.buildable_building_ids_for_house(),
@@ -322,6 +325,7 @@ func _test_mech_gait_speeds() -> void:
 
 	var unit := match_instance.get_node("Units/ScoutA") as Unit
 	unit.setup(&"ATMongoose")
+	unit.replace_visual_scene(ATMongooseModelScene)
 	var configured_speed := float(unit.unit_definition.speed)
 	var configured_mech_speed := float(unit.unit_definition.mech_speed)
 	_expect(
@@ -332,38 +336,56 @@ func _test_mech_gait_speeds() -> void:
 		is_equal_approx(unit.mech_speed, configured_mech_speed),
 		"Mongoose must load its editable MechSpeed rule"
 	)
-	_expect(unit.move_speed > unit.mech_speed, "the gait test requires Speed above MechSpeed")
+	var authored_average := float(unit.get("_mech_authored_average_speed"))
+	var cadence := float(unit.call("_mech_gait_cadence"))
+	_expect(
+		is_equal_approx(authored_average, 2.66),
+		"Mongoose must average its authored 1.0/3.5/0.8 Move speed events"
+	)
+	_expect(
+		is_equal_approx(authored_average * cadence, unit.mech_speed),
+		"MechSpeed must calibrate the authored profile's average through cadence"
+	)
 
-	var cycle_duration := float(unit.call("_mech_move_cycle_duration"))
 	unit.set("_mech_gait_elapsed", 0.0)
 	_expect(
-		is_equal_approx(unit.navigation_move_speed(), unit.mech_speed),
-		"a mech must use MechSpeed between authored steps"
+		is_equal_approx(unit.navigation_move_speed(), 1.0 * cadence),
+		"Mongoose Move must begin with its authored 1.0 speed"
 	)
-	unit.set("_mech_gait_elapsed", cycle_duration * 0.2025)
-	var blended_speed := unit.navigation_move_speed()
+	unit.set("_mech_gait_elapsed", 0.20)
 	_expect(
-		blended_speed > unit.mech_speed and blended_speed < unit.move_speed,
-		"a mech must blend rather than snap between MechSpeed and Speed"
+		is_equal_approx(unit.navigation_move_speed(), 3.5 * cadence),
+		"Mongoose must switch to its authored fast phase at frame 6"
 	)
-	unit.set("_mech_gait_elapsed", cycle_duration * 0.2325)
+	unit.set("_mech_gait_elapsed", 0.60)
 	_expect(
-		is_equal_approx(unit.navigation_move_speed(), unit.move_speed),
-		"a mech must use ordinary Speed during the active step"
+		is_equal_approx(unit.navigation_move_speed(), 0.8 * cadence),
+		"Mongoose must switch to its authored slow phase at frame 14"
 	)
-	unit.set("_mech_gait_elapsed", cycle_duration * 0.50)
 	_expect(
-		is_equal_approx(unit.navigation_move_speed(), unit.mech_speed),
-		"each half of the Move cycle must begin with the between-step speed"
+		unit.navigation_move_speed() < unit.move_speed,
+		"a mech gait must never use the ordinary Speed rule"
 	)
 
-	# At its full phase speed the authored Move animation stays at 1x. Dividing
-	# by ordinary Speed here would stretch the slow phase and desynchronise it
-	# from the feet that define the next transition.
-	unit.velocity = Vector3.RIGHT * unit.mech_speed
+	unit.velocity = Vector3.RIGHT * unit.navigation_move_speed()
 	_expect(
-		is_equal_approx(float(unit.call("_movement_animation_speed_scale")), 1.0),
-		"MechSpeed motion must keep the gait animation at its authored rate"
+		is_equal_approx(float(unit.call("_movement_animation_speed_scale")), cadence),
+		"the physical XBF speed and Move playback must share one cadence"
+	)
+
+	unit.setup(&"HKDevastator")
+	unit.replace_visual_scene(HKDevastatorModelScene)
+	unit.set_navigation_destination(unit.global_position + Vector3(10.0, 0.0, 0.0))
+	unit.set("_mech_gait_elapsed", 0.0)
+	_expect(
+		is_zero_approx(unit.navigation_move_speed()),
+		"Devastator must begin Move with its authored zero-speed phase"
+	)
+	unit.navigation_step(Vector3.ZERO, 0.1)
+	_expect(
+		float(unit.get("_mech_gait_elapsed")) > 0.0
+		and (_unit_animation_player(unit) as AnimationPlayer).current_animation == &"Move",
+		"an authored zero-speed phase must advance Move instead of resetting to idle"
 	)
 
 	unit.setup(&"IMTANK")

@@ -304,6 +304,7 @@ func _parse_fx_event(
 		11:
 			if payload_type != 64 or offset + 8 > event_limit:
 				return {}
+			value = _f64_le(bytes, offset)
 			offset += 8
 		12:
 			# The original light-event record uses payload tag 388 but carries
@@ -535,3 +536,9 @@ static func _f32_le(bytes: PackedByteArray, offset: int) -> float:
 	var buffer := StreamPeerBuffer.new()
 	buffer.data_array = bytes.slice(offset, offset + 4)
 	return buffer.get_float()
+
+
+static func _f64_le(bytes: PackedByteArray, offset: int) -> float:
+	var buffer := StreamPeerBuffer.new()
+	buffer.data_array = bytes.slice(offset, offset + 8)
+	return buffer.get_double()

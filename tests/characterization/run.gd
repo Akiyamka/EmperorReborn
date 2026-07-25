@@ -38,6 +38,7 @@ func _initialize() -> void:
 	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
 	_run_case("XBF padded halo anchor", _test_padded_halo_anchor)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case("XBF mech Move timelines retain authored speeds", _test_xbf_mech_motion_events)
 	_run_case(
 		"XBF duplicate sibling animations keep independent paths",
 		_test_duplicate_object_animation_paths
@@ -539,6 +540,43 @@ func _test_xbf_animation_table_variants() -> bool:
 		for entry: Dictionary in xbf.animation_entries:
 			names.append(String(entry.get("name", "")))
 		_expect(names.has("Stationary"), "%s must expose Stationary" % file_name)
+	return true
+
+
+func _test_xbf_mech_motion_events() -> bool:
+	var cases := [
+		["HK_devastator_H0.xbf", [15, 25, 45, 60, 90], [0.0, 1.2, 0.0, 1.2, 0.0]],
+		["AT_minotaurus_H0.xbf", [4, 8, 12, 16, 28, 32], [0.8, 2.0, 0.8, 2.0, 0.8, 2.0]],
+		["AT_mongoose_H0.xbf", [3, 6, 14, 18, 27], [1.0, 3.5, 0.8, 3.5, 0.8]],
+	]
+	for model_case: Array in cases:
+		var file_name := String(model_case[0])
+		var path := "res://assets/raw_original_content/3DDATA/Units".path_join(file_name)
+		var xbf = ModelXbfScript.load_file(path)
+		_expect(xbf != null, "%s must parse for mech motion events" % file_name)
+		if xbf == null:
+			continue
+		var move := _xbf_animation_entry(xbf.animation_entries, "Move")
+		_expect(not move.is_empty(), "%s must expose its Move clip" % file_name)
+		if move.is_empty():
+			continue
+		var frames: Array[int] = []
+		var speeds: Array[float] = []
+		for event: Dictionary in xbf.fx_events:
+			var frame := int(event.get("frame", -1))
+			if int(event.get("type", -1)) != 11 \
+			or frame < int(move.start_frame) or frame > int(move.end_frame):
+				continue
+			frames.append(frame)
+			speeds.append(float(event.get("value", -1.0)))
+		_expect(frames == Array(model_case[1]), "%s must retain every authored gait frame" % file_name)
+		var expected_speeds: Array = model_case[2]
+		_expect(speeds.size() == expected_speeds.size(), "%s must retain every authored gait speed" % file_name)
+		for index in mini(speeds.size(), expected_speeds.size()):
+			_expect(
+				is_equal_approx(speeds[index], float(expected_speeds[index])),
+				"%s gait event %d must decode its 64-bit speed" % [file_name, index]
+			)
 	return true
 
 
