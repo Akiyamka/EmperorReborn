@@ -38,7 +38,7 @@ func _init() -> void:
 		return
 
 	print("convert_building: wrote %s" % output)
-	print("convert_building: imported %d H-state XBF files" % builder.imported_files.size())
+	print("convert_building: imported %d XBF files" % builder.imported_files.size())
 	if not builder.missing_states.is_empty():
 		print("convert_building: missing optional H states: %s" % ", ".join(builder.missing_states))
 	if not builder.missing_textures.is_empty():

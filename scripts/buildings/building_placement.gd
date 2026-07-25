@@ -41,6 +41,9 @@ var _source_occupy_rows: Array[String] = []
 var _occupy_rows: Array[String] = []
 var _rotation_quarter_turns := 0
 var _anchor_cell := INVALID_ANCHOR
+var _preview_anchor_cells: Array[Vector2i] = []
+var _preview_cells_by_grid_cell: Dictionary = {}
+var _preview_arrow: Node3D
 var _has_anchor := false
 var _can_build := false
 var _is_wall_candidate := false
@@ -119,6 +122,29 @@ func process(pointer_position: Vector2) -> void:
 		_hide_preview()
 		return
 	_update_for_hover_cell(hover_cell)
+
+
+## Draws the same placement footprint at every supplied hover cell. Wall-line
+## selection uses this to preview all segments between its A/B points at once.
+func preview_at_hover_cells(hover_cells: Array[Vector2i]) -> void:
+	if not is_active():
+		return
+	if hover_cells.is_empty():
+		_hide_preview()
+		return
+
+	var anchor_cells: Array[Vector2i] = []
+	for hover_cell in hover_cells:
+		var anchor_cell := _anchor_for_hover_cell(hover_cell)
+		if not anchor_cells.has(anchor_cell):
+			anchor_cells.append(anchor_cell)
+	if visible and anchor_cells == _preview_anchor_cells:
+		return
+	visible = true
+	_anchor_cell = anchor_cells[0]
+	_preview_anchor_cells = anchor_cells
+	_has_anchor = true
+	_rebuild_preview_for_anchors(anchor_cells)
 
 
 ## Faces the building's local +Z exit toward the dominant grid direction from
@@ -273,77 +299,123 @@ func _update_for_hover_cell(hover_cell: Vector2i) -> void:
 		_hide_preview()
 		return
 	var anchor_cell := _anchor_for_hover_cell(hover_cell)
-	if _has_anchor and _anchor_cell == anchor_cell and visible:
+	if _has_anchor and _preview_anchor_cells == [anchor_cell] and visible:
 		return
 
 	visible = true
 	_anchor_cell = anchor_cell
+	_preview_anchor_cells.assign([anchor_cell])
 	_has_anchor = true
 	_rebuild_preview(anchor_cell)
 
 
 func _rebuild_preview(anchor_cell: Vector2i) -> void:
-	_clear_preview_cells()
+	_rebuild_preview_for_anchors([anchor_cell])
 
+
+func _rebuild_preview_for_anchors(anchor_cells: Array[Vector2i]) -> void:
 	var has_cells := false
 	var can_build := true
-	# Checked once per anchor rather than per cell: it does not depend on the
-	# individual occupy cell, and every cell's preview material must reflect
-	# it, not just the aggregate _can_build result (otherwise the grid stays
-	# green while placement is silently blocked by radius).
-	var within_radius := _skip_build_radius_check or _is_within_build_radius(anchor_cell)
 	var occupied_cells := _occupied_building_nav_cells()
-	for row_index in _occupy_rows.size():
-		var row := _occupy_rows[row_index]
-		for column_index in row.length():
-			var marker := row.substr(column_index, 1)
-			if _is_empty_occupy_marker(marker):
-				continue
-
-			has_cells = true
-			var grid_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
-			var cell_available := (
-				_is_occupy_cell_buildable(grid_cell)
-				and _is_occupy_cell_unoccupied(grid_cell, occupied_cells)
-				and within_radius
+	var radius_tiles := 0
+	var existing_footprints: Array = []
+	if not _skip_build_radius_check and not _build_radius_provider.is_null():
+		radius_tiles = int(_build_radius_provider.call())
+		if radius_tiles > 0:
+			# Building footprints are map-wide input shared by every segment in
+			# this preview. Scanning them once per segment made long wall lines
+			# increasingly expensive as the cursor moved.
+			existing_footprints = _existing_building_footprints()
+	var next_preview_cells: Dictionary = {}
+	for anchor_index in anchor_cells.size():
+		var anchor_cell := anchor_cells[anchor_index]
+		# Checked once per anchor rather than per cell: it does not depend on
+		# the individual occupy cell, and every cell's preview material must
+		# reflect it, not just the aggregate _can_build result.
+		var within_radius := (
+			_skip_build_radius_check
+			or radius_tiles <= 0
+			or BuildRadiusScript.is_within_radius(
+				_footprint_nav_cells(anchor_cell),
+				_is_wall_candidate,
+				existing_footprints,
+				radius_tiles
 			)
-			can_build = can_build and cell_available
+		)
+		for row_index in _occupy_rows.size():
+			var row := _occupy_rows[row_index]
+			for column_index in row.length():
+				var marker := row.substr(column_index, 1)
+				if _is_empty_occupy_marker(marker):
+					continue
 
-			var preview_scene := _preview_scene_for_marker(marker, cell_available)
-			if preview_scene == null:
-				continue
-			var preview_cell := preview_scene.instantiate() as Node3D
-			if preview_cell == null:
-				continue
+				has_cells = true
+				var grid_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
+				var cell_available := (
+					_is_occupy_cell_buildable(grid_cell)
+						and _is_occupy_cell_unoccupied(grid_cell, occupied_cells)
+						and within_radius
+				)
+				can_build = can_build and cell_available
 
-			preview_cell.name = "Cell_%d_%d_%s" % [column_index, row_index, marker]
-			_configure_preview_visuals(preview_cell)
-			add_child(preview_cell)
-			var preview_position := (
-				_snap_to_ground(_occupy_cell_world_center(grid_cell))
-				+ Vector3.UP * CELL_SURFACE_OFFSET
-			)
-			if preview_cell.is_inside_tree():
-				preview_cell.global_position = preview_position
-			else:
-				preview_cell.position = preview_position
+				var preview_scene := _preview_scene_for_marker(marker, cell_available)
+				if preview_scene == null:
+					continue
+				if next_preview_cells.has(grid_cell):
+					continue
+
+				var entry: Dictionary = _preview_cells_by_grid_cell.get(grid_cell, {})
+				if entry.get("scene") != preview_scene:
+					_release_preview_cell(entry.get("node") as Node3D)
+					entry = _create_preview_cell(
+						grid_cell,
+						preview_scene,
+						"Cell_%d_%d_%d_%s" % [
+							anchor_index, column_index, row_index, marker
+						]
+					)
+				if not entry.is_empty():
+					next_preview_cells[grid_cell] = entry
+
+	for grid_cell in _preview_cells_by_grid_cell:
+		if not next_preview_cells.has(grid_cell):
+			var stale_entry: Dictionary = _preview_cells_by_grid_cell[grid_cell]
+			_release_preview_cell(stale_entry.get("node") as Node3D)
+	_preview_cells_by_grid_cell = next_preview_cells
 
 	_can_build = has_cells and can_build
-	if has_cells:
-		_add_arrow(anchor_cell)
+	if has_cells and not _is_wall_candidate and not anchor_cells.is_empty():
+		_add_arrow(anchor_cells[0])
+	else:
+		_remove_arrow()
 
 
-func _is_within_build_radius(anchor_cell: Vector2i) -> bool:
-	if _build_radius_provider.is_null():
-		return true
-	var radius_tiles := int(_build_radius_provider.call())
-	if radius_tiles <= 0:
-		return true
-	var candidate_cells := _footprint_nav_cells(anchor_cell)
-	var existing_footprints := _existing_building_footprints()
-	return BuildRadiusScript.is_within_radius(
-		candidate_cells, _is_wall_candidate, existing_footprints, radius_tiles
+func _create_preview_cell(
+		grid_cell: Vector2i, preview_scene: PackedScene, preview_name: String
+	) -> Dictionary:
+	var preview_cell := preview_scene.instantiate() as Node3D
+	if preview_cell == null:
+		return {}
+	preview_cell.name = preview_name
+	_configure_preview_visuals(preview_cell)
+	add_child(preview_cell)
+	var preview_position := (
+		_snap_to_ground(_occupy_cell_world_center(grid_cell))
+		+ Vector3.UP * CELL_SURFACE_OFFSET
 	)
+	if preview_cell.is_inside_tree():
+		preview_cell.global_position = preview_position
+	else:
+		preview_cell.position = preview_position
+	return {"node": preview_cell, "scene": preview_scene}
+
+
+func _release_preview_cell(preview_cell: Node3D) -> void:
+	if preview_cell == null:
+		return
+	if preview_cell.get_parent() == self:
+		remove_child(preview_cell)
+	preview_cell.queue_free()
 
 
 func _footprint_nav_cells(anchor_cell: Vector2i) -> Array[Vector2i]:
@@ -377,10 +449,12 @@ func _existing_building_footprints() -> Array:
 		var is_wall := false
 		if not _existing_building_is_wall.is_null():
 			is_wall = bool(_existing_building_is_wall.call(building))
+		var footprint_cells: Array = BuildingFootprintScript.nav_cells_by_marker(
+			building, occupy_rows, _navigation_grid, NAV_CELLS_PER_OCCUPY_CELL
+		).keys()
 		footprints.append({
-			"cells": BuildingFootprintScript.nav_cells_by_marker(
-				building, occupy_rows, _navigation_grid, NAV_CELLS_PER_OCCUPY_CELL
-			).keys(),
+			"cells": footprint_cells,
+			"bounds": BuildRadiusScript.bounds(footprint_cells),
 			"is_wall": is_wall,
 		})
 	return footprints
@@ -409,6 +483,7 @@ func _clear() -> void:
 	_is_wall_candidate = false
 	_skip_build_radius_check = false
 	_anchor_cell = INVALID_ANCHOR
+	_preview_anchor_cells.clear()
 	_has_anchor = false
 	_can_build = false
 	visible = false
@@ -419,10 +494,13 @@ func _clear_preview_cells() -> void:
 	for child in get_children():
 		remove_child(child)
 		child.queue_free()
+	_preview_cells_by_grid_cell.clear()
+	_preview_arrow = null
 
 
 func _hide_preview() -> void:
 	_anchor_cell = INVALID_ANCHOR
+	_preview_anchor_cells.clear()
 	_has_anchor = false
 	_can_build = false
 	visible = false
@@ -431,14 +509,27 @@ func _hide_preview() -> void:
 func _add_arrow(anchor_cell: Vector2i) -> void:
 	if _arrow_scene == null:
 		return
-	var arrow := _arrow_scene.instantiate() as Node3D
-	if arrow == null:
+	if _preview_arrow == null:
+		_preview_arrow = _arrow_scene.instantiate() as Node3D
+		if _preview_arrow == null:
+			return
+		_preview_arrow.name = "CenterArrow"
+		_configure_arrow_visuals(_preview_arrow)
+		add_child(_preview_arrow)
+	_preview_arrow.rotation = Vector3.ZERO
+	_preview_arrow.rotate_y(float(_rotation_quarter_turns) * QUARTER_TURN_RADIANS)
+	_preview_arrow.global_position = (
+		_snap_to_ground(_world_center(anchor_cell)) + Vector3.UP * CELL_SURFACE_OFFSET
+	)
+
+
+func _remove_arrow() -> void:
+	if _preview_arrow == null:
 		return
-	arrow.name = "CenterArrow"
-	_configure_arrow_visuals(arrow)
-	add_child(arrow)
-	arrow.rotate_y(float(_rotation_quarter_turns) * QUARTER_TURN_RADIANS)
-	arrow.global_position = _snap_to_ground(_world_center(anchor_cell)) + Vector3.UP * CELL_SURFACE_OFFSET
+	if _preview_arrow.get_parent() == self:
+		remove_child(_preview_arrow)
+	_preview_arrow.queue_free()
+	_preview_arrow = null
 
 
 func _set_rotation_quarter_turns(value: int) -> bool:
@@ -451,6 +542,7 @@ func _set_rotation_quarter_turns(value: int) -> bool:
 	# same cell, so force the next process() call to rebuild rather than taking
 	# the unchanged-anchor fast path.
 	_anchor_cell = INVALID_ANCHOR
+	_preview_anchor_cells.clear()
 	_has_anchor = false
 	return true
 
@@ -537,18 +629,16 @@ func _configure_preview_visuals(node: Node) -> void:
 func _configure_preview_materials(mesh_instance: MeshInstance3D) -> void:
 	if mesh_instance.mesh == null:
 		return
-	for surface_index in mesh_instance.mesh.get_surface_count():
-		if _surface_material(mesh_instance, surface_index) == null:
-			# A per-surface override is still too late for GLES's shadow/material
-			# bookkeeping on a mesh whose source surface has no material. A mesh
-			# override is resolved before that query and covers every surface.
-			mesh_instance.material_override = _placement_fallback_material()
-			return
-
-	mesh_instance.material_override = null
-	for surface_index in mesh_instance.mesh.get_surface_count():
-		var material := _placement_blend_material(_surface_material(mesh_instance, surface_index))
-		mesh_instance.set_surface_override_material(surface_index, material)
+	var source_material: Material
+	if mesh_instance.mesh.get_surface_count() > 0:
+		source_material = _surface_material(mesh_instance, 0)
+	var preview_material := _placement_blend_material(source_material)
+	if preview_material == null:
+		preview_material = _placement_fallback_material()
+	# Placement cells use one visual surface. Keeping a non-null mesh-wide
+	# override also avoids exposing a transient/null surface RID to GLES3 while
+	# a long wall preview adds many MeshInstance3D nodes in the same frame.
+	mesh_instance.material_override = preview_material
 
 
 func _surface_material(mesh_instance: MeshInstance3D, surface_index: int) -> Material:

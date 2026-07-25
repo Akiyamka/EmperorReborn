@@ -4,6 +4,7 @@ const BuildingPlacementScript := preload("res://scripts/buildings/building_place
 const BuildingBakeBuilderScript := preload("res://converters/building_bake_builder.gd")
 const ATBarracksScene := preload("res://assets/converted/buildings/ATBarracks/ATBarracks.scn")
 const PlacementArrowScene := preload("res://assets/converted/placement/build_arrow.scn")
+const PlacementBuildingScene := preload("res://assets/converted/placement/build_building.scn")
 
 var _assertions := 0
 var _failures := 0
@@ -51,6 +52,7 @@ func _initialize() -> void:
 	_run_case("placement rotation turns footprint and spawned building", _test_rotated_placement)
 	_run_case("unmaterialed preview mesh gets fallback material", _test_unmaterialed_preview_mesh_gets_fallback_material)
 	_run_case("placement arrow keeps its white fill from either camera side", _test_arrow_white_fill)
+	_run_case("wall footprint omits the direction arrow", _test_wall_footprint_omits_arrow)
 	_run_case("legacy building without placement anchor", _test_legacy_building_without_placement_anchor)
 	_run_case("rotated existing footprint follows building transform", _test_rotated_existing_footprint)
 	_run_case("resolver fallback occupancy", _test_resolver_fallback_occupancy)
@@ -380,6 +382,68 @@ func _test_arrow_white_fill(token: int) -> int:
 	_expect(not blue_override_found, "the arrow fix must not replace its authored blue screen surface")
 	arrow.free()
 	placement.free()
+	return token
+
+
+func _test_wall_footprint_omits_arrow(token: int) -> int:
+	var buildings_root := Node3D.new()
+	get_root().add_child(buildings_root)
+	var placement = BuildingPlacementScript.new()
+	get_root().add_child(placement)
+
+	placement.setup(
+		null,
+		FakeGrid.new(),
+		buildings_root,
+		PlacementArrowScene,
+		PlacementBuildingScene,
+		null,
+		null,
+		Callable()
+	)
+	placement.begin(&"ATWall", "Wall", _rows(["b"]), true)
+	placement.preview_at_hover_cells([
+		Vector2i(2, 4),
+		Vector2i(4, 4),
+		Vector2i(6, 4),
+	])
+	_expect(
+		placement.get_node_or_null("CenterArrow") == null,
+		"a wall footprint must not draw a direction arrow"
+	)
+	_expect(
+		placement.get_child_count() == 3,
+		"wall-line selection must draw the footprint of every selected segment"
+	)
+	for preview_cell in placement.get_children():
+		for value in preview_cell.find_children("*", "MeshInstance3D", true, false):
+			var mesh_instance := value as MeshInstance3D
+			_expect(
+				mesh_instance.material_override != null,
+				"every wall-line preview mesh must enter the renderer with a material override"
+			)
+	var retained_nodes := {
+		Vector2i(2, 4): placement._preview_cells_by_grid_cell[Vector2i(2, 4)]["node"],
+		Vector2i(4, 4): placement._preview_cells_by_grid_cell[Vector2i(4, 4)]["node"],
+		Vector2i(6, 4): placement._preview_cells_by_grid_cell[Vector2i(6, 4)]["node"],
+	}
+	placement.preview_at_hover_cells([
+		Vector2i(2, 4),
+		Vector2i(4, 4),
+		Vector2i(6, 4),
+		Vector2i(8, 4),
+	])
+	for grid_cell in retained_nodes:
+		_expect(
+			placement._preview_cells_by_grid_cell[grid_cell]["node"] == retained_nodes[grid_cell],
+			"extending a wall line must reuse its existing preview at %s" % grid_cell
+		)
+	_expect(
+		placement.get_child_count() == 4,
+		"extending a wall line must instantiate only its new segment preview"
+	)
+	placement.queue_free()
+	buildings_root.queue_free()
 	return token
 
 

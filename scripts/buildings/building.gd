@@ -3,6 +3,7 @@ extends Node3D
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
+const WallConnectivityScript := preload("res://scripts/buildings/wall_connectivity.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 static var _native_definition_catalog := BuildingDefinitionCatalogScript.new()
@@ -27,9 +28,12 @@ const COLLISION_OBJECT_NAME := "#~~0"
 const RALLY_POINT_CLEARANCE := 1.5
 const OCCUPY_CELL_WORLD_SPAN := 2.0
 const REFINERY_ROLE := "Refinery"
+const WALL_BUILDING_GROUP := "Wall"
 const REFINERY_DOCK_RELEASE_DELAY_SECONDS := 3.0
 const INVALID_REFINERY_DOCK := -1
 const RULE_COMBAT_TICKS_PER_SECOND := 20.0
+const WALL_ANCHOR_CELL_SPAN := 2
+const WALL_WORLD_NEIGHBOR_TOLERANCE := 0.35
 const RALLY_POINT_LINE_COLOR := Color(0.12, 1.0, 0.28, 0.9)
 const RALLY_POINT_LINE_WIDTH := 0.10
 const RALLY_POINT_LINE_HEIGHT := 0.08
@@ -122,6 +126,9 @@ var _rally_point_line_material: StandardMaterial3D
 var _rally_point_marker: Node3D
 var _refinery_dock_users: Dictionary = {}
 var _refinery_dock_cooldowns: Dictionary = {}
+var _wall_connection_mask := 0
+var _wall_topology: StringName = WallConnectivityScript.SINGLE
+var _wall_rotation_quarters := 0
 
 
 func _ready() -> void:
@@ -145,9 +152,15 @@ func _ready() -> void:
 	# enters the tree. Deferring this lets both pre-placed and newly-built
 	# production buildings receive a point in front of their final transform.
 	call_deferred("_set_default_rally_point_if_unset")
+	if _has_wall_role():
+		# BuildingPlacement writes placement_anchor_cell and the final transform
+		# immediately after add_child(), so defer adjacency until both exist.
+		call_deferred("refresh_wall_connections")
 
 
 func _exit_tree() -> void:
+	if is_in_group("wall_buildings"):
+		_defer_adjacent_wall_refresh()
 	_set_generated_energy(0)
 
 
@@ -535,6 +548,7 @@ func play_state(state: StringName) -> void:
 		# frame. Otherwise a freshly added building can briefly render its
 		# default idle state before construct starts updating.
 		player.advance(0.0)
+		_refresh_wall_variant_visual()
 		_bind_combat_turrets(_state_root(state))
 		return
 
@@ -545,7 +559,180 @@ func play_state(state: StringName) -> void:
 	for child in states.get_children():
 		var child_state := StringName(String(child.get_meta("state", child.name.to_lower())))
 		child.visible = child_state == state
+	_refresh_wall_variant_visual()
 	_bind_combat_turrets(_state_root(state))
+
+
+## Recomputes this wall plus the at-most-four segments whose topology can
+## change because of it. Placement calls this deferred from _ready; removal
+## schedules the same refresh for surviving neighbours from _exit_tree.
+func refresh_wall_connections() -> void:
+	if not is_inside_tree() or not _has_wall_role():
+		return
+	_refresh_wall_topology()
+	for candidate in get_tree().get_nodes_in_group("wall_buildings"):
+		if candidate == self or not is_instance_valid(candidate) \
+		or candidate.is_queued_for_deletion():
+			continue
+		if _wall_direction_to(candidate as Node3D) != 0:
+			candidate.call("_refresh_wall_topology")
+
+
+func wall_connection_mask() -> int:
+	return _wall_connection_mask
+
+
+func wall_topology() -> StringName:
+	return _wall_topology
+
+
+func wall_rotation_quarters() -> int:
+	return _wall_rotation_quarters
+
+
+func active_wall_variant_path() -> NodePath:
+	var variants := get_node_or_null("WallVariants")
+	if variants == null:
+		return NodePath()
+	for variant in variants.get_children():
+		for state_node in variant.get_children():
+			if state_node is Node3D and state_node.visible:
+				return state_node.get_path()
+	return NodePath()
+
+
+func _refresh_wall_topology() -> void:
+	if not is_inside_tree() or not _has_wall_role():
+		return
+	_wall_connection_mask = _wall_neighbor_mask()
+	var selection: Dictionary = WallConnectivityScript.selection_for_mask(
+		_wall_connection_mask
+	)
+	_wall_topology = selection["topology"]
+	_wall_rotation_quarters = int(selection["rotation_quarters"])
+	_refresh_wall_variant_visual()
+
+
+func _wall_neighbor_mask() -> int:
+	var mask := 0
+	for candidate in get_tree().get_nodes_in_group("wall_buildings"):
+		if candidate == self or not is_instance_valid(candidate) \
+		or candidate.is_queued_for_deletion():
+			continue
+		mask |= _wall_direction_to(candidate as Node3D)
+	return mask
+
+
+func _wall_direction_to(other: Node3D) -> int:
+	if other == null:
+		return 0
+	if has_meta(&"placement_anchor_cell") and other.has_meta(&"placement_anchor_cell"):
+		var delta: Vector2i = (
+			other.get_meta(&"placement_anchor_cell") as Vector2i
+			- get_meta(&"placement_anchor_cell") as Vector2i
+		)
+		match delta:
+			Vector2i(0, -WALL_ANCHOR_CELL_SPAN):
+				return WallConnectivityScript.NORTH
+			Vector2i(WALL_ANCHOR_CELL_SPAN, 0):
+				return WallConnectivityScript.EAST
+			Vector2i(0, WALL_ANCHOR_CELL_SPAN):
+				return WallConnectivityScript.SOUTH
+			Vector2i(-WALL_ANCHOR_CELL_SPAN, 0):
+				return WallConnectivityScript.WEST
+			_:
+				return 0
+
+	# Legacy/pre-placed walls have no placement metadata. Their relative world
+	# positions still share the authored two-unit occupy-cell pitch.
+	var delta_world := other.global_position - global_position
+	var span := OCCUPY_CELL_WORLD_SPAN
+	var tolerance := WALL_WORLD_NEIGHBOR_TOLERANCE
+	if absf(delta_world.x) <= tolerance:
+		if absf(delta_world.z + span) <= tolerance:
+			return WallConnectivityScript.NORTH
+		if absf(delta_world.z - span) <= tolerance:
+			return WallConnectivityScript.SOUTH
+	if absf(delta_world.z) <= tolerance:
+		if absf(delta_world.x - span) <= tolerance:
+			return WallConnectivityScript.EAST
+		if absf(delta_world.x + span) <= tolerance:
+			return WallConnectivityScript.WEST
+	return 0
+
+
+func _refresh_wall_variant_visual() -> void:
+	if not _has_wall_role():
+		return
+	var variants := get_node_or_null("WallVariants") as Node3D
+	if variants == null:
+		return
+	for variant in variants.get_children():
+		if variant is Node3D:
+			variant.visible = false
+		for state_node in variant.get_children():
+			if state_node is Node3D:
+				state_node.visible = false
+
+	var visual_state := String(current_state)
+	if visual_state != "idle" and not visual_state.begins_with("damage"):
+		return
+
+	# Wall Stationary clips carry no gameplay animation. Pause the outer state
+	# player after applying time zero so its looping visibility key cannot
+	# reveal the base Single model over an active joined variant.
+	var state_player := get_node_or_null("StatePlayer") as AnimationPlayer
+	if state_player != null:
+		state_player.pause()
+
+	var states := get_node_or_null("States")
+	var base_state := _state_root(current_state)
+	if states != null:
+		for child in states.get_children():
+			var child_state := String(child.get_meta("state", child.name.to_lower()))
+			if child_state == "idle" or child_state.begins_with("damage"):
+				child.visible = false
+
+	if _wall_topology == WallConnectivityScript.SINGLE:
+		if base_state != null:
+			base_state.visible = true
+		return
+
+	var variant_name := WallConnectivityScript.variant_node_name(_wall_topology)
+	var variant_root := variants.get_node_or_null(NodePath(String(variant_name))) as Node3D
+	if variant_root == null:
+		if base_state != null:
+			base_state.visible = true
+		return
+	variant_root.visible = true
+	# The mask is expressed in world/grid directions. Compensate any authored
+	# or pre-placed parent yaw so the selected arms still face those neighbours.
+	variant_root.rotation.y = (
+		float(_wall_rotation_quarters) * PI * 0.5 - variants.global_rotation.y
+	)
+
+	var state_node_name := "Damage2" if visual_state.begins_with("damage") else "Idle"
+	var active_state := variant_root.get_node_or_null(NodePath(state_node_name)) as Node3D
+	# Some original families (notably IX Middle/Cross) omit H2. Preserve the
+	# correct join topology and fall back to that family's intact H0 art.
+	if active_state == null:
+		active_state = variant_root.get_node_or_null("Idle") as Node3D
+	if active_state != null:
+		active_state.visible = true
+	elif base_state != null:
+		base_state.visible = true
+
+
+func _defer_adjacent_wall_refresh() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	for candidate in tree.get_nodes_in_group("wall_buildings"):
+		if candidate == self or not is_instance_valid(candidate) \
+		or candidate.is_queued_for_deletion():
+			continue
+		if _wall_direction_to(candidate as Node3D) != 0:
+			candidate.call_deferred("_refresh_wall_topology")
 
 
 ## Idle is the single undamaged health band. Every available DamageN state is
@@ -978,10 +1165,23 @@ func _apply_building_definition() -> void:
 		push_warning("Building definition not found: %s" % String(config_id))
 		return
 
+	_sync_wall_group()
 	max_health = building_definition.health
 	max_shields = building_definition.shield_health
 	armour_type = building_definition.armour_type
 	_configure_combat_turret()
+
+
+func _has_wall_role() -> bool:
+	return building_definition != null \
+		and String(building_definition.building_group_id) == WALL_BUILDING_GROUP
+
+
+func _sync_wall_group() -> void:
+	if _has_wall_role():
+		add_to_group("wall_buildings")
+	elif is_in_group("wall_buildings"):
+		remove_from_group("wall_buildings")
 
 
 func _configure_combat_turret() -> void:

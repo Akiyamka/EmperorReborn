@@ -21,6 +21,20 @@ const STATE_DEFS: Array[Dictionary] = [
 	{"name": "damage2", "node": "Damage2", "suffix": "_h2"},
 	{"name": "destroy", "node": "Destroy", "suffix": "_h3"},
 ]
+## Canonical topology families shared by every House. The source directory
+## also contains NewWall/enclosed/LO/MO experiments and spelling duplicates;
+## those are deliberately excluded from the runtime asset contract.
+const WALL_VARIANT_DEFS: Array[Dictionary] = [
+	{"topology": "end", "node": "End", "suffix": "_end"},
+	{"topology": "middle", "node": "Middle", "suffix": "_middle"},
+	{"topology": "corner", "node": "Corner", "suffix": "_corner"},
+	{"topology": "tjoin", "node": "TJoin", "suffix": "_tjoin"},
+	{"topology": "cross", "node": "Cross", "suffix": "_cross"},
+]
+const WALL_VARIANT_STATE_DEFS: Array[Dictionary] = [
+	{"name": "idle", "node": "Idle", "suffix": "_h0"},
+	{"name": "damage2", "node": "Damage2", "suffix": "_h2"},
+]
 ## HC contains the authored transition clips. Most buildings expose only
 ## Construct; Construction Yards additionally expose Deconstruct and Sell,
 ## while wall HC models also carry Sell. Runtime names are deliberately
@@ -84,6 +98,13 @@ func build(building_id: StringName) -> PackedScene:
 		state_nodes.append(node)
 
 	states_root.position = _footprint_alignment_offset(building_id, state_nodes)
+	if String(building_id).ends_with("Wall"):
+		var wall_variants := _build_wall_variants(prefix)
+		if wall_variants.get_child_count() > 0:
+			wall_variants.position = states_root.position
+			root.add_child(wall_variants)
+		else:
+			wall_variants.free()
 	_add_state_player(root, states_root, state_nodes)
 	_assign_scene_owner(root, root)
 
@@ -204,6 +225,63 @@ func _find_state_files(prefix: String) -> Dictionary:
 			for state_def: Dictionary in STATE_DEFS:
 				var state_name := String(state_def["name"])
 				if not found.has(state_name) and _matches_state_file(file_name, prefix, String(state_def["suffix"])):
+					found[state_name] = building_model_dir.path_join(file_name)
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	return found
+
+
+func _build_wall_variants(prefix: String) -> Node3D:
+	var variants_root := Node3D.new()
+	variants_root.name = "WallVariants"
+	for variant_def: Dictionary in WALL_VARIANT_DEFS:
+		var state_files := _find_wall_variant_state_files(
+			prefix, String(variant_def["suffix"])
+		)
+		# An H0 model is the canonical proof that this topology exists. A
+		# missing H2 is valid original data and falls back to H0 at runtime.
+		if not state_files.has("idle"):
+			continue
+
+		var variant_root := Node3D.new()
+		variant_root.name = String(variant_def["node"])
+		variant_root.set_meta("wall_topology", String(variant_def["topology"]))
+		for state_def: Dictionary in WALL_VARIANT_STATE_DEFS:
+			var state_name := String(state_def["name"])
+			if not state_files.has(state_name):
+				continue
+			var state_node := _build_state_node(
+				state_def, String(state_files[state_name])
+			)
+			if state_node == null:
+				continue
+			state_node.visible = false
+			state_node.set_meta("wall_topology", String(variant_def["topology"]))
+			variant_root.add_child(state_node)
+		variants_root.add_child(variant_root)
+	return variants_root
+
+
+func _find_wall_variant_state_files(prefix: String, variant_suffix: String) -> Dictionary:
+	var found := {}
+	var dir := DirAccess.open(building_model_dir)
+	if dir == null:
+		push_error("BuildingBakeBuilder: cannot open %s" % building_model_dir)
+		return found
+
+	var expected_prefix := _normalized_model_name(prefix + variant_suffix)
+	dir.list_dir_begin()
+	var file_name := dir.get_next()
+	while not file_name.is_empty():
+		if not dir.current_is_dir() and file_name.get_extension().to_lower() == "xbf":
+			var stem := file_name.get_basename().to_lower()
+			for state_def: Dictionary in WALL_VARIANT_STATE_DEFS:
+				var state_name := String(state_def["name"])
+				var state_suffix := String(state_def["suffix"])
+				if found.has(state_name) or not stem.ends_with(state_suffix):
+					continue
+				var model_name := stem.substr(0, stem.length() - state_suffix.length())
+				if _normalized_model_name(model_name) == expected_prefix:
 					found[state_name] = building_model_dir.path_join(file_name)
 		file_name = dir.get_next()
 	dir.list_dir_end()

@@ -4,7 +4,9 @@ const BuildingControllerScript := preload("res://scripts/buildings/building_cont
 const BuildingOrderScript := preload("res://scripts/buildings/building_order.gd")
 const UpgradeEffectsScript := preload("res://scripts/buildings/upgrade_effects.gd")
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
+const WallChainScript := preload("res://scripts/buildings/wall_chain.gd")
 const ATConYardScene := preload("res://assets/converted/buildings/ATConYard/ATConYard.scn")
+const PlacementBuildingScene := preload("res://assets/converted/placement/build_building.scn")
 
 var _assertions := 0
 var _failures := 0
@@ -46,6 +48,18 @@ class SaleController extends BuildingController:
 		return raycast_hit
 
 
+class FakeGrid extends RefCounted:
+	func is_loaded() -> bool:
+		return true
+
+	func grid_to_world(cell: Vector2i, centered: bool) -> Vector3:
+		var offset := 0.5 if centered else 0.0
+		return Vector3(float(cell.x) + offset, 0.0, float(cell.y) + offset)
+
+	func cell_debug(_cell: Vector2i) -> Dictionary:
+		return {"valid": true, "buildable": true}
+
+
 func _initialize() -> void:
 	await process_frame
 	var players = root.get_node("Players")
@@ -58,6 +72,7 @@ func _initialize() -> void:
 	_run_case("repeated setup forwards resources once", _test_repeated_setup_forwards_resources_once.bind(local_player))
 	_run_case("freed controller leaves no resource forwarding", _test_free_disconnects_resource_forwarding.bind(local_player))
 	_run_case("failed completed wall segment refunds paid credits", _test_completed_wall_refund.bind(local_player))
+	_run_case("wall line preview spans selection and stops before ordering", _test_wall_line_preview_only_during_selection)
 	_run_case("building sale plays the authored sell transition", _test_sale_animation.bind(local_player))
 	_run_case("building sale reverses construct without an authored sell transition", _test_sale_construct_fallback.bind(local_player))
 	_run_case(
@@ -178,6 +193,45 @@ func _test_completed_wall_refund(token: int, local_player: PlayerData) -> int:
 	controller._refund_completed_wall_segment(order)
 	_expect(local_player.money == money_before + 75, "a paid wall segment that cannot be placed must be fully refunded")
 	order = null
+	controller.free()
+	return token
+
+
+func _test_wall_line_preview_only_during_selection(token: int) -> int:
+	var controller := _new_controller()
+	_setup_without_assets(controller)
+	controller._building_placement.setup(
+		null,
+		FakeGrid.new(),
+		null,
+		null,
+		PlacementBuildingScene,
+		null,
+		null,
+		Callable()
+	)
+	controller._wall_line_mode = true
+	controller._wall_line_start_cell = Vector2i(2, 4)
+	controller._building_placement.begin(&"ATWall", "Wall", ["b"], true)
+	controller._preview_wall_line_to_hover_cell(Vector2i(6, 4))
+	_expect(
+		controller._building_placement.get_child_count() == 3,
+		"choosing the wall end must preview every segment from the start"
+	)
+
+	controller._building_placement.cancel()
+	controller._wall_chain = WallChainScript.new(
+		&"ATWall", "Wall", 10, 60.0, [Vector2i(6, 8)]
+	)
+	controller._advance_wall_chain()
+	_expect(
+		controller._building_queue.has_order(),
+		"selecting a wall segment must start its construction order"
+	)
+	_expect(
+		not controller._building_placement.is_active(),
+		"ordering the first segment must not preview it or any following segment"
+	)
 	controller.free()
 	return token
 

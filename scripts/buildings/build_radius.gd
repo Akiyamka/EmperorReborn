@@ -16,7 +16,7 @@ static func is_within_radius(
 	if candidate_cells.is_empty() or existing_footprints.is_empty():
 		return false
 
-	var candidate_bounds := _bounds(candidate_cells)
+	var candidate_bounds := bounds(candidate_cells)
 	for footprint in existing_footprints:
 		var footprint_is_wall: bool = footprint.get("is_wall", false)
 		# All buildings extend the radius; walls only do so for other walls.
@@ -25,13 +25,15 @@ static func is_within_radius(
 		var other_cells: Array = footprint.get("cells", [])
 		if other_cells.is_empty():
 			continue
-		var other_bounds := _bounds(other_cells)
+		var other_bounds: Dictionary = footprint.get("bounds", {})
+		if other_bounds.is_empty():
+			other_bounds = bounds(other_cells)
 		if _rect_distance(candidate_bounds, other_bounds) <= radius_tiles:
 			return true
 	return false
 
 
-static func _bounds(cells: Array) -> Dictionary:
+static func bounds(cells: Array) -> Dictionary:
 	var min_cell: Vector2i = cells[0]
 	var max_cell: Vector2i = cells[0]
 	for cell in cells:

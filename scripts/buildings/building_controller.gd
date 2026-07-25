@@ -114,7 +114,9 @@ func process(delta: float) -> void:
 			_refresh_building_option_states()
 	_process_building_order(delta)
 	_process_repairs(delta)
-	if _building_placement.is_active():
+	if _wall_line_mode:
+		_process_wall_line_preview(get_viewport().get_mouse_position())
+	elif _building_placement.is_active():
 		var pointer_position := (
 			_placement_press_position
 			if _placement_pointer_down
@@ -265,6 +267,7 @@ func _set_sell_mode(active: bool) -> void:
 
 
 func _set_wall_line_mode(active: bool, building_id: StringName = &"") -> void:
+	var was_active := _wall_line_mode
 	_wall_line_mode = active
 	_wall_line_start_cell = null
 	_wall_line_building_id = building_id if active else &""
@@ -273,8 +276,11 @@ func _set_wall_line_mode(active: bool, building_id: StringName = &"") -> void:
 		_set_repair_mode(false)
 		_set_sell_mode(false)
 		_cancel_building_placement()
+		_begin_wall_line_preview(building_id)
 		status_changed.emit("Wall mode: click the line start, then the line end")
 	else:
+		if was_active:
+			_building_placement.cancel()
 		status_changed.emit("Wall mode canceled")
 	_refresh_building_option_states()
 
@@ -388,6 +394,33 @@ func _on_wall_line_click(screen_position: Vector2) -> void:
 	var building_id := _wall_line_building_id
 	_set_wall_line_mode(false)
 	_start_wall_chain(start_cell, cell, building_id)
+
+
+func _begin_wall_line_preview(building_id: StringName) -> void:
+	var config := _building_config(building_id)
+	var occupy_rows := _building_occupy_rows(config)
+	if not _building_placement.begin(
+		building_id, _building_display_name(building_id), occupy_rows, true
+	):
+		return
+	_process_wall_line_preview(get_viewport().get_mouse_position())
+
+
+func _process_wall_line_preview(screen_position: Vector2) -> void:
+	if not _wall_line_mode or not _building_placement.is_active():
+		return
+	var hover_cell = _building_placement.hover_cell_from_pointer(screen_position)
+	if hover_cell == null:
+		_building_placement.preview_at_hover_cells([])
+		return
+	_preview_wall_line_to_hover_cell(hover_cell)
+
+
+func _preview_wall_line_to_hover_cell(hover_cell: Vector2i) -> void:
+	var preview_cells: Array[Vector2i] = [hover_cell]
+	if _wall_line_start_cell != null:
+		preview_cells = _wall_nav_cells_between(_wall_line_start_cell, hover_cell)
+	_building_placement.preview_at_hover_cells(preview_cells)
 
 
 func _try_sell_building(screen_position: Vector2) -> void:
@@ -804,6 +837,22 @@ func _start_wall_chain(from_nav_cell: Vector2i, to_nav_cell: Vector2i, building_
 		status_changed.emit("Wall rules are not loaded")
 		return
 
+	var nav_cells := _wall_nav_cells_between(from_nav_cell, to_nav_cell)
+
+	var players = _players()
+	var owner_player_id = players.local_player_id if players != null else null
+	_wall_chain = WallChainScript.new(
+		building_id,
+		_building_display_name(building_id),
+		maxi(config.cost, 0),
+		maxf(config.build_time_ticks, 1.0),
+		nav_cells,
+		owner_player_id
+	)
+	_advance_wall_chain()
+
+
+func _wall_nav_cells_between(from_nav_cell: Vector2i, to_nav_cell: Vector2i) -> Array[Vector2i]:
 	var cell_span := BuildingPlacementScript.NAV_CELLS_PER_OCCUPY_CELL
 	var from_occupy_cell := Vector2i(
 		int(floor(float(from_nav_cell.x) / float(cell_span))),
@@ -817,18 +866,7 @@ func _start_wall_chain(from_nav_cell: Vector2i, to_nav_cell: Vector2i, building_
 	var nav_cells: Array[Vector2i] = []
 	for occupy_cell in occupy_cells:
 		nav_cells.append(occupy_cell * cell_span)
-
-	var players = _players()
-	var owner_player_id = players.local_player_id if players != null else null
-	_wall_chain = WallChainScript.new(
-		building_id,
-		_building_display_name(building_id),
-		maxi(config.cost, 0),
-		maxf(config.build_time_ticks, 1.0),
-		nav_cells,
-		owner_player_id
-	)
-	_advance_wall_chain()
+	return nav_cells
 
 
 func _advance_wall_chain() -> void:
@@ -871,6 +909,7 @@ func _place_wall_chain_segment() -> void:
 	if placed != BuildingPlacementScript.PlaceResult.PLACED:
 		_refund_completed_wall_segment(completed_order)
 		status_changed.emit("%s segment could not be placed; wall chain stopped" % chain.display_name)
+		_building_placement.cancel()
 		_wall_chain = null
 		_refresh_building_option_states()
 		return
