@@ -17,6 +17,7 @@ tech_level = 2
 power_used = 40
 power_generated = 0
 can_be_primary = true
+ai_exit = true
 is_construction_yard = false
 upgraded_primary_required = false
 primary_building_ids = [&"HKConYard"]

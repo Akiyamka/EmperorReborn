@@ -477,7 +477,15 @@ func _try_resume_harvest_from_dock() -> bool:
 	if not _harvest_cycle_enabled or _cycle_spice_layer == null or _cycle_grid == null \
 	or spice >= max_spice:
 		return false
-	var origin: Vector2i = _cycle_grid.call("world_to_grid", global_position)
+	# A refinery's rally point is a field-search origin, not a destination for
+	# the departing harvester. This lets the player steer the automatic
+	# economy loop toward a preferred spice field without making the harvester
+	# visit the flag first.
+	var search_origin := global_position
+	if is_instance_valid(_unload_refinery) \
+	and _unload_refinery.has_method("rally_point_position"):
+		search_origin = _unload_refinery.call("rally_point_position") as Vector3
+	var origin: Vector2i = _cycle_grid.call("world_to_grid", search_origin)
 	var next_cell: Vector2i = _cycle_spice_layer.call(
 		"nearest_spice_cell", origin, 1, -1, _auto_spice_cell_filter
 	)

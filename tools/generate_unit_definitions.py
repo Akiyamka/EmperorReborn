@@ -396,6 +396,7 @@ def building_definition_text(row: sqlite3.Row, occupy_rows: list[str], links: li
             f"power_used = {int(row['power_used'] or 0)}",
             f"power_generated = {int(row['power_generated'] or 0)}",
             f"can_be_primary = {bool_text(row['can_be_primary'])}",
+            *(["ai_exit = true"] if bool(row["ai_exit"]) else []),
             f"is_construction_yard = {bool_text(row['is_con_yard'])}",
             f"upgraded_primary_required = {bool_text(row['upgraded_primary_required'])}",
             f"primary_building_ids = {array_text(primary)}",

@@ -14,6 +14,12 @@ const SCREEN_SURFACE_QUIRKS := {
 	"cu_attack_h0.xbf": {"whitering2.tga": true},
 	"cu_deploy_h0.xbf": {"whitering2.tga": true},
 }
+const CURSOR_TIMELINE_LENGTH_OVERRIDES := {
+	# The authored PlaceFlag rotation completes its seamless clockwise cycle in
+	# the first eight 20 Hz frames. Later keys continue into a different pose,
+	# so wrapping the full movement creates a visible jump.
+	&"place_flag": 0.4,
+}
 
 
 func _initialize() -> void:
@@ -32,6 +38,14 @@ func _initialize() -> void:
 		var scene: PackedScene = builder.build(source_path)
 		if scene == null:
 			_fail("could not convert %s" % source_path)
+			return
+		scene = _prepare_cursor_timeline(
+			scene,
+			builder.fps,
+			float(CURSOR_TIMELINE_LENGTH_OVERRIDES.get(model_key, 0.0))
+		)
+		if scene == null:
+			_fail("could not trim cursor animation in %s" % source_path)
 			return
 		if not builder.missing_textures.is_empty():
 			_fail(
@@ -62,6 +76,59 @@ func _initialize() -> void:
 
 	print("Converted %d original 3D cursor models" % converted)
 	quit(0)
+
+
+## Some cursor XBFs pad one object's transform track with hundreds of identical
+## keys. ModelBakeBuilder correctly preserves that raw timeline, but for a
+## looping cursor this creates a long visual pause after all motion has ended.
+## Retain one source frame after the final actual change, then wrap.
+func _prepare_cursor_timeline(
+	source_scene: PackedScene, fps: float, length_override: float
+) -> PackedScene:
+	var root := source_scene.instantiate() as Node3D
+	if root == null:
+		return null
+	for node in root.find_children("*", "AnimationPlayer", true, false):
+		var player := node as AnimationPlayer
+		if not player.has_animation(&"timeline"):
+			continue
+		var animation := player.get_animation(&"timeline")
+		if length_override > 0.0:
+			animation.length = length_override
+			continue
+		var last_change_time := 0.0
+		for track in animation.get_track_count():
+			var previous: Variant = null
+			for key in animation.track_get_key_count(track):
+				var value: Variant = animation.track_get_key_value(track, key)
+				if previous == null or not _animation_values_equal(value, previous):
+					last_change_time = maxf(
+						last_change_time, animation.track_get_key_time(track, key)
+					)
+				previous = value
+		var trimmed_length := maxf(last_change_time + 1.0 / fps, 1.0 / fps)
+		if trimmed_length < animation.length:
+			animation.length = trimmed_length
+	var result := PackedScene.new()
+	var pack_error := result.pack(root)
+	root.free()
+	return result if pack_error == OK else null
+
+
+func _animation_values_equal(a: Variant, b: Variant) -> bool:
+	if typeof(a) != typeof(b):
+		return false
+	if a is Transform3D:
+		return (a as Transform3D).is_equal_approx(b as Transform3D)
+	if a is Vector3:
+		return (a as Vector3).is_equal_approx(b as Vector3)
+	if a is Quaternion:
+		return (a as Quaternion).is_equal_approx(b as Quaternion)
+	if a is Color:
+		return (a as Color).is_equal_approx(b as Color)
+	if a is float:
+		return is_equal_approx(a as float, b as float)
+	return a == b
 
 
 func _fail(message: String) -> void:

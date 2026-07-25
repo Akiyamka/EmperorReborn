@@ -19,6 +19,9 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 const REPAIR_EFFECT_SCENE := preload("res://assets/converted/ui/cursor_models/repair.scn")
+const RALLY_POINT_MARKER_SCENE := preload(
+	"res://assets/converted/ui/cursor_models/place_flag.scn"
+)
 
 const COLLISION_OBJECT_NAME := "#~~0"
 const RALLY_POINT_CLEARANCE := 1.5
@@ -27,6 +30,9 @@ const REFINERY_ROLE := "Refinery"
 const REFINERY_DOCK_RELEASE_DELAY_SECONDS := 3.0
 const INVALID_REFINERY_DOCK := -1
 const RULE_COMBAT_TICKS_PER_SECOND := 20.0
+const RALLY_POINT_LINE_COLOR := Color(0.12, 1.0, 0.28, 0.9)
+const RALLY_POINT_LINE_WIDTH := 0.10
+const RALLY_POINT_LINE_HEIGHT := 0.08
 
 ## Refinery dock upgrades are visual states of the refinery itself, not
 ## separate Building nodes. The first/left upgrade unfolds ~~3SmallPad01 and
@@ -109,6 +115,11 @@ var _generated_energy := 0
 var _selection_halo
 var _repair_effect: Node3D
 var _has_rally_point := false
+var _rally_point_is_default := true
+var _rally_point_line: MeshInstance3D
+var _rally_point_line_mesh: ImmediateMesh
+var _rally_point_line_material: StandardMaterial3D
+var _rally_point_marker: Node3D
 var _refinery_dock_users: Dictionary = {}
 var _refinery_dock_cooldowns: Dictionary = {}
 
@@ -128,6 +139,8 @@ func _ready() -> void:
 	_apply_refinery_upgrade_pose()
 	_add_selection_collision()
 	_add_selection_halo()
+	_add_rally_point_line()
+	_add_rally_point_marker()
 	# Placement assigns a newly-built node's final position immediately after it
 	# enters the tree. Deferring this lets both pre-placed and newly-built
 	# production buildings receive a point in front of their final transform.
@@ -153,9 +166,22 @@ func _process(delta: float) -> void:
 		mesh_instance.set_instance_shader_parameter("fx_time", _scroll_fx_time)
 
 
-func set_rally_point(position: Vector3) -> void:
+func can_set_rally_point() -> bool:
+	return building_definition != null and building_definition.ai_exit
+
+
+func set_rally_point(position: Vector3) -> bool:
+	if not can_set_rally_point():
+		return false
+	_assign_rally_point(position, false)
+	return true
+
+
+func _assign_rally_point(position: Vector3, is_default: bool) -> void:
 	rally_point = position
 	_has_rally_point = true
+	_rally_point_is_default = is_default
+	_rebuild_rally_point_line()
 	rally_point_changed.emit(rally_point)
 
 
@@ -258,7 +284,95 @@ func _set_default_rally_point_if_unset() -> void:
 	if _has_rally_point:
 		return
 	var clearance := RALLY_POINT_CLEARANCE + _front_collision_extent()
-	set_rally_point(global_position + exit_direction() * clearance)
+	_assign_rally_point(global_position + exit_direction() * clearance, true)
+
+
+func _add_rally_point_line() -> void:
+	_rally_point_line = MeshInstance3D.new()
+	_rally_point_line.name = "RallyPointLine"
+	_rally_point_line.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_rally_point_line.extra_cull_margin = 1000.0
+	add_child(_rally_point_line)
+
+	_rally_point_line_mesh = ImmediateMesh.new()
+	_rally_point_line_material = StandardMaterial3D.new()
+	_rally_point_line_material.albedo_color = RALLY_POINT_LINE_COLOR
+	_rally_point_line_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_rally_point_line_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_rally_point_line_material.no_depth_test = true
+	_rally_point_line_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_rally_point_line_material.render_priority = 19
+	_rebuild_rally_point_line()
+
+
+func _add_rally_point_marker() -> void:
+	_rally_point_marker = RALLY_POINT_MARKER_SCENE.instantiate() as Node3D
+	if _rally_point_marker == null:
+		return
+	_rally_point_marker.name = "RallyPointMarker"
+	# Cursor conversion separates screen/additive surfaces onto render layer 2.
+	# In the world marker both passes must be visible through the gameplay
+	# camera, whose ordinary geometry is on layer 1.
+	for node in _rally_point_marker.find_children("*", "MeshInstance3D", true, false):
+		(node as MeshInstance3D).layers = 1
+	add_child(_rally_point_marker)
+	_refresh_rally_point_marker()
+
+
+func _rebuild_rally_point_line() -> void:
+	if _rally_point_line == null:
+		return
+	_rally_point_line_mesh.clear_surfaces()
+	if not _has_rally_point or _rally_point_is_default:
+		_rally_point_line.mesh = null
+		_refresh_rally_point_line_visibility()
+		_refresh_rally_point_marker()
+		return
+
+	var start := to_local(production_exit_position())
+	var finish := to_local(rally_point)
+	var direction := finish - start
+	direction.y = 0.0
+	if direction.length_squared() <= 0.000001:
+		_rally_point_line.mesh = null
+		_refresh_rally_point_line_visibility()
+		_refresh_rally_point_marker()
+		return
+	var lateral := Vector3(-direction.z, 0.0, direction.x).normalized() \
+		* RALLY_POINT_LINE_WIDTH * 0.5
+	start.y += RALLY_POINT_LINE_HEIGHT
+	finish.y += RALLY_POINT_LINE_HEIGHT
+	_rally_point_line_mesh.surface_begin(
+		Mesh.PRIMITIVE_TRIANGLES, _rally_point_line_material
+	)
+	_add_rally_point_line_triangle(start - lateral, finish - lateral, finish + lateral)
+	_add_rally_point_line_triangle(start - lateral, finish + lateral, start + lateral)
+	_rally_point_line_mesh.surface_end()
+	_rally_point_line.mesh = _rally_point_line_mesh
+	_refresh_rally_point_line_visibility()
+	_refresh_rally_point_marker()
+
+
+func _add_rally_point_line_triangle(a: Vector3, b: Vector3, c: Vector3) -> void:
+	_rally_point_line_mesh.surface_add_vertex(a)
+	_rally_point_line_mesh.surface_add_vertex(b)
+	_rally_point_line_mesh.surface_add_vertex(c)
+
+
+func _refresh_rally_point_line_visibility() -> void:
+	if _rally_point_line != null:
+		_rally_point_line.visible = is_selected \
+			and _has_rally_point and not _rally_point_is_default \
+			and _rally_point_line.mesh != null
+
+
+func _refresh_rally_point_marker() -> void:
+	if _rally_point_marker == null:
+		return
+	if _has_rally_point:
+		_rally_point_marker.position = to_local(rally_point)
+	_rally_point_marker.visible = is_selected \
+		and _has_rally_point and not _rally_point_is_default
 
 
 func _front_collision_extent() -> float:
@@ -721,6 +835,8 @@ func set_selected(value: bool) -> void:
 	is_selected = value
 	if _selection_halo != null:
 		_selection_halo.set_selected(value)
+	_refresh_rally_point_line_visibility()
+	_refresh_rally_point_marker()
 
 
 func set_hovered(value: bool) -> void:

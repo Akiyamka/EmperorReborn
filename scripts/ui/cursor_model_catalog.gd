@@ -50,6 +50,8 @@ const MODEL_FILES := {
 	&"dn6": "CU_Teleport_H0.xbf",
 	&"gather": "CU_Move_H0.xbf",
 	&"cant_deploy": "CU_Cant_Deploy_H0.xbf",
+	&"place_flag": "CU_placeflag_H0.xbf",
+	&"cant_place_flag": "CU_Cant_placeflag_H0.xbf",
 }
 
 

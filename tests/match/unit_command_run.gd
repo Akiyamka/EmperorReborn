@@ -84,6 +84,7 @@ class FakeBuilding extends Node3D:
 	var selected := false
 	var rally_points: Array[Vector3] = []
 	var refinery := false
+	var ai_exit := true
 
 	func set_selected(active: bool) -> void:
 		selected = active
@@ -96,6 +97,9 @@ class FakeBuilding extends Node3D:
 
 	func set_rally_point(target: Vector3) -> void:
 		rally_points.append(target)
+
+	func can_set_rally_point() -> bool:
+		return ai_exit
 
 	func is_refinery() -> bool:
 		return refinery
@@ -497,6 +501,44 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 	mcv.add_child(mcv_collider)
 	enemy.add_child(enemy_collider)
 
+	var barracks := FakeBuilding.new()
+	barracks.name = "ATBarracks"
+	barracks.player = local_player
+	barracks.add_to_group("buildings")
+	root.add_child(barracks)
+	commands._set_selection([barracks])
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({"position": Vector3(8.0, 0.0, 10.0)})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.PLACE_FLAG,
+		"a valid building rally point must use the place-flag cursor"
+	)
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.CANT_PLACE_FLAG,
+		"a rally point outside terrain must use the cant-place-flag cursor"
+	)
+	var windtrap := FakeBuilding.new()
+	windtrap.name = "ATSmWindtrap"
+	windtrap.player = local_player
+	windtrap.ai_exit = false
+	windtrap.add_to_group("buildings")
+	root.add_child(windtrap)
+	commands._set_selection([windtrap])
+	commands.raycast_hits.append({})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) == UnitCommandControllerScript.NO_CURSOR_OVERRIDE,
+		"a building without AiExit must not expose a rally-point cursor"
+	)
+	commands.raycast_hits.append({})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+	_expect(
+		windtrap.rally_points.is_empty(),
+		"a building without AiExit must reject right-click rally points"
+	)
+
+	commands._set_selection([])
 	commands.raycast_hits.append({"collider": scout_collider})
 	_expect(
 		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.OVER_UNIT,
@@ -599,8 +641,8 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(50.2, 0.0, 52.7)})
 	_expect(
-		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.GATHER,
-		"a harvestable spice target must use the separate Gather cursor"
+		commands._command_cursor_at(Vector2.ZERO) == CursorManagerScript.CursorType.ATTACK,
+		"a harvester over spice must use the Attack cursor for its gather order"
 	)
 
 	commands._set_selection([])
@@ -619,7 +661,7 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 		"a row-four destination must reject the movement order itself"
 	)
 	_expect(
-		commands.raycast_masks == [2, 2, 2, 2, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 2, 1],
+		commands.raycast_masks == [2, 1, 2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 2, 1],
 		"cursor context must keep entity and terrain raycasts on their dedicated layers"
 	)
 
@@ -630,6 +672,8 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 	enemy.queue_free()
 	harvester.queue_free()
 	refinery.queue_free()
+	barracks.queue_free()
+	windtrap.queue_free()
 	terrain.free()
 	return token
 

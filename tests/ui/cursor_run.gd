@@ -31,7 +31,7 @@ func _test_model_catalog(cursors) -> void:
 		CursorManagerScript.ORIGINAL_CURSOR_COUNT == 33,
 		"the original Cursor Test.txt ordering must retain all 33 entries"
 	)
-	_expect(cursors.cursor_count() == 36, "the remake semantic states must remain appended")
+	_expect(cursors.cursor_count() == 38, "the remake semantic states must remain appended")
 	_expect(
 		CursorManagerScript.CURSOR_MODEL_KEYS.size() == cursors.cursor_count(),
 		"every semantic cursor must map to a 3D model key"
@@ -81,6 +81,32 @@ func _test_model_catalog(cursors) -> void:
 		== "CU_Teleport_H0.xbf",
 		"the ring DN6 state must use the Teleport model"
 	)
+	_expect(
+		cursors.model_source_path(CursorManagerScript.CursorType.PLACE_FLAG).get_file()
+		== "CU_placeflag_H0.xbf",
+		"rally-point placement must use the original place-flag cursor"
+	)
+	_expect(
+		cursors.model_source_path(CursorManagerScript.CursorType.CANT_PLACE_FLAG).get_file()
+		== "CU_Cant_placeflag_H0.xbf",
+		"invalid rally-point placement must use the original cant-place-flag cursor"
+	)
+	var place_flag_scene := load(
+		cursors.model_scene_path(CursorManagerScript.CursorType.PLACE_FLAG)
+	) as PackedScene
+	var place_flag_model := place_flag_scene.instantiate() as Node3D
+	var place_flag_player := place_flag_model.find_child(
+		"AnimationPlayer", true, false
+	) as AnimationPlayer
+	_expect(
+		is_equal_approx(place_flag_player.get_animation(&"timeline").length, 0.4),
+		"place-flag animation must wrap at its seamless eight-frame cycle"
+	)
+	_expect(
+		place_flag_player.get_animation(&"timeline").loop_mode == Animation.LOOP_LINEAR,
+		"place-flag animation must preserve its clockwise direction while looping"
+	)
+	place_flag_model.free()
 	_expect(
 		cursors.model_scene_path(CursorManagerScript.CursorType.GATHER)
 		!= cursors.model_scene_path(CursorManagerScript.CursorType.MOVE),

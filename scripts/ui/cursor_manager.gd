@@ -5,8 +5,8 @@ const CursorModelCatalogScript := preload("res://scripts/ui/cursor_model_catalog
 const CURSOR_SCREEN_BLEND_SHADER := preload("res://scripts/ui/cursor_screen_blend.gdshader")
 
 # Indices 0..32 retain the order documented by the original
-# UI0001/CURSORS/Cursor Test.txt. Gather and Cant Deploy are remake-specific
-# semantic states appended without disturbing that contract.
+# UI0001/CURSORS/Cursor Test.txt. Remake-specific semantic states are appended
+# without disturbing that contract.
 enum CursorType {
 	POINTER,
 	MOVE,
@@ -44,10 +44,12 @@ enum CursorType {
 	GATHER,
 	CANT_DEPLOY,
 	CANT_REPAIR,
+	PLACE_FLAG,
+	CANT_PLACE_FLAG,
 }
 
 const ORIGINAL_CURSOR_COUNT := 33
-const CURSOR_COUNT := 36
+const CURSOR_COUNT := 38
 const EDGE_SCROLL_OVERRIDE := &"edge_scroll"
 const CURSOR_CANVAS_LAYER := 128
 const CURSOR_NORMAL_RENDER_LAYER := 1
@@ -99,6 +101,8 @@ const CURSOR_MODEL_KEYS := {
 	CursorType.GATHER: &"gather",
 	CursorType.CANT_DEPLOY: &"cant_deploy",
 	CursorType.CANT_REPAIR: &"cant_repair",
+	CursorType.PLACE_FLAG: &"place_flag",
+	CursorType.CANT_PLACE_FLAG: &"cant_place_flag",
 }
 
 const SCROLL_CURSORS := {

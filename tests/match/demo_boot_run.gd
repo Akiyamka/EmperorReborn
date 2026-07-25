@@ -765,13 +765,46 @@ func _test_unit_production_rally_and_primary() -> void:
 	first_barracks.set_owner_player_id(1)
 	primary_barracks.set_owner_player_id(1)
 	await process_frame
+	_expect(
+		primary_barracks.building_definition.ai_exit,
+		"a building with AiExit must support an explicit rally point"
+	)
 
 	_expect(
 		first_barracks.rally_point_position().z > first_barracks.global_position.z,
 		"a building's default rally point must be directly in front of it"
 	)
+	var default_rally_line := first_barracks.get_node("RallyPointLine") as MeshInstance3D
+	var default_rally_marker := first_barracks.get_node("RallyPointMarker") as Node3D
+	first_barracks.set_selected(true)
+	_expect(
+		default_rally_line.mesh == null and not default_rally_line.visible \
+		and not default_rally_marker.visible,
+		"a selected building must not draw its automatic default rally point or marker"
+	)
+	first_barracks.set_selected(false)
 	var rally_point := Vector3(120.0, 8.0, 28.0)
 	primary_barracks.set_rally_point(rally_point)
+	var rally_line := primary_barracks.get_node("RallyPointLine") as MeshInstance3D
+	var rally_marker := primary_barracks.get_node("RallyPointMarker") as Node3D
+	_expect(
+		rally_line.mesh != null and not rally_line.visible and not rally_marker.visible,
+		"an explicit rally point visual must stay hidden while its building is unselected"
+	)
+	primary_barracks.set_selected(true)
+	_expect(
+		rally_line.visible and rally_marker.visible,
+		"selecting a building must reveal its rally point line and place-flag model"
+	)
+	_expect(
+		rally_marker.global_position.is_equal_approx(rally_point),
+		"the place-flag model must stand at the explicit rally point"
+	)
+	primary_barracks.set_selected(false)
+	_expect(
+		not rally_line.visible and not rally_marker.visible,
+		"deselecting a building must hide its rally point line and marker"
+	)
 	var players = get_root().get_node("Players")
 	players.designate_primary_building(primary_barracks, 1, "ATBarracks")
 

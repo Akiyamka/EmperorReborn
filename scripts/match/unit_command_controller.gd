@@ -250,7 +250,7 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 			continue
 		if entity.has_method("move_to"):
 			movable_entities.append(entity)
-		elif entity.has_method("set_rally_point"):
+		elif _can_set_rally_point(entity):
 			rally_buildings.append(entity)
 	if movable_entities.is_empty() and rally_buildings.is_empty():
 		if deploying_entities > 0:
@@ -461,19 +461,28 @@ func _command_cursor_at(screen_position: Vector2) -> int:
 		return CursorManagerScript.CursorType.OVER_UNIT
 	if _selected_entities.is_empty():
 		return NO_CURSOR_OVERRIDE
+	if not _has_movement_or_rally_selection():
+		return NO_CURSOR_OVERRIDE
 
 	var terrain_hit := _raycast(screen_position, TERRAIN_COLLISION_MASK)
 	if terrain_hit.is_empty():
-		return NO_CURSOR_OVERRIDE if _attack_modifier_down \
-			else CursorManagerScript.CursorType.CANT_MOVE
+		if _attack_modifier_down:
+			return NO_CURSOR_OVERRIDE
+		if _has_rally_point_selection():
+			return CursorManagerScript.CursorType.CANT_PLACE_FLAG
+		return CursorManagerScript.CursorType.CANT_MOVE
 	var target: Vector3 = terrain_hit["position"]
 	if _attack_modifier_down:
 		return CursorManagerScript.CursorType.ATTACK \
 			if _can_issue_attack_order(target) else NO_CURSOR_OVERRIDE
 	if not _can_issue_movement_order(target):
+		if _has_rally_point_selection():
+			return CursorManagerScript.CursorType.CANT_PLACE_FLAG
 		return CursorManagerScript.CursorType.CANT_MOVE
+	if _has_rally_point_selection():
+		return CursorManagerScript.CursorType.PLACE_FLAG
 	if _can_gather_at(target):
-		return CursorManagerScript.CursorType.GATHER
+		return CursorManagerScript.CursorType.ATTACK
 	return CursorManagerScript.CursorType.MOVE
 
 
@@ -582,7 +591,7 @@ func _can_issue_movement_order(target: Vector3) -> bool:
 			continue
 		if entity.has_method("move_to"):
 			movable_entities.append(entity)
-		elif entity.has_method("set_rally_point"):
+		elif _can_set_rally_point(entity):
 			has_rally_building = true
 	if has_rally_building:
 		return true
@@ -591,6 +600,29 @@ func _can_issue_movement_order(target: Vector3) -> bool:
 	if _navigation != null and _navigation.has_method("can_move_to"):
 		return bool(_navigation.call("can_move_to", movable_entities, target))
 	return true
+
+
+func _has_rally_point_selection() -> bool:
+	for entity in _selected_entities:
+		if is_instance_valid(entity) and _can_control(entity) and _can_set_rally_point(entity):
+			return true
+	return false
+
+
+func _has_movement_or_rally_selection() -> bool:
+	for entity in _selected_entities:
+		if not is_instance_valid(entity) or not _can_control(entity):
+			continue
+		if entity.has_method("move_to") or _can_set_rally_point(entity):
+			return true
+	return false
+
+
+func _can_set_rally_point(entity: Node) -> bool:
+	if not entity.has_method("set_rally_point"):
+		return false
+	return not entity.has_method("can_set_rally_point") \
+		or bool(entity.call("can_set_rally_point"))
 
 
 func _find_selectable_entity(node: Node):
