@@ -1,6 +1,7 @@
 extends SceneTree
 
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
+const WallLineScript := preload("res://scripts/buildings/wall_line.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -32,6 +33,7 @@ func _initialize() -> void:
 	_run_case("cancel refunds exactly paid credits", _test_cancel_refund)
 	_run_case("ready signal and consume handoff", _test_ready_and_consume)
 	_run_case("start contract", _test_start_contract)
+	_run_case("wall lines connect every segment by a side", _test_wall_line_side_connectivity)
 
 	if _failures > 0:
 		printerr("BuildingQueue tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -164,4 +166,39 @@ func _test_start_contract(token: int) -> int:
 	_expect(not queue.start(&"InvalidTime", "Invalid", 0, 0.0), "a non-positive build duration must be rejected")
 	_expect(queue.start(&"First", "First", 0, 60.0), "a valid order must start after rejected inputs")
 	_expect(not queue.start(&"Second", "Second", 0, 60.0), "a duplicate queue start must be rejected")
+	return token
+
+
+func _test_wall_line_side_connectivity(token: int) -> int:
+	var cases := [
+		[Vector2i(0, 0), Vector2i(5, 0)],
+		[Vector2i(0, 0), Vector2i(0, -4)],
+		[Vector2i(0, 0), Vector2i(5, 2)],
+		[Vector2i(3, -2), Vector2i(-2, 4)],
+		[Vector2i(4, 4), Vector2i(-1, -1)],
+	]
+	for endpoints in cases:
+		var start: Vector2i = endpoints[0]
+		var finish: Vector2i = endpoints[1]
+		var cells: Array[Vector2i] = WallLineScript.occupy_cells_between(start, finish)
+		_expect(cells.front() == start, "a wall line must retain its selected start")
+		_expect(cells.back() == finish, "a wall line must retain its selected end")
+		_expect(
+			cells.size() == absi(finish.x - start.x) + absi(finish.y - start.y) + 1,
+			"a wall line must contain one side-connected step per changed coordinate"
+		)
+		for index in range(1, cells.size()):
+			var step := cells[index] - cells[index - 1]
+			_expect(
+				absi(step.x) + absi(step.y) == 1,
+				"neighboring wall cells must share a side, not only a corner"
+			)
+
+		var backwards: Array[Vector2i] = WallLineScript.occupy_cells_between(finish, start)
+		var reversed := cells.duplicate()
+		reversed.reverse()
+		_expect(
+			backwards == reversed,
+			"reversing the selected endpoints must reverse the same wall path"
+		)
 	return token

@@ -42,6 +42,7 @@ var _occupy_rows: Array[String] = []
 var _rotation_quarter_turns := 0
 var _anchor_cell := INVALID_ANCHOR
 var _preview_anchor_cells: Array[Vector2i] = []
+var _available_preview_anchor_cells: Array[Vector2i] = []
 var _preview_cells_by_grid_cell: Dictionary = {}
 var _preview_arrow: Node3D
 var _has_anchor := false
@@ -145,6 +146,17 @@ func preview_at_hover_cells(hover_cells: Array[Vector2i]) -> void:
 	_preview_anchor_cells = anchor_cells
 	_has_anchor = true
 	_rebuild_preview_for_anchors(anchor_cells)
+
+
+func available_preview_anchor_cells() -> Array[Vector2i]:
+	return _available_preview_anchor_cells.duplicate()
+
+
+func wall_marker_world_position(anchor_cell: Vector2i) -> Vector3:
+	return (
+		_snap_to_ground(_occupy_cell_world_center(anchor_cell))
+		+ Vector3.UP * CELL_SURFACE_OFFSET
+	)
 
 
 ## Faces the building's local +Z exit toward the dominant grid direction from
@@ -327,8 +339,11 @@ func _rebuild_preview_for_anchors(anchor_cells: Array[Vector2i]) -> void:
 			# increasingly expensive as the cursor moved.
 			existing_footprints = _existing_building_footprints()
 	var next_preview_cells: Dictionary = {}
+	var available_anchor_cells: Array[Vector2i] = []
 	for anchor_index in anchor_cells.size():
 		var anchor_cell := anchor_cells[anchor_index]
+		var anchor_has_cells := false
+		var anchor_can_build := true
 		# Checked once per anchor rather than per cell: it does not depend on
 		# the individual occupy cell, and every cell's preview material must
 		# reflect it, not just the aggregate _can_build result.
@@ -350,6 +365,7 @@ func _rebuild_preview_for_anchors(anchor_cells: Array[Vector2i]) -> void:
 					continue
 
 				has_cells = true
+				anchor_has_cells = true
 				var grid_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
 				var cell_available := (
 					_is_occupy_cell_buildable(grid_cell)
@@ -357,6 +373,7 @@ func _rebuild_preview_for_anchors(anchor_cells: Array[Vector2i]) -> void:
 						and within_radius
 				)
 				can_build = can_build and cell_available
+				anchor_can_build = anchor_can_build and cell_available
 
 				var preview_scene := _preview_scene_for_marker(marker, cell_available)
 				if preview_scene == null:
@@ -376,12 +393,15 @@ func _rebuild_preview_for_anchors(anchor_cells: Array[Vector2i]) -> void:
 					)
 				if not entry.is_empty():
 					next_preview_cells[grid_cell] = entry
+		if anchor_has_cells and anchor_can_build:
+			available_anchor_cells.append(anchor_cell)
 
 	for grid_cell in _preview_cells_by_grid_cell:
 		if not next_preview_cells.has(grid_cell):
 			var stale_entry: Dictionary = _preview_cells_by_grid_cell[grid_cell]
 			_release_preview_cell(stale_entry.get("node") as Node3D)
 	_preview_cells_by_grid_cell = next_preview_cells
+	_available_preview_anchor_cells = available_anchor_cells
 
 	_can_build = has_cells and can_build
 	if has_cells and not _is_wall_candidate and not anchor_cells.is_empty():
@@ -484,6 +504,7 @@ func _clear() -> void:
 	_skip_build_radius_check = false
 	_anchor_cell = INVALID_ANCHOR
 	_preview_anchor_cells.clear()
+	_available_preview_anchor_cells.clear()
 	_has_anchor = false
 	_can_build = false
 	visible = false
@@ -501,6 +522,7 @@ func _clear_preview_cells() -> void:
 func _hide_preview() -> void:
 	_anchor_cell = INVALID_ANCHOR
 	_preview_anchor_cells.clear()
+	_available_preview_anchor_cells.clear()
 	_has_anchor = false
 	_can_build = false
 	visible = false
@@ -543,6 +565,7 @@ func _set_rotation_quarter_turns(value: int) -> bool:
 	# the unchanged-anchor fast path.
 	_anchor_cell = INVALID_ANCHOR
 	_preview_anchor_cells.clear()
+	_available_preview_anchor_cells.clear()
 	_has_anchor = false
 	return true
 

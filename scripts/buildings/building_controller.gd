@@ -63,6 +63,8 @@ var _building_double_click := DoubleClickTrackerScript.new()
 var _placement_pointer_down := false
 var _placement_press_position := Vector2.ZERO
 var _placement_rotated_during_press := false
+var _wall_marker_scene: PackedScene
+var _wall_markers: Dictionary = {}
 
 
 func setup(
@@ -73,10 +75,12 @@ func setup(
 		arrow_scene: PackedScene,
 		building_preview_scene: PackedScene,
 		cant_build_preview_scene: PackedScene,
-		skirt_preview_scene: PackedScene
+		skirt_preview_scene: PackedScene,
+		wall_marker_scene: PackedScene = null
 ) -> void:
 	camera = placement_camera
 	_building_ids = building_ids.duplicate()
+	_wall_marker_scene = wall_marker_scene
 	if _building_placement.get_parent() != self:
 		add_child(_building_placement)
 	var navigation_grid = map_loader.navigation_grid if map_loader != null else null
@@ -156,12 +160,6 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 			return true
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			_set_wall_line_mode(false)
-			return true
-		return false
-
-	if _wall_chain != null:
-		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
-			_cancel_building_order()
 			return true
 		return false
 
@@ -392,8 +390,11 @@ func _on_wall_line_click(screen_position: Vector2) -> void:
 
 	var start_cell: Vector2i = _wall_line_start_cell
 	var building_id := _wall_line_building_id
+	_preview_wall_line_to_hover_cell(cell)
+	var buildable_cells := _building_placement.available_preview_anchor_cells()
 	_set_wall_line_mode(false)
-	_start_wall_chain(start_cell, cell, building_id)
+	_lock_wall_markers(buildable_cells)
+	_start_wall_chain(start_cell, cell, building_id, buildable_cells)
 
 
 func _begin_wall_line_preview(building_id: StringName) -> void:
@@ -421,6 +422,35 @@ func _preview_wall_line_to_hover_cell(hover_cell: Vector2i) -> void:
 	if _wall_line_start_cell != null:
 		preview_cells = _wall_nav_cells_between(_wall_line_start_cell, hover_cell)
 	_building_placement.preview_at_hover_cells(preview_cells)
+
+
+func _lock_wall_markers(anchor_cells: Array[Vector2i]) -> void:
+	_clear_wall_markers()
+	if _wall_marker_scene == null:
+		return
+	for anchor_cell in anchor_cells:
+		var marker := _wall_marker_scene.instantiate() as Node3D
+		if marker == null:
+			continue
+		marker.name = "WallMarker_%d_%d" % [anchor_cell.x, anchor_cell.y]
+		add_child(marker)
+		marker.global_position = _building_placement.wall_marker_world_position(anchor_cell)
+		_wall_markers[anchor_cell] = marker
+
+
+func _remove_wall_marker(anchor_cell: Vector2i) -> void:
+	var marker := _wall_markers.get(anchor_cell) as Node3D
+	_wall_markers.erase(anchor_cell)
+	if marker == null:
+		return
+	if marker.get_parent() == self:
+		remove_child(marker)
+	marker.queue_free()
+
+
+func _clear_wall_markers() -> void:
+	for anchor_cell in _wall_markers.keys():
+		_remove_wall_marker(anchor_cell)
 
 
 func _try_sell_building(screen_position: Vector2) -> void:
@@ -801,10 +831,11 @@ func _cancel_building_order() -> void:
 		player.add_money(refunded)
 
 	_building_placement.cancel()
-	# The wall chain only ever auto-orders its next cell once the current one
-	# succeeds (docs/mechanics/production.md section 2 "walls"), so cancelling
-	# the in-flight cell's order is enough to stop the whole chain.
+	# The wall chain only auto-orders a later buildable cell after the current
+	# one finishes (blocked cells in between are skipped), so cancelling the
+	# in-flight order is enough to stop the whole chain.
 	_wall_chain = null
+	_clear_wall_markers()
 	status_changed.emit("%s canceled; refunded %d" % [display_name, refunded])
 	_refresh_building_option_states()
 
@@ -825,19 +856,34 @@ func _begin_ready_building_placement() -> void:
 	_refresh_building_option_states()
 
 
-func _start_wall_chain(from_nav_cell: Vector2i, to_nav_cell: Vector2i, building_id: StringName = &"ATWall") -> void:
+func _start_wall_chain(
+		from_nav_cell: Vector2i,
+		to_nav_cell: Vector2i,
+		building_id: StringName,
+		selected_buildable_cells: Array[Vector2i]
+	) -> void:
 	if String(building_id).is_empty():
 		building_id = &"ATWall"
 	if _building_queue.has_order() or _wall_chain != null:
 		status_changed.emit("Building queue is busy")
+		_clear_wall_markers()
 		return
 
 	var config := _building_config(building_id)
 	if config == null:
 		status_changed.emit("Wall rules are not loaded")
+		_clear_wall_markers()
 		return
 
-	var nav_cells := _wall_nav_cells_between(from_nav_cell, to_nav_cell)
+	var nav_cells: Array[Vector2i] = []
+	for cell in _wall_nav_cells_between(from_nav_cell, to_nav_cell):
+		if selected_buildable_cells.has(cell):
+			nav_cells.append(cell)
+	if nav_cells.is_empty():
+		status_changed.emit("Wall line has no buildable segments")
+		_clear_wall_markers()
+		_refresh_building_option_states()
+		return
 
 	var players = _players()
 	var owner_player_id = players.local_player_id if players != null else null
@@ -872,14 +918,56 @@ func _wall_nav_cells_between(from_nav_cell: Vector2i, to_nav_cell: Vector2i) -> 
 func _advance_wall_chain() -> void:
 	if _wall_chain == null:
 		return
+	while _wall_chain != null:
+		var availability := _wall_segment_availability(_wall_chain)
+		if availability == BuildingPlacementScript.PlaceResult.AVAILABLE:
+			break
+		if availability != BuildingPlacementScript.PlaceResult.CANNOT_BUILD:
+			status_changed.emit("%s segment could not be evaluated" % _wall_chain.display_name)
+			_wall_chain = null
+			_clear_wall_markers()
+			_refresh_building_option_states()
+			return
+		var skipped_index := _wall_chain.segment_index()
+		_remove_wall_marker(_wall_chain.current_cell())
+		if not _wall_chain.advance():
+			status_changed.emit(
+				"%s wall complete; segment %d/%d skipped" % [
+					_wall_chain.display_name,
+					skipped_index,
+					_wall_chain.segment_count(),
+				]
+			)
+			_wall_chain = null
+			_clear_wall_markers()
+			_refresh_building_option_states()
+			return
+		status_changed.emit(
+			"%s segment %d/%d skipped" % [
+				_wall_chain.display_name,
+				skipped_index,
+				_wall_chain.segment_count(),
+			]
+		)
 	if not _building_queue.start(_wall_chain.building_id, _wall_chain.display_name, _wall_chain.cost, _wall_chain.build_time_ticks):
 		status_changed.emit("%s segment could not be queued" % _wall_chain.display_name)
 		_wall_chain = null
+		_clear_wall_markers()
 		return
 	status_changed.emit(
 		"%s segment %d/%d ordered" % [_wall_chain.display_name, _wall_chain.segment_index(), _wall_chain.segment_count()]
 	)
 	_refresh_building_option_states()
+
+
+func _wall_segment_availability(chain: WallChain) -> BuildingPlacementScript.PlaceResult:
+	var config := _building_config(chain.building_id)
+	var occupy_rows := _building_occupy_rows(config)
+	if not _building_placement.begin(chain.building_id, chain.display_name, occupy_rows, true):
+		return BuildingPlacementScript.PlaceResult.INACTIVE
+	var result := _building_placement.evaluate_at_hover_cell(chain.current_cell())
+	_building_placement.cancel()
+	return result
 
 
 func _place_wall_chain_segment() -> void:
@@ -892,6 +980,7 @@ func _place_wall_chain_segment() -> void:
 		_refund_completed_wall_segment(completed_order)
 		status_changed.emit("%s has no occupy_rows" % chain.display_name)
 		_wall_chain = null
+		_clear_wall_markers()
 		_refresh_building_option_states()
 		return
 
@@ -901,19 +990,40 @@ func _place_wall_chain_segment() -> void:
 		status_changed.emit("%s placement valid; missing scene %s" % [chain.display_name, scene_path])
 		_building_placement.cancel()
 		_wall_chain = null
+		_clear_wall_markers()
 		_refresh_building_option_states()
 		return
 
 	var scene := load(scene_path) as PackedScene
 	var placed := _building_placement.try_place_at_hover_cell(chain.current_cell(), scene, chain.owner_player_id)
+	if placed == BuildingPlacementScript.PlaceResult.CANNOT_BUILD:
+		_refund_completed_wall_segment(completed_order)
+		_building_placement.cancel()
+		var skipped_index := chain.segment_index()
+		_remove_wall_marker(chain.current_cell())
+		if chain.advance():
+			status_changed.emit(
+				"%s segment %d/%d skipped" % [
+					chain.display_name, skipped_index, chain.segment_count()
+				]
+			)
+			_advance_wall_chain()
+		else:
+			status_changed.emit("%s wall complete; final segment skipped" % chain.display_name)
+			_wall_chain = null
+			_clear_wall_markers()
+			_refresh_building_option_states()
+		return
 	if placed != BuildingPlacementScript.PlaceResult.PLACED:
 		_refund_completed_wall_segment(completed_order)
 		status_changed.emit("%s segment could not be placed; wall chain stopped" % chain.display_name)
 		_building_placement.cancel()
 		_wall_chain = null
+		_clear_wall_markers()
 		_refresh_building_option_states()
 		return
 
+	_remove_wall_marker(chain.current_cell())
 	if chain.advance():
 		status_changed.emit(
 			"%s segment %d/%d placed" % [chain.display_name, chain.segment_index() - 1, chain.segment_count()]
@@ -922,6 +1032,7 @@ func _place_wall_chain_segment() -> void:
 	else:
 		status_changed.emit("%s wall complete" % chain.display_name)
 		_wall_chain = null
+		_clear_wall_markers()
 		_refresh_building_option_states()
 
 

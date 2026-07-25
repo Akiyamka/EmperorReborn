@@ -15,6 +15,7 @@ const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_a
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
 const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
 const PLACEMENT_SKIRT_SCENE := preload("res://assets/converted/placement/build_skirt.scn")
+const PLACEMENT_WALL_SCENE := preload("res://assets/converted/placement/build_wall.scn")
 const LOCAL_PLAYER_ID := 1
 const ENEMY_PLAYER_ID := 2
 
@@ -133,7 +134,8 @@ func _setup_building_controller() -> void:
 		PLACEMENT_ARROW_SCENE,
 		PLACEMENT_BUILDING_SCENE,
 		PLACEMENT_CANT_BUILD_SCENE,
-		PLACEMENT_SKIRT_SCENE
+		PLACEMENT_SKIRT_SCENE,
+		PLACEMENT_WALL_SCENE
 	)
 
 

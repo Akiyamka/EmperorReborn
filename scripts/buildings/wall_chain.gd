@@ -1,9 +1,10 @@
 class_name WallChain
 extends RefCounted
 
-## Tracks a wall's line-of-cells order: one BuildingQueue order per cell,
-## the next cell only ever queued once the previous one finishes (see
-## BuildingController._advance_wall_chain / _place_wall_chain_segment).
+## Tracks a wall's line-of-cells order: one BuildingQueue order per buildable
+## cell. Blocked cells are advanced past without an order; otherwise the next
+## cell is queued once the previous one finishes (see BuildingController's
+## _advance_wall_chain / _place_wall_chain_segment).
 ## Cancelling the current cell's order simply drops this chain, which stops
 ## the auto-continuation (docs/mechanics/production.md section 2 "walls").
 

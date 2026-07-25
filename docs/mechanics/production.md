@@ -86,9 +86,13 @@ Rules for placing a ready building on the map:
 - **walls** (verified) are a special form of construction:
   - ordered as a **line from point A to point B**, built **one cell at a time**:
     each cell is a separate order in the construction queue, automatically
-    placed after the preceding cell completes successfully;
+    placed after the preceding buildable cell completes successfully;
+  - cells where construction is not allowed are shown as blocked during line
+    selection and **skipped without stopping the remaining wall chain**;
+  - after the line is confirmed, its buildable cells retain `build_wall`
+    markers until the corresponding segment is built or the order is canceled;
   - **cancelling one cell's order also cancels all later ones** (the next cell is
-    auto-ordered only when the previous one succeeds);
+    auto-ordered only when the previous buildable one succeeds);
   - block **passability and visibility**; projectiles with **indirect trajectories
     (artillery) pass over walls**, while direct-fire projectiles are blocked
     (3D collision, section 1 §1);

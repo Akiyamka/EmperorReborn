@@ -27,6 +27,11 @@ class FakeGrid extends RefCounted:
 		return {"valid": true, "buildable": true}
 
 
+class PartiallyBlockedGrid extends FakeGrid:
+	func cell_debug(cell: Vector2i) -> Dictionary:
+		return {"valid": true, "buildable": cell.x < 4}
+
+
 class FootprintConfig extends Resource:
 	var rows: Array[String]
 
@@ -441,6 +446,27 @@ func _test_wall_footprint_omits_arrow(token: int) -> int:
 	_expect(
 		placement.get_child_count() == 4,
 		"extending a wall line must instantiate only its new segment preview"
+	)
+
+	placement.setup(
+		null,
+		PartiallyBlockedGrid.new(),
+		buildings_root,
+		PlacementArrowScene,
+		PlacementBuildingScene,
+		null,
+		null,
+		Callable()
+	)
+	placement.begin(&"ATWall", "Wall", _rows(["b"]), true)
+	placement.preview_at_hover_cells([
+		Vector2i(2, 4),
+		Vector2i(4, 4),
+		Vector2i(6, 4),
+	])
+	_expect(
+		placement.available_preview_anchor_cells() == [Vector2i(2, 4)],
+		"only green wall footprints may become fixed build_wall markers"
 	)
 	placement.queue_free()
 	buildings_root.queue_free()

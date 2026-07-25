@@ -7,6 +7,7 @@ const BuildingOptionStateScript := preload("res://scripts/buildings/building_opt
 const WallChainScript := preload("res://scripts/buildings/wall_chain.gd")
 const ATConYardScene := preload("res://assets/converted/buildings/ATConYard/ATConYard.scn")
 const PlacementBuildingScene := preload("res://assets/converted/placement/build_building.scn")
+const PlacementWallScene := preload("res://assets/converted/placement/build_wall.scn")
 
 var _assertions := 0
 var _failures := 0
@@ -60,6 +61,18 @@ class FakeGrid extends RefCounted:
 		return {"valid": true, "buildable": true}
 
 
+class MutableGrid extends FakeGrid:
+	var blocked_cells: Dictionary = {}
+
+	func block_occupy_cell(anchor: Vector2i) -> void:
+		for y in BuildingPlacement.NAV_CELLS_PER_OCCUPY_CELL:
+			for x in BuildingPlacement.NAV_CELLS_PER_OCCUPY_CELL:
+				blocked_cells[anchor + Vector2i(x, y)] = true
+
+	func cell_debug(cell: Vector2i) -> Dictionary:
+		return {"valid": true, "buildable": not blocked_cells.has(cell)}
+
+
 func _initialize() -> void:
 	await process_frame
 	var players = root.get_node("Players")
@@ -73,6 +86,10 @@ func _initialize() -> void:
 	_run_case("freed controller leaves no resource forwarding", _test_free_disconnects_resource_forwarding.bind(local_player))
 	_run_case("failed completed wall segment refunds paid credits", _test_completed_wall_refund.bind(local_player))
 	_run_case("wall line preview spans selection and stops before ordering", _test_wall_line_preview_only_during_selection)
+	_run_case("wall chain skips initially blocked segments", _test_wall_chain_skips_blocked_segment)
+	_run_case("wall chain continues when an ordered segment becomes blocked", _test_wall_chain_continues_after_late_block)
+	_run_case("world right click does not cancel a fixed wall line", _test_fixed_wall_line_ignores_world_right_click)
+	_run_case("fixed wall markers remain until built or canceled", _test_fixed_wall_marker_lifecycle)
 	_run_case("building sale plays the authored sell transition", _test_sale_animation.bind(local_player))
 	_run_case("building sale reverses construct without an authored sell transition", _test_sale_construct_fallback.bind(local_player))
 	_run_case(
@@ -233,6 +250,156 @@ func _test_wall_line_preview_only_during_selection(token: int) -> int:
 		"ordering the first segment must not preview it or any following segment"
 	)
 	controller.free()
+	return token
+
+
+func _test_wall_chain_skips_blocked_segment(token: int) -> int:
+	var controller := _new_controller()
+	_setup_without_assets(controller)
+	var grid := MutableGrid.new()
+	grid.block_occupy_cell(Vector2i(2, 4))
+	controller._building_placement.setup(
+		null, grid, null, null, null, null, null, Callable()
+	)
+	controller._wall_chain = WallChainScript.new(
+		&"ATWall", "Wall", 0, 1.0, [Vector2i(2, 4), Vector2i(4, 4)]
+	)
+	controller._advance_wall_chain()
+	_expect(
+		controller._building_queue.has_order(),
+		"the first buildable segment after a blocked cell must still be ordered"
+	)
+	_expect(
+		controller._wall_chain != null
+		and controller._wall_chain.current_cell() == Vector2i(4, 4),
+		"an initially blocked wall cell must be skipped without stopping the chain"
+	)
+	controller.free()
+	return token
+
+
+func _test_wall_chain_continues_after_late_block(token: int) -> int:
+	var controller := _new_controller()
+	_setup_without_assets(controller)
+	var grid := MutableGrid.new()
+	controller._building_placement.setup(
+		null, grid, null, null, null, null, null, Callable()
+	)
+	controller._wall_chain = WallChainScript.new(
+		&"ATWall", "Wall", 0, 1.0, [Vector2i(2, 4), Vector2i(4, 4)]
+	)
+	controller._advance_wall_chain()
+	grid.block_occupy_cell(Vector2i(2, 4))
+	controller._building_queue.tick(1.0, 0)
+	_expect(
+		controller._building_queue.has_order(),
+		"a later segment must be ordered when the completed segment became blocked"
+	)
+	_expect(
+		controller._wall_chain != null
+		and controller._wall_chain.current_cell() == Vector2i(4, 4),
+		"a wall chain must advance past a segment that became blocked while building"
+	)
+	controller.free()
+	return token
+
+
+func _test_fixed_wall_line_ignores_world_right_click(token: int) -> int:
+	var controller := _new_controller()
+	_setup_without_assets(controller)
+	controller._building_placement.setup(
+		null, FakeGrid.new(), null, null, null, null, null, Callable()
+	)
+	var world_right_click := InputEventMouseButton.new()
+	world_right_click.button_index = MOUSE_BUTTON_RIGHT
+	world_right_click.pressed = true
+
+	controller._set_wall_line_mode(true, &"ATWall")
+	_expect(
+		controller.handle_unhandled_input(world_right_click)
+		and not controller._wall_line_mode,
+		"a world right click must cancel wall-line drawing before it is fixed"
+	)
+
+	controller._wall_chain = WallChainScript.new(
+		&"ATWall", "Wall", 0, 60.0, [Vector2i(2, 4), Vector2i(4, 4)]
+	)
+	controller._advance_wall_chain()
+
+	_expect(
+		not controller.handle_unhandled_input(world_right_click),
+		"a world right click must remain available to other gameplay controls"
+	)
+	_expect(
+		controller._building_queue.has_order()
+		and not controller._building_queue.current_order().manually_paused,
+		"a world right click must not pause or cancel a fixed wall order"
+	)
+
+	controller._on_building_slot_right_pressed(&"ATWall")
+	_expect(
+		controller._building_queue.current_order().manually_paused,
+		"right-clicking the wall icon must pause its running order"
+	)
+	controller._on_building_slot_right_pressed(&"ATWall")
+	_expect(
+		not controller._building_queue.has_order() and controller._wall_chain == null,
+		"right-clicking the paused wall icon must cancel the remaining chain"
+	)
+	controller.free()
+	return token
+
+
+func _test_fixed_wall_marker_lifecycle(token: int) -> int:
+	var controller := _new_controller()
+	_setup_without_assets(controller)
+	var buildings_root := Node3D.new()
+	root.add_child(buildings_root)
+	controller._building_placement.setup(
+		null, FakeGrid.new(), buildings_root, null, null, null, null, Callable()
+	)
+	controller._wall_marker_scene = PlacementWallScene
+	controller._lock_wall_markers([Vector2i(2, 4), Vector2i(4, 4)])
+	_expect(
+		controller._wall_markers.size() == 2,
+		"fixing a wall line must retain one build_wall marker per green segment"
+	)
+	var marker := controller._wall_markers[Vector2i(2, 4)] as Node3D
+	var marker_meshes := marker.find_children("*", "MeshInstance3D", true, false)
+	var marker_uses_source_materials := not marker_meshes.is_empty()
+	for node in marker_meshes:
+		var mesh_instance := node as MeshInstance3D
+		marker_uses_source_materials = (
+			marker_uses_source_materials and mesh_instance.material_override == null
+		)
+		for surface_index in mesh_instance.mesh.get_surface_count():
+			marker_uses_source_materials = (
+				marker_uses_source_materials
+				and mesh_instance.get_surface_override_material(surface_index) == null
+			)
+	_expect(
+		marker_uses_source_materials,
+		"build_wall markers must keep their ordinary authored materials"
+	)
+
+	controller._wall_chain = WallChainScript.new(
+		&"ATWall", "Wall", 0, 1.0, [Vector2i(2, 4), Vector2i(4, 4)]
+	)
+	controller._advance_wall_chain()
+	controller._building_queue.tick(1.0, 0)
+	_expect(
+		not controller._wall_markers.has(Vector2i(2, 4))
+		and controller._wall_markers.has(Vector2i(4, 4)),
+		"a completed segment must remove only its own fixed marker"
+	)
+
+	controller._cancel_building_order()
+	_expect(
+		controller._wall_markers.is_empty(),
+		"canceling wall construction must remove all remaining fixed markers"
+	)
+	controller.free()
+	buildings_root.free()
 	return token
 
 
