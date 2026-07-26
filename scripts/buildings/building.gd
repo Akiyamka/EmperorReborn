@@ -342,28 +342,43 @@ func _rebuild_rally_point_line() -> void:
 		_refresh_rally_point_marker()
 		return
 
-	var start := to_local(production_exit_position())
+	var spawn := to_local(production_spawn_position())
+	var exit := to_local(production_exit_position())
 	var finish := to_local(rally_point)
-	var direction := finish - start
-	direction.y = 0.0
-	if direction.length_squared() <= 0.000001:
+	var spawn_to_exit := exit - spawn
+	spawn_to_exit.y = 0.0
+	var exit_to_finish := finish - exit
+	exit_to_finish.y = 0.0
+	if spawn_to_exit.length_squared() <= 0.000001 \
+	and exit_to_finish.length_squared() <= 0.000001:
 		_rally_point_line.mesh = null
 		_refresh_rally_point_line_visibility()
 		_refresh_rally_point_marker()
 		return
-	var lateral := Vector3(-direction.z, 0.0, direction.x).normalized() \
-		* RALLY_POINT_LINE_WIDTH * 0.5
-	start.y += RALLY_POINT_LINE_HEIGHT
+
+	spawn.y += RALLY_POINT_LINE_HEIGHT
+	exit.y += RALLY_POINT_LINE_HEIGHT
 	finish.y += RALLY_POINT_LINE_HEIGHT
 	_rally_point_line_mesh.surface_begin(
 		Mesh.PRIMITIVE_TRIANGLES, _rally_point_line_material
 	)
-	_add_rally_point_line_triangle(start - lateral, finish - lateral, finish + lateral)
-	_add_rally_point_line_triangle(start - lateral, finish + lateral, start + lateral)
+	_add_rally_point_line_segment(spawn, exit)
+	_add_rally_point_line_segment(exit, finish)
 	_rally_point_line_mesh.surface_end()
 	_rally_point_line.mesh = _rally_point_line_mesh
 	_refresh_rally_point_line_visibility()
 	_refresh_rally_point_marker()
+
+
+func _add_rally_point_line_segment(start: Vector3, finish: Vector3) -> void:
+	var direction := finish - start
+	direction.y = 0.0
+	if direction.length_squared() <= 0.000001:
+		return
+	var lateral := Vector3(-direction.z, 0.0, direction.x).normalized() \
+		* RALLY_POINT_LINE_WIDTH * 0.5
+	_add_rally_point_line_triangle(start - lateral, finish - lateral, finish + lateral)
+	_add_rally_point_line_triangle(start - lateral, finish + lateral, start + lateral)
 
 
 func _add_rally_point_line_triangle(a: Vector3, b: Vector3, c: Vector3) -> void:

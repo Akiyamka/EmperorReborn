@@ -1,6 +1,8 @@
 extends SceneTree
 
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
+const BuildingScript := preload("res://scripts/buildings/building.gd")
+const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
 const WallLineScript := preload("res://scripts/buildings/wall_line.gd")
 
 var _assertions := 0
@@ -34,6 +36,9 @@ func _initialize() -> void:
 	_run_case("ready signal and consume handoff", _test_ready_and_consume)
 	_run_case("start contract", _test_start_contract)
 	_run_case("wall lines connect every segment by a side", _test_wall_line_side_connectivity)
+	await _run_async_case(
+		"rally line follows spawn, exit, and destination", _test_two_segment_rally_line
+	)
 
 	if _failures > 0:
 		printerr("BuildingQueue tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -49,6 +54,20 @@ func _run_case(case_name: String, test: Callable) -> void:
 	var token := _completion_token
 	var failures_before := _failures
 	var completed: Variant = test.call(token)
+	if completed != token:
+		_failures += 1
+		printerr("FAIL: %s: case did not return its completion token" % case_name)
+		return
+	if _failures == failures_before:
+		print("PASS: %s" % case_name)
+
+
+func _run_async_case(case_name: String, test: Callable) -> void:
+	_current_case = case_name
+	_completion_token += 1
+	var token := _completion_token
+	var failures_before := _failures
+	var completed: Variant = await test.call(token)
 	if completed != token:
 		_failures += 1
 		printerr("FAIL: %s: case did not return its completion token" % case_name)
@@ -201,4 +220,59 @@ func _test_wall_line_side_connectivity(token: int) -> int:
 			backwards == reversed,
 			"reversing the selected endpoints must reverse the same wall path"
 		)
+	return token
+
+
+func _test_two_segment_rally_line(token: int) -> int:
+	var building := BuildingScript.new()
+	var definition := BuildingDefinitionScript.new()
+	definition.ai_exit = true
+	definition.occupy_rows = ["oo", "oo", "ss"]
+	building.building_definition = definition
+	building.position = Vector3(12.0, 3.0, 8.0)
+	building.rotation.y = PI / 2.0
+
+	var states := Node3D.new()
+	states.name = "States"
+	building.add_child(states)
+	var idle := Node3D.new()
+	idle.name = "Idle"
+	states.add_child(idle)
+	var slct := Node3D.new()
+	slct.name = "AuthoredSpawn"
+	slct.set_meta("original_name", "SLCT")
+	slct.position = Vector3(1.0, 0.0, 0.5)
+	idle.add_child(slct)
+	root.add_child(building)
+	await process_frame
+
+	var rally_point := building.to_global(Vector3(-4.0, 0.0, 8.0))
+	_expect(building.set_rally_point(rally_point), "a production building must accept a rally point")
+	var rally_line := building.get_node("RallyPointLine") as MeshInstance3D
+	var rally_line_arrays := rally_line.mesh.surface_get_arrays(0)
+	var vertices := rally_line_arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+	_expect(
+		vertices.size() == 12,
+		"the rally line must contain separate spawn-to-exit and exit-to-rally segments"
+	)
+	if vertices.size() == 12:
+		var first_start := (vertices[0] + vertices[5]) * 0.5
+		var first_finish := (vertices[1] + vertices[2]) * 0.5
+		var second_start := (vertices[6] + vertices[11]) * 0.5
+		var second_finish := (vertices[7] + vertices[8]) * 0.5
+		var expected_spawn := building.to_local(building.production_spawn_position())
+		var expected_exit := building.to_local(building.production_exit_position())
+		var expected_rally := building.to_local(rally_point)
+		expected_spawn.y += BuildingScript.RALLY_POINT_LINE_HEIGHT
+		expected_exit.y += BuildingScript.RALLY_POINT_LINE_HEIGHT
+		expected_rally.y += BuildingScript.RALLY_POINT_LINE_HEIGHT
+		_expect(
+			first_start.is_equal_approx(expected_spawn)
+			and first_finish.is_equal_approx(expected_exit)
+			and second_start.is_equal_approx(expected_exit)
+			and second_finish.is_equal_approx(expected_rally),
+			"the two segments must follow the SLCT spawn, production exit, and rally point"
+		)
+
+	building.queue_free()
 	return token
