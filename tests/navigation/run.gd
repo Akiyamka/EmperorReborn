@@ -136,6 +136,7 @@ func _initialize() -> void:
 	_test_rotated_building_blockers(grid)
 	_test_interior_escape(grid)
 	_test_immediate_movement(grid)
+	_test_fast_unit_does_not_overshoot_near_destination(grid)
 	_test_navigation_catch_up_budget(grid)
 	_test_selected_unit_navigation_debug(grid)
 	_test_rounded_local_avoidance_field(grid)
@@ -780,6 +781,35 @@ func _test_immediate_movement(grid: MapNavigationGrid) -> void:
 	for _iteration in 10:
 		navigation.call("_navigation_tick", 0.05)
 	_expect(unit.global_position.distance_to(start_position) > 1.0, "the unit must start moving within half a second of the order")
+
+	navigation.queue_free()
+	unit.queue_free()
+
+
+func _test_fast_unit_does_not_overshoot_near_destination(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize for near-destination speed limiting")
+
+	var unit := FakeUnit.new(2.0)
+	unit.move_speed = 14.0
+	root.add_child(unit)
+	# A size-two unit has a 0.294 arrival tolerance, but at speed 14 it would
+	# otherwise travel 0.7 units per 20 Hz navigation tick. Starting 0.35 away
+	# reproduces the old exact two-position loop across the destination.
+	unit.global_position = Vector3(99.65, 0.0, 100.0)
+	var assignments := navigation.command_move([unit], Vector3(100.0, 0.0, 100.0))
+	_expect(assignments.size() == 1, "the nearby destination must receive a movement assignment")
+	if not assignments.is_empty():
+		var destination: Vector3 = assignments[0]["position"]
+		navigation.call("_navigation_tick", 0.05)
+		_expect(unit.global_position.distance_to(destination) <= 0.001,
+			"a fast unit's final tick must stop at the destination instead of overshooting it")
+		var arrived_position := unit.global_position
+		navigation.call("_navigation_tick", 0.05)
+		_expect(unit.global_position.is_equal_approx(arrived_position),
+			"a fast unit must remain stopped after its speed-limited final tick")
 
 	navigation.queue_free()
 	unit.queue_free()

@@ -110,6 +110,7 @@ func path_points_for(agent: Dictionary) -> Array[Vector3]:
 func desired_velocity(agent: Dictionary) -> Vector3:
 	var unit: Node3D = agent["unit"]
 	agent["steering_target"] = unit.global_position
+	agent["_arrival_speed_limited"] = false
 	if bool(agent["hold"]):
 		return Vector3.ZERO
 	if float(agent["yield_remaining"]) > 0.0:
@@ -122,7 +123,10 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 		exit_offset.y = 0.0
 		if exit_offset.length() > maxf(_facade._arrival_radius(unit), float(agent["radius"]) * 0.35):
 			agent["steering_target"] = exit_point
-			return exit_offset.normalized() * _facade._unit_speed(unit)
+			var exit_speed := _arrival_limited_speed(
+				agent, _facade._unit_speed(unit), exit_offset.length()
+			)
+			return exit_offset.normalized() * exit_speed
 		agent["exit_point"] = Vector3.INF
 		route_agent(agent, unit.global_position, agent["destination"])
 	var destination: Vector3 = agent["destination"]
@@ -140,6 +144,7 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 	if int(agent["mode"]) == UnitNavigationSystem.MoveMode.FORMATION:
 		speed = minf(speed, float(agent["group_speed"]))
 	var direction := Vector3.ZERO
+	var final_approach := bool(agent["direct_path"])
 	var path: Array = agent["path"]
 	if bool(agent["direct_path"]):
 		direction = offset.normalized()
@@ -161,9 +166,21 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 		direction = unit.global_position.direction_to(steering_target)
 		direction.y = 0.0
 		direction = direction.normalized()
+		final_approach = path_index >= path_points.size() - 1
 	if direction.is_zero_approx():
 		return Vector3.ZERO
+	if final_approach:
+		speed = _arrival_limited_speed(agent, speed, offset.length())
 	return direction * speed
+
+
+## Full cruise speed may cover more than the remaining final segment in one
+## fixed navigation tick. Limit only that last step so it lands on the target
+## instead of crossing it and reversing direction on the following tick.
+func _arrival_limited_speed(agent: Dictionary, speed: float, distance: float) -> float:
+	var limited := minf(speed, distance * UnitNavigationSystem.NAVIGATION_TICK_RATE)
+	agent["_arrival_speed_limited"] = limited < speed
+	return limited
 
 
 ## A yielding friend steps sideways out of the requester's lane (toward the
@@ -323,6 +340,11 @@ func _apply_resolved_velocity(
 	velocity = _facade.avoidance.stabilize_velocity(
 		agent, velocity, delta, nearby, resolved_positions
 	)
+	# ORCA already treats the preferred speed as a hard maximum, but elastic
+	# separation is added afterwards. Preserve the reduced final-step maximum
+	# even when a nearby friendly body also pushes this moving unit.
+	if bool(agent.get("_arrival_speed_limited", false)):
+		velocity = velocity.limit_length(desired.length())
 	_facade._agents[unit.get_instance_id()] = agent
 	if unit.has_method("navigation_step"):
 		unit.call("navigation_step", velocity, delta)
