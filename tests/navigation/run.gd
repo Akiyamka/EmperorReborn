@@ -447,20 +447,21 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	var assignments := navigation.command_move([clicker], Vector3(103.5, 0.0, 103.5), NavigationSystemScript.MoveMode.FREE)
 	var slot_cell: Vector2i = grid.world_to_grid(assignments[0]["position"])
 	_expect(apron.has(slot_cell), "an explicit movement order must retain its selected no-stop destination")
-	_expect(bool(navigation.agent_debug(clicker)["vacate_no_stop"]), "the no-stop leg must be marked for automatic evacuation on arrival")
+	_expect(bool(navigation.agent_debug(clicker)["no_stop_destination"]), "the no-stop leg must retain access to its explicit destination")
+	var command_count := navigation.command_log().size()
 	var entered_apron := false
 	for _iteration in 200:
 		navigation.call("_navigation_tick", 0.05)
 		entered_apron = entered_apron or apron.has(grid.world_to_grid(clicker.global_position))
 	var parked_cell: Vector2i = grid.world_to_grid(navigation.agent_debug(clicker)["destination"])
-	_expect(entered_apron, "the unit must actually enter the ordered no-stop area before leaving it")
+	_expect(entered_apron, "the unit must enter the ordered no-stop area")
 	_expect(
-		not apron.has(parked_cell) and clicker.global_position.distance_to(navigation.agent_debug(clicker)["destination"]) < 1.0,
-		"arrival on no-stop space must immediately auto-route the unit to the nearest legal parking cell"
+		apron.has(parked_cell) and clicker.global_position.distance_to(navigation.agent_debug(clicker)["destination"]) < 1.0,
+		"arrival on no-stop space must leave the unit stopped at its ordered destination"
 	)
 	_expect(
-		bool(navigation.command_log().back().get("auto_vacate_no_stop", false)),
-		"the automatic evacuation must be recorded as a navigation order"
+		navigation.command_log().size() == command_count,
+		"arrival on no-stop space must not create an automatic evacuation order"
 	)
 
 	var produced := FakeUnit.new()
@@ -540,8 +541,8 @@ func _test_dock_order_has_per_unit_building_access(grid: MapNavigationGrid) -> v
 	var assignments := navigation.command_move([ordinary], dock)
 	var ordinary_cell: Vector2i = grid.world_to_grid(assignments[0]["position"])
 	_expect(
-		dock_cells.has(ordinary_cell) and bool(navigation.agent_debug(ordinary)["vacate_no_stop"]),
-		"an ordinary order may enter the same d/p cells but must auto-vacate them after arrival"
+		dock_cells.has(ordinary_cell) and bool(navigation.agent_debug(ordinary)["no_stop_destination"]),
+		"an ordinary order may enter and remain on the same d/p cells"
 	)
 
 	navigation.queue_free()
@@ -757,8 +758,33 @@ func _test_interior_escape(grid: MapNavigationGrid) -> void:
 	_expect(first_open_cell.y >= 112, "the unit must emerge in front of the apron, not through a wall")
 	_expect(produced.global_position.distance_to(destination) < 2.0, "a unit produced inside the building must walk out and reach its destination")
 
+	var no_stop_rally_unit := FakeUnit.new()
+	root.add_child(no_stop_rally_unit)
+	no_stop_rally_unit.global_position = Vector3(103.5, 0.0, 103.5)
+	var no_stop_rally := Vector3(103.5, 0.0, 109.5)
+	var rally_assignments := navigation.command_move(
+		[no_stop_rally_unit],
+		no_stop_rally,
+		NavigationSystemScript.MoveMode.FREE,
+		exit_point
+	)
+	_expect(rally_assignments.size() == 1, "a produced unit must accept a rally point on no-stop space")
+	var furthest_front_z := no_stop_rally_unit.global_position.z
+	for _iteration in 300:
+		navigation.call("_navigation_tick", 0.05)
+		furthest_front_z = maxf(furthest_front_z, no_stop_rally_unit.global_position.z)
+	_expect(
+		furthest_front_z >= exit_point.z - 1.0,
+		"a no-stop rally point must not prevent a produced unit from reaching its mandatory building exit"
+	)
+	_expect(
+		no_stop_rally_unit.global_position.distance_to(no_stop_rally) < 2.0,
+		"after leaving the building, a produced unit may return to and stop at its no-stop rally point"
+	)
+
 	navigation.queue_free()
 	produced.queue_free()
+	no_stop_rally_unit.queue_free()
 
 
 func _test_immediate_movement(grid: MapNavigationGrid) -> void:

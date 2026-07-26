@@ -4,10 +4,8 @@ extends RefCounted
 ## waypoint advancement, cross-route lane offsetting, and the swept-disc
 ## visibility tests (chord/line-of-sight, per-cell passable/stoppable) that
 ## everything else in ground navigation treats as the real movement
-## constraint. Also owns the two "second half of an order" continuations that
-## only make sense once the follower has delivered the unit: releasing a
-## harvester's temporary refinery-apron access, and auto-parking off no-stop
-## transit space.
+## constraint. Also releases a harvester's temporary refinery-apron access
+## once the follower has delivered it outside those cells.
 
 var _facade: Node
 
@@ -297,62 +295,6 @@ func release_departure_access_if_clear(agent: Dictionary) -> void:
 		return
 	agent["departure_access"] = false
 	_facade._route_agent(agent, unit.global_position, agent["destination"])
-
-
-## Completes the second half of an ordinary no-stop order. This is internal
-## navigation work rather than a new gameplay order, so it must not call
-## Unit.prepare_navigation_order() and cancel the unit's action state again.
-func auto_vacate_no_stop(agent: Dictionary) -> bool:
-	var unit: Node3D = agent["unit"]
-	var span := int(agent["footprint"])
-	var anchor: Vector2i = _facade._claim_anchor(
-		_facade._parking_anchor(agent["destination"], span),
-		agent,
-		_facade._reserved_blocks(agent),
-		unit.global_position
-	)
-	if anchor.x < 0:
-		return false
-	var destination: Vector3 = _facade._block_center(anchor, span)
-	destination.y = (agent["destination"] as Vector3).y
-	var command_id: int = _facade._next_command_id
-	_facade._next_command_id += 1
-	agent["destination"] = destination
-	agent["claim_center"] = destination
-	agent["command_id"] = command_id
-	agent["mode"] = UnitNavigationSystem.MoveMode.FREE
-	agent["group_speed"] = INF
-	agent["reserved"] = true
-	agent["claim_radius"] = 0.0
-	agent["blocked_time"] = 0.0
-	agent["reported_enemy"] = false
-	agent["exit_point"] = Vector3.INF
-	agent["yield_remaining"] = 0.0
-	agent["yield_direction"] = Vector3.ZERO
-	agent["vacate_no_stop"] = false
-	agent["departure_access"] = false
-	agent["allowed_cells"] = {}
-	_facade._route_agent(agent, unit.global_position, destination)
-	if unit.has_method("set_navigation_destination"):
-		unit.call("set_navigation_destination", destination)
-	var assignment := {
-		"unit": unit,
-		"agent_id": agent["id"],
-		"slot_id": -1,
-		"position": destination,
-		"available": true,
-	}
-	_facade._command_log.append({
-		"tick": _facade._navigation_tick_index,
-		"command_id": command_id,
-		"mode": UnitNavigationSystem.MoveMode.FREE,
-		"target": destination,
-		"agents": [agent["id"]],
-		"slots": [destination],
-		"auto_vacate_no_stop": true,
-	})
-	_facade.destination_slots_assigned.emit(command_id, [assignment])
-	return true
 
 
 func has_clear_line(from: Vector3, to: Vector3, agent: Dictionary) -> bool:

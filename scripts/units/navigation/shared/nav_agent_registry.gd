@@ -75,10 +75,9 @@ func register_unit(agents: Dictionary, unit: Node3D, debug_enabled: bool) -> int
 		"claim_radius": 0.0,
 		"claim_center": unit.global_position,
 		"swap_tick": -1000,
-		# An ordinary order may deliberately end on traversable no-stop space.
-		# Once that first leg arrives, navigation immediately parks the unit on
-		# the nearest ordinary stopping block.
-		"vacate_no_stop": false,
+		# An explicit ordinary order may deliberately end and remain on
+		# traversable no-stop space.
+		"no_stop_destination": false,
 		# A harvester leaving a refinery temporarily keeps access to that
 		# refinery's d/p cells. The exception is dropped as soon as its complete
 		# footprint reaches ordinary stoppable ground.

@@ -131,17 +131,17 @@ func process_reroute_queue() -> void:
 		var span := int(agent["footprint"])
 		var destination_anchor: Vector2i = _facade._parking_anchor(destination, span)
 		var destination_stoppable: bool = _facade._block_stoppable(destination_anchor, span, agent)
-		if bool(agent.get("vacate_no_stop", false)) and destination_stoppable:
-			agent["vacate_no_stop"] = false
+		if bool(agent.get("no_stop_destination", false)) and destination_stoppable:
+			agent["no_stop_destination"] = false
 		if not destination_stoppable \
-		and not (bool(agent.get("vacate_no_stop", false)) and _facade._block_passable(destination_anchor, span, agent)):
+		and not (bool(agent.get("no_stop_destination", false)) and _facade._block_passable(destination_anchor, span, agent)):
 			var replacement: Vector2i = _facade._find_slot(_facade._parking_anchor(destination, span), agent, _facade._reserved_blocks(agent))
 			if replacement.x >= 0:
 				var height := destination.y
 				destination = _facade._block_center(replacement, span)
 				destination.y = height
 				agent["destination"] = destination
-				agent["vacate_no_stop"] = false
+				agent["no_stop_destination"] = false
 				agent["original_destination"] = destination
 				var command_id := int(agent["command_id"])
 				if not changed_by_command.has(command_id):

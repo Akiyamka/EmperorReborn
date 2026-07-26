@@ -30,7 +30,7 @@
 | `shared/nav_agent_registry.gd` | Создание агентов, `_profile_for`, probes, prune, rotation envelope, вычисление `domain` | ~260 |
 | `shared/nav_spatial_hash.gd` | Spatial hash (этап 5: пер-бакет max-radius, переиспользуемые массивы) | ~130 |
 | `shared/nav_blocker_tracker.gd` | Скан блокеров зданий, diff клеток, бюджетная очередь репланов | ~170 |
-| `ground/ground_navigation.gd` | Наземный тик: desired velocity, вызов avoidance, blocked/enemy, yielding, vacate-no-stop, `_route_agent` | ~330 |
+| `ground/ground_navigation.gd` | Наземный тик: desired velocity, вызов avoidance, blocked/enemy, yielding, `_route_agent` | ~330 |
 | `ground/ground_path_follower.gd` | `_path_steering_target`, `_advanced_path_index`, `_path_lane_target`, `_path_chord_is_clear`, `_has_clear_line`, passable/stoppable, departure access | ~380 |
 | `ground/ground_slot_allocator.gd` | Слоты/парковка/lanes (строки 1104–1566 сегодня) | ~520 |
 | `ground/path_funnel.gd` | Radius-aware funnel по коридору A*-клеток (замена `_simplify_path`) | ~180 |

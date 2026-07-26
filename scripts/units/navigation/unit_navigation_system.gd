@@ -245,7 +245,7 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		avoidance.reset_agent(agent)
 		_set_agent_rotation_envelope(agent, true)
 		agent["allowed_cells"] = {}
-		agent["vacate_no_stop"] = false
+		agent["no_stop_destination"] = false
 		agent["departure_access"] = false
 		agent["domain"] = registry.domain_for(agent)
 		_agents[unit.get_instance_id()] = agent
@@ -271,8 +271,8 @@ func command_move(units: Array, world_target: Vector3, mode := MoveMode.FREE, ex
 		# Formation slots are planned upfront; a FREE move flies each unit to
 		# its shape-preserving aim point and lets it claim a parking block on
 		# approach, searching center-out from the shared target.
-		agent["vacate_no_stop"] = bool(assignment.get("vacate_no_stop", false))
-		agent["reserved"] = mode == MoveMode.FORMATION or bool(agent["vacate_no_stop"])
+		agent["no_stop_destination"] = bool(assignment.get("no_stop_destination", false))
+		agent["reserved"] = mode == MoveMode.FORMATION or bool(agent["no_stop_destination"])
 		agent["claim_radius"] = claim_radius
 		agent["claim_center"] = assignment.get("claim_center", world_target)
 		agent["command_id"] = command_id
@@ -362,7 +362,7 @@ func command_dock(unit: Node3D, world_target: Vector3, allowed_cells: Dictionary
 	agent["route_lane_offset"] = 0.0
 	agent["route_lane_min"] = 0.0
 	agent["route_lane_max"] = 0.0
-	agent["vacate_no_stop"] = false
+	agent["no_stop_destination"] = false
 	agent["departure_access"] = false
 	agent["allowed_cells"] = allowed_cells.duplicate()
 	_route_agent(agent, unit.global_position, world_target)
@@ -392,7 +392,7 @@ func stop(unit: Node3D) -> void:
 	agent["exit_point"] = Vector3.INF
 	agent["yield_remaining"] = 0.0
 	agent["yield_direction"] = Vector3.ZERO
-	agent["vacate_no_stop"] = false
+	agent["no_stop_destination"] = false
 	if bool(agent.get("departure_access", false)):
 		agent["departure_access"] = false
 		agent["allowed_cells"] = {}
@@ -434,7 +434,7 @@ func agent_debug(unit: Node3D) -> Dictionary:
 		"mode": agent["mode"],
 		"group_speed": agent["group_speed"],
 		"hold": agent["hold"],
-		"vacate_no_stop": agent["vacate_no_stop"],
+		"no_stop_destination": agent["no_stop_destination"],
 		"departure_access": agent["departure_access"],
 		"blocked_time": agent["blocked_time"],
 		"route_ready": bool(agent["direct_path"]) or not (agent["path"] as Array).is_empty() or (agent["exit_point"] as Vector3).is_finite(),
@@ -628,13 +628,6 @@ func _release_departure_access_if_clear(agent: Dictionary) -> void:
 	path_follower.release_departure_access_if_clear(agent)
 
 
-## Completes the second half of an ordinary no-stop order. This is internal
-## navigation work rather than a new gameplay order, so it must not call
-## Unit.prepare_navigation_order() and cancel the unit's action state again.
-func _auto_vacate_no_stop(agent: Dictionary) -> bool:
-	return path_follower.auto_vacate_no_stop(agent)
-
-
 func _has_clear_line(from: Vector3, to: Vector3, agent: Dictionary) -> bool:
 	return path_follower.has_clear_line(from, to, agent)
 
@@ -739,8 +732,8 @@ func _claim_anchor(preferred: Vector2i, agent: Dictionary, occupied: Array[Dicti
 	return slot_allocator.claim_anchor(preferred, agent, occupied, from)
 
 
-## No-stop command legs need the same nearest, non-overlapping block search as
-## ordinary parking, but accept any traversable block for their temporary end.
+## No-stop destinations need the same nearest, non-overlapping block search as
+## ordinary parking, but accept any traversable block for their final stop.
 func _claim_passable_anchor(
 		preferred: Vector2i,
 		agent: Dictionary,

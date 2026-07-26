@@ -139,7 +139,7 @@ func assign_slots(agents: Dictionary, units: Array[Node3D], world_target: Vector
 			"slot_id": index,
 			"position": position,
 			"available": anchor.x >= 0,
-			"vacate_no_stop": anchor.x >= 0 and not block_stoppable(anchor, span, agent),
+			"no_stop_destination": anchor.x >= 0 and not block_stoppable(anchor, span, agent),
 		}
 		result.append(assignment)
 		if anchor.x >= 0:
@@ -189,7 +189,7 @@ func shared_target_assignments(agents: Dictionary, units: Array[Node3D], world_t
 		# the bounded slot search cannot find a reachable candidate.
 		var position := block_center(anchor, span) if anchor.x >= 0 else unit.global_position
 		position.y = world_target.y
-		var vacate_no_stop := anchor.x >= 0 and not block_stoppable(anchor, span, agent)
+		var no_stop_destination := anchor.x >= 0 and not block_stoppable(anchor, span, agent)
 		result.append({
 			"unit": unit,
 			"agent_id": agent["id"],
@@ -197,7 +197,7 @@ func shared_target_assignments(agents: Dictionary, units: Array[Node3D], world_t
 			"position": position,
 			"available": anchor.x >= 0,
 			"claim_center": world_target if gather else position,
-			"vacate_no_stop": vacate_no_stop,
+			"no_stop_destination": no_stop_destination,
 		})
 		if allow_no_stop and anchor.x >= 0:
 			occupied.append({"anchor": anchor, "span": span})
@@ -239,7 +239,7 @@ func uncross_assignments(ordered_agents: Array[Dictionary]) -> void:
 	var groups := {}
 	for agent in ordered_agents:
 		if int(agent["command_id"]) <= 0 or not bool(agent["reserved"]) or bool(agent["hold"]) \
-		or bool(agent.get("vacate_no_stop", false)):
+		or bool(agent.get("no_stop_destination", false)):
 			continue
 		if (agent["exit_point"] as Vector3).is_finite():
 			continue
@@ -367,8 +367,8 @@ func claim_anchor(preferred: Vector2i, agent: Dictionary, occupied: Array[Dictio
 	return Vector2i(-1, -1)
 
 
-## No-stop command legs need the same nearest, non-overlapping block search as
-## ordinary parking, but accept any traversable block for their temporary end.
+## No-stop destinations need the same nearest, non-overlapping block search as
+## ordinary parking, but accept any traversable block for their final stop.
 func claim_passable_anchor(
 		preferred: Vector2i,
 		agent: Dictionary,

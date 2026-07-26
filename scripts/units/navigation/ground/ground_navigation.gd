@@ -30,7 +30,7 @@ func route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void
 	if (agent["exit_point"] as Vector3).is_finite():
 		return
 	var stoppable_no_stop_cells: Dictionary = agent.get("allowed_cells", {}).duplicate()
-	if bool(agent.get("vacate_no_stop", false)):
+	if bool(agent.get("no_stop_destination", false)):
 		stoppable_no_stop_cells[_facade.runtime_map.grid.world_to_grid(destination)] = true
 	var start_cell: Vector2i = _facade.runtime_map.grid.world_to_grid(from)
 	var target_cell: Vector2i = _facade.runtime_map.grid.world_to_grid(destination)
@@ -135,11 +135,7 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 	agent["steering_target"] = destination
 	var arrival: float = _facade.arrival_tolerance(unit)
 	if offset.length() <= arrival:
-		if not bool(agent.get("vacate_no_stop", false)) or not _facade._auto_vacate_no_stop(agent):
-			return Vector3.ZERO
-		destination = agent["destination"]
-		offset = destination - unit.global_position
-		offset.y = 0.0
+		return Vector3.ZERO
 	var speed: float = _facade._unit_speed(unit)
 	if int(agent["mode"]) == UnitNavigationSystem.MoveMode.FORMATION:
 		speed = minf(speed, float(agent["group_speed"]))
