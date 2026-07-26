@@ -39,7 +39,8 @@ func _initialize() -> void:
 	await _run_case("units turn at their rules rates", _test_unit_turn_rates)
 	await _run_case("entity forward directions share one world-space contract", _test_entity_orientation_contract)
 	await _run_case("units switch between stationary and movement animations", _test_unit_movement_animations)
-	await _run_case("mechs alternate smoothly between gait speeds", _test_mech_gait_speeds)
+	await _run_case("mechs follow authored gait speeds", _test_mech_gait_speeds)
+	await _run_case("mechs use authored locomotion transitions", _test_mech_locomotion_transitions)
 	await _run_case("test match roster is non-empty after boot", _test_match_roster_populated)
 	await _run_case("roster controls leave arrow keys to the camera", _test_roster_controls_ignore_keyboard_focus)
 	await _run_case("F3 toggles every navigation debug layer", _test_unified_debug_shortcut)
@@ -375,17 +376,48 @@ func _test_mech_gait_speeds() -> void:
 
 	unit.setup(&"HKDevastator")
 	unit.replace_visual_scene(HKDevastatorModelScene)
-	unit.set_navigation_destination(unit.global_position + Vector3(10.0, 0.0, 0.0))
+	var forward := unit.facing_direction()
+	unit.set_navigation_destination(unit.global_position + forward * 10.0)
 	unit.set("_mech_gait_elapsed", 0.0)
 	_expect(
 		is_zero_approx(unit.navigation_move_speed()),
 		"Devastator must begin Move with its authored zero-speed phase"
 	)
 	unit.navigation_step(Vector3.ZERO, 0.1)
+	var devastator_player := _unit_animation_player(unit)
+	_expect(
+		devastator_player != null
+		and devastator_player.current_animation == &"Move_Start"
+		and is_zero_approx(float(unit.get("_mech_gait_elapsed"))),
+		"Devastator must finish Move_Start before beginning its zero-speed Move phase"
+	)
+	if devastator_player != null:
+		devastator_player.animation_finished.emit(&"Move_Start")
+	unit.navigation_step(Vector3.ZERO, 0.1)
 	_expect(
 		float(unit.get("_mech_gait_elapsed")) > 0.0
-		and (_unit_animation_player(unit) as AnimationPlayer).current_animation == &"Move",
-		"an authored zero-speed phase must advance Move instead of resetting to idle"
+		and devastator_player != null
+		and devastator_player.current_animation == &"Move",
+		"an authored zero-speed Move phase must advance instead of resetting to idle"
+	)
+
+	var navigation = unit.get("_navigation_system")
+	if navigation != null:
+		navigation.unregister_unit(unit)
+		navigation.register_unit(unit)
+	var navigation_arrival := float(navigation.arrival_tolerance(unit)) \
+		if navigation != null else unit.arrival_radius
+	_expect(
+		navigation_arrival > unit.arrival_radius,
+		"Devastator's large body must use a wider navigation arrival tolerance"
+	)
+	var parked_distance := lerpf(unit.arrival_radius, navigation_arrival, 0.5)
+	unit.set_navigation_destination(unit.global_position + unit.facing_direction() * parked_distance)
+	unit.set("_mech_gait_elapsed", 0.0)
+	unit.navigation_step(Vector3.ZERO, 0.1)
+	_expect(
+		devastator_player != null and devastator_player.current_animation == &"Move_Stop",
+		"Devastator must stop its gait when navigation considers the destination reached"
 	)
 
 	unit.setup(&"IMTANK")
@@ -393,6 +425,100 @@ func _test_mech_gait_speeds() -> void:
 		is_equal_approx(unit.navigation_move_speed(), unit.move_speed),
 		"non-mechs must retain their ordinary constant movement speed"
 	)
+	match_instance.queue_free()
+
+
+func _test_mech_locomotion_transitions() -> void:
+	var match_instance := MatchFixtureScene.instantiate()
+	get_root().add_child(match_instance)
+	await physics_frame
+
+	var unit := match_instance.get_node("Units/ScoutA") as Unit
+	var mech_models := [
+		[&"ATMongoose", ATMongooseModelScene],
+		[&"ATMinotaurus", ATMinotaurusModelScene],
+		[&"HKDevastator", HKDevastatorModelScene],
+	]
+	for model_case: Array in mech_models:
+		unit.setup(model_case[0])
+		unit.replace_visual_scene(model_case[1])
+		var model_player := _unit_animation_player(unit)
+		_expect(model_player != null, "%s must expose locomotion animations" % model_case[0])
+		if model_player == null:
+			continue
+		for clip_name in [&"Move_Start", &"Move_Stop", &"Turn_Left", &"Turn_Right"]:
+			_expect(
+				model_player.has_animation(clip_name),
+				"%s must retain its authored %s clip" % [model_case[0], clip_name]
+			)
+
+	unit.setup(&"ATMongoose")
+	unit.replace_visual_scene(ATMongooseModelScene)
+	var player := _unit_animation_player(unit)
+	var tick_delta := 1.0 / Unit.RULE_MOVEMENT_UPDATES_PER_SECOND
+	var forward := Vector3.FORWARD
+	unit.face_direction(forward)
+	unit.set_navigation_destination(unit.global_position + forward * 10.0)
+	var start_position := unit.global_position
+	unit.navigation_step(forward * unit.navigation_move_speed(), tick_delta)
+	_expect(
+		player != null and player.current_animation == &"Move_Start",
+		"a stationary mech must play Move_Start before Move"
+	)
+	_expect(
+		Vector2(unit.global_position.x, unit.global_position.z).is_equal_approx(
+			Vector2(start_position.x, start_position.z)
+		),
+		"a mech must remain in place while Move_Start is playing"
+	)
+
+	if player != null:
+		player.animation_finished.emit(&"Move_Start")
+	_expect(
+		player != null and player.current_animation == &"Move",
+		"Move_Start completion must enter the looping Move animation"
+	)
+	unit.navigation_step(forward * unit.navigation_move_speed(), tick_delta)
+	_expect(
+		unit.global_position.distance_to(start_position) > 0.0,
+		"a mech must translate after Move_Start has completed"
+	)
+
+	unit.stop_at_current_position()
+	_expect(
+		player != null and player.current_animation == &"Move_Stop",
+		"a moving mech must play Move_Stop when its order ends"
+	)
+	if player != null:
+		player.animation_finished.emit(&"Move_Stop")
+	_expect(
+		player != null and _is_unit_idle(player),
+		"Move_Stop completion must return the mech to Stationary"
+	)
+
+	unit.rotation = Vector3.ZERO
+	unit.set_navigation_destination(unit.global_position + Vector3.RIGHT * 10.0)
+	unit.navigation_step(Vector3.RIGHT * unit.navigation_move_speed(), tick_delta)
+	_expect(
+		player != null and player.current_animation == &"Turn_Right",
+		"a clockwise in-place turn must use Turn_Right"
+	)
+
+	unit.rotation = Vector3.ZERO
+	unit.set_navigation_destination(unit.global_position + Vector3.LEFT * 10.0)
+	unit.navigation_step(Vector3.LEFT * unit.navigation_move_speed(), tick_delta)
+	_expect(
+		player != null and player.current_animation == &"Turn_Left",
+		"a counter-clockwise in-place turn must use Turn_Left"
+	)
+
+	unit.face_direction(Vector3.LEFT)
+	unit.navigation_step(Vector3.LEFT * unit.navigation_move_speed(), tick_delta)
+	_expect(
+		player != null and player.current_animation == &"Move_Start",
+		"finishing an in-place turn must transition through Move_Start"
+	)
+
 	match_instance.queue_free()
 
 

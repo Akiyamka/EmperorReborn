@@ -781,11 +781,13 @@ func _apply_unit_definition() -> void:
 	spice = spice
 
 
-func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
+func _set_movement_animation(
+		is_moving: bool, speed_scale := 1.0, turn_animation: StringName = &""
+	) -> void:
 	if _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END] \
 	or _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
 		return
-	super._set_movement_animation(is_moving, speed_scale)
+	super._set_movement_animation(is_moving, speed_scale, turn_animation)
 
 
 func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:

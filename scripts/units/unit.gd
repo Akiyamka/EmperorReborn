@@ -43,6 +43,10 @@ const FIRE_ANIMATION_SPEED_SCALE := (
 const FIRE_ANIMATION_PREFIX := "Fire_"
 const FIRE_EVENT_EPSILON := 0.0001
 const MOVING_ANIMATION := &"Move"
+const MOVE_START_ANIMATION := &"Move_Start"
+const MOVE_STOP_ANIMATION := &"Move_Stop"
+const TURN_LEFT_ANIMATION := &"Turn_Left"
+const TURN_RIGHT_ANIMATION := &"Turn_Right"
 const IDLE_ANIMATION := &"Stationary"
 const IDLE_ANIMATION_PREFIX := "Idle"
 ## The original MCV model has no clip literally named Deploy. Move_Stop is its
@@ -59,6 +63,15 @@ enum SlopeAlignmentMode {
 	AUTO,
 	ENABLED,
 	DISABLED,
+}
+
+enum MechLocomotionState {
+	IDLE,
+	STARTING,
+	MOVING,
+	TURNING_LEFT,
+	TURNING_RIGHT,
+	STOPPING,
 }
 
 @export var config_id: StringName
@@ -124,6 +137,8 @@ var _mech_gait_elapsed := 0.0
 var _mech_motion_profile: Array[Dictionary] = []
 var _mech_authored_average_speed := 0.0
 var _mech_motion_cycle_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
+var _mech_locomotion_state := MechLocomotionState.IDLE
+var _mech_start_remaining := 0.0
 var _flight_controller: UnitFlightController = null
 var _is_deploying := false
 var _deployment_aligning := false
@@ -220,10 +235,12 @@ func _physics_process(delta: float) -> void:
 		return
 	if _navigation_managed:
 		return
+	_advance_mech_start_transition(delta)
 	var offset := target_position - global_position
 	offset.y = 0.0
 	var requested_velocity := Vector3.ZERO
 	var movement_speed := navigation_move_speed()
+	var turn_animation := &""
 
 	if offset.length() <= arrival_radius:
 		velocity = Vector3.ZERO
@@ -235,13 +252,20 @@ func _physics_process(delta: float) -> void:
 			velocity = direction * movement_speed * _slope_speed_multiplier(direction, delta)
 		else:
 			velocity = Vector3.ZERO
+		if not heading_reached:
+			turn_animation = _mech_turn_animation_for_direction(direction)
 
 	_set_navigation_debug_direction(requested_velocity)
 	var animation_speed_scale := _movement_animation_speed_scale()
 	_set_movement_animation(
-		not velocity.is_zero_approx() or _mech_is_authored_pause_with_move_order(),
-		animation_speed_scale
+		not velocity.is_zero_approx()
+			or not turn_animation.is_empty()
+			or _mech_transition_or_pause_has_move_order(),
+		animation_speed_scale,
+		turn_animation
 	)
+	if _mech_locomotion_state == MechLocomotionState.STARTING:
+		velocity = Vector3.ZERO
 	_advance_mech_gait(delta, animation_speed_scale)
 	move_and_slide()
 	_snap_to_terrain(delta)
@@ -441,22 +465,42 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 		velocity = Vector3.ZERO
 		_set_navigation_debug_direction(Vector3.ZERO)
 		return
+	_advance_mech_start_transition(delta)
 	# Preserve the requested course before a tracked unit possibly converts its
 	# translational velocity to zero while turning in place. This is the value
 	# shown by the selected-unit navigation debug arrow.
 	_set_navigation_debug_direction(horizontal_velocity)
 	velocity = Vector3(horizontal_velocity.x, 0.0, horizontal_velocity.z)
+	var turn_animation := &""
+	var steering_direction := velocity.normalized() \
+		if velocity.length_squared() > 0.000001 else Vector3.ZERO
+	if (
+		steering_direction.is_zero_approx()
+		and _uses_mech_gait
+		and _mech_locomotion_state != MechLocomotionState.STARTING
+		and _mech_has_active_move_order()
+	):
+		var destination_offset := target_position - global_position
+		destination_offset.y = 0.0
+		steering_direction = destination_offset.normalized()
 	# Crowded units receive tiny non-zero velocities from collision resolution;
 	# skip negligible motion so it cannot jitter the unit's heading.
-	if velocity.length_squared() > 0.000001:
-		var heading_reached := _turn_toward(velocity.normalized(), delta)
+	if not steering_direction.is_zero_approx():
+		var heading_reached := _turn_toward(steering_direction, delta)
 		if not can_move_any_direction and not heading_reached:
 			velocity = Vector3.ZERO
+		if not heading_reached:
+			turn_animation = _mech_turn_animation_for_direction(steering_direction)
 	var animation_speed_scale := _movement_animation_speed_scale()
 	_set_movement_animation(
-		not velocity.is_zero_approx() or _mech_is_authored_pause_with_move_order(),
-		animation_speed_scale
+		not velocity.is_zero_approx()
+			or not turn_animation.is_empty()
+			or _mech_transition_or_pause_has_move_order(),
+		animation_speed_scale,
+		turn_animation
 	)
+	if _mech_locomotion_state == MechLocomotionState.STARTING:
+		velocity = Vector3.ZERO
 	_advance_mech_gait(delta, animation_speed_scale)
 	# Unit/unit collision has already been resolved centrally as swept discs.
 	# Applying the exact fixed navigation delta avoids depending on physics-frame
@@ -477,13 +521,29 @@ func navigation_move_speed() -> float:
 
 
 func _advance_mech_gait(delta: float, animation_speed_scale: float) -> void:
-	if not _uses_mech_gait or not _movement_animation_active or delta <= 0.0:
+	if (
+		not _uses_mech_gait
+		or _mech_locomotion_state != MechLocomotionState.MOVING
+		or delta <= 0.0
+	):
 		return
 	var cycle_duration := _mech_move_cycle_duration()
 	_mech_gait_elapsed = fposmod(
 		_mech_gait_elapsed + delta * maxf(animation_speed_scale, 0.0),
 		cycle_duration
 	)
+
+
+func _advance_mech_start_transition(delta: float) -> void:
+	if _mech_locomotion_state != MechLocomotionState.STARTING or delta <= 0.0:
+		return
+	# Physics owns the transition deadline as well as AnimationPlayer. This
+	# keeps deterministic/manual simulations moving even when no render frame
+	# advances the player, while the normal animation_finished path can still
+	# switch to Move first during ordinary scene playback.
+	_mech_start_remaining = maxf(_mech_start_remaining - delta, 0.0)
+	if _mech_start_remaining <= 0.0:
+		_begin_mech_move(_mech_gait_cadence())
 
 
 func _mech_move_cycle_duration() -> float:
@@ -516,11 +576,43 @@ func _mech_gait_cadence() -> float:
 	return mech_speed / _mech_authored_average_speed
 
 
-func _mech_is_authored_pause_with_move_order() -> bool:
-	return _uses_mech_gait \
-		and not _mech_motion_profile.is_empty() \
-		and _mech_authored_phase_speed() <= 0.0 \
-		and global_position.distance_to(target_position) > arrival_radius
+func _mech_transition_or_pause_has_move_order() -> bool:
+	if not _uses_mech_gait or not _mech_has_active_move_order():
+		return false
+	if _mech_locomotion_state in [
+		MechLocomotionState.STARTING,
+		MechLocomotionState.TURNING_LEFT,
+		MechLocomotionState.TURNING_RIGHT,
+		MechLocomotionState.STOPPING,
+	]:
+		return true
+	return not _mech_motion_profile.is_empty() and _mech_authored_phase_speed() <= 0.0
+
+
+func _mech_has_active_move_order() -> bool:
+	var tolerance := arrival_radius
+	if (
+		_navigation_managed
+		and _navigation_system != null
+		and _navigation_system.has_method("arrival_tolerance")
+	):
+		tolerance = maxf(
+			tolerance,
+			float(_navigation_system.call("arrival_tolerance", self))
+		)
+	var offset := target_position - global_position
+	offset.y = 0.0
+	return offset.length() > tolerance
+
+
+func _mech_turn_animation_for_direction(direction: Vector3) -> StringName:
+	if not _uses_mech_gait or direction.length_squared() <= 0.000001:
+		return &""
+	var target_yaw := SpatialOrientationScript.yaw_facing(direction, global_rotation.y)
+	var signed_angle := angle_difference(global_rotation.y, target_yaw)
+	if is_zero_approx(signed_angle):
+		return &""
+	return TURN_LEFT_ANIMATION if signed_angle > 0.0 else TURN_RIGHT_ANIMATION
 
 
 func _refresh_mech_motion_profile() -> void:
@@ -1469,6 +1561,8 @@ func _apply_unit_definition() -> void:
 	mech_speed = maxf(float(unit_definition.mech_speed), 0.0)
 	_uses_mech_gait = unit_definition.mech and mech_speed > 0.0
 	_mech_gait_elapsed = 0.0
+	_mech_locomotion_state = MechLocomotionState.IDLE
+	_mech_start_remaining = 0.0
 	turn_rate = maxf(float(unit_definition.turn_rate), 0.0)
 	can_move_any_direction = unit_definition.can_move_any_direction
 	max_health = float(unit_definition.health)
@@ -1551,7 +1645,9 @@ func _prepare_idle_animations() -> void:
 			player.animation_finished.connect(_on_animation_finished.bind(player))
 
 
-func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
+func _set_movement_animation(
+		is_moving: bool, speed_scale := 1.0, turn_animation: StringName = &""
+	) -> void:
 	if _flight_controller != null and _flight_controller.flight_is_airborne_phase():
 		_flight_controller.set_cruise_moving(is_moving, speed_scale)
 		return
@@ -1559,8 +1655,13 @@ func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
 		if not is_moving:
 			return
 		_cancel_fire_sequence(false)
+	if _uses_mech_gait:
+		_set_mech_locomotion_animation(is_moving, speed_scale, turn_animation)
+		_restore_combat_turret_poses()
+		return
 	if not is_moving:
 		_mech_gait_elapsed = 0.0
+		_mech_start_remaining = 0.0
 	_movement_animation_active = is_moving
 	for player in _animation_players:
 		if is_moving:
@@ -1572,6 +1673,121 @@ func _set_movement_animation(is_moving: bool, speed_scale := 1.0) -> void:
 		player.speed_scale = 1.0
 		_play_idle_sequence(player)
 	_restore_combat_turret_poses()
+
+
+func _set_mech_locomotion_animation(
+		is_moving: bool, move_speed_scale: float, turn_animation: StringName
+	) -> void:
+	var was_moving := _movement_animation_active
+	_movement_animation_active = is_moving
+	if not is_moving:
+		_mech_gait_elapsed = 0.0
+		_mech_start_remaining = 0.0
+		if (
+			_mech_locomotion_state == MechLocomotionState.STOPPING
+			and _any_animation_playing(MOVE_STOP_ANIMATION)
+		):
+			return
+		if was_moving and _any_player_has_animation(MOVE_STOP_ANIMATION):
+			_mech_locomotion_state = MechLocomotionState.STOPPING
+			_play_mech_clip(MOVE_STOP_ANIMATION, _mech_gait_cadence())
+			return
+		_mech_locomotion_state = MechLocomotionState.IDLE
+		for player in _animation_players:
+			player.speed_scale = 1.0
+			_play_idle_sequence(player)
+		return
+
+	if turn_animation in [TURN_LEFT_ANIMATION, TURN_RIGHT_ANIMATION] \
+	and _any_player_has_animation(turn_animation):
+		_mech_start_remaining = 0.0
+		_mech_locomotion_state = MechLocomotionState.TURNING_LEFT \
+			if turn_animation == TURN_LEFT_ANIMATION \
+			else MechLocomotionState.TURNING_RIGHT
+		# TurnRate already controls the physical hull yaw. These authored clips
+		# describe the feet/body pose during that turn and retain their own time.
+		_play_mech_clip(turn_animation, 1.0)
+		return
+
+	if (
+		_mech_locomotion_state == MechLocomotionState.STARTING
+		and _any_animation_playing(MOVE_START_ANIMATION)
+	):
+		return
+	if _mech_locomotion_state == MechLocomotionState.MOVING:
+		_play_mech_clip(MOVING_ANIMATION, move_speed_scale)
+		return
+
+	if _any_player_has_animation(MOVE_START_ANIMATION):
+		_mech_locomotion_state = MechLocomotionState.STARTING
+		var start_speed_scale := _mech_gait_cadence()
+		_mech_start_remaining = _animation_playback_duration(
+			MOVE_START_ANIMATION, start_speed_scale
+		)
+		_play_mech_clip(MOVE_START_ANIMATION, start_speed_scale)
+		if _mech_start_remaining <= 0.0:
+			_begin_mech_move(move_speed_scale)
+		return
+	_begin_mech_move(move_speed_scale)
+
+
+func _begin_mech_move(speed_scale: float) -> void:
+	_mech_locomotion_state = MechLocomotionState.MOVING
+	_mech_start_remaining = 0.0
+	_play_mech_clip(MOVING_ANIMATION, speed_scale)
+
+
+func _play_mech_clip(animation_name: StringName, speed_scale: float) -> void:
+	for player in _animation_players:
+		var selected_animation := animation_name
+		if not player.has_animation(selected_animation):
+			if animation_name in [
+				MOVE_START_ANIMATION,
+				MOVE_STOP_ANIMATION,
+				TURN_LEFT_ANIMATION,
+				TURN_RIGHT_ANIMATION,
+			] and player.has_animation(MOVING_ANIMATION):
+				selected_animation = MOVING_ANIMATION
+			else:
+				continue
+		if (
+			player.current_animation != selected_animation
+			or not player.is_playing()
+		):
+			if player.current_animation == selected_animation:
+				player.stop()
+			player.play(selected_animation)
+		player.speed_scale = maxf(speed_scale, 0.0)
+
+
+func _any_player_has_animation(animation_name: StringName) -> bool:
+	for player in _animation_players:
+		if player.has_animation(animation_name):
+			return true
+	return false
+
+
+func _any_animation_playing(animation_name: StringName) -> bool:
+	for player in _animation_players:
+		if (
+			player.has_animation(animation_name)
+			and player.current_animation == animation_name
+			and player.is_playing()
+		):
+			return true
+	return false
+
+
+func _animation_playback_duration(animation_name: StringName, speed_scale: float) -> float:
+	var duration := 0.0
+	var safe_speed_scale := maxf(speed_scale, 0.000001)
+	for player in _animation_players:
+		if not player.has_animation(animation_name):
+			continue
+		var animation := player.get_animation(animation_name)
+		if animation != null:
+			duration = maxf(duration, animation.length / safe_speed_scale)
+	return duration
 
 
 func _play_idle_sequence(player: AnimationPlayer) -> void:
@@ -1674,6 +1890,38 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 	):
 		deployment_animation_finished.emit()
 		return
+	if _uses_mech_gait:
+		if (
+			_mech_locomotion_state == MechLocomotionState.STARTING
+			and animation_name == MOVE_START_ANIMATION
+		):
+			_begin_mech_move(_mech_gait_cadence())
+			return
+		if (
+			_mech_locomotion_state == MechLocomotionState.STOPPING
+			and animation_name == MOVE_STOP_ANIMATION
+		):
+			_mech_locomotion_state = MechLocomotionState.IDLE
+			_mech_start_remaining = 0.0
+			for animation_player in _animation_players:
+				animation_player.speed_scale = 1.0
+				_play_idle_sequence(animation_player)
+			return
+		var active_turn_animation := TURN_LEFT_ANIMATION \
+			if _mech_locomotion_state == MechLocomotionState.TURNING_LEFT \
+			else TURN_RIGHT_ANIMATION
+		if (
+			_mech_locomotion_state in [
+				MechLocomotionState.TURNING_LEFT,
+				MechLocomotionState.TURNING_RIGHT,
+			]
+			and animation_name == active_turn_animation
+			and _movement_animation_active
+		):
+			player.stop()
+			player.play(animation_name)
+			player.speed_scale = 1.0
+			return
 	if _movement_animation_active:
 		return
 	var idle_animations := _idle_animations(player)
