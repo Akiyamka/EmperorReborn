@@ -1078,7 +1078,12 @@ func _is_effect_object(object_name: String) -> bool:
 
 
 func _is_muzzle_flash_object(object_name: String) -> bool:
-	return object_name.to_lower().contains("bigflash")
+	var lower := object_name.to_lower()
+	# HK_Trooper_H0 ships with the misspelled `flah~?` object instead of the
+	# usual bigflash name. It has the same tiny idle scale and expands only in
+	# Fire_0, so treat it as authored embedded muzzle-flash geometry too.
+	return lower.contains("bigflash") \
+		or (_source_file_name == "hk_trooper_h0.xbf" and lower.begins_with("flah"))
 
 
 func _prepare_attachment_fx_names(xbf) -> void:
