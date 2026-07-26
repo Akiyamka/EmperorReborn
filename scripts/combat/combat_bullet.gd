@@ -225,10 +225,29 @@ func id() -> StringName:
 
 
 func can_reach(from: Vector3, to: Vector3) -> bool:
-	var offset := to - from
-	var horizontal_distance := Vector2(offset.x, offset.z).length()
+	return can_reach_distance(horizontal_target_distance(from, to))
+
+
+func can_reach_target(from: Vector3, to: Vector3, target: Object) -> bool:
+	return can_reach_distance(horizontal_target_distance(from, to, target))
+
+
+func can_reach_distance(horizontal_distance: float) -> bool:
 	return horizontal_distance + 0.0001 >= minimum_range_world() \
 		and horizontal_distance <= maximum_range_world() + 0.0001
+
+
+func horizontal_target_distance(
+		from: Vector3,
+		to: Vector3,
+		target: Object = null
+	) -> float:
+	if target != null \
+	and is_instance_valid(target) \
+	and target.has_method("combat_range_distance_from"):
+		return maxf(float(target.call("combat_range_distance_from", from)), 0.0)
+	var offset := to - from
+	return Vector2(offset.x, offset.z).length()
 
 
 func can_hit(target: Object) -> bool:

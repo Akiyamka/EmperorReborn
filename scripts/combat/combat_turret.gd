@@ -457,10 +457,13 @@ func target_range(target_or_position: Variant, aim_offset := Vector3.ZERO) -> in
 	var range_origin := _range_origin()
 	if not range_origin.is_finite():
 		return TargetRange.INVALID
-	var offset: Vector3 = target_position - range_origin
-	var horizontal_distance := Vector2(offset.x, offset.z).length()
 	var bullet = CombatBulletScript.new(
 		bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
+	)
+	var range_target := target_or_position as Object \
+		if target_or_position is Object else null
+	var horizontal_distance: float = bullet.horizontal_target_distance(
+		range_origin, target_position, range_target
 	)
 	if horizontal_distance + 0.0001 < bullet.minimum_range_world():
 		return TargetRange.TOO_CLOSE
@@ -534,7 +537,18 @@ func try_fire_at(
 		return result
 	var range_origin := _range_origin()
 	if not range_origin.is_finite() \
-	or not preview_bullet.can_reach(range_origin, target_position + aim_offset):
+	or (
+		target_or_position is Object
+		and not preview_bullet.can_reach_target(
+			range_origin,
+			target_position + aim_offset,
+			target_or_position as Object
+		)
+	) \
+	or (
+		not target_or_position is Object
+		and not preview_bullet.can_reach(range_origin, target_position + aim_offset)
+	):
 		return result
 
 	var parent := projectile_parent if projectile_parent != null else _default_projectile_parent()
@@ -569,6 +583,14 @@ func _bullet_target_position(target_or_position: Variant) -> Vector3:
 		return target_or_position
 	if target_or_position is Object and is_instance_valid(target_or_position):
 		var target_object := target_or_position as Object
+		if target_object.has_method("combat_aim_position_from"):
+			var origin := _range_origin()
+			if origin.is_finite():
+				var value: Variant = target_object.call(
+					"combat_aim_position_from", origin
+				)
+				if value is Vector3:
+					return value
 		if target_object.has_method("combat_aim_position"):
 			var value: Variant = target_object.call("combat_aim_position")
 			if value is Vector3:

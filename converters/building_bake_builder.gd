@@ -13,6 +13,10 @@ const OCCUPY_CELL_WORLD_SPAN := 2.0
 ## the original renderer. AT_Helipad's 64x96-unit Mesh_00 is the calibration
 ## reference: adjacent 2x3 pads occupy 72x108 model units, giving 9/8.
 const BUILDING_WORLD_SCALE := 0.0625 * 1.125
+const COMBAT_HULL_POINT_EPSILON := 0.0001
+const COMBAT_GROUND_MESH_MAX_HEIGHT := 0.5
+const COMBAT_GROUND_MESH_MAX_TOP := 0.55
+const COMBAT_GROUND_MESH_MAX_ASPECT := 0.1
 
 const STATE_DEFS: Array[Dictionary] = [
 	{"name": "construction", "node": "Build", "suffix": "_hc"},
@@ -105,6 +109,9 @@ func build(building_id: StringName) -> PackedScene:
 			root.add_child(wall_variants)
 		else:
 			wall_variants.free()
+	var idle_state := _state_node(state_nodes, "idle")
+	if idle_state != null:
+		_add_combat_collision(root, idle_state)
 	_add_state_player(root, states_root, state_nodes)
 	_assign_scene_owner(root, root)
 
@@ -115,6 +122,252 @@ func build(building_id: StringName) -> PackedScene:
 		push_error("BuildingBakeBuilder: could not pack building scene (%s)" % error_string(err))
 		return null
 	return scene
+
+
+func _state_node(state_nodes: Array[Node3D], state_name: String) -> Node3D:
+	for node in state_nodes:
+		if String(node.get_meta("state", "")) == state_name:
+			return node
+	return null
+
+
+func _add_combat_collision(root: Node3D, idle: Node3D) -> void:
+	var geometry := _combat_geometry_points(root, idle)
+	if geometry["points"].is_empty() or geometry["faces"].is_empty():
+		return
+	var hull := _simplify_combat_hull(
+		_convex_hull_2d(geometry["points"]),
+		BuildingScript.MAX_COMBAT_HULL_VERTICES
+	)
+	if hull.size() < 3:
+		return
+	root.set_meta("combat_hull", hull)
+	root.set_meta("combat_hull_minimum_y", geometry["minimum_y"])
+	root.set_meta("combat_hull_maximum_y", geometry["maximum_y"])
+	root.set_meta(
+		"combat_collision_triangle_count",
+		geometry["faces"].size() / 3
+	)
+
+	var shape := ConcavePolygonShape3D.new()
+	shape.backface_collision = true
+	shape.set_faces(geometry["faces"])
+	var collision := CollisionShape3D.new()
+	collision.name = "CombatHull"
+	collision.shape = shape
+	var body := StaticBody3D.new()
+	body.name = "CombatCollision"
+	body.collision_layer = 2
+	body.collision_mask = 0
+	body.add_child(collision)
+	root.add_child(body)
+
+
+func _combat_geometry_points(root: Node3D, idle: Node3D) -> Dictionary:
+	var points := PackedVector2Array()
+	var faces := PackedVector3Array()
+	var minimum_y := INF
+	var maximum_y := -INF
+	for mesh_instance in _combat_mesh_instances(idle):
+		if not _mesh_contributes_to_combat_hull(mesh_instance, root):
+			continue
+		for surface_index in mesh_instance.mesh.get_surface_count():
+			var arrays := mesh_instance.mesh.surface_get_arrays(surface_index)
+			if arrays.is_empty():
+				continue
+			var vertices := arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+			var transformed_vertices := PackedVector3Array()
+			for vertex in vertices:
+				var local_point := _point_relative_to(
+					mesh_instance, root, vertex
+				)
+				transformed_vertices.append(local_point)
+				points.append(Vector2(local_point.x, local_point.z))
+				minimum_y = minf(minimum_y, local_point.y)
+				maximum_y = maxf(maximum_y, local_point.y)
+			if mesh_instance.mesh.surface_get_primitive_type(surface_index) \
+					!= Mesh.PRIMITIVE_TRIANGLES:
+				continue
+			var indices := arrays[Mesh.ARRAY_INDEX] as PackedInt32Array
+			if indices.is_empty():
+				for index in range(0, transformed_vertices.size() - 2, 3):
+					_append_combat_triangle(
+						faces,
+						transformed_vertices[index],
+						transformed_vertices[index + 1],
+						transformed_vertices[index + 2]
+					)
+			else:
+				for index in range(0, indices.size() - 2, 3):
+					_append_combat_triangle(
+						faces,
+						transformed_vertices[indices[index]],
+						transformed_vertices[indices[index + 1]],
+						transformed_vertices[indices[index + 2]]
+					)
+	return {
+		"points": points,
+		"faces": faces,
+		"minimum_y": minimum_y,
+		"maximum_y": maximum_y,
+	}
+
+
+func _append_combat_triangle(
+		faces: PackedVector3Array,
+		a: Vector3,
+		b: Vector3,
+		c: Vector3
+	) -> void:
+	if (b - a).cross(c - a).length_squared() \
+			<= COMBAT_HULL_POINT_EPSILON * COMBAT_HULL_POINT_EPSILON:
+		return
+	faces.append(a)
+	faces.append(b)
+	faces.append(c)
+
+
+func _point_relative_to(
+		source: Node3D,
+		ancestor: Node3D,
+		point: Vector3
+	) -> Vector3:
+	var current := source
+	var result := point
+	while current != null and current != ancestor:
+		result = current.transform * result
+		current = current.get_parent() as Node3D
+	return result
+
+
+func _combat_mesh_instances(node: Node) -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	if node is MeshInstance3D:
+		result.append(node)
+	for child in node.get_children():
+		result.append_array(_combat_mesh_instances(child))
+	return result
+
+
+func _mesh_contributes_to_combat_hull(
+		mesh_instance: MeshInstance3D,
+		root: Node3D
+	) -> bool:
+	if mesh_instance.mesh == null or not mesh_instance.visible:
+		return false
+	var source := mesh_instance.get_parent()
+	while source != null:
+		if source.has_meta("original_name"):
+			var source_name := String(source.get_meta("original_name", ""))
+			if not source_name.is_empty():
+				var first := source_name.unicode_at(0)
+				if not (
+					(first >= 48 and first <= 57) \
+					or (first >= 65 and first <= 90) \
+					or (first >= 97 and first <= 122)
+				):
+					return false
+				break
+		source = source.get_parent()
+	return not _is_flat_ground_mesh(mesh_instance, root)
+
+
+func _is_flat_ground_mesh(
+		mesh_instance: MeshInstance3D,
+		root: Node3D
+	) -> bool:
+	var bounds := _mesh_bounds_relative_to(mesh_instance, root)
+	var horizontal_span := maxf(bounds.size.x, bounds.size.z)
+	return bounds.end.y <= COMBAT_GROUND_MESH_MAX_TOP \
+		and bounds.size.y <= COMBAT_GROUND_MESH_MAX_HEIGHT \
+		and horizontal_span > COMBAT_HULL_POINT_EPSILON \
+		and bounds.size.y / horizontal_span <= COMBAT_GROUND_MESH_MAX_ASPECT
+
+
+func _mesh_bounds_relative_to(
+		mesh_instance: MeshInstance3D,
+		root: Node3D
+	) -> AABB:
+	var source_bounds := mesh_instance.mesh.get_aabb()
+	var bounds := AABB()
+	var initialized := false
+	for x in [source_bounds.position.x, source_bounds.end.x]:
+		for y in [source_bounds.position.y, source_bounds.end.y]:
+			for z in [source_bounds.position.z, source_bounds.end.z]:
+				var point := _point_relative_to(
+					mesh_instance, root, Vector3(x, y, z)
+				)
+				if initialized:
+					bounds = bounds.expand(point)
+				else:
+					bounds = AABB(point, Vector3.ZERO)
+					initialized = true
+	return bounds
+
+
+static func _convex_hull_2d(
+		source_points: PackedVector2Array
+	) -> PackedVector2Array:
+	var sorted: Array[Vector2] = []
+	for point in source_points:
+		sorted.append(point)
+	sorted.sort_custom(func(a: Vector2, b: Vector2) -> bool:
+		return a.x < b.x or (is_equal_approx(a.x, b.x) and a.y < b.y)
+	)
+	var unique: Array[Vector2] = []
+	for point in sorted:
+		if unique.is_empty() or unique.back().distance_squared_to(point) \
+				> COMBAT_HULL_POINT_EPSILON * COMBAT_HULL_POINT_EPSILON:
+			unique.append(point)
+	if unique.size() < 3:
+		return PackedVector2Array(unique)
+
+	var lower: Array[Vector2] = []
+	for point in unique:
+		while lower.size() >= 2 and _hull_cross(
+				lower[-2], lower[-1], point
+			) <= COMBAT_HULL_POINT_EPSILON:
+			lower.pop_back()
+		lower.append(point)
+	var upper: Array[Vector2] = []
+	for index in range(unique.size() - 1, -1, -1):
+		var point := unique[index]
+		while upper.size() >= 2 and _hull_cross(
+				upper[-2], upper[-1], point
+			) <= COMBAT_HULL_POINT_EPSILON:
+			upper.pop_back()
+		upper.append(point)
+	lower.pop_back()
+	upper.pop_back()
+	lower.append_array(upper)
+	return PackedVector2Array(lower)
+
+
+static func _simplify_combat_hull(
+		source_hull: PackedVector2Array,
+		maximum_vertices: int
+	) -> PackedVector2Array:
+	var hull: Array[Vector2] = []
+	for point in source_hull:
+		hull.append(point)
+	while hull.size() > maximum_vertices:
+		var remove_index := 0
+		var smallest_area := INF
+		for index in hull.size():
+			var area := absf(_hull_cross(
+				hull[(index - 1 + hull.size()) % hull.size()],
+				hull[index],
+				hull[(index + 1) % hull.size()]
+			))
+			if area < smallest_area:
+				smallest_area = area
+				remove_index = index
+		hull.remove_at(remove_index)
+	return PackedVector2Array(hull)
+
+
+static func _hull_cross(a: Vector2, b: Vector2, c: Vector2) -> float:
+	return (b - a).cross(c - a)
 
 
 ## Source models are not authored around the occupy-matrix centre, while the

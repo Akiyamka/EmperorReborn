@@ -34,6 +34,7 @@ const INVALID_REFINERY_DOCK := -1
 const RULE_COMBAT_TICKS_PER_SECOND := 20.0
 const WALL_ANCHOR_CELL_SPAN := 2
 const WALL_WORLD_NEIGHBOR_TOLERANCE := 0.35
+const MAX_COMBAT_HULL_VERTICES := 8
 const RALLY_POINT_LINE_COLOR := Color(0.12, 1.0, 0.28, 0.9)
 const RALLY_POINT_LINE_WIDTH := 0.10
 const RALLY_POINT_LINE_HEIGHT := 0.08
@@ -129,6 +130,9 @@ var _refinery_dock_cooldowns: Dictionary = {}
 var _wall_connection_mask := 0
 var _wall_topology: StringName = WallConnectivityScript.SINGLE
 var _wall_rotation_quarters := 0
+var _combat_hull := PackedVector2Array()
+var _combat_hull_minimum_y := 0.0
+var _combat_hull_maximum_y := 0.0
 
 
 func _ready() -> void:
@@ -144,6 +148,9 @@ func _ready() -> void:
 	_sync_purchased_upgrade()
 	play_state(default_state)
 	_apply_refinery_upgrade_pose()
+	_combat_hull = get_meta("combat_hull", PackedVector2Array())
+	_combat_hull_minimum_y = float(get_meta("combat_hull_minimum_y", 0.0))
+	_combat_hull_maximum_y = float(get_meta("combat_hull_maximum_y", 0.0))
 	_add_selection_collision()
 	_add_selection_halo()
 	_add_rally_point_line()
@@ -438,6 +445,8 @@ func _add_selection_collision() -> void:
 	body.name = "SelectionCollision"
 	body.collision_layer = 2
 	body.collision_mask = 0
+	if get_node_or_null("CombatCollision") != null:
+		body.set_meta("combat_ignore", true)
 	for source in _collision_sources():
 		var shape := _collision_shape(source)
 		if shape == null:
@@ -1081,6 +1090,71 @@ func combat_aim_position() -> Vector3:
 	return global_position
 
 
+## Spreads incoming fire across the footprint-facing edge instead of making
+## every attacker converge on the building root.
+func combat_aim_position_from(world_origin: Vector3) -> Vector3:
+	if _combat_hull.size() >= 3:
+		var local_origin := to_local(world_origin)
+		var nearest := _nearest_combat_hull_point(
+			Vector2(local_origin.x, local_origin.z)
+		)
+		var local_aim := to_local(combat_aim_position())
+		local_aim.x = nearest.x
+		local_aim.y = clampf(
+			local_origin.y,
+			_combat_hull_minimum_y,
+			_combat_hull_maximum_y
+		)
+		local_aim.z = nearest.y
+		return to_global(local_aim)
+	var collision_body := get_node_or_null("SelectionCollision") as StaticBody3D
+	if collision_body == null or not collision_body.has_meta("collision_bounds"):
+		return combat_aim_position()
+	var bounds: AABB = collision_body.get_meta("collision_bounds")
+	var local_origin := to_local(world_origin)
+	var local_aim := to_local(combat_aim_position())
+	local_aim.x = clampf(local_origin.x, bounds.position.x, bounds.end.x)
+	local_aim.z = clampf(local_origin.z, bounds.position.z, bounds.end.z)
+	return to_global(local_aim)
+
+
+func _nearest_combat_hull_point(point: Vector2) -> Vector2:
+	if Geometry2D.is_point_in_polygon(point, _combat_hull):
+		return point
+	var nearest := _combat_hull[0]
+	var nearest_distance := INF
+	for index in _combat_hull.size():
+		var candidate := Geometry2D.get_closest_point_to_segment(
+			point,
+			_combat_hull[index],
+			_combat_hull[(index + 1) % _combat_hull.size()]
+		)
+		var distance := point.distance_squared_to(candidate)
+		if distance < nearest_distance:
+			nearest = candidate
+			nearest_distance = distance
+	return nearest
+
+
+func combat_hull() -> PackedVector2Array:
+	return _combat_hull.duplicate()
+
+
+func combat_has_precise_collision() -> bool:
+	return get_node_or_null("CombatCollision") != null
+
+
+func combat_contains_impact_position(world_position: Vector3) -> bool:
+	if _combat_hull.size() < 3:
+		return false
+	var local_position := to_local(world_position)
+	var footprint_position := Vector2(local_position.x, local_position.z)
+	return Geometry2D.is_point_in_polygon(footprint_position, _combat_hull) \
+		or footprint_position.distance_to(
+			_nearest_combat_hull_point(footprint_position)
+		) <= 0.001
+
+
 func combat_is_alive() -> bool:
 	return health > 0.0 and not is_queued_for_deletion()
 
@@ -1091,6 +1165,16 @@ func combat_hit_radius() -> float:
 		var bounds: AABB = collision_body.get_meta("collision_bounds")
 		return maxf(minf(bounds.size.x, bounds.size.z) * 0.5, 0.5)
 	return 0.5
+
+
+## Weapon range is measured to the nearest point of a building's authored
+## footprint. Entity roots remain the range point for units and other targets.
+func combat_range_distance_from(
+		world_origin: Vector3
+	) -> float:
+	var nearest_world := combat_aim_position_from(world_origin)
+	var offset := nearest_world - world_origin
+	return Vector2(offset.x, offset.z).length()
 
 
 func combat_owner_player_id() -> int:

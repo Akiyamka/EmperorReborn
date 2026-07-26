@@ -1445,6 +1445,12 @@ func _combat_target_position(attack_target: Variant) -> Vector3:
 	if not attack_target is Object or not is_instance_valid(attack_target):
 		return Vector3.INF
 	var target_object := attack_target as Object
+	if target_object.has_method("combat_aim_position_from"):
+		var value: Variant = target_object.call(
+			"combat_aim_position_from", global_position
+		)
+		if value is Vector3:
+			return value
 	if target_object.has_method("combat_aim_position"):
 		var value: Variant = target_object.call("combat_aim_position")
 		if value is Vector3:

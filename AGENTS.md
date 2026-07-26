@@ -22,3 +22,10 @@ Prefer read-only `sqlite3 assets/converted/rules.db ...` queries for structured
 analysis. Cross-check the corresponding entry in `Rules.txt` when units or
 conversion semantics (for example comments describing units per tick/update)
 matter.
+
+## Godot container
+
+Run commands that use `tools/godot-container` sequentially. Parallel runs share
+the same container and `/workspace` mount, so they interfere with one another
+and can produce invalid project-path or incomplete class-loading errors that
+look like test failures.

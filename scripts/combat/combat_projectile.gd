@@ -49,8 +49,10 @@ var _launch_position := Vector3.ZERO
 var _aim_position := Vector3.ZERO
 var _trajectory_impact_position := Vector3.ZERO
 var _aim_travel_distance := 0.0
+var _target_range_allowance := 0.0
 var _target_ref: WeakRef
 var _tracks_live_target := false
+var _targets_ground_position := false
 var _source_ref: WeakRef
 var _excluded_rids: Array[RID] = []
 var _gravity_world := 0.0
@@ -83,7 +85,9 @@ func launch(
 	if not emission.has("position"):
 		return false
 
-	var resolved_target := _resolve_target_position(target_or_position)
+	var resolved_target := _resolve_target_position(
+		target_or_position, Vector3(emission["position"])
+	)
 	if not resolved_target["valid"]:
 		return false
 
@@ -96,10 +100,21 @@ func launch(
 	_launch_position = global_position
 	_aim_position = Vector3(resolved_target["position"]) + aim_offset
 	_trajectory_impact_position = _aim_position
+	_targets_ground_position = target_or_position is Vector3
 	var gameplay_range_origin := range_origin \
 		if range_origin.is_finite() else _launch_position
+	if target_or_position is Object:
+		var center_offset := _aim_position - gameplay_range_origin
+		var center_distance := Vector2(center_offset.x, center_offset.z).length()
+		var surface_distance: float = bullet.horizontal_target_distance(
+			gameplay_range_origin,
+			_aim_position,
+			target_or_position as Object
+		)
+		_target_range_allowance = maxf(center_distance - surface_distance, 0.0)
 	_maximum_flight_distance = bullet.maximum_range_world() \
-		+ gameplay_range_origin.distance_to(_launch_position)
+		+ gameplay_range_origin.distance_to(_launch_position) \
+		+ _target_range_allowance
 	if target_or_position is Object:
 		_target_ref = weakref(target_or_position as Object)
 		_tracks_live_target = true
@@ -134,7 +149,17 @@ func launch(
 	_face_direction(_direction)
 	_create_missile_trail()
 
-	if not bullet.can_reach(gameplay_range_origin, _aim_position):
+	if (
+		target_or_position is Object
+		and not bullet.can_reach_target(
+			gameplay_range_origin,
+			_aim_position,
+			target_or_position as Object
+		)
+	) or (
+		not target_or_position is Object
+		and not bullet.can_reach(gameplay_range_origin, _aim_position)
+	):
 		_expire(&"out_of_range")
 		return false
 	if bullet.is_hitscan():
@@ -400,7 +425,7 @@ func _configure_trajectory() -> void:
 	var horizontal_distance := horizontal.length()
 	var ballistic_velocities: Array[Vector3] = trajectory_launch_velocities(
 		bullet, _launch_position, _trajectory_impact_position, _gravity_world,
-		bullet.maximum_range_world()
+		bullet.maximum_range_world() + _target_range_allowance
 	)
 	if not ballistic_velocities.is_empty():
 		_trajectory_initial_velocity = _closest_velocity(
@@ -535,7 +560,7 @@ static func _closest_velocity(candidates: Array[Vector3], direction: Vector3) ->
 
 func _advance_trajectory(_previous_elapsed: float, current_elapsed: float) -> void:
 	var from := global_position
-	var time := minf(current_elapsed, _trajectory_duration)
+	var time := current_elapsed
 	var to := _launch_position + _trajectory_initial_velocity * time \
 		+ Vector3.DOWN * (0.5 * _gravity_world * time * time)
 	var segment := to - from
@@ -549,7 +574,10 @@ func _advance_trajectory(_previous_elapsed: float, current_elapsed: float) -> vo
 	if not segment.is_zero_approx():
 		_direction = segment.normalized()
 		_face_direction(_direction)
-	if current_elapsed + 0.000001 >= _trajectory_duration:
+	if (
+		_targets_ground_position
+		and current_elapsed + 0.000001 >= _trajectory_duration
+	):
 		_resolve_arrival(_trajectory_impact_position)
 
 
@@ -618,6 +646,9 @@ func _fallback_target_collision(from: Vector3, to: Vector3) -> bool:
 	var intended_target := target()
 	if intended_target == null or not _target_is_alive() or not bullet.can_hit(intended_target):
 		return false
+	if intended_target.has_method("combat_has_precise_collision") \
+	and bool(intended_target.call("combat_has_precise_collision")):
+		return false
 	var target_position := _current_target_position()
 	if not target_position.is_finite():
 		return false
@@ -654,6 +685,16 @@ func _impact_target(entity: Object, world_position: Vector3, stop: bool) -> void
 
 
 func _impact_ground(world_position: Vector3) -> void:
+	var intended_target := target()
+	if intended_target != null \
+	and _target_is_alive() \
+	and bullet.can_hit(intended_target) \
+	and intended_target.has_method("combat_contains_impact_position") \
+	and bool(intended_target.call(
+		"combat_contains_impact_position", world_position
+	)):
+		_impact_target(intended_target, world_position, true)
+		return
 	global_position = world_position
 	_resolve_impact(null, world_position)
 	_finish_impact(&"impact_ground", world_position)
@@ -726,10 +767,14 @@ func _collisions_between(from: Vector3, to: Vector3) -> Array[Dictionary]:
 		var hit := get_world_3d().direct_space_state.intersect_ray(query)
 		if hit.is_empty():
 			break
-		result.append(hit)
 		var rid: RID = hit.get("rid", RID())
 		if not rid.is_valid():
 			break
+		var collider := hit.get("collider") as CollisionObject3D
+		if collider != null and collider.get_meta("combat_ignore", false):
+			excludes.append(rid)
+			continue
+		result.append(hit)
 		excludes.append(rid)
 	return result
 
@@ -751,18 +796,25 @@ func _collect_collision_rids(object: Object, result: Array[RID]) -> void:
 			_collect_collision_rids(child, result)
 
 
-func _resolve_target_position(target_or_position: Variant) -> Dictionary:
+func _resolve_target_position(
+		target_or_position: Variant,
+		world_origin := Vector3.INF
+	) -> Dictionary:
 	if target_or_position is Vector3:
 		return {"valid": true, "position": target_or_position}
 	if target_or_position is Object and is_instance_valid(target_or_position):
-		var position := _object_position(target_or_position as Object)
+		var position := _object_position(target_or_position as Object, world_origin)
 		return {"valid": position.is_finite(), "position": position}
 	return {"valid": false, "position": Vector3.ZERO}
 
 
-func _object_position(object: Object) -> Vector3:
+func _object_position(object: Object, world_origin := Vector3.INF) -> Vector3:
 	if object == null or not is_instance_valid(object):
 		return Vector3.INF
+	if world_origin.is_finite() and object.has_method("combat_aim_position_from"):
+		var value: Variant = object.call("combat_aim_position_from", world_origin)
+		if value is Vector3:
+			return value
 	if object.has_method("combat_aim_position"):
 		var value: Variant = object.call("combat_aim_position")
 		if value is Vector3:
@@ -774,7 +826,8 @@ func _object_position(object: Object) -> Vector3:
 
 func _current_target_position() -> Vector3:
 	var intended_target := target()
-	return _object_position(intended_target) if intended_target != null else Vector3.INF
+	return _object_position(intended_target, global_position) \
+		if intended_target != null else Vector3.INF
 
 
 func _target_is_alive() -> bool:

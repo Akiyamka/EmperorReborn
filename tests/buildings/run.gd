@@ -39,6 +39,10 @@ func _initialize() -> void:
 	await _run_async_case(
 		"rally line follows spawn, exit, and destination", _test_two_segment_rally_line
 	)
+	await _run_async_case(
+		"attackable buildings generate bounded combat hulls",
+		_test_combat_hull_budget
+	)
 
 	if _failures > 0:
 		printerr("BuildingQueue tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -275,4 +279,83 @@ func _test_two_segment_rally_line(token: int) -> int:
 		)
 
 	building.queue_free()
+	return token
+
+
+func _test_combat_hull_budget(token: int) -> int:
+	var candidates := [
+		"ORRefinery", "ORSmWindtrap", "ORStarport", "ORWall",
+		"ORPalace", "ATPalace", "HKPalace", "HKStarport", "HKRefinery",
+	]
+	for building_name in candidates:
+		var scene_path := "res://assets/converted/buildings/%s/%s.scn" % [
+			building_name, building_name
+		]
+		var scene := load(scene_path) as PackedScene
+		var building := scene.instantiate() as Building
+		_expect(
+			building.has_meta("combat_hull"),
+			"%s combat hull must be baked into the converted scene" % building_name
+		)
+		_expect(
+			building.get_node_or_null("CombatCollision") != null,
+			"%s projectile proxy must be baked into the converted scene" % building_name
+		)
+		var combat_shape := building.get_node_or_null(
+			"CombatCollision/CombatHull"
+		) as CollisionShape3D
+		_expect(
+			combat_shape != null
+				and combat_shape.shape is ConcavePolygonShape3D
+				and int(building.get_meta(
+					"combat_collision_triangle_count", 0
+				)) > 0,
+			"%s projectile proxy must retain filtered source triangles"
+				% building_name
+		)
+		root.add_child(building)
+		var hull := building.combat_hull()
+		var minimum_y := float(building.get_meta("combat_hull_minimum_y"))
+		var maximum_y := float(building.get_meta("combat_hull_maximum_y"))
+		_expect(
+			hull.size() >= 3
+				and hull.size() <= BuildingScript.MAX_COMBAT_HULL_VERTICES,
+			"%s combat hull must fit the strict vertex budget" % building_name
+		)
+		_expect(
+			maximum_y > minimum_y,
+			"%s must bake a non-empty vertical combat range" % building_name
+		)
+		var outside_z := hull[0].y + 100.0
+		var middle_y := (minimum_y + maximum_y) * 0.5
+		var low_aim := building.to_local(building.combat_aim_position_from(
+			building.to_global(Vector3(0.0, minimum_y - 10.0, outside_z))
+		))
+		var middle_aim := building.to_local(building.combat_aim_position_from(
+			building.to_global(Vector3(0.0, middle_y, outside_z))
+		))
+		var high_aim := building.to_local(building.combat_aim_position_from(
+			building.to_global(Vector3(0.0, maximum_y + 10.0, outside_z))
+		))
+		_expect(
+			is_equal_approx(low_aim.y, minimum_y)
+				and is_equal_approx(middle_aim.y, middle_y)
+				and is_equal_approx(high_aim.y, maximum_y),
+			"%s aim height must follow the attacker within baked bounds" % building_name
+		)
+		if building_name == "HKStarport":
+			_expect(
+				not building.combat_contains_impact_position(
+					building.to_global(Vector3(0.0, 0.0, 4.0))
+				),
+				"HKStarport ground apron must remain outside its combat hull"
+			)
+		elif building_name == "HKRefinery":
+			_expect(
+				not building.combat_contains_impact_position(
+					building.to_global(Vector3(0.0, 0.0, 4.0))
+				),
+				"HKRefinery loadingramp23 must remain outside its combat hull"
+			)
+		building.free()
 	return token
