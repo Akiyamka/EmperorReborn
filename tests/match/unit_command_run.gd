@@ -18,12 +18,17 @@ class FakeUnit extends Node3D:
 	var attack_targets: Array = []
 	var rejected_attack_targets: Array = []
 	var attack_capable := true
+	var active_order := false
 
 	func set_selected(active: bool) -> void:
 		selected = active
 
 	func move_to(target: Vector3) -> void:
 		move_targets.append(target)
+		active_order = true
+
+	func has_active_order() -> bool:
+		return active_order
 
 	func can_attack(target_or_position: Variant) -> bool:
 		return attack_capable and target_or_position not in rejected_attack_targets
@@ -275,6 +280,11 @@ func _test_selection_ownership_and_movement(token: int, local_player, enemy_play
 	_expect(enemy_unit.selected == false and local_unit.move_targets == [Vector3(3.0, 7.0, 4.0)], "owned unit moves to terrain hit")
 	_expect(commands.raycast_masks.back() == 1, "movement uses terrain mask one")
 	_expect(statuses.back() == "Moving to 3.0, 4.0", "movement status keeps legacy text without nav grid")
+	commands._refresh_idle_status()
+	_expect(statuses.back() == "Moving to 3.0, 4.0", "movement status remains while the order is active")
+	local_unit.active_order = false
+	commands._refresh_idle_status()
+	_expect(statuses.back() == "Idle", "finishing the selected unit's order reports Idle")
 
 	commands.raycast_hits.append({})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))

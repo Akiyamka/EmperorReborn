@@ -29,6 +29,9 @@ const HKMissileModelScene := preload(
 const HKDevastatorModelScene := preload(
 	"res://assets/converted/models/HK_devastator_H0/HK_devastator_H0.scn"
 )
+const HKInkVineModelScene := preload(
+	"res://assets/converted/models/HK_Inkvine_H0/HK_Inkvine_H0.scn"
+)
 const ORAPCModelScene := preload("res://assets/converted/models/Or_apc_H0/Or_apc_H0.scn")
 const ORLaserTankModelScene := preload(
 	"res://assets/converted/models/OR_Lasertank_H0/OR_Lasertank_H0.scn"
@@ -136,6 +139,27 @@ class CombatSource extends RefCounted:
 		return owner_player_id
 
 
+class RejectingAttackNavigation extends RefCounted:
+	var destinations: Array[Vector3] = []
+
+	func command_move(units: Array, target: Vector3, _mode: int) -> Array:
+		destinations.append(target)
+		if destinations.size() <= 2:
+			return []
+		for unit in units:
+			unit.set_navigation_destination(target)
+		return [{"unit": units.front(), "position": target}]
+
+	func route_is_unreachable(_unit: Node3D) -> bool:
+		return false
+
+	func arrival_tolerance(_unit: Node3D) -> float:
+		return 0.2
+
+	func stop(_unit: Node3D) -> void:
+		pass
+
+
 func _initialize() -> void:
 	LegacyRulesFixture.install(root)
 	await process_frame
@@ -176,6 +200,8 @@ func _initialize() -> void:
 	_run_case("turret recenters smoothly after attack is replaced by move", _test_turret_recenter_after_move)
 	_run_case("unit model replacement rebinds its turret", _test_unit_turret_rebind)
 	_run_case("unit attack orders validate targets, fire, and pursue", _test_unit_attack_order)
+	_run_case("Ink Vine repeats fire while its attack order remains active", _test_ink_vine_refire)
+	_run_case("attack pursuit backs rejected firing positions toward the unit", _test_rejected_attack_perch)
 	_run_case("launcher fire clips schedule every projectile before reload", _test_launcher_fire_sequences)
 	_run_case("pursuit enters a stable firing range", _test_far_attack_pursuit)
 	_run_case("building state replacement rebinds its turret", _test_building_turret_rebind)
@@ -1633,11 +1659,17 @@ func _test_unit_attack_order() -> void:
 	var far_ground := Vector3(emission["position"]) + direction * 30.0
 	_expect(unit.command_attack(far_ground), "attack-ground validity must not depend on current range")
 	unit._process(0.01)
+	var original_distance := Vector2(
+		far_ground.x - unit.global_position.x,
+		far_ground.z - unit.global_position.z
+	).length()
+	var pursuit_distance := Vector2(
+		far_ground.x - unit.target_position.x,
+		far_ground.z - unit.target_position.z
+	).length()
 	_expect(
-		Vector2(unit.target_position.x, unit.target_position.z).is_equal_approx(
-			Vector2(far_ground.x, far_ground.z)
-		),
-		"an out-of-range attack order must pursue its target coordinate"
+		pursuit_distance > 0.0 and pursuit_distance < original_distance,
+		"an out-of-range attack order must pursue a firing position before its target"
 	)
 	unit.move_to(unit.global_position + Vector3.RIGHT)
 	_expect(not unit.has_attack_order(), "a later ordinary movement order must cancel attack")
@@ -1855,6 +1887,76 @@ func _test_unit_attack_order() -> void:
 	infantry.free()
 	minotaurus.free()
 	unit.free()
+
+
+func _test_ink_vine_refire() -> void:
+	var ink_vine = UnitScene.instantiate()
+	ink_vine.config_id = &"HKInkVine"
+	root.add_child(ink_vine)
+	ink_vine.replace_visual_scene(HKInkVineModelScene)
+	var emission: Dictionary = ink_vine.turret_emission_points()[0]
+	var forward: Vector3 = emission["direction"]
+	forward.y = 0.0
+	var target: Vector3 = ink_vine.global_position + forward.normalized() * 60.0
+	target.y += 20.0
+	var fired: Array = []
+	ink_vine.weapon_fired.connect(
+		func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+			fired.append_array(projectiles)
+	)
+
+	_expect(ink_vine.command_attack(target), "the Ink Vine must accept an in-range target")
+	for frame in 1200:
+		ink_vine._process(1.0 / 60.0)
+		ink_vine._physics_process(1.0 / 60.0)
+		if fired.size() >= 2:
+			break
+	_expect(
+		fired.size() >= 2,
+		"the Ink Vine must fire again after ReloadCount without a new attack order"
+	)
+
+	for projectile in fired:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	ink_vine.free()
+
+
+func _test_rejected_attack_perch() -> void:
+	var ink_vine = UnitScene.instantiate()
+	ink_vine.config_id = &"HKInkVine"
+	root.add_child(ink_vine)
+	ink_vine.replace_visual_scene(HKInkVineModelScene)
+	var navigation := RejectingAttackNavigation.new()
+	ink_vine.set_navigation_controller(navigation)
+	ink_vine.set_navigation_managed(true)
+	var emission: Dictionary = ink_vine.turret_emission_points()[0]
+	var forward: Vector3 = emission["direction"]
+	forward.y = 0.0
+	var target: Vector3 = ink_vine.global_position + forward.normalized() * 60.0
+
+	_expect(ink_vine.command_attack(target), "the Ink Vine must accept the distant ground point")
+	for attempt in 3:
+		ink_vine._process(0.3)
+	_expect(
+		navigation.destinations.size() == 3,
+		"rejected firing positions must be retried instead of leaving pursuit inert"
+	)
+	if navigation.destinations.size() == 3:
+		var first_distance: float = ink_vine.global_position.distance_to(
+			navigation.destinations[0]
+		)
+		var second_distance: float = ink_vine.global_position.distance_to(
+			navigation.destinations[1]
+		)
+		var third_distance: float = ink_vine.global_position.distance_to(
+			navigation.destinations[2]
+		)
+		_expect(
+			first_distance > second_distance and second_distance > third_distance,
+			"each rejected perch must move back toward the unit's connected region"
+		)
+	ink_vine.free()
 
 
 func _test_launcher_fire_sequences() -> void:

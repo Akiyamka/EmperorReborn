@@ -249,6 +249,22 @@ func _test_disconnected_island_orders(grid: MapNavigationGrid) -> void:
 		stranded.global_position == Vector3(100.5, 0.0, 100.5),
 		"a rejected island order must not make the unit walk into the separating wall"
 	)
+	var firing_position := navigation.reachable_attack_position(
+		stranded, unreachable_target, 30.0
+	)
+	_expect(
+		firing_position.is_finite()
+		and Vector2(
+			firing_position.x - unreachable_target.x,
+			firing_position.z - unreachable_target.z
+		).length() <= 30.0,
+		"attack pursuit must find a reachable firing cell inside weapon range"
+	)
+	var firing_move := navigation.command_move([stranded], firing_position)
+	_expect(
+		firing_move.size() == 1,
+		"the navigation-selected firing cell must be accepted from the unit's island"
+	)
 
 	var reachable := FakeUnit.new()
 	root.add_child(reachable)

@@ -152,6 +152,8 @@ var _attack_is_ground := false
 var _attack_is_pursuing := false
 var _attack_repath_remaining := 0.0
 var _attack_last_path_position := Vector3.INF
+var _attack_pursuit_destination := Vector3.INF
+var _attack_pursuit_rejected := false
 var _issuing_attack_move := false
 var _fire_sequence_active := false
 var _fire_sequence_turret
@@ -1015,6 +1017,8 @@ func command_attack(target_or_position: Variant) -> bool:
 	_attack_is_pursuing = false
 	_attack_repath_remaining = 0.0
 	_attack_last_path_position = Vector3.INF
+	_attack_pursuit_destination = Vector3.INF
+	_attack_pursuit_rejected = false
 	attack_order_changed.emit(true, target_or_position)
 	return true
 
@@ -1030,11 +1034,17 @@ func cancel_attack_order() -> void:
 	_attack_is_pursuing = false
 	_attack_repath_remaining = 0.0
 	_attack_last_path_position = Vector3.INF
+	_attack_pursuit_destination = Vector3.INF
+	_attack_pursuit_rejected = false
 	attack_order_changed.emit(false, null)
 
 
 func has_attack_order() -> bool:
 	return _has_attack_order
+
+
+func has_active_order() -> bool:
+	return _has_attack_order or _is_deploying or _mech_has_active_move_order()
 
 
 func attack_order_target() -> Variant:
@@ -1089,7 +1099,7 @@ func _advance_attack_order(delta: float) -> void:
 			in_range_turrets.append(turret)
 	if in_range_turrets.is_empty():
 		if primary_turret.target_range(attack_target) == CombatTurretScript.TargetRange.TOO_FAR:
-			_advance_attack_pursuit(target_world_position, delta)
+			_advance_attack_pursuit(target_world_position, primary_turret, delta)
 			return
 		# A minimum-range violation is not solved by moving closer. Keep the
 		# explicit order active so a moving target can re-enter weapon range.
@@ -1345,26 +1355,87 @@ func _primary_attack_turret(attack_target: Variant):
 	return null
 
 
-func _advance_attack_pursuit(target_world_position: Vector3, delta: float) -> void:
+func _advance_attack_pursuit(
+	target_world_position: Vector3, primary_turret, delta: float
+	) -> void:
 	_attack_repath_remaining = maxf(_attack_repath_remaining - delta, 0.0)
 	var target_moved := not _attack_last_path_position.is_finite() \
 		or _attack_last_path_position.distance_to(target_world_position) >= ATTACK_REPATH_DISTANCE
+	var route_unreachable: bool = (
+		_navigation_managed
+		and _navigation_system != null
+		and _navigation_system.has_method("route_is_unreachable")
+		and bool(_navigation_system.call("route_is_unreachable", self))
+	)
+	if target_moved:
+		_attack_pursuit_destination = Vector3.INF
+		_attack_pursuit_rejected = false
+		route_unreachable = false
 	if _attack_repath_remaining > 0.0 \
-	or (_attack_is_pursuing and not target_moved):
+	or (
+		_attack_is_pursuing
+		and not target_moved
+		and not route_unreachable
+		and _mech_has_active_move_order()
+	):
 		return
 	_attack_is_pursuing = true
 	_attack_last_path_position = target_world_position
 	_attack_repath_remaining = ATTACK_REPATH_INTERVAL_SECONDS
+	var pursuit_position := target_world_position
+	var horizontal_offset := target_world_position - global_position
+	horizontal_offset.y = 0.0
+	var preferred_range := float(primary_turret.maximum_range_world()) * 0.8 \
+		if primary_turret != null else 0.0
+	var reachable_position := Vector3.INF
+	if (
+		_navigation_managed
+		and _navigation_system != null
+		and primary_turret != null
+		and _navigation_system.has_method("reachable_attack_position")
+	):
+		reachable_position = _navigation_system.call(
+			"reachable_attack_position",
+			self,
+			target_world_position,
+			float(primary_turret.maximum_range_world())
+		)
+	if reachable_position.is_finite():
+		pursuit_position = reachable_position
+	elif preferred_range > 0.0:
+		# Navigate to a firing position rather than the target coordinate itself.
+		# An attack-ground point on top of a cliff may be unreachable to a ground
+		# unit even though a position in front of it is a valid artillery perch.
+		# If that first perch still cannot satisfy the elevation limits, halve
+		# the remaining distance on the next arrival and continue approaching.
+		var remaining_distance := minf(
+			preferred_range, horizontal_offset.length() * 0.5
+		)
+		pursuit_position = target_world_position \
+			- horizontal_offset.normalized() * remaining_distance
+	if (
+		not reachable_position.is_finite()
+		and (route_unreachable or _attack_pursuit_rejected)
+		and _attack_pursuit_destination.is_finite()
+	):
+		# The requested perch landed on disconnected terrain (commonly the red
+		# face or the separately connected top of a cliff). Back it toward the
+		# unit until the navigation grid accepts a firing position on this side.
+		pursuit_position = global_position.lerp(
+			_attack_pursuit_destination, 0.5
+		)
+	_attack_pursuit_destination = pursuit_position
 	_issuing_attack_move = true
 	var move_issued := true
 	if _navigation_managed and _navigation_system != null:
 		var assignments: Array = _navigation_system.command_move(
-			[self], target_world_position, UnitNavigationSystemScript.MoveMode.FREE
+			[self], pursuit_position, UnitNavigationSystemScript.MoveMode.FREE
 		)
 		move_issued = not assignments.is_empty()
 	else:
-		move_to(target_world_position)
+		move_to(pursuit_position)
 	_issuing_attack_move = false
+	_attack_pursuit_rejected = not move_issued
 	_attack_is_pursuing = move_issued
 
 

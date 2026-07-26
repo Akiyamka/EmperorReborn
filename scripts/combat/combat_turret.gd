@@ -414,6 +414,15 @@ func reload_count() -> float:
 		if firing_config != null else 0.0
 
 
+func maximum_range_world() -> float:
+	if bullet_config == null:
+		return 0.0
+	var bullet = CombatBulletScript.new(
+		bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
+	)
+	return bullet.maximum_range_world()
+
+
 func begin_reload() -> void:
 	reload_ticks_remaining = reload_count()
 
@@ -457,6 +466,19 @@ func target_range(target_or_position: Variant, aim_offset := Vector3.ZERO) -> in
 		return TargetRange.TOO_CLOSE
 	if horizontal_distance > bullet.maximum_range_world() + 0.0001:
 		return TargetRange.TOO_FAR
+	# Range alone is insufficient for weapons with a limited elevation arc.
+	# Ink Vine, for example, cannot lower its barrel less than 20 degrees: at
+	# maximum rules range a ground point is horizontally legal but still too
+	# shallow to aim at. Treat that case as too far while moving closer improves
+	# the pitch, so attack pursuit continues to an actually fireable position.
+	if _pitch_pivot != null:
+		var pitch_error := _pitch_limit_error(target_position)
+		if pitch_error > deg_to_rad(_acceptable_pitch_degrees()):
+			var closer_position := target_position
+			closer_position.x = lerpf(range_origin.x, target_position.x, 0.5)
+			closer_position.z = lerpf(range_origin.z, target_position.z, 0.5)
+			if _pitch_limit_error(closer_position) + 0.0001 < pitch_error:
+				return TargetRange.TOO_FAR
 	return TargetRange.IN_RANGE
 
 
@@ -787,6 +809,17 @@ func _desired_yaw(world_position: Vector3) -> float:
 
 func _desired_firing_pitch(world_position: Vector3) -> float:
 	return _desired_pitch_for_direction(_desired_firing_direction(world_position))
+
+
+func _pitch_limit_error(world_position: Vector3) -> float:
+	var pitch_config := _pitch_config()
+	if pitch_config == null:
+		return 0.0
+	var desired_pitch := _desired_firing_pitch(world_position)
+	var reachable_pitch := _clamp_rule_angle(
+		desired_pitch, pitch_config, &"minimum_pitch", &"maximum_pitch"
+	)
+	return absf(angle_difference(desired_pitch, reachable_pitch))
 
 
 func _desired_firing_direction(world_position: Vector3) -> Vector3:

@@ -450,6 +450,60 @@ func arrival_tolerance(unit: Node3D) -> float:
 	return maxf(_arrival_radius(unit), radius * 0.35)
 
 
+func route_is_unreachable(unit: Node3D) -> bool:
+	var agent := _agent_for(unit)
+	return not agent.is_empty() and bool(agent.get("route_unreachable", false))
+
+
+## Finds the closest stoppable ground position to an attack point that belongs
+## to the unit's connected navigation region and still lies inside weapon
+## range. Unlike command_move(), this searches the whole radius instead of
+## testing one guessed perch on the direct unit-target line.
+func reachable_attack_position(
+	unit: Node3D, world_target: Vector3, maximum_range: float
+	) -> Vector3:
+	if unit == null or runtime_map.grid == null or maximum_range <= 0.0:
+		return Vector3.INF
+	var agent := _movement_probe_for(unit)
+	if agent.is_empty():
+		return Vector3.INF
+	var grid = runtime_map.grid
+	var target_cell: Vector2i = grid.world_to_grid(world_target)
+	var cell_size: Vector2 = grid.cell_size()
+	var minimum_cell_span := minf(cell_size.x, cell_size.y)
+	if minimum_cell_span <= 0.0:
+		return Vector3.INF
+	var maximum_radius := ceili(maximum_range / minimum_cell_span)
+	for radius in range(maximum_radius + 1):
+		for candidate in _cell_ring(target_cell, radius):
+			if not grid.in_bounds(candidate):
+				continue
+			var position: Vector3 = grid.grid_to_world(candidate)
+			var horizontal_offset := Vector2(
+				position.x - world_target.x, position.z - world_target.z
+			)
+			if horizontal_offset.length() > maximum_range:
+				continue
+			if not _ground_target_is_legal(agent, position, false):
+				continue
+			if _ground_target_is_reachable(unit, agent, position):
+				return position
+	return Vector3.INF
+
+
+func _cell_ring(center: Vector2i, radius: int) -> Array[Vector2i]:
+	if radius <= 0:
+		return [center]
+	var result: Array[Vector2i] = []
+	for x in range(-radius, radius + 1):
+		result.append(center + Vector2i(x, -radius))
+		result.append(center + Vector2i(x, radius))
+	for y in range(-radius + 1, radius):
+		result.append(center + Vector2i(-radius, y))
+		result.append(center + Vector2i(radius, y))
+	return result
+
+
 func command_log() -> Array[Dictionary]:
 	return _command_log.duplicate(true)
 

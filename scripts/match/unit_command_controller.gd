@@ -31,6 +31,7 @@ const DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC := 1000
 var _deployment_cursor_entity_id := 0
 var _deployment_cursor_last_check_msec := -DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC
 var _deployment_cursor_result := NO_CURSOR_OVERRIDE
+var _selected_orders_active := -1
 
 
 func setup(
@@ -48,6 +49,7 @@ func setup(
 
 
 func process() -> void:
+	_refresh_idle_status()
 	var hovered_control := get_viewport().gui_get_hovered_control()
 	if hovered_control != null and hovered_control.mouse_filter != Control.MOUSE_FILTER_IGNORE:
 		_clear_command_cursor()
@@ -104,6 +106,30 @@ func selection_text(status := "") -> String:
 	if not status.is_empty():
 		text += " | %s" % status
 	return text
+
+
+func _refresh_idle_status() -> void:
+	if _selected_entities.is_empty():
+		_selected_orders_active = -1
+		return
+	var has_units := false
+	var active := false
+	for entity in _selected_entities:
+		if not is_instance_valid(entity) or not entity.has_method("has_active_order"):
+			continue
+		has_units = true
+		if bool(entity.call("has_active_order")):
+			active = true
+			break
+	if not has_units:
+		_selected_orders_active = -1
+		return
+	var next_state := 1 if active else 0
+	if next_state == _selected_orders_active:
+		return
+	_selected_orders_active = next_state
+	if not active:
+		status_changed.emit("Idle")
 
 
 func _begin_drag_selection(screen_position: Vector2) -> void:
@@ -396,6 +422,7 @@ func _clear_selection() -> void:
 
 func _set_selection(entities: Array[Node]) -> void:
 	_clear_selection()
+	_selected_orders_active = -1
 	for entity in entities:
 		if entity == null or not is_instance_valid(entity):
 			continue
@@ -408,6 +435,7 @@ func _set_selection(entities: Array[Node]) -> void:
 
 func _on_selected_entity_exiting(entity: Node) -> void:
 	_selected_entities.erase(entity)
+	_selected_orders_active = -1
 	status_changed.emit("")
 
 

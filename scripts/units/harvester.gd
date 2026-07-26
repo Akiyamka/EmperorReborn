@@ -264,6 +264,16 @@ func has_harvest_order() -> bool:
 	return _harvest_phase != HarvestPhase.NONE
 
 
+func has_active_order() -> bool:
+	return (
+		super.has_active_order()
+		or has_harvest_order()
+		or has_unload_order()
+		or _pending_order != PendingOrder.NONE
+		or _harvest_cycle_enabled
+	)
+
+
 func harvest_target_cell() -> Vector2i:
 	return _harvest_target_cell
 
