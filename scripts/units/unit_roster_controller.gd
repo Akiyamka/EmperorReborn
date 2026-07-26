@@ -404,7 +404,6 @@ func _refresh_unit_option_states() -> void:
 					status_text = "PAUSED" if order.manually_paused else ""
 				elif queued_count > 0:
 					state = BuildingOptionStateScript.State.PROGRESS
-					status_text = "QUEUED"
 				else:
 					state = BuildingOptionStateScript.State.BLOCKED
 		unit_option_state_changed.emit(BuildingOptionStateScript.new(

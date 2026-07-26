@@ -84,6 +84,13 @@ func _ready() -> void:
 	_apply()
 
 
+func _get_tooltip(_at_position: Vector2) -> String:
+	# The icon (and its name/cost tooltip) is hidden in DISABLED state, so the
+	# tooltip must follow -- otherwise an invisible slot still reveals its
+	# content on hover.
+	return tooltip_text if _icon_rect != null and _icon_rect.visible else ""
+
+
 func _gui_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton and event.pressed):
 		return
