@@ -35,6 +35,9 @@ const HKInkVineModelScene := preload(
 const HKTrooperModelScene := preload(
 	"res://assets/converted/models/HK_Trooper_H0/HK_Trooper_H0.scn"
 )
+const ORAATrooperModelScene := preload(
+	"res://assets/converted/models/OR_AATrooper_H0/OR_AATrooper_H0.scn"
+)
 const ORAPCModelScene := preload("res://assets/converted/models/Or_apc_H0/Or_apc_H0.scn")
 const ORLaserTankModelScene := preload(
 	"res://assets/converted/models/OR_Lasertank_H0/OR_Lasertank_H0.scn"
@@ -236,6 +239,7 @@ func _initialize() -> void:
 	_run_case("unit attack orders validate targets, fire, and pursue", _test_unit_attack_order)
 	_run_case("Ink Vine repeats fire while its attack order remains active", _test_ink_vine_refire)
 	_run_case("attack pursuit backs rejected firing positions toward the unit", _test_rejected_attack_perch)
+	_run_case("XBF fire events delay infantry projectiles", _test_xbf_fire_event_timing)
 	_run_case("launcher fire clips schedule every projectile before reload", _test_launcher_fire_sequences)
 	_run_case("pursuit enters a stable firing range", _test_far_attack_pursuit)
 	_run_case("building state replacement rebinds its turret", _test_building_turret_rebind)
@@ -2058,12 +2062,17 @@ func _test_launcher_fire_sequences() -> void:
 		launcher.config_id = definition[0]
 		root.add_child(launcher)
 		launcher.replace_visual_scene(definition[1])
-		var player := launcher.get_node("VisualRoot").find_child(
-			"AnimationPlayer", true, false
-		) as AnimationPlayer
-		var animation := player.get_animation(&"Fire_0")
 		for turret in launcher.combat_turrets:
-			var shot_times: Array[float] = launcher._authored_fire_shot_times(player, animation, turret)
+			var binding: Dictionary = launcher._fire_animation_binding(turret.weapon_index())
+			var player := binding["player"] as AnimationPlayer
+			var animation_name := StringName(binding["name"])
+			var animation := player.get_animation(animation_name)
+			var shot_times: Array[float] = launcher._authored_fire_shot_times(
+				player, animation, turret, animation_name
+			)
+			var source_times: Array[float] = launcher._xbf_fire_shot_times(
+				animation_name, animation, turret
+			)
 			var configured_count := int(turret.firing_config.burst_shot_count)
 			_expect(
 				configured_count == turret.muzzle_count(),
@@ -2077,7 +2086,14 @@ func _test_launcher_fire_sequences() -> void:
 					definition[0], turret.weapon_index()
 				]
 			)
-			if shot_times.size() >= 2:
+			if not source_times.is_empty():
+				_expect(
+					shot_times == source_times,
+					"%s weapon %d must prefer its complete XBF projectile schedule" % [
+						definition[0], turret.weapon_index()
+					]
+				)
+			elif shot_times.size() >= 2:
 				_expect(
 					is_equal_approx(
 						shot_times[1] - shot_times[0],
@@ -2095,6 +2111,52 @@ func _test_launcher_fire_sequences() -> void:
 				]
 			)
 		launcher.free()
+
+
+func _test_xbf_fire_event_timing() -> void:
+	var trooper = UnitScene.instantiate()
+	trooper.config_id = &"ORAATrooper"
+	root.add_child(trooper)
+	trooper.replace_visual_scene(ORAATrooperModelScene)
+	var player := trooper.get_node("VisualRoot").find_child(
+		"AnimationPlayer", true, false
+	) as AnimationPlayer
+	var animation := player.get_animation(&"Fire_0")
+	var turret = trooper.combat_turrets[0]
+	var shot_times: Array[float] = trooper._authored_fire_shot_times(
+		player, animation, turret, &"Fire_0"
+	)
+	_expect(
+		shot_times.size() == 1 and is_equal_approx(shot_times[0], 15.0 / 20.0),
+		"ORAATrooper must convert its absolute frame-301 type-10 event "
+			+ "to frame 15 of the Fire_0 clip"
+	)
+
+	var emission: Dictionary = trooper.turret_emission_points()[0]
+	var target: Vector3 = Vector3(emission["position"]) \
+		+ Vector3(emission["direction"]).normalized() * 5.0
+	var fired: Array = []
+	trooper.weapon_fired.connect(func(
+			projectiles: Array, _target: Variant, _weapon_index: int
+		) -> void:
+		fired.append_array(projectiles)
+	)
+	_expect(trooper.command_attack(target), "ORAATrooper must accept an in-range target")
+	_expect(
+		trooper._start_authored_fire_sequence(turret),
+		"ORAATrooper must start its authored Fire_0 sequence"
+	)
+	trooper._process(0.59)
+	_expect(
+		fired.is_empty(),
+		"ORAATrooper must not launch before the authored firing pose"
+	)
+	trooper._process(0.02)
+	_expect(
+		fired.size() == 1,
+		"ORAATrooper must launch when Fire_0 reaches its type-10 event"
+	)
+	trooper.free()
 
 
 func _test_far_attack_pursuit() -> void:
