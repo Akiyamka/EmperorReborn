@@ -573,6 +573,7 @@ func play_state(state: StringName) -> void:
 		# default idle state before construct starts updating.
 		player.advance(0.0)
 		_refresh_wall_variant_visual()
+		_apply_refinery_upgrade_pose()
 		_bind_combat_turrets(_state_root(state))
 		return
 
@@ -584,6 +585,7 @@ func play_state(state: StringName) -> void:
 		var child_state := StringName(String(child.get_meta("state", child.name.to_lower())))
 		child.visible = child_state == state
 	_refresh_wall_variant_visual()
+	_apply_refinery_upgrade_pose()
 	_bind_combat_turrets(_state_root(state))
 
 
@@ -1004,8 +1006,16 @@ func _apply_refinery_upgrade_pose() -> void:
 		player.pause()
 
 
+## Idle, Damage1 and Damage2 each carry their own copy of the dock pad nodes
+## and their own AnimationPlayer, so the pose has to be reapplied against
+## whichever state is currently active, not always against Idle.
 func _refinery_animation_player() -> AnimationPlayer:
-	return get_node_or_null("States/Idle/AnimationPlayer") as AnimationPlayer
+	var state_root := _state_root(current_state)
+	if state_root == null:
+		state_root = get_node_or_null("States/Idle")
+	if state_root == null:
+		return null
+	return state_root.get_node_or_null("AnimationPlayer") as AnimationPlayer
 
 
 func setup(building_id: StringName) -> void:
