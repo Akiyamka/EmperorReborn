@@ -104,4 +104,5 @@ web server rather than opening `index.html` directly.
 
 ## Credits
 - Thanks to the [CorrinoEngine](https://github.com/cookgreen/CorrinoEngine) project, I didn’t have to figure out from scratch how the format of models and animations in the game works. 
+- Audio decoding was inspired by [ebfd-re](https://github.com/IceReaper/ebfd-re) project 
 - Many thanks to Westwood studio for creating this legendary game
