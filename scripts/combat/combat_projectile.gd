@@ -3,6 +3,7 @@ extends Node3D
 
 const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
 const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
+const CombatLingerEffectScript := preload("res://scripts/combat/combat_linger_effect.gd")
 
 ## A physical, world-space delivery instance for one CombatBullet payload.
 ## CombatBullet remains the immutable typed-definition view; this node owns flight,
@@ -185,6 +186,11 @@ func _create_visual() -> void:
 			if bullet.id() in NO_PROPULSION_FLASH_BULLETS:
 				_hide_authored_propulsion_flash(authored_visual)
 			return
+	# Model-authored particle banks provide the visible gas/flame stream for
+	# continuous delivery. Do not expose the missing projectile mesh as a
+	# yellow debug bolt inside that stream.
+	if bullet.is_continuous():
+		return
 	# Keep an unmistakable fallback for bullets whose ArtIni XAF has not yet
 	# been converted. Rules-backed weapons with a converted scene never use it.
 	var size := DIRECT_PROJECTILE_SIZE
@@ -654,7 +660,7 @@ func _fallback_target_collision(from: Vector3, to: Vector3) -> bool:
 		return false
 	if _distance_to_segment(target_position, from, to) > _target_hit_radius(intended_target):
 		return false
-	_impact_target(intended_target, target_position, not bullet.is_piercing())
+	_impact_target(intended_target, target_position, _stops_at(intended_target))
 	return state != State.FLYING
 
 
@@ -667,7 +673,7 @@ func _handle_collisions(collisions: Array[Dictionary]) -> bool:
 		if entity != null:
 			if not bullet.can_hit(entity):
 				continue
-			_impact_target(entity, Vector3(collision["position"]), not bullet.is_piercing())
+			_impact_target(entity, Vector3(collision["position"]), _stops_at(entity))
 			if state != State.FLYING:
 				return true
 			continue
@@ -675,6 +681,21 @@ func _handle_collisions(collisions: Array[Dictionary]) -> bool:
 			_impact_ground(Vector3(collision["position"]))
 			return true
 	return false
+
+
+## Whether hitting `entity` should stop this projectile's travel. Explicitly
+## piercing bullets (the Sonic wave) never stop. Continuous streams (flame,
+## gas) represent an ongoing jet rather than a single discrete shot: they
+## keep burning through every unit and building in their path (matching the
+## original engine's "sprays a whole line of infantry" behavior) but still
+## stop dead at walls, which the source rules model as a distinct fortified
+## obstacle rather than an ordinary building.
+func _stops_at(entity: Object) -> bool:
+	if bullet.is_piercing():
+		return false
+	if bullet.is_continuous():
+		return entity is Node and (entity as Node).is_in_group("wall_buildings")
+	return true
 
 
 func _impact_target(entity: Object, world_position: Vector3, stop: bool) -> void:
@@ -715,6 +736,25 @@ func _resolve_impact(direct_target: Object, world_position: Vector3) -> void:
 	if explosion_type != &"" or not explosion_effects.is_empty():
 		explosion_requested.emit(explosion_type, explosion_effects, world_position)
 	_spawn_explosion_visuals(world_position)
+	_spawn_linger_effect(direct_target, world_position)
+
+
+func _spawn_linger_effect(
+		direct_target: Object,
+		world_position: Vector3
+	) -> void:
+	if bullet == null \
+	or bullet.linger_duration_ticks() <= 0.0 \
+	or bullet.linger_damage() <= 0.0 \
+	or direct_target == null \
+	or not is_instance_valid(direct_target) \
+	or get_parent() == null \
+	or not get_parent().is_inside_tree():
+		return
+	var effect = CombatLingerEffectScript.new()
+	get_parent().add_child(effect)
+	if not effect.configure(bullet, direct_target, world_position):
+		effect.free()
 
 
 func _spawn_explosion_visuals(world_position: Vector3) -> void:

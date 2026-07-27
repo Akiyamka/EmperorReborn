@@ -29,6 +29,13 @@ func resolve(
 
 	if bullet.blast_radius_world() > 0.0:
 		for candidate in _splash_targets(world_context, world_position, bullet.blast_radius_world()):
+			# A shooter standing point-blank against an obstacle (wall, target)
+			# must never catch its own weapon's splash, no matter how large its
+			# blast radius or how the friendly-fire percentage would otherwise
+			# scale it. Only a deliberately selected direct target may hit its
+			# own source (already handled above via `direct_target`).
+			if candidate == source:
+				continue
 			if not _contains_object(candidates, candidate):
 				candidates.append(candidate)
 

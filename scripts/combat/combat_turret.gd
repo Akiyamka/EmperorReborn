@@ -40,6 +40,16 @@ const LAUNCH_SMOKE_MARKER := "#smoke"
 const LAUNCH_SMOKE_SEQUENCE := "!cexp"
 const LAUNCH_SMOKE_FRAME_COUNT := 16
 const LAUNCH_SMOKE_SIZE := 1.25
+## A flamethrower jet's particles are authored sparse, constant-sized, and
+## perfectly straight. Densifying them, growing each one over its lifetime,
+## and adding a small acceleration away from the jet's axis reads as a real
+## flame jet that stays a tight column at the nozzle and flares out only
+## near its tip — the flare grows with elapsed^2, not with distance from the
+## nozzle, so the acceleration term stays negligible until late in the shot.
+const JET_FLARE_DENSITY_MULTIPLIER := 2
+const JET_FLARE_MAX_PARTICLES_PER_EMISSION := 12
+const JET_FLARE_GROWTH_SCALE := 1.5
+const JET_FLARE_RADIAL_ACCELERATION := 0.9
 
 enum TargetRange {
 	INVALID,
@@ -58,6 +68,7 @@ var muzzle_flash_id: StringName = &""
 var muzzle_flash_scene: PackedScene
 var joint_configs: Array[Resource] = []
 var reload_ticks_remaining := 0.0
+var continuous_burst_ticks_remaining := 0.0
 var bullet_gravity := 1.0
 
 var current_yaw := 0.0
@@ -79,15 +90,22 @@ var _next_muzzle_index := 0
 var _last_emissions: Array[Dictionary] = []
 var _rear_flash_textures: Array[Texture2D] = []
 var _launch_smoke_textures: Array[Texture2D] = []
+var _model_fx_texture_cache: Dictionary = {}
 var _muzzle_bank_particle_index := 0
 var _casing_particle_index := 0
 var _casing_timeline_tween: Tween
+var _particle_timeline_tweens: Array[Tween] = []
+var _stream_particle_index := 0
 var _authored_fire_fx_active := false
+var _fx_random := RandomNumberGenerator.new()
 var _definition_catalog := CombatDefinitionCatalogScript.new()
+
+static var _fx_texture_paths_by_lowercase: Dictionary = {}
 
 
 func configure(turret_id: StringName) -> bool:
 	unbind_model()
+	_fx_random.randomize()
 	_weapon_index = -1
 	config = _definition_catalog.turret(turret_id)
 	joint_configs = _joint_chain(config)
@@ -225,6 +243,21 @@ func requires_hull_turn() -> bool:
 	return _yaw_pivot == null
 
 
+func has_independent_yaw() -> bool:
+	return _yaw_pivot != null and _axis_speed(_yaw_config(), &"yaw_speed") > 0.0
+
+
+## True when an animation target belongs to this weapon's articulated branch
+## or to the ancestor chain that carries that branch. A Fire clip confined to
+## this set can be layered over sibling locomotion branches.
+func owns_aim_branch(node: Node) -> bool:
+	if node == null or _root_pivot == null or not is_instance_valid(_root_pivot):
+		return false
+	return node == _root_pivot \
+		or _root_pivot.is_ancestor_of(node) \
+		or node.is_ancestor_of(_root_pivot)
+
+
 func requires_hull_turn_for(world_position: Vector3) -> bool:
 	if _yaw_pivot == null:
 		return true
@@ -239,6 +272,36 @@ func requires_hull_turn_for(world_position: Vector3) -> bool:
 	)
 	return absf(angle_difference(desired_yaw, reachable_yaw)) \
 		> deg_to_rad(_acceptable_yaw_degrees())
+
+
+## Signed world-Y rotation still required from the owner hull before the target
+## reaches this turret's nearest authored yaw limit. Zero means the servo can
+## already acquire it without changing the hull heading.
+func hull_yaw_adjustment_for(world_position: Vector3) -> float:
+	if _yaw_pivot == null:
+		var emission := peek_emission()
+		if emission.is_empty():
+			return 0.0
+		var direction: Vector3 = emission["direction"]
+		var target_direction := world_position - Vector3(emission["position"])
+		var horizontal_direction := Vector2(direction.x, direction.z)
+		var horizontal_target := Vector2(target_direction.x, target_direction.z)
+		if horizontal_direction.is_zero_approx() or horizontal_target.is_zero_approx():
+			return 0.0
+		return angle_difference(
+			atan2(horizontal_direction.x, horizontal_direction.y),
+			atan2(horizontal_target.x, horizontal_target.y)
+		)
+	var yaw_config := _yaw_config()
+	if yaw_config == null:
+		return 0.0
+	_apply_aim_transforms()
+	var desired_yaw := _desired_yaw(world_position)
+	var reachable_yaw := _clamp_rule_angle(
+		desired_yaw, yaw_config,
+		&"minimum_yaw", &"maximum_yaw"
+	)
+	return angle_difference(reachable_yaw, desired_yaw)
 
 
 func joint_count() -> int:
@@ -427,10 +490,31 @@ func begin_reload() -> void:
 	reload_ticks_remaining = reload_count()
 
 
+## True while a continuous-bullet turret is still within its authored burst
+## window (see `begin_continuous_burst`). Ignored for non-continuous weapons.
+func continuous_burst_active() -> bool:
+	return continuous_burst_ticks_remaining > 0.0
+
+
+## Starts (or keeps alive) a continuous weapon's burst window, sized to the
+## same `ReloadCount` budget used for the cooldown that follows it — matching
+## the original engine's roughly symmetric on/off cadence for stream weapons
+## (e.g. the Flame Tank's ~2.4s burst followed by a ~2.4s reload).
+func begin_continuous_burst() -> void:
+	continuous_burst_ticks_remaining = reload_count()
+
+
 func advance_ticks(ticks: float) -> void:
-	if ticks <= 0.0 or reload_ticks_remaining <= 0.0:
+	if ticks <= 0.0:
 		return
-	reload_ticks_remaining = maxf(reload_ticks_remaining - ticks, 0.0)
+	if reload_ticks_remaining > 0.0:
+		reload_ticks_remaining = maxf(reload_ticks_remaining - ticks, 0.0)
+	if continuous_burst_ticks_remaining > 0.0:
+		continuous_burst_ticks_remaining = maxf(
+			continuous_burst_ticks_remaining - ticks, 0.0
+		)
+		if continuous_burst_ticks_remaining <= 0.0:
+			begin_reload()
 
 
 func can_target(target_or_position: Variant) -> bool:
@@ -485,7 +569,9 @@ func target_range(target_or_position: Variant, aim_offset := Vector3.ZERO) -> in
 	return TargetRange.IN_RANGE
 
 
-func try_fire(begin_reload_after_shot := true, committed_sequence := false) -> Array:
+func try_fire(
+		begin_reload_after_shot := true, committed_sequence := false, damage_scale := 1.0
+	) -> Array:
 	var result: Array = []
 	if not is_configured() or (not committed_sequence and not is_ready()):
 		return result
@@ -493,9 +579,11 @@ func try_fire(begin_reload_after_shot := true, committed_sequence := false) -> A
 	_last_emissions.clear()
 	var bullet_count := maxi(int(firing_config.bullet_count), 1)
 	for index in bullet_count:
-		result.append(CombatBulletScript.new(
+		var payload = CombatBulletScript.new(
 			bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
-		))
+		)
+		payload.damage_scale = damage_scale
+		result.append(payload)
 		_last_emissions.append(next_emission())
 	if begin_reload_after_shot:
 		begin_reload()
@@ -512,7 +600,8 @@ func try_fire_at(
 		aim_offset := Vector3.ZERO,
 		begin_reload_after_shot := true,
 		require_aim := true,
-		committed_sequence := false
+		committed_sequence := false,
+		damage_scale := 1.0
 	) -> Array:
 	var result: Array = []
 	if not is_configured() or not is_bound() \
@@ -554,7 +643,7 @@ func try_fire_at(
 	var parent := projectile_parent if projectile_parent != null else _default_projectile_parent()
 	if parent == null or not parent.is_inside_tree():
 		return result
-	var payloads := try_fire(begin_reload_after_shot, committed_sequence)
+	var payloads := try_fire(begin_reload_after_shot, committed_sequence, damage_scale)
 	for index in payloads.size():
 		var projectile = CombatProjectileScript.new()
 		parent.add_child(projectile)
@@ -572,7 +661,11 @@ func try_fire_at(
 		# so adding the rules TurretMuzzleFlash and runtime light would duplicate it.
 		if not _uses_embedded_muzzle_flash:
 			_spawn_muzzle_flash(parent, emission)
-			_spawn_shot_light(parent, emission)
+			# Continuous delivery is presented by the model's authored particle
+			# banks. A generic ballistic flash is especially wrong for gas and
+			# also competes with flame streams.
+			if not preview_bullet.is_continuous():
+				_spawn_shot_light(parent, emission)
 			_spawn_auxiliary_muzzle_effects(parent, emission)
 		result.append(projectile)
 	return result
@@ -932,11 +1025,14 @@ func start_authored_fire_fx(
 		playback_speed := 1.0
 	) -> bool:
 	cancel_authored_fire_fx()
-	var started := _start_model_casing_timeline(
+	var casing_started := _start_model_casing_timeline(
 		animation_name, parent, playback_speed
 	)
-	_authored_fire_fx_active = started
-	return started
+	var particles_started := _start_model_particle_timelines(
+		animation_name, parent, playback_speed
+	)
+	_authored_fire_fx_active = casing_started or particles_started
+	return _authored_fire_fx_active
 
 
 func has_authored_fire_fx() -> bool:
@@ -948,6 +1044,10 @@ func cancel_authored_fire_fx() -> void:
 	if _casing_timeline_tween != null and _casing_timeline_tween.is_valid():
 		_casing_timeline_tween.kill()
 	_casing_timeline_tween = null
+	for timeline in _particle_timeline_tweens:
+		if timeline != null and timeline.is_valid():
+			timeline.kill()
+	_particle_timeline_tweens.clear()
 
 
 func _start_model_casing_timeline(
@@ -1020,6 +1120,431 @@ func _start_model_casing_timeline(
 
 func _finish_casing_timeline() -> void:
 	_casing_timeline_tween = null
+
+
+func _start_model_particle_timelines(
+		animation_name: StringName,
+		parent: Node,
+		playback_speed: float
+	) -> bool:
+	if _fx_model_root == null or not is_instance_valid(_fx_model_root) \
+	or not bool(_fx_model_root.get_meta("xbf_fx_events_complete", false)):
+		return false
+	var animation_entry := _model_animation_entry(animation_name)
+	if animation_entry.is_empty():
+		return false
+	var resolved_parent := parent if parent != null else _default_projectile_parent()
+	if resolved_parent == null or not resolved_parent.is_inside_tree():
+		return false
+
+	var clip_start := int(animation_entry.get("start_frame", 0))
+	var clip_end := int(animation_entry.get("end_frame", 0))
+	var seconds_per_frame := INLINE_FX_FRAME_SECONDS / maxf(playback_speed, 0.001)
+	var world_scale := float(_fx_model_root.get_meta("xbf_world_scale", 1.0))
+	var jet_reach_world := _continuous_jet_reach_world()
+	var started := false
+	for bank_value: Variant in _fx_model_root.get_meta("xbf_fx_banks", []) as Array:
+		var bank := bank_value as Dictionary
+		var texture_name := String(bank.get("texture", ""))
+		if texture_name.nocasecmp_to(CASING_SEQUENCE) == 0:
+			continue
+		var schedule := _stream_fx_bank_schedule(
+			String(bank.get("id", "")), clip_start, clip_end
+		)
+		if schedule.is_empty():
+			continue
+		var frame_count := maxi(int(bank.get("texture_frame_count", 1)), 1)
+		var textures := _model_fx_bank_textures(texture_name, frame_count)
+		if textures.size() != frame_count:
+			continue
+
+		var timeline := _fx_model_root.create_tween()
+		_particle_timeline_tweens.append(timeline)
+		var previous_time := 0.0
+		var scheduled_emissions := 0
+		for scheduled_value: Dictionary in schedule:
+			var attachment := String(scheduled_value.get("attachment", ""))
+			var marker := _find_original_node(_fx_model_root, attachment)
+			if marker == null:
+				continue
+			var emission_time := maxf(
+				float(int(scheduled_value.get("frame", clip_start)) - clip_start)
+					* seconds_per_frame,
+				0.0
+			)
+			if emission_time > previous_time:
+				timeline.tween_interval(emission_time - previous_time)
+			timeline.tween_callback(
+				_emit_model_stream_particles.bind(
+					weakref(resolved_parent), weakref(marker), bank, textures,
+					world_scale, attachment, jet_reach_world
+				)
+			)
+			previous_time = emission_time
+			scheduled_emissions += 1
+		if scheduled_emissions == 0:
+			timeline.kill()
+			_particle_timeline_tweens.erase(timeline)
+			continue
+		timeline.tween_interval(seconds_per_frame)
+		timeline.finished.connect(_finish_particle_timeline.bind(timeline))
+		started = true
+	return started
+
+
+func _finish_particle_timeline(timeline: Tween) -> void:
+	_particle_timeline_tweens.erase(timeline)
+
+
+## True for a stream weapon (the Harkonnen Flamer/Flame Tank's Flame_B and
+## FlameTank_B). Their authored Fire clip is a short single burst meant to be
+## replayed back-to-back for as long as the target stays engaged, rather than
+## gated behind a full ReloadCount wait between each short clip like a normal
+## discrete-shot weapon.
+func is_continuous_bullet() -> bool:
+	if bullet_config == null:
+		return false
+	var preview_bullet = CombatBulletScript.new(
+		bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
+	)
+	return preview_bullet.is_continuous()
+
+
+## World-unit reach the authored flame-jet particles should visually stretch
+## to, or -1.0 when this weapon's bullet is not continuous (leaving muzzle
+## banks such as casings and flashes at their authored, unscaled distance).
+func _continuous_jet_reach_world() -> float:
+	if bullet_config == null:
+		return -1.0
+	var preview_bullet = CombatBulletScript.new(
+		bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
+	)
+	return preview_bullet.maximum_range_world() if preview_bullet.is_continuous() else -1.0
+
+
+func _stream_fx_bank_schedule(
+		bank_id: String,
+		clip_start_frame: int,
+		clip_end_frame: int
+	) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var active_frames := {}
+	for event_value: Variant in _fx_model_root.get_meta("xbf_fx_events", []) as Array:
+		var event := event_value as Dictionary
+		if String(event.get("bank_id", "")) != bank_id:
+			continue
+		var attachment := String(event.get("attachment", ""))
+		if not _is_projectile_fx_attachment(attachment):
+			continue
+		var frame := int(event.get("frame", -1))
+		if frame < clip_start_frame or frame > clip_end_frame:
+			continue
+		var action := String(event.get("action", ""))
+		if action == "start":
+			if active_frames.has(attachment):
+				_append_stream_schedule(
+					result, int(active_frames[attachment]), frame, attachment
+				)
+			active_frames[attachment] = frame
+		elif action == "stop" and active_frames.has(attachment):
+			_append_stream_schedule(
+				result, int(active_frames[attachment]), frame, attachment
+			)
+			active_frames.erase(attachment)
+	result.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a["frame"]) < int(b["frame"])
+	)
+	return result
+
+
+func _append_stream_schedule(
+		result: Array[Dictionary],
+		start_frame: int,
+		stop_frame: int,
+		attachment: String
+	) -> void:
+	if stop_frame < start_frame:
+		return
+	var first_particle_frame := start_frame + 1 \
+		if stop_frame - start_frame > 1 else start_frame
+	var particle_frames := maxi(stop_frame - start_frame - 1, 1)
+	for particle_offset in particle_frames:
+		result.append({
+			"frame": first_particle_frame + particle_offset,
+			"attachment": attachment,
+		})
+
+
+func _is_projectile_fx_attachment(attachment: String) -> bool:
+	var lower := attachment.to_lower()
+	return lower.begins_with(MUZZLE_MARKER) or lower.contains("gun")
+
+
+func _emit_model_stream_particles(
+		parent_ref: WeakRef,
+		marker_ref: WeakRef,
+		bank: Dictionary,
+		textures: Array[Texture2D],
+		world_scale: float,
+		attachment: String,
+		jet_reach_world: float
+	) -> void:
+	var parent := parent_ref.get_ref() as Node if parent_ref != null else null
+	var marker := marker_ref.get_ref() as Node3D if marker_ref != null else null
+	if parent == null or not parent.is_inside_tree() \
+	or marker == null or not is_instance_valid(marker) or textures.is_empty():
+		return
+	var particles_per_frame := 1
+	var parameters: Variant = bank.get("int_parameters_0_3", [])
+	if _fx_parameter_count(parameters) >= 2:
+		particles_per_frame = clampi(int(parameters[1]), 1, 8)
+	if jet_reach_world > 0.0 and String(bank.get("texture", "")).to_lower().contains("fire"):
+		particles_per_frame = mini(
+			particles_per_frame * JET_FLARE_DENSITY_MULTIPLIER,
+			JET_FLARE_MAX_PARTICLES_PER_EMISSION
+		)
+	for particle_number in particles_per_frame:
+		_emit_model_stream_particle(
+			parent, marker, bank, textures, world_scale,
+			attachment, particle_number, jet_reach_world
+		)
+
+
+func _emit_model_stream_particle(
+		parent: Node,
+		marker: Node3D,
+		bank: Dictionary,
+		textures: Array[Texture2D],
+		world_scale: float,
+		attachment: String,
+		particle_number: int,
+		jet_reach_world: float
+	) -> void:
+	var particle := Node3D.new()
+	particle.name = "AuthoredStream_%d_%d" % [
+		_weapon_index, _stream_particle_index,
+	]
+	particle.set_meta("combat_muzzle_fx", &"authored_stream")
+	particle.set_meta("emission_index", particle_number)
+	particle.set_meta("combat_fx_bank_id", StringName(String(bank.get("id", ""))))
+	particle.set_meta("combat_fx_texture", StringName(String(bank.get("texture", ""))))
+	particle.set_meta("combat_fx_attachment", attachment)
+	_stream_particle_index += 1
+	var start := marker.global_position
+	particle.set_meta("combat_muzzle_start_position", start)
+
+	var particle_size := float(bank.get(
+		"world_particle_size",
+		float(bank.get("particle_size", 0.0)) * world_scale
+	))
+	var material := _fx_bank_material(bank, textures.front())
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE * particle_size
+	quad.material = material
+	var visual := MeshInstance3D.new()
+	visual.name = "Visual"
+	visual.mesh = quad
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	particle.add_child(visual)
+	particle.set_meta("combat_fx_particle_size", particle_size)
+
+	var direction := Vector3(
+		peek_emission().get("direction", marker.global_basis * AUTHORED_MUZZLE_FORWARD)
+	).normalized()
+	if direction.is_zero_approx():
+		direction = Vector3.FORWARD
+	var integer_parameters: Variant = bank.get("int_parameters_0_3", [])
+	var spread_degrees := float(integer_parameters[3]) \
+		if _fx_parameter_count(integer_parameters) >= 4 else 0.0
+	var is_jet_bank := jet_reach_world > 0.0 \
+		and String(bank.get("texture", "")).to_lower().contains("fire")
+	if is_jet_bank:
+		# A concentrated flamethrower jet keeps every particle traveling the
+		# same straight line the muzzle is aimed along; only its spawn point
+		# jitters sideways within the nozzle. Turning the authored spread into
+		# a velocity-angle deviation instead (as non-jet muzzle banks do below)
+		# compounds with `jet_reach_world`'s now much longer travel distance
+		# and fans the whole stream into a widening cone instead of a jet.
+		start = _jittered_stream_start(start, direction, spread_degrees, particle_size)
+		particle.set_meta("combat_muzzle_start_position", start)
+	else:
+		direction = _random_stream_direction(direction, spread_degrees)
+	var float_parameters: Variant = bank.get("float_parameters_4_6", [])
+	var source_speed := float(float_parameters[0]) \
+		if _fx_parameter_count(float_parameters) >= 1 else 0.0
+	var variation_parameters: Variant = bank.get("float_parameters_12_14", [])
+	var source_speed_variation := absf(float(variation_parameters[0])) \
+		if _fx_parameter_count(variation_parameters) >= 1 else 0.0
+	var varied_source_speed := maxf(
+		source_speed + _fx_random.randf_range(
+			-source_speed_variation, source_speed_variation
+		),
+		0.0
+	)
+	var velocity := direction * varied_source_speed * world_scale \
+		* AIM_UPDATES_PER_SECOND
+	var duration := float(textures.size()) * INLINE_FX_FRAME_SECONDS
+	# The XBF fire-jet banks were authored for the source engine's own particle
+	# reach, which is far short of a converted weapon's actual MaxRange (about
+	# half of it for the flamer/flame tank). Stretch only the moving flame jet
+	# (not embers/smoke, and not a stationary pilot-light bank) so the visible
+	# stream reaches the same distance the warhead can actually hit, instead of
+	# fading out partway to the target.
+	if jet_reach_world > 0.0 \
+	and not velocity.is_zero_approx() \
+	and String(bank.get("texture", "")).to_lower().contains("fire"):
+		var authored_reach := velocity.length() * duration
+		if authored_reach > 0.0001:
+			velocity *= jet_reach_world / authored_reach
+	var source_gravity := float(bank.get("gravity", _fx_bank_gravity(bank)))
+	var world_gravity := float(bank.get(
+		"world_gravity",
+		source_gravity * world_scale \
+			* AIM_UPDATES_PER_SECOND * AIM_UPDATES_PER_SECOND
+	))
+	var acceleration := Vector3.DOWN * world_gravity
+	if is_jet_bank:
+		# A per-particle acceleration away from the jet's own travel direction
+		# stays negligible right after the nozzle (displacement grows with
+		# elapsed^2) and only becomes visible near the tip, so the column
+		# stays tight at the source and flares out just before it dissipates
+		# — unlike a cone, which would fan out at a constant rate from frame
+		# one. Each particle picks its own random perpendicular direction so
+		# the flare spreads outward rather than the whole jet bending one way.
+		var side := direction.cross(Vector3.UP)
+		if side.is_zero_approx():
+			side = direction.cross(Vector3.RIGHT)
+		side = side.normalized()
+		var up := direction.cross(side).normalized()
+		var flare_angle := _fx_random.randf_range(0.0, TAU)
+		var radial_direction := side * cos(flare_angle) + up * sin(flare_angle)
+		acceleration += radial_direction * JET_FLARE_RADIAL_ACCELERATION \
+			* world_scale * AIM_UPDATES_PER_SECOND * AIM_UPDATES_PER_SECOND
+	particle.set_meta("combat_fx_source_gravity", source_gravity)
+	particle.set_meta("combat_muzzle_velocity", velocity)
+	particle.set_meta("combat_muzzle_acceleration", acceleration)
+	parent.add_child(particle)
+	particle.top_level = true
+	particle.global_position = start
+
+	if is_jet_bank:
+		var growth := particle.create_tween().set_process_mode(
+			Tween.TWEEN_PROCESS_PHYSICS
+		)
+		growth.tween_method(
+			_scale_stream_particle.bind(particle),
+			1.0, JET_FLARE_GROWTH_SCALE, duration
+		)
+
+	if not velocity.is_zero_approx() or not acceleration.is_zero_approx():
+		var motion := particle.create_tween().set_process_mode(
+			Tween.TWEEN_PROCESS_PHYSICS
+		)
+		motion.tween_method(
+			_update_model_stream_particle.bind(
+				particle, start, velocity, acceleration
+			),
+			0.0, duration, duration
+		)
+
+	var tint := material.albedo_color
+	var frame_animation := particle.create_tween()
+	for frame_index in textures.size():
+		frame_animation.tween_callback(
+			_set_fx_bank_frame.bind(
+				material, textures[frame_index], tint,
+				_fx_bank_frame_opacity(bank, frame_index)
+			)
+		)
+		frame_animation.tween_interval(INLINE_FX_FRAME_SECONDS)
+	frame_animation.finished.connect(particle.queue_free)
+
+
+func _random_stream_direction(direction: Vector3, spread_degrees: float) -> Vector3:
+	var spread := deg_to_rad(clampf(absf(spread_degrees), 0.0, 60.0))
+	if spread <= 0.0001:
+		return direction
+	var yaw := _fx_random.randf_range(-spread, spread)
+	var pitch := _fx_random.randf_range(-spread, spread)
+	var result := direction.rotated(Vector3.UP, yaw)
+	var side := result.cross(Vector3.UP).normalized()
+	if side.is_zero_approx():
+		side = Vector3.RIGHT
+	return result.rotated(side, pitch).normalized()
+
+
+## Sideways spawn offset for one jet particle, within a nozzle-width disc
+## perpendicular to `direction`. Unlike `_random_stream_direction`, this keeps
+## the jet's cross-section constant along its whole travel distance instead of
+## widening it in proportion to distance traveled.
+func _jittered_stream_start(
+		start: Vector3, direction: Vector3, spread_degrees: float, particle_size: float
+	) -> Vector3:
+	var jitter_radius := particle_size * 0.5 \
+		* clampf(absf(spread_degrees) / 60.0, 0.0, 1.0)
+	if jitter_radius <= 0.0001:
+		return start
+	var side := direction.cross(Vector3.UP)
+	if side.is_zero_approx():
+		side = Vector3.RIGHT
+	side = side.normalized()
+	var up := direction.cross(side).normalized()
+	var angle := _fx_random.randf_range(0.0, TAU)
+	var radius := _fx_random.randf_range(0.0, jitter_radius)
+	return start + (side * cos(angle) + up * sin(angle)) * radius
+
+
+func _update_model_stream_particle(
+		elapsed: float,
+	particle: Node3D,
+	start: Vector3,
+	velocity: Vector3,
+	acceleration: Vector3
+	) -> void:
+	if particle == null or not is_instance_valid(particle):
+		return
+	particle.global_position = start + velocity * elapsed \
+		+ 0.5 * acceleration * elapsed * elapsed
+
+
+func _scale_stream_particle(scale_value: float, particle: Node3D) -> void:
+	if particle == null or not is_instance_valid(particle):
+		return
+	particle.scale = Vector3.ONE * scale_value
+
+
+func _model_fx_bank_textures(
+		base_name: String,
+		count: int
+	) -> Array[Texture2D]:
+	var cache_key := "%s:%d" % [base_name.to_lower(), count]
+	var result: Array[Texture2D] = []
+	if _model_fx_texture_cache.has(cache_key):
+		for texture: Texture2D in _model_fx_texture_cache[cache_key]:
+			result.append(texture)
+		return result
+	var textures: Array[Texture2D] = _muzzle_bank_textures(base_name, count)
+	if not textures.is_empty() or count != 1:
+		if not textures.is_empty():
+			_model_fx_texture_cache[cache_key] = textures.duplicate()
+		return textures
+	var source_path := _resolved_fx_texture_path(base_name + ".tga")
+	var source_texture := load(source_path) as Texture2D \
+		if not source_path.is_empty() else null
+	if source_texture != null:
+		textures.append(_opaque_additive_texture(source_texture))
+		_model_fx_texture_cache[cache_key] = textures.duplicate()
+	return textures
+
+
+func _fx_parameter_count(parameters: Variant) -> int:
+	if parameters is Array \
+	or parameters is PackedInt32Array \
+	or parameters is PackedInt64Array \
+	or parameters is PackedFloat32Array \
+	or parameters is PackedFloat64Array:
+		return parameters.size()
+	return 0
 
 
 func _model_animation_entry(animation_name: StringName) -> Dictionary:
@@ -1385,9 +1910,12 @@ func _find_original_node(node: Node, original_name: String) -> Node3D:
 
 func _muzzle_bank_textures(base_name: String, count: int) -> Array[Texture2D]:
 	if count <= 0:
-		return []
-	var textures := _load_fx_texture_sequence(base_name, count)
-	return textures if textures.size() == count else []
+		var empty: Array[Texture2D] = []
+		return empty
+	var textures: Array[Texture2D] = _load_fx_texture_sequence(base_name, count)
+	if textures.size() != count:
+		textures.clear()
+	return textures
 
 
 func _fx_bank_material(
@@ -1400,9 +1928,8 @@ func _fx_bank_material(
 	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material.albedo_texture = texture
-	var colors := bank.get("int_parameters_7_11", PackedInt32Array()) \
-		as PackedInt32Array
-	if colors.size() >= 3:
+	var colors: Variant = bank.get("int_parameters_7_11", [])
+	if _fx_parameter_count(colors) >= 3:
 		material.albedo_color = Color(
 			clampf(float(colors[0]) / 255.0, 0.0, 1.0),
 			clampf(float(colors[1]) / 255.0, 0.0, 1.0),
@@ -1413,17 +1940,15 @@ func _fx_bank_material(
 
 
 func _fx_bank_gravity(bank: Dictionary) -> float:
-	var parameters := bank.get("float_parameters_4_6", PackedFloat32Array()) \
-		as PackedFloat32Array
-	if parameters.size() < 2:
+	var parameters: Variant = bank.get("float_parameters_4_6", [])
+	if _fx_parameter_count(parameters) < 2:
 		return 0.0
-	return parameters[1]
+	return float(parameters[1])
 
 
 func _fx_bank_frame_opacity(bank: Dictionary, frame_index: int) -> float:
-	var trailing := bank.get("trailing_words", PackedInt32Array()) \
-		as PackedInt32Array
-	if trailing.size() < 2:
+	var trailing: Variant = bank.get("trailing_words", [])
+	if _fx_parameter_count(trailing) < 2:
 		return 1.0
 	return clampf(
 		float(trailing[0] + trailing[1] * frame_index) / 255.0,
@@ -1608,12 +2133,36 @@ func _load_fx_texture_sequence(base_name: String, count: int) -> Array[Texture2D
 	for frame in count:
 		# Concatenate instead of %-formatting: the literal `%` in `!%shel`
 		# would otherwise be interpreted as another format placeholder.
-		var path := INLINE_FX_TEXTURE_DIR + "/" + base_name + str(frame) + ".tga"
+		var path := _resolved_fx_texture_path(
+			base_name + str(frame) + ".tga"
+		)
+		if path.is_empty():
+			result.clear()
+			return result
 		var source_texture := load(path) as Texture2D
 		if source_texture == null:
-			return []
+			result.clear()
+			return result
 		result.append(_opaque_additive_texture(source_texture))
 	return result
+
+
+func _resolved_fx_texture_path(file_name: String) -> String:
+	if _fx_texture_paths_by_lowercase.is_empty():
+		var directory := DirAccess.open(INLINE_FX_TEXTURE_DIR)
+		if directory == null:
+			return ""
+		directory.list_dir_begin()
+		var entry := directory.get_next()
+		while not entry.is_empty():
+			if not directory.current_is_dir() \
+			and entry.get_extension().to_lower() == "tga":
+				_fx_texture_paths_by_lowercase[entry.to_lower()] = (
+					INLINE_FX_TEXTURE_DIR + "/" + entry
+				)
+			entry = directory.get_next()
+		directory.list_dir_end()
+	return String(_fx_texture_paths_by_lowercase.get(file_name.to_lower(), ""))
 
 
 func _opaque_additive_texture(source: Texture2D) -> Texture2D:

@@ -76,6 +76,27 @@ Other weapon properties on a unit:
   inside the clip follow the animated barrel
   recoils: the Minotaurus emits four sequential shells from its four muzzles
   during one 31-frame `Fire 0` clip while its reload timer is already advancing.
+  A `Continuous` bullet uses its single type-10 launch as the first damage
+  pulse, then repeats at the source-frame cadence until the matching authored
+  muzzle-stream banks stop. Thus the Harkonnen Flamer and Flame Tank deliver a
+  real pulse sequence for the whole visible jet instead of one projectile at
+  its beginning. The authored `!%01fire` jet banks were sized for the source
+  engine's own particle reach, which is roughly half of a converted weapon's
+  `MaxRange` in world units; runtime rescales only the moving flame-jet
+  particles (matched by texture name, excluding smoke/ember banks and the
+  zero-speed pilot-light bank) so the visible stream travels the bullet's
+  actual `maximum_range_world()` instead of fading out partway to the target.
+  The Flame Tank's own authored `Fire 0`/`Fire 1` clips are each only 5-6
+  frames (one short burst per side turret), far shorter than their 60-tick
+  (2.4s) `ReloadCount`; unlike a discrete-shot weapon, a `Continuous` turret's
+  next authored clip is allowed to restart as soon as the previous one ends,
+  without waiting for `ReloadCount` to finish counting down first
+  (`CombatTurret.is_continuous_bullet()`), so the short burst replays
+  back-to-back into one sustained stream for as long as the target stays
+  engaged, matching the original's continuous flame instead of one puff
+  followed by a multi-second silent gap. The infantry Flamer's single `Fire_0`
+  clip already contains enough authored burst frames to look continuous on
+  its own and is unaffected by this change.
   `TurretBulletCount` remains a
   separate rule for several projectiles emitted by one event. Once the firing
   clip has started, its authored salvo events are committed; the next barrel

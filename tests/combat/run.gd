@@ -4,6 +4,7 @@ const LegacyRulesFixture := preload("res://tests/support/legacy_rules_fixture.gd
 
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
 const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
+const CombatLingerEffectScript := preload("res://scripts/combat/combat_linger_effect.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_definition_catalog.gd")
@@ -31,6 +32,15 @@ const HKDevastatorModelScene := preload(
 )
 const HKInkVineModelScene := preload(
 	"res://assets/converted/models/HK_Inkvine_H0/HK_Inkvine_H0.scn"
+)
+const HKFlamerModelScene := preload(
+	"res://assets/converted/models/HK_Flamer_H0/HK_Flamer_H0.scn"
+)
+const HKFlameModelScene := preload(
+	"res://assets/converted/models/HK_flame_H0/HK_flame_H0.scn"
+)
+const ORChemicalModelScene := preload(
+	"res://assets/converted/models/OR_Chemical_H0/OR_Chemical_H0.scn"
 )
 const HKTrooperModelScene := preload(
 	"res://assets/converted/models/HK_Trooper_H0/HK_Trooper_H0.scn"
@@ -89,6 +99,9 @@ class CombatTarget extends RefCounted:
 	func combat_hit_radius() -> float:
 		return hit_radius
 
+	func is_enemy_of(player_id: int) -> bool:
+		return owner_player_id != player_id
+
 	func take_damage(amount: float) -> void:
 		damage_taken += amount
 
@@ -133,6 +146,9 @@ class PhysicsCombatTarget extends StaticBody3D:
 
 	func combat_hit_radius() -> float:
 		return hit_radius
+
+	func is_enemy_of(player_id: int) -> bool:
+		return owner_player_id != player_id
 
 	func combat_owner_player_id() -> int:
 		return owner_player_id
@@ -188,6 +204,7 @@ func _initialize() -> void:
 	_run_case("bullet targeting distinguishes ground and aircraft", _test_target_domains)
 	_run_case("bullet rules expose physical delivery parameters", _test_bullet_delivery_rules)
 	_run_case("impact effects use typed acceptance and fallback damage", _test_impact_effect_contract)
+	_run_case("lingering gas delivers every authored damage tick", _test_lingering_gas_damage)
 	_run_case("hitscan resolves at launch without travel", _test_hitscan_projectile)
 	_run_case("non-homing bullets keep the sampled aim point", _test_linear_projectile_no_lead)
 	_run_case("attack-ground missiles descend to the sampled point", _test_attack_ground_missile)
@@ -198,8 +215,20 @@ func _initialize() -> void:
 		_test_trajectory_moving_target_miss
 	)
 	await _run_async_case("projectiles collide and Sonic pierces in 3D", _test_projectile_world_collision)
+	await _run_async_case(
+		"flame streams pierce units and buildings but stop at walls",
+		_test_continuous_stream_piercing
+	)
+	_run_case(
+		"a continuous stream's pulses split one clip's total damage evenly",
+		_test_continuous_stream_damage_split
+	)
 	await _run_async_case("impact resolution applies splash falloff and friendly fire", _test_impact_resolution)
 	_run_case("turret emits bursts and reloads in rule ticks", _test_turret_reload)
+	_run_case(
+		"continuous turrets burst then reload for equal ReloadCount windows",
+		_test_continuous_turret_burst_reload
+	)
 	await _run_async_case(
 		"muzzle FX banks emit authored rising barrel smoke",
 		_test_muzzle_fx_bank_smoke
@@ -207,6 +236,10 @@ func _initialize() -> void:
 	await _run_async_case(
 		"model FX banks emit authored casing counts and sizes",
 		_test_model_fx_bank_casings
+	)
+	await _run_async_case(
+		"flame and chemical Fire clips emit authored particle streams",
+		_test_model_fx_bank_streams
 	)
 	await _run_async_case(
 		"turret launches projectiles and composes the authored impact FX",
@@ -222,6 +255,14 @@ func _initialize() -> void:
 	_run_case("multi-barrel turret cycles authored muzzles", _test_multi_barrel_turret)
 	_run_case("trajectory barrels fire a parallel salvo", _test_parallel_trajectory_salvo)
 	_run_case("limited turret turns its hull toward rear targets", _test_limited_turret_hull_turn)
+	_run_case(
+		"Fire track topology determines firing while moving",
+		_test_fire_while_moving_capability
+	)
+	_run_case(
+		"independent side turrets acquire separate targets and escape blind zones",
+		_test_independent_side_turrets
+	)
 	_run_case("turret recenters smoothly after attack is replaced by move", _test_turret_recenter_after_move)
 	_run_case("unit model replacement rebinds its turret", _test_unit_turret_rebind)
 	await _run_async_case(
@@ -241,6 +282,7 @@ func _initialize() -> void:
 	_run_case("attack pursuit backs rejected firing positions toward the unit", _test_rejected_attack_perch)
 	_run_case("XBF fire events delay infantry projectiles", _test_xbf_fire_event_timing)
 	_run_case("launcher fire clips schedule every projectile before reload", _test_launcher_fire_sequences)
+	_run_case("continuous flame clips schedule every stream pulse", _test_continuous_flame_sequences)
 	_run_case("pursuit enters a stable firing range", _test_far_attack_pursuit)
 	_run_case("building state replacement rebinds its turret", _test_building_turret_rebind)
 	_run_case("building damage visuals use equal health bands", _test_building_damage_visual_states)
@@ -482,6 +524,57 @@ func _test_impact_effect_contract() -> void:
 	)
 
 
+func _test_lingering_gas_damage() -> void:
+	var rules = root.get_node("Rules")
+	var gas = _runtime_bullet(rules, &"GasInf_B")
+	var impact_target := CombatTarget.new(&"BPV")
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	projectile.bullet = gas
+	projectile._resolve_impact(impact_target, Vector3.ZERO)
+	var spawned_linger: Node = null
+	for child in root.get_children():
+		if child.get_meta("combat_linger_effect", &"") == &"GasInf_B":
+			spawned_linger = child
+			break
+	_expect(
+		spawned_linger != null
+		and is_equal_approx(impact_target.damage_taken, 200.0),
+		"a GasInf_B impact must apply its direct payload and spawn the lingering effect"
+	)
+	if spawned_linger != null:
+		spawned_linger.free()
+	projectile.free()
+
+	var target := CombatTarget.new(&"BPV")
+	var effect = CombatLingerEffectScript.new()
+	root.add_child(effect)
+	_expect(
+		effect.configure(gas, target, Vector3.ZERO),
+		"GasInf_B must create a target-bound lingering payload"
+	)
+	effect.set_physics_process(false)
+	for tick in 49:
+		effect._physics_process(
+			1.0 / CombatLingerEffectScript.RULE_COMBAT_TICKS_PER_SECOND
+		)
+	_expect(
+		effect.delivered_ticks == 49
+		and is_equal_approx(target.damage_taken, 392.0)
+		and not effect.is_queued_for_deletion(),
+		"49 gas ticks must deliver 10 damage through Flame_W's 80% BPV multiplier"
+	)
+	effect._physics_process(
+		1.0 / CombatLingerEffectScript.RULE_COMBAT_TICKS_PER_SECOND
+	)
+	_expect(
+		effect.delivered_ticks == 50
+		and is_equal_approx(target.damage_taken, 400.0)
+		and effect.is_queued_for_deletion(),
+		"GasInf_B must stop after all 50 authored linger ticks"
+	)
+
+
 func _test_hitscan_projectile() -> void:
 	var rules = root.get_node("Rules")
 	var target := CombatTarget.new(&"None")
@@ -719,6 +812,68 @@ func _test_projectile_world_collision() -> void:
 	target.free()
 
 
+func _test_continuous_stream_piercing() -> void:
+	var rules = root.get_node("Rules")
+	var blocker := PhysicsCombatTarget.new(Vector3(0.0, 0.0, -4.0), 0.75)
+	var target := PhysicsCombatTarget.new(Vector3(0.0, 0.0, -8.0), 0.75)
+	root.add_child(blocker)
+	root.add_child(target)
+	await physics_frame
+
+	var flame = CombatProjectileScript.new()
+	root.add_child(flame)
+	flame.launch(
+		_runtime_bullet(rules, &"Flame_B"),
+		_emission(Vector3.ZERO, Vector3.FORWARD),
+		target
+	)
+	flame.advance(0.5)
+	_expect(blocker.damage_taken > 0.0, "a flame stream must burn the first unit in its path")
+	_expect(
+		target.damage_taken > 0.0,
+		"a flame stream must keep burning through to the unit standing behind it"
+	)
+	flame.free()
+
+	blocker.damage_taken = 0.0
+	target.damage_taken = 0.0
+	blocker.add_to_group("wall_buildings")
+	var flame_at_wall = CombatProjectileScript.new()
+	root.add_child(flame_at_wall)
+	flame_at_wall.launch(
+		_runtime_bullet(rules, &"Flame_B"),
+		_emission(Vector3.ZERO, Vector3.FORWARD),
+		target
+	)
+	flame_at_wall.advance(0.5)
+	_expect(blocker.damage_taken > 0.0, "a flame stream must still burn a wall it reaches")
+	_expect(
+		is_zero_approx(target.damage_taken),
+		"a wall, unlike an ordinary unit or building, must stop a flame stream"
+	)
+	flame_at_wall.free()
+	blocker.free()
+	target.free()
+
+
+func _test_continuous_stream_damage_split() -> void:
+	var rules = root.get_node("Rules")
+	var flame = _runtime_bullet(rules, &"Flame_B")
+	var full_burst_damage: float = flame.damage_against(&"Building")
+
+	var pulse_count := 17
+	var pulse = _runtime_bullet(rules, &"Flame_B")
+	pulse.damage_scale = 1.0 / pulse_count
+	_expect(
+		is_equal_approx(pulse.damage_against(&"Building") * pulse_count, full_burst_damage),
+		"summing every evenly scaled pulse must recover exactly one full stream hit"
+	)
+	_expect(
+		pulse.damage_against(&"Building") < full_burst_damage,
+		"an individual pulse must deal less than the whole stream's total damage"
+	)
+
+
 func _test_impact_resolution() -> void:
 	var rules = root.get_node("Rules")
 	var source := CombatSource.new()
@@ -752,6 +907,17 @@ func _test_impact_resolution() -> void:
 		"explicitly disabled distance reduction must keep enemy splash at full damage"
 	)
 	_expect(is_zero_approx(outside.damage_taken), "a collider outside BlastRadius must remain untouched")
+
+	var shooter := PhysicsCombatTarget.new(Vector3(0.01, 0.0, 0.0))
+	shooter.owner_player_id = source.owner_player_id
+	root.add_child(shooter)
+	await physics_frame
+	resolver.resolve(mortar, shooter, Vector3.ZERO, direct, shooter)
+	_expect(
+		is_zero_approx(shooter.damage_taken),
+		"a shooter standing point-blank against an obstacle must never catch its own splash"
+	)
+	shooter.free()
 
 	ally.damage_taken = 0.0
 	var heat = _runtime_bullet(rules, &"HEAT_B")
@@ -817,6 +983,56 @@ func _test_turret_reload() -> void:
 		burst_turret.try_fire().size() == 10,
 		"TurretBulletCount=10 must emit a ten-bullet burst"
 	)
+
+
+func _test_continuous_turret_burst_reload() -> void:
+	var turret = CombatTurretScript.new()
+	_expect(
+		turret.configure(&"HKFlamerGun"),
+		"HKFlamerGun must resolve Turret -> Flame_B -> Flame_W"
+	)
+	_expect(
+		turret.is_continuous_bullet(),
+		"HKFlamerGun's Flame_B bullet must be marked continuous"
+	)
+	_expect(
+		not turret.continuous_burst_active(),
+		"a fresh turret must not start inside a burst window"
+	)
+
+	turret.begin_continuous_burst()
+	_expect(
+		is_equal_approx(turret.continuous_burst_ticks_remaining, 30.0),
+		"the burst window must be sized to ReloadCount (30 ticks)"
+	)
+	turret.advance_ticks(29.0)
+	_expect(
+		turret.continuous_burst_active(),
+		"the burst window must still be open one tick before it elapses"
+	)
+	_expect(
+		turret.is_ready(),
+		"a turret mid-burst must not have started its post-burst reload yet"
+	)
+
+	turret.advance_ticks(1.0)
+	_expect(
+		not turret.continuous_burst_active(),
+		"the burst window must close once its ReloadCount ticks elapse"
+	)
+	_expect(
+		not turret.is_ready(),
+		"closing the burst window must start a real ReloadCount cooldown"
+	)
+	_expect(
+		is_equal_approx(turret.reload_ticks_remaining, 30.0),
+		"the post-burst cooldown must last the same ReloadCount as the burst"
+	)
+
+	turret.advance_ticks(29.0)
+	_expect(not turret.is_ready(), "the cooldown must remain locked one tick early")
+	turret.advance_ticks(1.0)
+	_expect(turret.is_ready(), "the turret must become ready once the cooldown elapses")
 
 
 func _test_muzzle_fx_bank_smoke() -> void:
@@ -937,11 +1153,11 @@ func _test_model_fx_bank_casings() -> void:
 		root.child_entered_tree.connect(observe_casing)
 		var started := turret.start_authored_fire_fx(&"Fire_0", root)
 		_expect(
-			started == (int(casing_case[2]) > 0),
-			"%s casing timeline presence must come from its !%%shel bank"
+			int(casing_case[2]) == 0 or started,
+			"%s must start authored FX when its !%%shel bank has emissions"
 				% String(casing_case[1])
 		)
-		if started:
+		if int(casing_case[2]) > 0:
 			await create_timer(float(casing_case[5])).timeout
 		root.child_entered_tree.disconnect(observe_casing)
 		_expect(
@@ -964,6 +1180,86 @@ func _test_model_fx_bank_casings() -> void:
 			"%s casings must retain bank size, gravity, and authored attachments"
 				% String(casing_case[1])
 		)
+		turret.cancel_authored_fire_fx()
+		_free_muzzle_effects()
+		model.free()
+
+
+func _test_model_fx_bank_streams() -> void:
+	var cases := [
+		[ORChemicalModelScene, &"ORChemicalGun", &"!sm"],
+		[HKFlamerModelScene, &"HKFlamerGun", &"!%01fire"],
+		[HKFlameModelScene, &"HKFlameTankRight", &"!%01fire"],
+	]
+	for stream_case: Array in cases:
+		_free_muzzle_effects()
+		var model := (stream_case[0] as PackedScene).instantiate() as Node3D
+		root.add_child(model)
+		var turret = CombatTurretScript.new()
+		_expect(
+			turret.configure(StringName(stream_case[1]))
+			and turret.bind_model(model, 0),
+			"%s must bind for authored stream playback" % String(stream_case[1])
+		)
+		var observed: Array[Dictionary] = []
+		var observe_stream := func(child: Node) -> void:
+			if child.get_meta("combat_muzzle_fx", &"") != &"authored_stream":
+				return
+			observed.append({
+				"texture": child.get_meta("combat_fx_texture", &""),
+				"velocity": child.get_meta(
+					"combat_muzzle_velocity", Vector3.ZERO
+				),
+				"attachment": child.get_meta("combat_fx_attachment", ""),
+			})
+		root.child_entered_tree.connect(observe_stream)
+		_expect(
+			turret.start_authored_fire_fx(&"Fire_0", root),
+			"%s Fire_0 must start its authored particle banks"
+				% String(stream_case[1])
+		)
+		await create_timer(0.5).timeout
+		root.child_entered_tree.disconnect(observe_stream)
+		_expect(
+			not observed.is_empty(),
+			"%s must emit visible stream particles" % String(stream_case[1])
+		)
+		var expected_texture := StringName(stream_case[2])
+		var bank_driven := not observed.is_empty()
+		var saw_expected_texture := false
+		var saw_motion := false
+		for particle: Dictionary in observed:
+			bank_driven = bank_driven \
+				and String(particle["attachment"]).begins_with(">>")
+			saw_expected_texture = saw_expected_texture \
+				or particle["texture"] == expected_texture
+			saw_motion = saw_motion \
+				or not Vector3(particle["velocity"]).is_zero_approx()
+		_expect(
+			bank_driven and saw_expected_texture and saw_motion,
+			"%s stream must retain its authored texture, motion, and muzzle attachment: %s"
+				% [stream_case[1], observed]
+		)
+		var emission := turret.peek_emission()
+		var target_position: Vector3 = Vector3(emission["position"]) \
+			+ Vector3(emission["direction"]) * 2.0
+		var projectiles: Array = turret.try_fire_at(
+			target_position, model, root, Vector3.ZERO, false
+		)
+		_expect(
+			projectiles.size() == 1
+			and _muzzle_effects(&"shot_light").is_empty(),
+			"%s continuous stream must not add a generic ballistic shot light"
+				% String(stream_case[1])
+		)
+		if stream_case[1] == &"HKFlamerGun" and not projectiles.is_empty():
+			_expect(
+				projectiles[0].get_node_or_null("Visual") == null,
+				"HKFlamerGun must not draw a yellow fallback bolt through its flame stream"
+			)
+		for projectile in projectiles:
+			if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+				projectile.free()
 		turret.cancel_authored_fire_fx()
 		_free_muzzle_effects()
 		model.free()
@@ -1621,6 +1917,286 @@ func _test_limited_turret_hull_turn() -> void:
 	unit.free()
 
 
+func _test_fire_while_moving_capability() -> void:
+	var mongoose = UnitScene.instantiate()
+	mongoose.config_id = &"ATMongoose"
+	root.add_child(mongoose)
+	mongoose.replace_visual_scene(ATMongooseModelScene)
+	var minotaurus = UnitScene.instantiate()
+	minotaurus.config_id = &"ATMinotaurus"
+	root.add_child(minotaurus)
+	minotaurus.replace_visual_scene(ATMinotaurusModelScene)
+	var devastator = UnitScene.instantiate()
+	devastator.config_id = &"HKDevastator"
+	root.add_child(devastator)
+	devastator.replace_visual_scene(HKDevastatorModelScene)
+
+	_expect(
+		mongoose.weapon_can_fire_while_moving(0),
+		"Mongoose Fire_0 must layer over its sibling leg locomotion"
+	)
+	_expect(
+		not minotaurus.weapon_can_fire_while_moving(0),
+		"Minotaurus Fire_0 moves its legs and must remain a braced full-body action"
+	)
+	_expect(
+		not devastator.weapon_can_fire_while_moving(0)
+		and devastator.weapon_can_fire_while_moving(1),
+		"only the Devastator's independently animated missile turret may fire while moving"
+	)
+
+	var emission: Dictionary = mongoose.combat_turrets[0].peek_emission()
+	var forward: Vector3 = emission["direction"]
+	forward.y = 0.0
+	forward = forward.normalized()
+	var target_direction := forward.rotated(Vector3.UP, deg_to_rad(60.0))
+	var target := PhysicsCombatTarget.new(
+		Vector3(emission["position"]) + target_direction * 5.0
+	)
+	root.add_child(target)
+	var movement_samples: Array[bool] = []
+	var projectile_directions: Array[Vector3] = []
+	var muzzle_directions: Array[Vector3] = []
+	var facing_directions: Array[Vector3] = []
+	var fired_targets: Array = []
+	mongoose.weapon_fired.connect(func(
+		projectiles: Array, fired_target: Variant, _weapon_index: int
+		) -> void:
+		movement_samples.append(mongoose._movement_animation_active)
+		fired_targets.append(fired_target)
+		var muzzle: Vector3 = mongoose.combat_turrets[0].peek_emission()["direction"]
+		muzzle.y = 0.0
+		muzzle_directions.append(muzzle.normalized())
+		var facing: Vector3 = mongoose.facing_direction()
+		facing.y = 0.0
+		facing_directions.append(facing.normalized())
+		for projectile in projectiles:
+			if is_instance_valid(projectile):
+				var shot_direction: Vector3 = projectile.direction()
+				shot_direction.y = 0.0
+				projectile_directions.append(shot_direction.normalized())
+				projectile.free()
+	)
+	_expect(
+		mongoose.command_attack(target),
+		"Mongoose must accept the target before its movement order"
+	)
+	mongoose.move_to(mongoose.global_position + forward * 20.0)
+	_expect(
+		not mongoose.has_attack_order()
+		and mongoose._weapon_targets.has(0)
+		and mongoose._moving_fire_weapons.has(0),
+		"Move must replace pursuit and enable autonomous fire for its movable turret"
+	)
+	for frame in 180:
+		mongoose._process(1.0 / 60.0)
+		mongoose._physics_process(1.0 / 60.0)
+		if true in movement_samples:
+			break
+	_expect(
+		true in movement_samples,
+		"Mongoose must keep tracking and fire through its Move animation"
+	)
+	_expect(
+		not projectile_directions.is_empty()
+		and projectile_directions[0].dot(muzzle_directions[0]) > 0.999,
+		"Mongoose projectiles must leave along the independently aimed turret muzzle"
+	)
+	_expect(
+		not projectile_directions.is_empty()
+		and projectile_directions[0].dot(facing_directions[0]) < 0.9,
+		"Mongoose side shots must not be forced along the unit's movement heading"
+	)
+	target.global_position = mongoose.global_position + forward * 100.0
+	for frame in 180:
+		mongoose._process(1.0 / 60.0)
+		mongoose._physics_process(1.0 / 60.0)
+		if mongoose._weapon_fire_sequences.is_empty():
+			break
+	var out_of_range_yaw := absf(
+		mongoose.combat_turrets[0].current_yaw_degrees()
+	)
+	var mongoose_player := mongoose.get_node("VisualRoot").find_child(
+		"AnimationPlayer", true, false
+	) as AnimationPlayer
+	if mongoose_player != null:
+		mongoose_player.advance(1.0 / 60.0)
+	mongoose._process(1.0 / 60.0)
+	var returning_yaw := absf(mongoose.combat_turrets[0].current_yaw_degrees())
+	_expect(
+		returning_yaw < out_of_range_yaw and returning_yaw > 0.0,
+		"an out-of-range retained target must release the Mongoose turret through its servo"
+	)
+	var returning_direction: Vector3 = (
+		mongoose.combat_turrets[0].peek_emission()["direction"]
+	)
+	_expect(
+		absf(
+			rad_to_deg(_horizontal_angle_between(forward, returning_direction))
+			- returning_yaw
+		) < 0.1,
+		"the visible Mongoose turret must not snap forward when its target leaves range"
+	)
+	var autonomous_target := PhysicsCombatTarget.new(
+		mongoose.global_position
+			+ forward.rotated(Vector3.UP, deg_to_rad(-60.0)) * 5.0
+	)
+	autonomous_target.owner_player_id = 2
+	root.add_child(autonomous_target)
+	autonomous_target.add_to_group(&"units")
+	for frame in 600:
+		mongoose._process(1.0 / 60.0)
+		mongoose._physics_process(1.0 / 60.0)
+		if autonomous_target in fired_targets:
+			break
+	_expect(
+		autonomous_target in fired_targets,
+		"a moving Mongoose must acquire a new nearby enemy instead of waiting for its old target"
+	)
+	autonomous_target.free()
+	target.free()
+	mongoose.free()
+	minotaurus.free()
+	devastator.free()
+
+
+func _test_independent_side_turrets() -> void:
+	var flame = UnitScene.instantiate()
+	flame.config_id = &"HKFlame"
+	flame.owner_player_id = 1
+	root.add_child(flame)
+	flame.replace_visual_scene(HKFlameModelScene)
+	_expect(
+		flame.combat_turrets.size() == 2
+		and flame.weapon_can_fire_while_moving(0)
+		and flame.weapon_can_fire_while_moving(1),
+		"both HKFlame side turrets must be independent movable-fire weapons"
+	)
+
+	var emissions: Array[Dictionary] = [
+		flame.combat_turrets[0].peek_emission(),
+		flame.combat_turrets[1].peek_emission(),
+	]
+	var forward := (
+		Vector3(emissions[0]["direction"])
+		+ Vector3(emissions[1]["direction"])
+	).normalized()
+	forward.y = 0.0
+	forward = forward.normalized()
+	var side_targets: Array[PhysicsCombatTarget] = []
+	for angle in [-60.0, 60.0]:
+		var direction := forward.rotated(Vector3.UP, deg_to_rad(angle))
+		var target := PhysicsCombatTarget.new(
+			flame.global_position + direction * 5.0
+		)
+		target.owner_player_id = 2
+		root.add_child(target)
+		target.add_to_group(&"units")
+		side_targets.append(target)
+
+	var target_for_weapon: Dictionary = {}
+	for target in side_targets:
+		var reachable: Array[int] = []
+		for turret in flame.combat_turrets:
+			if not turret.requires_hull_turn_for(target.global_position):
+				reachable.append(turret.weapon_index())
+		_expect(
+			reachable.size() == 1,
+			"each side target must belong to exactly one HKFlame firing sector"
+		)
+		if reachable.size() == 1:
+			target_for_weapon[reachable[0]] = target
+	_expect(
+		target_for_weapon.size() == 2,
+		"opposite side targets must exercise both independent HKFlame turrets"
+	)
+
+	var commanded_target: PhysicsCombatTarget = target_for_weapon.get(0) \
+		as PhysicsCombatTarget
+	var fired_targets: Dictionary = {}
+	flame.weapon_fired.connect(func(
+		projectiles: Array, fired_target: Variant, weapon_index: int
+		) -> void:
+		fired_targets[weapon_index] = fired_target
+		for projectile in projectiles:
+			if is_instance_valid(projectile):
+				projectile.free()
+	)
+	_expect(
+		commanded_target != null and flame.command_attack(commanded_target),
+		"HKFlame must accept the target in one side sector"
+	)
+	for frame in 240:
+		flame._process(1.0 / 60.0)
+		if fired_targets.size() >= 2:
+			break
+	_expect(
+		fired_targets.get(0) == target_for_weapon.get(0)
+		and fired_targets.get(1) == target_for_weapon.get(1),
+		"the commanded turret and free turret must fire at separate reachable targets"
+	)
+	for target in side_targets:
+		target.free()
+	flame.free()
+
+	var blind_flame = UnitScene.instantiate()
+	blind_flame.config_id = &"HKFlame"
+	root.add_child(blind_flame)
+	blind_flame.replace_visual_scene(HKFlameModelScene)
+	var blind_emissions: Array[Dictionary] = [
+		blind_flame.combat_turrets[0].peek_emission(),
+		blind_flame.combat_turrets[1].peek_emission(),
+	]
+	var blind_forward := (
+		Vector3(blind_emissions[0]["direction"])
+		+ Vector3(blind_emissions[1]["direction"])
+	).normalized()
+	blind_forward.y = 0.0
+	blind_forward = blind_forward.normalized()
+	var blind_target := PhysicsCombatTarget.new(
+		blind_flame.global_position + blind_forward * 5.0
+	)
+	root.add_child(blind_target)
+	_expect(
+		blind_flame.combat_turrets[0].requires_hull_turn_for(
+			blind_target.global_position
+		)
+		and blind_flame.combat_turrets[1].requires_hull_turn_for(
+			blind_target.global_position
+		),
+		"a centred target must begin inside the gap between the side sectors"
+	)
+	var initial_yaw: float = blind_flame.global_rotation.y
+	var blind_shots: Array[int] = []
+	blind_flame.weapon_fired.connect(func(
+		projectiles: Array, _target: Variant, weapon_index: int
+		) -> void:
+		blind_shots.append(weapon_index)
+		for projectile in projectiles:
+			if is_instance_valid(projectile):
+				projectile.free()
+	)
+	_expect(
+		blind_flame.command_attack(blind_target),
+		"HKFlame must accept a target in its current blind zone"
+	)
+	for frame in 360:
+		blind_flame._process(1.0 / 60.0)
+		if not blind_shots.is_empty():
+			break
+	_expect(
+		absf(angle_difference(initial_yaw, blind_flame.global_rotation.y))
+			> deg_to_rad(1.0),
+		"the hull must turn out of the gap between the side sectors"
+	)
+	_expect(
+		not blind_shots.is_empty(),
+		"at least one side turret must fire after the hull leaves the blind zone"
+	)
+	blind_target.free()
+	blind_flame.free()
+
+
 func _test_turret_recenter_after_move() -> void:
 	var unit = UnitScene.instantiate()
 	unit.config_id = &"ATMinotaurus"
@@ -1800,9 +2376,13 @@ func _test_unit_attack_order() -> void:
 	var mongoose_player := mongoose.get_node("VisualRoot").find_child(
 		"AnimationPlayer", true, false
 	) as AnimationPlayer
+	var mongoose_fire_overlay := mongoose._weapon_fire_overlays.get(0) \
+		as AnimationPlayer
 	_expect(
-		mongoose_player != null and mongoose_player.current_animation == &"Fire_0",
-		"the Mongoose shot must occur inside its authored Fire_0 animation"
+		mongoose_player != null
+		and mongoose_fire_overlay != null
+		and mongoose_fire_overlay.current_animation == &"Fire_0",
+		"the Mongoose shot must occur inside its turret-local Fire_0 overlay"
 	)
 	_expect(
 		mongoose.combat_turrets[0].reload_ticks_remaining > 0.0
@@ -2111,6 +2691,50 @@ func _test_launcher_fire_sequences() -> void:
 				]
 			)
 		launcher.free()
+
+
+func _test_continuous_flame_sequences() -> void:
+	var definitions := [
+		[&"HKFlamer", HKFlamerModelScene, [17]],
+		[&"HKFlame", HKFlameModelScene, [4, 5]],
+	]
+	for definition: Array in definitions:
+		var unit = UnitScene.instantiate()
+		unit.config_id = definition[0]
+		root.add_child(unit)
+		unit.replace_visual_scene(definition[1])
+		var expected_counts: Array = definition[2]
+		_expect(
+			unit.combat_turrets.size() == expected_counts.size(),
+			"%s must expose every expected continuous flame weapon" % definition[0]
+		)
+		for turret_index in mini(unit.combat_turrets.size(), expected_counts.size()):
+			var turret = unit.combat_turrets[turret_index]
+			var binding: Dictionary = unit._fire_animation_binding(turret.weapon_index())
+			var player := binding.get("player") as AnimationPlayer
+			var animation_name := StringName(binding.get("name", &""))
+			var animation := player.get_animation(animation_name) if player != null else null
+			var shot_times: Array[float] = unit._authored_fire_shot_times(
+				player, animation, turret, animation_name
+			) if animation != null else []
+			_expect(
+				shot_times.size() == int(expected_counts[turret_index]),
+				"%s weapon %d must expand its continuous XBF event into %d pulses, found %d"
+					% [
+						definition[0], turret.weapon_index(),
+						expected_counts[turret_index], shot_times.size(),
+					]
+			)
+			for shot_index in range(1, shot_times.size()):
+				_expect(
+					is_equal_approx(
+						shot_times[shot_index] - shot_times[shot_index - 1],
+						1.0 / UnitScript.BAKED_MODEL_FRAMES_PER_SECOND
+					),
+					"%s weapon %d continuous pulses must retain XBF frame cadence"
+						% [definition[0], turret.weapon_index()]
+				)
+		unit.free()
 
 
 func _test_xbf_fire_event_timing() -> void:
