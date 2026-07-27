@@ -2,7 +2,7 @@ GODOT_CONTAINER := ./tools/godot-container
 RULES_EDITOR_DIR := ./tools/rules_editor
 RULES_DB ?= $(CURDIR)/assets/converted/rules.db
 
-.PHONY: rules-editor rules-export unit-definitions unit-definitions-check godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-projectiles godot-convert-placement godot-convert-cursors godot-convert-spice-mound godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-editor rules-export unit-definitions unit-definitions-check godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-projectiles godot-convert-placement godot-convert-cursors godot-convert-spice-mound godot-convert-audio godot-export-web godot-watch-export godot-shell godot-version
 
 rules-editor:
 	cd $(RULES_EDITOR_DIR) && RULES_DB="$(RULES_DB)" npm start
@@ -70,6 +70,9 @@ godot-convert-cursors:
 
 godot-convert-spice-mound:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_model.gd -- --source res://assets/raw_original_content/3DDATA/spice/Spicemound.xbf --output res://assets/converted/models/Spicemound/Spicemound.scn
+
+godot-convert-audio:
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_audio_bag.gd
 
 godot-export-web:
 	$(GODOT_CONTAINER) export-web
