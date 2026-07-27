@@ -1,21 +1,20 @@
 # AUDIO.BAG compressed codec: investigation log
 
-**Status: the decode routine implemented here is confirmed byte-for-byte
-identical to the original engine's format-type-1 decoder (tables, per-nibble
-math, and the per-channel header it reads) — yet a residual crackle/"stepped
-waveform" artifact in voice lines persists, confirmed by ear against live
-in-game captures.** This means either a different decode path is actually
-selected for these entries (a second, real MS-ADPCM decoder exists in the
-same binary, but doesn't fit the tested entries — see finding #7) or the bug
-is upstream of decoding (something about which bytes reach the routine).
-Session paused here; see finding #8 for the concrete next step. The
-compressed audio format used by roughly 674 of the 945 entries in
-`assets/raw_original_content/SFX/AUDIO.BAG` — mostly unit voice
-acknowledgements (`ATRMove1`, `ATRAttack1`, `ATRSelect1`, ...) — does
-not have a publicly known, verified-correct decoder. `converters/bag/audio_bag.gd`
-ships a best-effort decoder that produces recognizable speech but with
-audible crackle/noise throughout. This document records what was tried so
-the next attempt doesn't repeat dead ends.
+**Status: SOLVED (finding #9).** The compressed stream is **block-based**:
+each entry's 64-byte table row carries a per-entry block size in its first
+trailing u32 (offset +48; 512 for all but 11 entries, which use 1024), and
+**every block independently restarts the codec with its own 4-byte header**
+(`s16 LE` predictor, `u8` step_index <= 88, `u8` reserved = 0). The earlier
+decoder read one header for the whole entry and treated every later block's
+header bytes as nibble data — that is exactly what produced the
+crackle/"stepped waveform" artifact (each block after the first decoded from
+a stale predictor/step, giving per-section scale and DC-offset errors, with
+a click at every 512-byte boundary). The per-nibble math from finding #6
+was always correct. `converters/bag/audio_bag.gd` now decodes per-block;
+verified structurally against all 17016 blocks of all 674 compressed
+entries (0 invalid headers — the `reserved == 0` check alone would fail with
+p=255/256 per block on misaligned data). Findings #1–#8 below are kept as
+the historical record of how this was narrowed down.
 
 The raw (uncompressed) formats are solid and not in question: 8-bit mono,
 16-bit mono, and 16-bit stereo PCM entries (269 of 945) decode and sound
@@ -337,7 +336,68 @@ actually select format type 1 or something else?) lives in a separate
 located. Tracing further was judged not worth the time this session; see
 the summary status at the top of this document.
 
-## Where things stand / what would actually move this forward
+### 9. SOLVED: the flags→format-type mapping, and the per-entry block size
+
+Finishing the trace that #8 left off: the function at VA `0x472520` in
+`Game.exe` is `get_entry_descriptor(bag, index, out)` — it looks up the
+64-byte table row (`index << 6`, or via the name-hash index at `bag+0x814`)
+and converts it into the descriptor the decoder constructor at `0x4a4a40`
+consumes:
+
+```
+out+0x00 = 4                                  ; descriptor tag/size?
+out+0x04 = format type:
+             flags & 0x08 (Compressed) -> 1   ; the IMA-style codec (0x4a5810/0x4a5a80)
+             else flags & 0x40         -> 2   ; MS-ADPCM (0x4a5b20) — flag not present in AUDIO.BAG
+             else flags & 0x20 (Mp3)   -> 3
+             else                      -> 0   ; raw PCM
+out+0x08 = entry.sample_rate  (entry+0x28)
+out+0x0c = (flags & 1) ? 2 : 1                ; channels
+out+0x10 = bytes per sample (2 if 16-bit/compressed/mp3 else 1)
+out+0x18..0x27 = entry bytes +0x30..+0x3f     ; the 16 "padding" tail bytes, copied verbatim
+```
+
+This settles finding #7's open question: **`Compressed` (bit 3) alone selects
+format type 1; the `Unk` flag (bit 4) plays no part in codec selection**, and
+format type 2 (MS-ADPCM) is selected by flag bit 6 (0x40), which no
+AUDIO.BAG entry has.
+
+The real discovery is the last line: the 16 tail bytes of each 64-byte
+table row — which this codebase's parser had been ignoring as padding — are
+copied into the descriptor, and the decoder constructor reads the first of
+them (`desc+0x18`) as its per-block buffer size (`obj+0xb8`, with
+`size*4+0x80` allocated at `obj+0xac`). In the shipped AUDIO.BAG, that
+first tail u32 is 512 for every compressed entry except 11 (`47-UA*`,
+which use 1024) and 0 for every non-compressed entry.
+
+**The compressed stream is therefore a sequence of `block_size`-byte blocks,
+each beginning with its own 4-byte header** (the same `s16 predictor / u8
+step_index / u8 reserved=0` layout finding #6 found — the engine re-runs
+that header read per block, not once per entry). Verified structurally:
+across all 674 compressed entries, all 17016 blocks have `step_index <= 88`
+and `reserved == 0` (16284 of them with non-zero initial state); random
+misaligned data would fail the `reserved == 0` check with probability
+255/256 per block, so this cannot be coincidence. This also explains every
+prior symptom: the ~11 "sections at their own scale/DC offset" in finding
+#5 were runs of blocks decoded from stale state, the clicks were block
+boundaries, resetting to `(0,0)` at boundaries (tested in #5) failed
+because the real headers carry non-zero values, and the three ground-truth
+entries partially matched with `DIVISOR=8` because their *first* block's
+header happened to be all-zero.
+
+One more correction found while porting: the engine computes
+`diff = (step>>3) + (step>>2 if bit0) + (step>>1 if bit1) + (step if bit2)`
+with each term truncated separately; the algebraically equivalent-looking
+`((2*delta+1)*step) >> 3` the old code used is **not** bit-identical (e.g.
+`step=7, delta=1`: 2 vs 1). The decoder now uses the exact shift-add form.
+
+`converters/bag/audio_bag.gd` reads the block size from entry offset +48
+and decodes per-block; all 945 entries convert cleanly
+(`make godot-convert-audio`), and the GDScript output was verified
+byte-identical to an independent Python re-implementation of the same
+algorithm.
+
+## Where things stand / what would actually move this forward (historical — superseded by #9)
 
 The single most direct next step: finish tracing from the archive loader
 (#8) to wherever a specific entry's `flags` get turned into the `format

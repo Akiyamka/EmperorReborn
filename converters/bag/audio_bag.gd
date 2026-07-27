@@ -10,24 +10,23 @@ extends RefCounted
 ## are laid out back-to-back inside the blob.
 ##
 ## Most entries store raw PCM. The rest are compressed with an IMA-ADPCM-like
-## variant. Confirmed bit-exact by disassembling the original engine
-## (`Game.exe`'s decode routine at file offset `0x4a5a80`, called from a loop
-## at `0x4a5990`, both tables byte-for-byte at `0x602298`/`0x602258`): each
-## compressed entry starts with one 4-byte header per channel — `s16 LE`
-## initial predictor, `u8` initial step_index, `u8` reserved (must be 0) —
-## then nibble-packed deltas follow, low-nibble first, `diff = (step * (2 *
-## delta + 1)) >> 3`, sign is nibble bit 3, index-table lookup uses the full
-## nibble (0-15) into a duplicated 16-entry table (mathematically identical
-## to indexing `nibble & 7` into the 8-entry half used here). No further
-## per-block reset exists in the decode loop itself.
+## variant, confirmed by disassembling the original engine (per-nibble decode
+## at VA `0x4a5a80`, flags-to-format-type mapping at `0x472520`, tables
+## byte-for-byte at `0x602298`/`0x602278` in `Game.exe`).
 ##
-## Despite the algorithm now being disassembly-confirmed, decoded voice lines
-## still show audible crackle and a "stepped" waveform (sudden scale/DC
-## jumps) not present in live in-game audio captures. Whether that remaining
-## difference is a real decode gap (something in the streaming/output path
-## not yet traced) or just energetic speech transients showing up as false
-## positives in coarse change-point analysis is unresolved — see
-## `docs/audio_bag_compressed_codec.md`.
+## The compressed stream is split into fixed-size blocks. The block size is
+## stored per entry in the first of the four trailing u32s of its 64-byte
+## table row (offset +48; 512 for all but 11 entries, which use 1024) — the
+## engine copies those 16 tail bytes into its sound descriptor at `0x472596`.
+## Every block independently begins with one 4-byte header per channel:
+## `s16 LE` initial predictor, `u8` initial step_index (<= 88), `u8`
+## reserved (always 0) — verified across all 17016 blocks of all 674
+## compressed entries in the shipped AUDIO.BAG. The rest of the block is
+## nibble-packed deltas, low-nibble first: `diff = (step >> 3) + (step >> 2
+## if bit0) + (step >> 1 if bit1) + (step if bit2)`, sign is nibble bit 3,
+## index-table lookup uses the full nibble (0-15) into a 16-entry table.
+## (The exact shift-add form matters: `((2 * delta + 1) * step) >> 3` is NOT
+## bit-identical because each term truncates separately.)
 
 const MAGIC := "GABA"
 const HEADER_SIZE := 16
@@ -108,6 +107,7 @@ func _parse(bytes: PackedByteArray) -> bool:
 		var data_size := buffer.get_32()
 		var sample_rate := buffer.get_32()
 		var flags := buffer.get_32()
+		var block_size := buffer.get_32()
 
 		if data_offset + data_size > bytes.size():
 			push_error("AudioBag: entry '%s' data (%d+%d) overruns file" % [name, data_offset, data_size])
@@ -128,7 +128,7 @@ func _parse(bytes: PackedByteArray) -> bool:
 
 		var channels := 2 if flags & FLAG_STEREO else 1
 		var bits := 16 if flags & FLAG_16BIT else 8
-		var pcm := _decode_ima_ws(raw) if compressed else raw
+		var pcm := _decode_ima_ws(raw, block_size) if compressed else raw
 		entries.append({"name": name, "sample_rate": sample_rate, "channels": channels, "bits": bits, "pcm": pcm})
 
 	return true
@@ -137,30 +137,40 @@ func _parse(bytes: PackedByteArray) -> bool:
 const CHANNEL_HEADER_SIZE := 4
 
 
-## Decodes one channel's worth of this IMA-ADPCM-like stream. `raw` starts
-## with that channel's 4-byte header (see class doc); the returned PCM
-## covers only the nibble-packed body, i.e. `(raw.size() - 4) * 2` samples.
-func _decode_ima_ws(raw: PackedByteArray) -> PackedByteArray:
-	var predictor: int = raw.decode_s16(0)
-	var step_index: int = clampi(raw.decode_u8(2), 0, 88)
-
-	var body := raw.slice(CHANNEL_HEADER_SIZE)
+## Decodes one channel's worth of this IMA-ADPCM-like stream. The stream is
+## made of `block_size`-byte blocks, each starting with its own 4-byte header
+## (see class doc) followed by nibble-packed deltas, so every block yields
+## `(block_size - 4) * 2` samples (fewer for a short final block).
+func _decode_ima_ws(raw: PackedByteArray, block_size: int) -> PackedByteArray:
 	var out := StreamPeerBuffer.new()
-	out.resize(body.size() * 4)
+	out.resize((raw.size() - CHANNEL_HEADER_SIZE) * 4)
 	out.seek(0)
 
-	for byte: int in body:
-		for shift: int in [0, 4]:
-			var nibble: int = (byte >> shift) & 0x0F
-			var step: int = STEP_TABLE[step_index]
-			var delta: int = nibble & 7
-			var diff: int = ((2 * delta + 1) * step) >> 3
-			if nibble & 8:
-				predictor -= diff
-			else:
-				predictor += diff
-			predictor = clampi(predictor, -32768, 32767)
-			step_index = clampi(step_index + INDEX_TABLE[nibble], 0, 88)
-			out.put_16(predictor)
+	for block_start: int in range(0, raw.size(), block_size):
+		if block_start + CHANNEL_HEADER_SIZE > raw.size():
+			break
+		var predictor: int = raw.decode_s16(block_start)
+		var step_index: int = clampi(raw.decode_u8(block_start + 2), 0, 88)
+		var body_end: int = mini(block_start + block_size, raw.size())
 
-	return out.data_array
+		for i: int in range(block_start + CHANNEL_HEADER_SIZE, body_end):
+			var byte: int = raw[i]
+			for shift: int in [0, 4]:
+				var nibble: int = (byte >> shift) & 0x0F
+				var step: int = STEP_TABLE[step_index]
+				var diff: int = step >> 3
+				if nibble & 1:
+					diff += step >> 2
+				if nibble & 2:
+					diff += step >> 1
+				if nibble & 4:
+					diff += step
+				if nibble & 8:
+					predictor -= diff
+				else:
+					predictor += diff
+				predictor = clampi(predictor, -32768, 32767)
+				step_index = clampi(step_index + INDEX_TABLE[nibble], 0, 88)
+				out.put_16(predictor)
+
+	return out.data_array.slice(0, out.get_position())
