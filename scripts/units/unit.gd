@@ -1145,7 +1145,9 @@ func _start_authored_fire_sequence(turret) -> bool:
 	_fire_sequence_animation = animation_name
 	_fire_sequence_duration = animation.length
 	_fire_sequence_elapsed = 0.0
-	_fire_sequence_shot_times = _authored_fire_shot_times(player, animation, turret)
+	_fire_sequence_shot_times = _authored_fire_shot_times(
+		player, animation, turret, animation_name
+	)
 	_fire_sequence_next_shot = 0
 	_fire_sequence_shots_emitted = 0
 	# Vehicle turrets reload independently while their authored clip plays.
@@ -1245,8 +1247,19 @@ func _fire_animation_binding(weapon_index: int) -> Dictionary:
 
 
 func _authored_fire_shot_times(
-		player: AnimationPlayer, animation: Animation, turret
+		player: AnimationPlayer,
+		animation: Animation,
+		turret,
+		animation_name: StringName = &""
 	) -> Array[float]:
+	if animation_name.is_empty():
+		for candidate_name: StringName in player.get_animation_list():
+			if player.get_animation(candidate_name) == animation:
+				animation_name = candidate_name
+				break
+	var xbf_events := _xbf_fire_shot_times(animation_name, animation, turret)
+	if not xbf_events.is_empty():
+		return xbf_events
 	var configured_burst := _configured_burst_shot_times(animation, turret)
 	if not configured_burst.is_empty():
 		return configured_burst
@@ -1299,6 +1312,52 @@ func _authored_fire_shot_times(
 	var result: Array[float] = []
 	for event in events:
 		result.append(float(event["time"]))
+	return result
+
+
+## XBF type-10 records are gameplay projectile events. Their integer payload
+## selects the source muzzle, while their absolute frame locates the shot in
+## the containing animation entry. Converted clips are sliced from those same
+## absolute ranges, so subtracting the clip start preserves the authored delay.
+func _xbf_fire_shot_times(
+		animation_name: StringName, animation: Animation, turret
+	) -> Array[float]:
+	if animation_name.is_empty() or visual_root == null:
+		return []
+	var model_root := _find_xbf_motion_root(visual_root)
+	if model_root == null \
+	or not bool(model_root.get_meta("xbf_fx_events_complete", false)):
+		return []
+	var source_entry := {}
+	for entry_value: Variant in model_root.get_meta("xbf_animation_entries", []):
+		var entry := entry_value as Dictionary
+		var converted_name := String(entry.get("name", "")).strip_edges().replace(" ", "_")
+		if converted_name == String(animation_name):
+			source_entry = entry
+			break
+	if source_entry.is_empty():
+		return []
+	var start_frame := int(source_entry.get("start_frame", -1))
+	var end_frame := int(source_entry.get("end_frame", -1))
+	if start_frame < 0 or end_frame < start_frame:
+		return []
+	var result: Array[float] = []
+	for event_value: Variant in model_root.get_meta("xbf_fx_events", []):
+		var event := event_value as Dictionary
+		var frame := int(event.get("frame", -1))
+		if int(event.get("type", -1)) == 10 \
+		and frame >= start_frame and frame <= end_frame:
+			result.append(clampf(
+				float(frame - start_frame) / BAKED_MODEL_FRAMES_PER_SECOND,
+				0.0,
+				animation.length
+			))
+	# Generated launcher configuration remains a safe fallback for a partial or
+	# ambiguous source schedule; never silently drop part of a known salvo.
+	if turret.firing_config != null:
+		var configured_count := int(turret.firing_config.burst_shot_count)
+		if configured_count > 0 and result.size() != configured_count:
+			return []
 	return result
 
 
@@ -1445,6 +1504,12 @@ func _combat_target_position(attack_target: Variant) -> Vector3:
 	if not attack_target is Object or not is_instance_valid(attack_target):
 		return Vector3.INF
 	var target_object := attack_target as Object
+	if target_object.has_method("combat_aim_position_from"):
+		var value: Variant = target_object.call(
+			"combat_aim_position_from", global_position
+		)
+		if value is Vector3:
+			return value
 	if target_object.has_method("combat_aim_position"):
 		var value: Variant = target_object.call("combat_aim_position")
 		if value is Vector3:

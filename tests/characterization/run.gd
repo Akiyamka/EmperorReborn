@@ -1212,8 +1212,9 @@ func _transform_track_paths(animation: Animation) -> Array[String]:
 
 func _test_muzzle_flash_clip_visibility() -> bool:
 	var cases := [
-		["res://assets/raw_original_content/3DDATA/Units/AT_Kindjal_H0.xbf", 2],
-		["res://assets/raw_original_content/3DDATA/Units/AT_Sniper_H0.XBF", 1],
+		["res://assets/raw_original_content/3DDATA/Units/AT_Kindjal_H0.xbf", 2, 1],
+		["res://assets/raw_original_content/3DDATA/Units/AT_Sniper_H0.XBF", 1, 1],
+		["res://assets/raw_original_content/3DDATA/Units/HK_Trooper_H0.xbf", 1, 1],
 	]
 	for model_case: Array in cases:
 		var builder = ModelBakeBuilderScript.new()
@@ -1229,7 +1230,7 @@ func _test_muzzle_flash_clip_visibility() -> bool:
 			var fire_values := _muzzle_flash_visibility_values(player.get_animation(&"Fire_0"))
 			_expect(stationary_values.size() == int(model_case[1]), "%s must track every muzzle flash in Stationary" % String(model_case[0]).get_file())
 			_expect(stationary_values.all(func(value: bool) -> bool: return not value), "%s must hide muzzle flashes in Stationary" % String(model_case[0]).get_file())
-			_expect(fire_values.count(true) == 1, "%s Fire_0 must show only its active muzzle flash" % String(model_case[0]).get_file())
+			_expect(fire_values.count(true) == int(model_case[2]), "%s Fire_0 must show only its active muzzle flash geometry" % String(model_case[0]).get_file())
 		root.free()
 	return true
 
@@ -1240,7 +1241,9 @@ func _muzzle_flash_visibility_values(animation: Animation) -> Array[bool]:
 		return result
 	for track_index in animation.get_track_count():
 		var track_path := String(animation.track_get_path(track_index))
-		if track_path.to_lower().contains("bigflash") and track_path.ends_with(":visible"):
+		var lower_path := track_path.to_lower()
+		if (lower_path.contains("bigflash") or lower_path.contains("flah_")) \
+		and track_path.ends_with(":visible"):
 			result.append(bool(animation.track_get_key_value(track_index, 0)))
 	return result
 

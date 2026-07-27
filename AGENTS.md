@@ -30,6 +30,7 @@ the same container and `/workspace` mount, so they interfere with one another
 and can produce invalid project-path or incomplete class-loading errors that
 look like test failures.
 
+
 ### A headless run that "hangs" is usually a compile error, not slow work
 
 A `godot --headless --script res://....gd` invocation for a one-shot
@@ -55,3 +56,4 @@ no way to tell a hang from real progress. Instead:
   than keep waiting.
 - On any hang, kill it, fix the reported error, and rerun — don't assume it
   will eventually finish.
+

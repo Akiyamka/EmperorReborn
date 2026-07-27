@@ -63,6 +63,24 @@ skips these three definitions. It generates scenes for every unit with a
 resolvable H0 source model; effect-only units remain represented by their
 referenced effects rather than placeholder meshes.
 
+### Harkonnen Trooper muzzle flash has a misspelled object name
+
+**Observed data:** `HK_Trooper_H0.xbf` stores its embedded muzzle-flash
+geometry in an object named `flah~?`. Other unit models use names containing
+`bigflash`, which is the normal marker recognized by the model converter.
+The `flah~?` transform remains at a tiny scale during stationary and idle
+clips, then expands during `Fire_0`.
+
+**Original-engine quirk:** The shipped Harkonnen Trooper model uses this
+misspelled, model-specific name for authored muzzle-flash geometry. Treating
+it as ordinary geometry leaves its mesh visible during idle animations.
+
+**EmperorReborn compatibility decision:** `ModelBakeBuilder` recognizes
+`flah~?` as embedded muzzle-flash geometry only when converting
+`HK_Trooper_H0.xbf`. Its mesh is hidden by default and in non-fire clips, and
+is enabled for `Fire_0`, matching the existing handling of `bigflash`
+objects without broadening the typo to unrelated models.
+
 ## Building models
 
 ### Atreides Refinery H0 contains two broken geometry components
