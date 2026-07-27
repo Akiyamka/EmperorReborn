@@ -80,12 +80,23 @@ Other weapon properties on a unit:
   pulse, then repeats at the source-frame cadence until the matching authored
   muzzle-stream banks stop. Thus the Harkonnen Flamer and Flame Tank deliver a
   real pulse sequence for the whole visible jet instead of one projectile at
-  its beginning. The authored `!%01fire` jet banks were sized for the source
-  engine's own particle reach, which is roughly half of a converted weapon's
-  `MaxRange` in world units; runtime rescales only the moving flame-jet
-  particles (matched by texture name, excluding smoke/ember banks and the
-  zero-speed pilot-light bank) so the visible stream travels the bullet's
-  actual `maximum_range_world()` instead of fading out partway to the target.
+  its beginning. A continuous weapon's muzzle-stream banks — the flamethrowers'
+  `!%01fire` fuel, the Chemical Trooper's `!sm` spray — are identified by
+  having a positive authored launch speed, which excludes the same models'
+  zero-speed pilot-light banks and stationary drum smoke without depending on
+  texture names. Those banks were sized for the source engine's own particle
+  reach, roughly half of a converted weapon's `MaxRange` in world units, and
+  emit sparse pulses of identically sized, identically aged sprites down one
+  straight line at constant speed. Runtime rebuilds each such particle's whole
+  life from the bullet's real `maximum_range_world()`: a sub-frame launch time
+  so one pulse becomes a continuous column rather than a march of puffs,
+  randomised lifetime and reach so the tip dissolves gradually instead of every
+  sprite vanishing at one radius, eased-out travel plus buoyancy and a lateral
+  flare that both grow with elapsed² so the stream stays a tight rod at the
+  nozzle and only opens into a plume where it burns out, growth from a fraction
+  of the authored size to a broad tip, a per-particle mirrored sprite sheet,
+  and a hot-to-ember tint with a real fade-out (the authored frame opacity ramp
+  bottoms out around a third, which alone would pop particles out mid-flame).
   The Flame Tank's own authored `Fire 0`/`Fire 1` clips are each only 5-6
   frames (one short burst per side turret), far shorter than their 60-tick
   (2.4s) `ReloadCount`; unlike a discrete-shot weapon, a `Continuous` turret's

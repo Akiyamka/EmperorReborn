@@ -40,16 +40,41 @@ const LAUNCH_SMOKE_MARKER := "#smoke"
 const LAUNCH_SMOKE_SEQUENCE := "!cexp"
 const LAUNCH_SMOKE_FRAME_COUNT := 16
 const LAUNCH_SMOKE_SIZE := 1.25
-## A flamethrower jet's particles are authored sparse, constant-sized, and
-## perfectly straight. Densifying them, growing each one over its lifetime,
-## and adding a small acceleration away from the jet's axis reads as a real
-## flame jet that stays a tight column at the nozzle and flares out only
-## near its tip — the flare grows with elapsed^2, not with distance from the
-## nozzle, so the acceleration term stays negligible until late in the shot.
-const JET_FLARE_DENSITY_MULTIPLIER := 2
-const JET_FLARE_MAX_PARTICLES_PER_EMISSION := 12
-const JET_FLARE_GROWTH_SCALE := 1.5
-const JET_FLARE_RADIAL_ACCELERATION := 0.9
+## A continuous weapon's authored muzzle stream (the flamethrowers' `!%01fire`
+## banks, the Chemical Trooper's `!sm` spray) is a sparse pulse of identically
+## sized, identically aged sprites launched down one perfectly straight line at
+## a constant speed. Replayed at the source cadence that reads as a dotted line
+## of repeating stamps rather than burning fuel, so every jet particle instead
+## gets: a sub-frame launch time so one pulse becomes a continuous stream, a
+## randomised lifetime and reach so the tip dissolves gradually instead of all
+## sprites vanishing at one radius, deceleration and buoyancy so the fuel slows
+## and lifts as it burns, growth from a tight nozzle to a broad plume, and a
+## hot-to-ember tint with a real fade-out.
+const JET_DENSITY_MULTIPLIER := 3
+const JET_MIN_PARTICLES_PER_EMISSION := 4
+const JET_MAX_PARTICLES_PER_EMISSION := 8
+const JET_START_SCALE := 0.32
+const JET_END_SCALE := 1.55
+const JET_SIZE_VARIATION := 0.25
+const JET_LIFE_VARIATION := 0.35
+const JET_REACH_VARIATION := 0.18
+## Travel eases out as `1 - (1 - t)^JET_DECELERATION_EXPONENT`, so a particle
+## leaves the nozzle at twice the average speed and has stopped by the time it
+## burns out, the way unburnt fuel loses its momentum to the air.
+const JET_DECELERATION_EXPONENT := 2.0
+const JET_CONE_MIN_DEGREES := 1.5
+const JET_CONE_MAX_DEGREES := 7.0
+const JET_NOZZLE_JITTER_SCALE := 0.3
+## Lateral flare and rise are applied as fractions of the jet's own reach and
+## grow with t^2, so they stay invisible at the nozzle and only open the plume
+## up near the tip.
+const JET_FLARE_REACH_FRACTION := 0.14
+const JET_BUOYANCY_REACH_FRACTION := 0.09
+const JET_IGNITION_FRACTION := 0.12
+const JET_BURNOUT_FRACTION := 0.45
+## Late-life tint for a fire-textured jet: fuel that has spent itself darkens
+## to a dull ember before it fades out.
+const JET_EMBER_COLOR := Color(0.55, 0.22, 0.1)
 
 enum TargetRange {
 	INVALID,
@@ -1298,15 +1323,16 @@ func _emit_model_stream_particles(
 	var parameters: Variant = bank.get("int_parameters_0_3", [])
 	if _fx_parameter_count(parameters) >= 2:
 		particles_per_frame = clampi(int(parameters[1]), 1, 8)
-	if jet_reach_world > 0.0 and String(bank.get("texture", "")).to_lower().contains("fire"):
-		particles_per_frame = mini(
-			particles_per_frame * JET_FLARE_DENSITY_MULTIPLIER,
-			JET_FLARE_MAX_PARTICLES_PER_EMISSION
+	if _is_jet_bank(bank, jet_reach_world):
+		particles_per_frame = clampi(
+			particles_per_frame * JET_DENSITY_MULTIPLIER,
+			JET_MIN_PARTICLES_PER_EMISSION,
+			JET_MAX_PARTICLES_PER_EMISSION
 		)
 	for particle_number in particles_per_frame:
 		_emit_model_stream_particle(
 			parent, marker, bank, textures, world_scale,
-			attachment, particle_number, jet_reach_world
+			attachment, particle_number, particles_per_frame, jet_reach_world
 		)
 
 
@@ -1318,6 +1344,7 @@ func _emit_model_stream_particle(
 		world_scale: float,
 		attachment: String,
 		particle_number: int,
+		particles_per_frame: int,
 		jet_reach_world: float
 	) -> void:
 	var particle := Node3D.new()
@@ -1356,19 +1383,24 @@ func _emit_model_stream_particle(
 	var integer_parameters: Variant = bank.get("int_parameters_0_3", [])
 	var spread_degrees := float(integer_parameters[3]) \
 		if _fx_parameter_count(integer_parameters) >= 4 else 0.0
-	var is_jet_bank := jet_reach_world > 0.0 \
-		and String(bank.get("texture", "")).to_lower().contains("fire")
-	if is_jet_bank:
-		# A concentrated flamethrower jet keeps every particle traveling the
-		# same straight line the muzzle is aimed along; only its spawn point
-		# jitters sideways within the nozzle. Turning the authored spread into
-		# a velocity-angle deviation instead (as non-jet muzzle banks do below)
-		# compounds with `jet_reach_world`'s now much longer travel distance
-		# and fans the whole stream into a widening cone instead of a jet.
-		start = _jittered_stream_start(start, direction, spread_degrees, particle_size)
-		particle.set_meta("combat_muzzle_start_position", start)
-	else:
-		direction = _random_stream_direction(direction, spread_degrees)
+	var source_gravity := float(bank.get("gravity", _fx_bank_gravity(bank)))
+	var world_gravity := float(bank.get(
+		"world_gravity",
+		source_gravity * world_scale \
+			* AIM_UPDATES_PER_SECOND * AIM_UPDATES_PER_SECOND
+	))
+	particle.set_meta("combat_fx_source_gravity", source_gravity)
+	var duration := float(textures.size()) * INLINE_FX_FRAME_SECONDS
+
+	if _is_jet_bank(bank, jet_reach_world):
+		_launch_jet_particle(
+			parent, particle, quad, material, bank, textures, start, direction,
+			spread_degrees, particle_size, world_gravity, jet_reach_world,
+			duration, particle_number, particles_per_frame
+		)
+		return
+
+	direction = _random_stream_direction(direction, spread_degrees)
 	var float_parameters: Variant = bank.get("float_parameters_4_6", [])
 	var source_speed := float(float_parameters[0]) \
 		if _fx_parameter_count(float_parameters) >= 1 else 0.0
@@ -1383,58 +1415,12 @@ func _emit_model_stream_particle(
 	)
 	var velocity := direction * varied_source_speed * world_scale \
 		* AIM_UPDATES_PER_SECOND
-	var duration := float(textures.size()) * INLINE_FX_FRAME_SECONDS
-	# The XBF fire-jet banks were authored for the source engine's own particle
-	# reach, which is far short of a converted weapon's actual MaxRange (about
-	# half of it for the flamer/flame tank). Stretch only the moving flame jet
-	# (not embers/smoke, and not a stationary pilot-light bank) so the visible
-	# stream reaches the same distance the warhead can actually hit, instead of
-	# fading out partway to the target.
-	if jet_reach_world > 0.0 \
-	and not velocity.is_zero_approx() \
-	and String(bank.get("texture", "")).to_lower().contains("fire"):
-		var authored_reach := velocity.length() * duration
-		if authored_reach > 0.0001:
-			velocity *= jet_reach_world / authored_reach
-	var source_gravity := float(bank.get("gravity", _fx_bank_gravity(bank)))
-	var world_gravity := float(bank.get(
-		"world_gravity",
-		source_gravity * world_scale \
-			* AIM_UPDATES_PER_SECOND * AIM_UPDATES_PER_SECOND
-	))
 	var acceleration := Vector3.DOWN * world_gravity
-	if is_jet_bank:
-		# A per-particle acceleration away from the jet's own travel direction
-		# stays negligible right after the nozzle (displacement grows with
-		# elapsed^2) and only becomes visible near the tip, so the column
-		# stays tight at the source and flares out just before it dissipates
-		# — unlike a cone, which would fan out at a constant rate from frame
-		# one. Each particle picks its own random perpendicular direction so
-		# the flare spreads outward rather than the whole jet bending one way.
-		var side := direction.cross(Vector3.UP)
-		if side.is_zero_approx():
-			side = direction.cross(Vector3.RIGHT)
-		side = side.normalized()
-		var up := direction.cross(side).normalized()
-		var flare_angle := _fx_random.randf_range(0.0, TAU)
-		var radial_direction := side * cos(flare_angle) + up * sin(flare_angle)
-		acceleration += radial_direction * JET_FLARE_RADIAL_ACCELERATION \
-			* world_scale * AIM_UPDATES_PER_SECOND * AIM_UPDATES_PER_SECOND
-	particle.set_meta("combat_fx_source_gravity", source_gravity)
 	particle.set_meta("combat_muzzle_velocity", velocity)
 	particle.set_meta("combat_muzzle_acceleration", acceleration)
 	parent.add_child(particle)
 	particle.top_level = true
 	particle.global_position = start
-
-	if is_jet_bank:
-		var growth := particle.create_tween().set_process_mode(
-			Tween.TWEEN_PROCESS_PHYSICS
-		)
-		growth.tween_method(
-			_scale_stream_particle.bind(particle),
-			1.0, JET_FLARE_GROWTH_SCALE, duration
-		)
 
 	if not velocity.is_zero_approx() or not acceleration.is_zero_approx():
 		var motion := particle.create_tween().set_process_mode(
@@ -1460,6 +1446,178 @@ func _emit_model_stream_particle(
 	frame_animation.finished.connect(particle.queue_free)
 
 
+## True for a bank that draws the visible stream of a continuous weapon: the
+## flamethrowers' burning fuel, the Chemical Trooper's spray. `jet_reach_world`
+## is only positive for a `Continuous` bullet, and a stream bank is the one
+## that actually launches its particles away from the nozzle — which excludes
+## the same weapons' zero-speed pilot-light banks and the Flame Tank's
+## stationary drum smoke, matched by authored speed rather than by texture name
+## so a gas spray drawn with a smoke texture is still treated as a jet.
+func _is_jet_bank(bank: Dictionary, jet_reach_world: float) -> bool:
+	if jet_reach_world <= 0.0:
+		return false
+	var parameters: Variant = bank.get("float_parameters_4_6", [])
+	if _fx_parameter_count(parameters) < 1:
+		return false
+	return float(parameters[0]) > 0.0
+
+
+## Set up one jet particle's whole life — travel, growth, tint and fade are all
+## driven from a single normalized age so they stay in step. The authored bank
+## contributes the sprite sheet, the base size, the colour and the gravity; the
+## jet shape itself is derived from the bullet's real reach, because the source
+## banks were authored for a much shorter particle reach than a converted
+## weapon's `MaxRange`.
+func _launch_jet_particle(
+		parent: Node,
+		particle: Node3D,
+		quad: QuadMesh,
+		material: StandardMaterial3D,
+		bank: Dictionary,
+		textures: Array[Texture2D],
+		start: Vector3,
+		direction: Vector3,
+		spread_degrees: float,
+		particle_size: float,
+		world_gravity: float,
+		jet_reach_world: float,
+		duration: float,
+		particle_number: int,
+		particles_per_frame: int
+	) -> void:
+	var cone_degrees := clampf(
+		absf(spread_degrees) * 0.25, JET_CONE_MIN_DEGREES, JET_CONE_MAX_DEGREES
+	)
+	var axis := _random_stream_direction(direction, cone_degrees)
+	start = _jittered_stream_start(start, axis, particle_size)
+	particle.set_meta("combat_muzzle_start_position", start)
+
+	var side := axis.cross(Vector3.UP)
+	if side.is_zero_approx():
+		side = axis.cross(Vector3.RIGHT)
+	side = side.normalized()
+	var flare_angle := _fx_random.randf_range(0.0, TAU)
+	var flare_direction := side * cos(flare_angle) \
+		+ axis.cross(side).normalized() * sin(flare_angle)
+
+	var life := duration * _fx_random.randf_range(1.0 - JET_LIFE_VARIATION, 1.0)
+	var reach := jet_reach_world * _fx_random.randf_range(
+		1.0 - JET_REACH_VARIATION, 1.0 + JET_REACH_VARIATION
+	)
+	# Every particle of one emission would otherwise leave the nozzle at the
+	# same instant from the same point, turning a stream into a march of
+	# discrete puffs one source frame apart. Spreading their launch times
+	# across the frame they belong to — by starting each one already that far
+	# into its own life — makes the column continuous.
+	var launch_age := (float(particle_number) + _fx_random.randf()) \
+		/ float(maxi(particles_per_frame, 1)) * INLINE_FX_FRAME_SECONDS
+	var launch_fraction := clampf(launch_age / maxf(life, 0.0001), 0.0, 0.9)
+
+	var jet := {
+		"start": start,
+		"axis": axis,
+		"flare_direction": flare_direction,
+		"reach": reach,
+		"life": life,
+		"gravity": world_gravity,
+		"base_size": particle_size * _fx_random.randf_range(
+			1.0 - JET_SIZE_VARIATION, 1.0 + JET_SIZE_VARIATION
+		),
+		"textures": textures,
+		"tint": material.albedo_color,
+		"is_fire": String(bank.get("texture", "")).to_lower().contains("fire"),
+		"frame_opacities": _fx_bank_frame_opacities(bank, textures.size()),
+	}
+
+	# Mirroring the sprite sheet per particle costs nothing and breaks up the
+	# repetition of one authored flame shape stamped over and over.
+	material.uv1_scale = Vector3(
+		-1.0 if _fx_random.randi() % 2 == 0 else 1.0,
+		-1.0 if _fx_random.randi() % 2 == 0 else 1.0,
+		1.0
+	)
+	material.uv1_offset = Vector3(
+		1.0 if material.uv1_scale.x < 0.0 else 0.0,
+		1.0 if material.uv1_scale.y < 0.0 else 0.0,
+		0.0
+	)
+	quad.size = Vector2.ONE * float(jet["base_size"])
+
+	particle.set_meta("combat_fx_particle_size", float(jet["base_size"]))
+	particle.set_meta("combat_muzzle_velocity", axis * reach / maxf(life, 0.0001))
+	particle.set_meta("combat_muzzle_acceleration", Vector3.DOWN * world_gravity)
+	parent.add_child(particle)
+	particle.top_level = true
+	_update_jet_particle(launch_fraction, particle, quad, material, jet)
+
+	var motion := particle.create_tween().set_process_mode(
+		Tween.TWEEN_PROCESS_PHYSICS
+	)
+	motion.tween_method(
+		_update_jet_particle.bind(particle, quad, material, jet),
+		launch_fraction, 1.0, life * (1.0 - launch_fraction)
+	)
+	motion.finished.connect(particle.queue_free)
+
+
+func _update_jet_particle(
+		age: float,
+		particle: Node3D,
+		quad: QuadMesh,
+		material: StandardMaterial3D,
+		jet: Dictionary
+	) -> void:
+	if particle == null or not is_instance_valid(particle):
+		return
+	var t := clampf(age, 0.0, 1.0)
+	var reach := float(jet["reach"])
+	# Fuel leaves the nozzle fast and gives its momentum up to the air, so the
+	# stream is dense and bright close in and piles up at its own tip. Flare
+	# and rise grow with t^2 so the column stays a tight rod at the muzzle and
+	# only opens into a plume where it is burning out.
+	var travel := reach * (1.0 - pow(1.0 - t, JET_DECELERATION_EXPONENT))
+	var spread := t * t
+	particle.global_position = Vector3(jet["start"]) \
+		+ Vector3(jet["axis"]) * travel \
+		+ Vector3(jet["flare_direction"]) * reach * JET_FLARE_REACH_FRACTION * spread \
+		+ Vector3.UP * reach * JET_BUOYANCY_REACH_FRACTION * spread \
+		+ Vector3.DOWN * float(jet["gravity"]) * 0.5 \
+			* pow(t * float(jet["life"]), 2.0)
+
+	quad.size = Vector2.ONE * float(jet["base_size"]) \
+		* lerpf(JET_START_SCALE, JET_END_SCALE, t)
+
+	var textures := jet["textures"] as Array[Texture2D]
+	var opacities := jet["frame_opacities"] as PackedFloat32Array
+	var frame_index := clampi(int(t * float(textures.size())), 0, textures.size() - 1)
+	material.albedo_texture = textures[frame_index]
+	var color := Color(jet["tint"])
+	if bool(jet["is_fire"]):
+		color = color.lerp(JET_EMBER_COLOR, smoothstep(0.35, 1.0, t))
+	color.a = opacities[frame_index] * _jet_envelope(t)
+	material.albedo_color = color
+
+
+## Opacity envelope over a jet particle's life: a short ignition ramp so fuel
+## does not appear at full brightness inside the nozzle, and a long burnout so
+## the tip of the stream dissolves. The authored banks' own frame opacity ramp
+## bottoms out around a third rather than at zero, which would otherwise pop
+## every particle out of existence mid-flame.
+func _jet_envelope(t: float) -> float:
+	if t < JET_IGNITION_FRACTION:
+		return t / JET_IGNITION_FRACTION
+	if t > 1.0 - JET_BURNOUT_FRACTION:
+		return (1.0 - t) / JET_BURNOUT_FRACTION
+	return 1.0
+
+
+func _fx_bank_frame_opacities(bank: Dictionary, count: int) -> PackedFloat32Array:
+	var result := PackedFloat32Array()
+	for frame_index in count:
+		result.append(_fx_bank_frame_opacity(bank, frame_index))
+	return result
+
+
 func _random_stream_direction(direction: Vector3, spread_degrees: float) -> Vector3:
 	var spread := deg_to_rad(clampf(absf(spread_degrees), 0.0, 60.0))
 	if spread <= 0.0001:
@@ -1474,14 +1632,14 @@ func _random_stream_direction(direction: Vector3, spread_degrees: float) -> Vect
 
 
 ## Sideways spawn offset for one jet particle, within a nozzle-width disc
-## perpendicular to `direction`. Unlike `_random_stream_direction`, this keeps
-## the jet's cross-section constant along its whole travel distance instead of
-## widening it in proportion to distance traveled.
+## perpendicular to `direction`. Several particles per source frame all leaving
+## from the exact same point read as one thick sprite rather than a stream, and
+## the Flame Tank's banks author no spread at all, so the jitter comes from the
+## nozzle's own width instead of from the authored spread angle.
 func _jittered_stream_start(
-		start: Vector3, direction: Vector3, spread_degrees: float, particle_size: float
+		start: Vector3, direction: Vector3, particle_size: float
 	) -> Vector3:
-	var jitter_radius := particle_size * 0.5 \
-		* clampf(absf(spread_degrees) / 60.0, 0.0, 1.0)
+	var jitter_radius := particle_size * JET_NOZZLE_JITTER_SCALE
 	if jitter_radius <= 0.0001:
 		return start
 	var side := direction.cross(Vector3.UP)
@@ -1505,12 +1663,6 @@ func _update_model_stream_particle(
 		return
 	particle.global_position = start + velocity * elapsed \
 		+ 0.5 * acceleration * elapsed * elapsed
-
-
-func _scale_stream_particle(scale_value: float, particle: Node3D) -> void:
-	if particle == null or not is_instance_valid(particle):
-		return
-	particle.scale = Vector3.ONE * scale_value
 
 
 func _model_fx_bank_textures(
