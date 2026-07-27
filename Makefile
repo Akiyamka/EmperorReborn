@@ -2,7 +2,7 @@ GODOT_CONTAINER := ./tools/godot-container
 RULES_EDITOR_DIR := ./tools/rules_editor
 RULES_DB ?= $(CURDIR)/assets/converted/rules.db
 
-.PHONY: rules-editor rules-export unit-definitions unit-definitions-check godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-projectiles godot-convert-placement godot-convert-cursors godot-convert-spice-mound godot-convert-audio godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-editor rules-export voice-feedback voice-feedback-check unit-definitions unit-definitions-check godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-projectiles godot-convert-placement godot-convert-cursors godot-convert-spice-mound godot-convert-audio godot-export-web godot-watch-export godot-shell godot-version
 
 rules-editor:
 	cd $(RULES_EDITOR_DIR) && RULES_DB="$(RULES_DB)" npm start
@@ -10,10 +10,16 @@ rules-editor:
 rules-export:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/import_rules.gd -- --db res://assets/converted/rules.db --clean
 
-unit-definitions:
+voice-feedback:
+	python3 tools/generate_voice_feedback.py
+
+voice-feedback-check:
+	python3 tools/generate_voice_feedback.py --check
+
+unit-definitions: voice-feedback
 	python3 tools/generate_unit_definitions.py --db "$(RULES_DB)"
 
-unit-definitions-check:
+unit-definitions-check: voice-feedback-check
 	python3 tools/generate_unit_definitions.py --db "$(RULES_DB)" --check
 
 godot-image:
@@ -28,6 +34,7 @@ godot-test:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/camera/run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/ui/cursor_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/ui/side_panel_pagination_run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/audio/voice_feedback_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/placement_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/wall_connectivity_run.gd

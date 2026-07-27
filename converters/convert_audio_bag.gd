@@ -29,13 +29,22 @@ func _init() -> void:
 
 	var written := 0
 	var failures: PackedStringArray = []
+	var entries_by_name := {}
 	for entry in bag.entries:
+		var folded_name := String(entry.name).to_lower()
+		if entries_by_name.has(folded_name):
+			var original: Dictionary = entries_by_name[folded_name]
+			if not _same_audio(original, entry):
+				failures.append("%s conflicts with %s by case" % [entry.name, original.name])
+			continue
+		entries_by_name[folded_name] = entry
 		var entry_path := output.path_join("%s.wav" % String(entry.name))
 		var err := _write_wav(entry_path, entry)
 		if err != OK:
 			failures.append(String(entry.name))
 			continue
 		written += 1
+	_remove_case_duplicate_outputs(output, entries_by_name)
 
 	print("convert_audio_bag: wrote %d wav files to %s" % [written, output])
 	if not failures.is_empty():
@@ -47,6 +56,30 @@ func _init() -> void:
 		push_error("convert_audio_bag: skipped %d entries with unrecognized format: %s" % [unknown.size(), ", ".join(unknown)])
 
 	quit(1 if (not failures.is_empty() or not bag.unknown_formats.is_empty()) else 0)
+
+
+func _same_audio(first: Dictionary, second: Dictionary) -> bool:
+	return (
+		first.sample_rate == second.sample_rate
+		and first.channels == second.channels
+		and first.bits == second.bits
+		and first.pcm == second.pcm
+	)
+
+
+func _remove_case_duplicate_outputs(output: String, entries_by_name: Dictionary) -> void:
+	var directory := DirAccess.open(output)
+	if directory == null:
+		return
+	for file_name in directory.get_files():
+		if file_name.get_extension().to_lower() != "wav":
+			continue
+		var folded_name := file_name.get_basename().to_lower()
+		if not entries_by_name.has(folded_name):
+			continue
+		var canonical_name := "%s.wav" % String(entries_by_name[folded_name].name)
+		if file_name != canonical_name:
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(output.path_join(file_name)))
 
 
 func _write_wav(path: String, entry: Dictionary) -> Error:
@@ -62,6 +95,16 @@ func _write_wav(path: String, entry: Dictionary) -> Error:
 	var pcm: PackedByteArray = entry.pcm
 	var block_align := channels * (bits / 8)
 	var byte_rate := sample_rate * block_align
+	# AUDIO.BAG contains a deliberately empty `silent` sample used by a few
+	# dialog hooks. Godot cannot instantiate playback for a zero-frame WAV
+	# (AudioStreamWAV fetches an initial block of eight frames), so preserve its
+	# meaning as a tiny playable block of digital silence. Keep enough frames
+	# beyond AudioStreamWAV's eight-frame interpolation window to avoid
+	# reaching EOF while that initial window is populated.
+	if pcm.is_empty():
+		pcm.resize(block_align * 32)
+		if bits == 8:
+			pcm.fill(128)
 
 	file.store_string("RIFF")
 	file.store_32(36 + pcm.size())

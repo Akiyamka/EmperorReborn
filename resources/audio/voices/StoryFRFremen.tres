@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="UnitVoiceProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/audio/unit_voice_profile.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+profile_id = &"StoryFRFremen"
+selection_event_path = "res://resources/audio/events/StoryFRFremenSelection.tres"
+move_event_path = "res://resources/audio/events/StoryFRFremenMove.tres"
+attack_event_path = "res://resources/audio/events/StoryFRFremenAttack.tres"

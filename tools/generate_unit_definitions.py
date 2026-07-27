@@ -21,6 +21,18 @@ MANIFEST_PATH = ROOT / "resources/units/generated_unit_manifest.gd"
 SCENE_DIR = ROOT / "scenes/units"
 MODEL_DIR = ROOT / "assets/converted/models"
 VETERANCY_DIR = ROOT / "resources/units/veterancy"
+VOICE_PROFILE_DIR = ROOT / "resources/audio/voices"
+VOICE_HOUSE_PREFIXES = {
+    "Atreides": "AT",
+    "Ordos": "OR",
+    "Harkonnen": "HK",
+    "Ix": "IX",
+    "Imperial": "IM",
+    "Fremen": "FR",
+    "Guild": "GU",
+    "Tleilaxu": "TL",
+    "Incidental": "IN",
+}
 COMBAT_DIR = ROOT / "resources/combat"
 TURRET_DIR = COMBAT_DIR / "turrets"
 BULLET_DIR = COMBAT_DIR / "bullets"
@@ -70,6 +82,26 @@ def dictionary_text(values: dict[str, object]) -> str:
         rendered = bool_text(value) if isinstance(value, bool) else f"{float(value):.6g}"
         entries.append(f"{godot_string(key)}: {rendered}")
     return "{" + ", ".join(entries) + "}"
+
+
+def string_dictionary_text(values: dict[str, str]) -> str:
+    return "{" + ", ".join(
+        f"{string_name(key)}: {godot_string(values[key])}" for key in sorted(values)
+    ) + "}"
+
+
+def voice_profile_path(profile_id: str) -> str:
+    path = VOICE_PROFILE_DIR / f"{profile_id}.tres"
+    return "res://" + path.relative_to(ROOT).as_posix() if path.exists() else ""
+
+
+def voice_house_paths(config_id: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for house_id, prefix in VOICE_HOUSE_PREFIXES.items():
+        path = voice_profile_path(prefix + config_id)
+        if path:
+            result[house_id] = path
+    return result
 
 
 def resource_text(script_class: str, script_path: str, properties: list[str]) -> str:
@@ -169,6 +201,7 @@ def visual_path(xaf: str | None, output_root: str) -> str:
 
 
 def definition_text(row: sqlite3.Row, scene_path: str, model_path: str,
+                    direct_voice_profile_path: str, house_voice_profile_paths: dict[str, str],
                     primary: list[str], secondary: list[str], turrets: list[str],
                     terrain: list[str], resources: list[str], effects: list[str],
                     veterancy_paths: list[str]) -> str:
@@ -182,6 +215,8 @@ def definition_text(row: sqlite3.Row, scene_path: str, model_path: str,
         f"icon_path = {godot_string(str(row['icon'] or ''))}",
         f"icon_grey_path = {godot_string(str(row['icon_grey'] or ''))}",
         f"sidebar_type = {string_name(row['sidebar_type'])}",
+        f"voice_profile_path = {godot_string(direct_voice_profile_path)}",
+        f"voice_profile_paths_by_house = {string_dictionary_text(house_voice_profile_paths)}",
         f"cost = {int(row['cost'] or 0)}",
         f"build_time_ticks = {int(row['build_time'] or 0)}",
         f"tech_level = {int(row['tech_level'] or 0)}",
@@ -496,6 +531,8 @@ def main() -> int:
                 row,
                 scene_paths.get(config_id, ""),
                 model_path,
+                voice_profile_path(config_id),
+                voice_house_paths(config_id),
                 linked_names(connection, "unit_primary_buildings", int(row["id"])),
                 linked_names(connection, "unit_secondary_buildings", int(row["id"])),
                 turret_names(connection, int(row["id"])),

@@ -18,6 +18,8 @@ extends Resource
 @export var icon_path: String
 @export var icon_grey_path: String
 @export var sidebar_type: StringName
+@export_file("*.tres") var voice_profile_path: String
+@export var voice_profile_paths_by_house: Dictionary = {}
 
 @export_group("Production")
 @export var cost: int

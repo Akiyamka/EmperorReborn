@@ -6,6 +6,8 @@ signal status_changed(status: String)
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
+const SoundEventPlayerScript := preload("res://scripts/audio/sound_event_player.gd")
+const UnitVoiceCatalogScript := preload("res://scripts/audio/unit_voice_catalog.gd")
 
 var _camera: Camera3D
 var _terrain: MapLoader
@@ -32,6 +34,14 @@ var _deployment_cursor_entity_id := 0
 var _deployment_cursor_last_check_msec := -DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC
 var _deployment_cursor_result := NO_CURSOR_OVERRIDE
 var _selected_orders_active := -1
+var _voice_catalog := UnitVoiceCatalogScript.new()
+var _voice_player
+
+
+func _ready() -> void:
+	_voice_player = SoundEventPlayerScript.new()
+	_voice_player.name = "UnitVoiceFeedback"
+	add_child(_voice_player)
 
 
 func setup(
@@ -232,6 +242,7 @@ func _issue_attack_order(target_or_position: Variant) -> void:
 	if accepted.is_empty():
 		status_changed.emit("Selected units cannot attack this target")
 		return
+	_play_voice_feedback(&"Attack", accepted)
 	if target_or_position is Vector3:
 		var target: Vector3 = target_or_position
 		var label := "Attacking ground at %.1f, %.1f" % [target.x, target.z]
@@ -354,6 +365,11 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 		else:
 			for entity in moving_entities:
 				entity.move_to(target)
+	var feedback_entities: Array[Node] = []
+	feedback_entities.append_array(moving_entities)
+	feedback_entities.append_array(harvesting_entities)
+	feedback_entities.append_array(unloading_entities)
+	_play_voice_feedback(&"Move", feedback_entities)
 	var nav_status := ""
 	if target_cell.x >= 0:
 		var debug: Dictionary = _terrain.navigation_grid.cell_debug(target_cell)
@@ -431,6 +447,40 @@ func _set_selection(entities: Array[Node]) -> void:
 		var callback := Callable(self, "_on_selected_entity_exiting").bind(entity)
 		if not entity.tree_exiting.is_connected(callback):
 			entity.tree_exiting.connect(callback, CONNECT_ONE_SHOT)
+	_play_voice_feedback(&"Selection", _selected_entities)
+
+
+func _play_voice_feedback(kind: StringName, entities: Array[Node]) -> void:
+	if _voice_player == null or AudioServer.get_driver_name() == "Dummy":
+		return
+	var units: Array[Node] = []
+	for entity in entities:
+		if entity != null and is_instance_valid(entity) and entity.is_in_group("units"):
+			units.append(entity)
+	if units.is_empty():
+		return
+	var owner = units.front().call("owner_player") if units.front().has_method("owner_player") else null
+	if owner == null:
+		return
+	var profile: UnitVoiceProfile
+	if units.size() > 1:
+		profile = _voice_catalog.group_profile_for_house(owner.house_id)
+	else:
+		var definition = units.front().get("unit_definition")
+		profile = _voice_catalog.profile_for_unit(definition, owner.house_id)
+	if profile == null:
+		return
+	var event_path := ""
+	match kind:
+		&"Selection":
+			event_path = profile.selection_event_path
+		&"Move":
+			event_path = profile.move_event_path
+		&"Attack":
+			event_path = profile.attack_event_path
+	if event_path.is_empty():
+		return
+	_voice_player.play_event(load(event_path) as SoundEvent)
 
 
 func _on_selected_entity_exiting(entity: Node) -> void:
