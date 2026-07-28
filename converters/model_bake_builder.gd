@@ -47,7 +47,13 @@ const SUPPRESSED_MISSING_TEXTURES := {
 }
 const HIDDEN_SOURCE_MESH_COMPONENTS := {
 	"at_refinery_h0.xbf": {
-		"at_refinery": {3: true, 10: true},
+		"at_refinery": {3: "broken_geometry", 10: "broken_geometry"},
+	},
+	# See docs/quirks.md "OR Mortar ships a static duplicate gun barrel".
+	"or_mortar_h0.xbf": {
+		"mortorgun01": {0: "unrendered_duplicate"},
+		"gunleg03": {0: "unrendered_duplicate"},
+		"gunleg04": {0: "unrendered_duplicate"},
 	},
 }
 ## The deployed-mode fire clip is authored as "Fire 1" (weapon index 1 = the
@@ -270,16 +276,16 @@ func _build_object_node(
 		# the matching physics shape at runtime.
 		var is_muzzle_flash := _is_muzzle_flash_object(raw_name)
 		var is_bank_attachment := _is_bank_attachment_object(raw_name)
-		var hidden_source_component := _is_hidden_source_mesh_component(raw_name, mesh_index)
+		var hidden_source_quirk := _hidden_source_mesh_component_quirk(raw_name, mesh_index)
 		mesh_instance.visible = not (
 			_is_effect_object(raw_name)
 			or (is_muzzle_flash and bake_embedded_muzzle_flash_visibility)
 			or (is_bank_attachment and bake_attachment_bank_effects)
 			or raw_name == COLLISION_OBJECT_NAME
-			or hidden_source_component
+			or not hidden_source_quirk.is_empty()
 		)
-		if hidden_source_component:
-			mesh_instance.set_meta("source_asset_quirk", "broken_geometry")
+		if not hidden_source_quirk.is_empty():
+			mesh_instance.set_meta("source_asset_quirk", hidden_source_quirk)
 		if raw_name == COLLISION_OBJECT_NAME:
 			mesh_instance.set_meta("collision_mesh", true)
 		content_root.add_child(mesh_instance)
@@ -372,10 +378,10 @@ func _mesh_is_inside_out(object: Dictionary) -> bool:
 	return volume / (diagonal ** 3) < -INSIDE_OUT_VOLUME_THRESHOLD
 
 
-func _is_hidden_source_mesh_component(object_name: String, mesh_index: int) -> bool:
+func _hidden_source_mesh_component_quirk(object_name: String, mesh_index: int) -> String:
 	var source_quirks: Dictionary = HIDDEN_SOURCE_MESH_COMPONENTS.get(_source_file_name, {})
 	var hidden_components: Dictionary = source_quirks.get(object_name.to_lower(), {})
-	return bool(hidden_components.get(mesh_index, false))
+	return String(hidden_components.get(mesh_index, ""))
 
 
 func _build_object_mesh_components(object: Dictionary, texture_names: PackedStringArray, flip_orientation := false) -> Array[ArrayMesh]:

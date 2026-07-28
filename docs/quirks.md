@@ -107,6 +107,34 @@ gated `disabled_when_deployed` and at least one gated
 `disabled_when_undeployed`" — which would otherwise spuriously match it
 alongside the three real combat-deployable units.
 
+### OR Mortar ships a static duplicate gun barrel
+
+**Observed data:** `OR_Mortar_H0.xbf` defines two top-level gun objects with
+identical geometry (`Mortorgun` and `Mortorgun01`, same 8-vertex/12-triangle
+box, same local bounding size). `Mortorgun` carries object-animation keys
+across the full 971-frame timeline and matches every clip. `Mortorgun01`
+carries 426 keys, but every one of them holds the exact same transform - it
+never actually moves. Its children `gunleg03`/`gunleg04` duplicate
+`Mortorgun`'s `gunleg1`/`gunleg2`. Clips authored past frame 425 (`Stationary`,
+`Shot_1/2`, `Blow_Up_1/2`, `Deployed_Death_1/2`, `Undeploy_Gun`, `Win`,
+`Gassed_1`, `Run_Over_1`) have zero keys at all on `Mortorgun01`'s track. Its
+only real purpose is carrying the `::1gun#`/`>>1gun#` attachment markers,
+which the FX event table uses to anchor the `Fire_1` muzzle bank
+(`913E0570#497`/`#498`, frames 422-429).
+
+**Original-engine quirk:** `Mortorgun01` is authoring scaffolding for the
+`1gun` attachment point, not a second visible barrel. The original engine
+apparently never rendered it; EmperorReborn's converter had no signal to
+distinguish it from real geometry, so it rendered as a motionless, oversized
+duplicate of the real barrel sitting near the mount point in every clip.
+
+**EmperorReborn compatibility decision:** `ModelBakeBuilder` hides
+`Mortorgun01`'s mesh (and its `gunleg03`/`gunleg04` children) via
+`HIDDEN_SOURCE_MESH_COMPONENTS`, tagged `source_asset_quirk =
+"unrendered_duplicate"`, the same mechanism used for the Atreides Refinery's
+broken geometry. The node, its transform, and the `::1gun#`/`>>1gun#`
+attachment markers are kept so the `Fire_1` muzzle FX still anchors correctly.
+
 ## Building models
 
 ### Atreides Refinery H0 contains two broken geometry components
