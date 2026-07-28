@@ -314,6 +314,10 @@ func _initialize() -> void:
 		_test_kobra_deployed_hull_frozen
 	)
 	_run_case(
+		"a deployed Kobra acquires targets throughout its firing range",
+		_test_kobra_deployed_range_acquisition
+	)
+	_run_case(
 		"IMADVSardaukar is not combat-deployable and both of its turrets are always active",
 		_test_sardaukar_not_combat_deployable
 	)
@@ -3420,6 +3424,69 @@ func _test_kobra_deployed_hull_frozen() -> void:
 		not active_turrets[0].requires_hull_turn(),
 		"Kobra's deployed gun has real yaw travel and must never ask for a hull turn"
 	)
+	kobra.free()
+
+
+func _test_kobra_deployed_range_acquisition() -> void:
+	var kobra = UnitScene.instantiate()
+	kobra.config_id = &"ORKobra"
+	root.add_child(kobra)
+	kobra.replace_visual_scene(ORKobraModelScene)
+	_expect(kobra.deploy(), "Kobra must accept the deploy command")
+	kobra.finish_deployment(true)
+	var turret = kobra._active_turrets()[0]
+	var emission: Dictionary = turret.peek_emission()
+	var forward := Vector3(emission["direction"])
+	forward.y = 0.0
+	forward = forward.normalized()
+	var target := CombatTarget.new(&"Heavy")
+	var failed_distances: Array[float] = []
+	for distance_tenths in range(10, 321):
+		var distance := float(distance_tenths) * 0.1
+		target.position = kobra.global_position + forward * distance
+		turret.reset_aim()
+		var aimed := false
+		for frame in 100:
+			aimed = turret.aim_at(target.position, 1.0 / 20.0)
+			if aimed:
+				break
+		if (
+			turret.target_range(target) == CombatTurretScript.TargetRange.IN_RANGE
+			and not aimed
+		):
+			failed_distances.append(distance)
+	_expect(
+		failed_distances.is_empty(),
+		"Kobra must acquire every in-range target; failed distances: %s"
+			% [failed_distances]
+	)
+	# Exact attack-ground dead zone reported from the live demo: the Kobra's
+	# long shared yaw/pitch pivot used to feed its current muzzle height back
+	# into ballistic arc selection and never complete vertical acquisition.
+	target.position = kobra.global_position + Vector3(
+		6.15308, -0.00272, -5.34003
+	)
+	var fired_projectiles: Array = []
+	kobra.weapon_fired.connect(func(
+			projectiles: Array, _target: Variant, _weapon_index: int
+		) -> void:
+		fired_projectiles.append_array(projectiles)
+	)
+	_expect(
+		kobra.command_attack(target.position),
+		"Kobra must accept the reported attack-ground dead-zone order"
+	)
+	for frame in 300:
+		kobra._process(1.0 / 20.0)
+		if not fired_projectiles.is_empty():
+			break
+	_expect(
+		not fired_projectiles.is_empty(),
+		"Kobra must fire at the reported high/low arc transition"
+	)
+	for projectile in fired_projectiles:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
 	kobra.free()
 
 

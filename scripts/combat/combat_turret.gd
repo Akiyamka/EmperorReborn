@@ -112,6 +112,12 @@ var _pitch_pivot: Node3D
 var _reference_pivot: Node3D
 var _pivot_rest_transforms: Dictionary = {}
 var _muzzles: Array[Node3D] = []
+## Model-local neutral muzzle-group position used only for aim/arc selection.
+## The actual projectile still launches from the animated world-space muzzle.
+## Keeping this origin independent from current_pitch prevents a long shared
+## yaw/pitch barrel (the deployed Kobra) from feeding its previous pose back
+## into the next ballistic solution.
+var _trajectory_aim_origin_local := Vector3.INF
 var _rear_muzzles: Dictionary = {}
 var _launch_smokes: Dictionary = {}
 var _next_muzzle_index := 0
@@ -230,6 +236,9 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 	current_pitch = 0.0
 	_next_muzzle_index = 0
 	_apply_aim_transforms()
+	var neutral_muzzle_origin := _muzzle_group_origin()
+	_trajectory_aim_origin_local = _model_root.to_local(neutral_muzzle_origin) \
+		if neutral_muzzle_origin.is_finite() else Vector3.INF
 	return _reference_pivot != null or not _muzzles.is_empty()
 
 
@@ -244,6 +253,7 @@ func unbind_model() -> void:
 	_reference_pivot = null
 	_pivot_rest_transforms.clear()
 	_muzzles.clear()
+	_trajectory_aim_origin_local = Vector3.INF
 	_rear_muzzles.clear()
 	_launch_smokes.clear()
 	_next_muzzle_index = 0
@@ -392,11 +402,9 @@ func aim_at(world_position: Vector3, delta: float) -> bool:
 			_desired_yaw(world_position), yaw_config,
 			&"minimum_yaw", &"maximum_yaw"
 		)
-		current_yaw = _turn_axis(
-			current_yaw,
-			desired_yaw,
-			_axis_speed(yaw_config, &"yaw_speed"),
-			delta
+		_turn_yaw_toward(
+			world_position, desired_yaw,
+			_axis_speed(yaw_config, &"yaw_speed"), delta
 		)
 		_apply_aim_transforms()
 	if _pitch_pivot != null:
@@ -405,14 +413,111 @@ func aim_at(world_position: Vector3, delta: float) -> bool:
 			_desired_firing_pitch(world_position), pitch_config,
 			&"minimum_pitch", &"maximum_pitch"
 		)
-		current_pitch = _turn_axis(
-			current_pitch,
-			desired_pitch,
-			_axis_speed(pitch_config, &"pitch_speed"),
-			delta
+		_turn_pitch_toward(
+			world_position, desired_pitch,
+			_axis_speed(pitch_config, &"pitch_speed"), delta
 		)
 		_apply_aim_transforms()
 	return is_aimed_at(world_position)
+
+
+## A joint-space yaw step is not always a world-space heading step of the same
+## size. On a pivot that also carries a steeply elevated barrel (notably the
+## deployed Kobra), the authored rest basis couples yaw and pitch: one 4-degree
+## rules step can move the projected muzzle heading by more than 10 degrees.
+## Taking that full step forever overshoots targets in alternating directions,
+## leaving the weapon in a dead zone where it never becomes "aimed".
+##
+## Keep the rules-rate upper bound, but test progressively smaller fractions
+## of that step against the actual world-space muzzle heading and retain the
+## largest one that improves it.
+func _turn_yaw_toward(
+		world_position: Vector3,
+		desired_yaw: float,
+		speed_degrees: float,
+		delta: float
+	) -> void:
+	var starting_yaw := current_yaw
+	var full_step := _turn_axis(
+		starting_yaw, desired_yaw, speed_degrees, delta
+	)
+	if is_equal_approx(full_step, starting_yaw):
+		return
+	if _pitch_pivot == null or _yaw_pivot != _pitch_pivot:
+		current_yaw = full_step
+		return
+	var best_yaw := starting_yaw
+	var best_error := _world_yaw_error(world_position)
+	for fraction in [1.0, 0.5, 0.25, 0.125, 0.0625]:
+		current_yaw = lerp_angle(starting_yaw, full_step, fraction)
+		_apply_aim_transforms()
+		var candidate_error := _world_yaw_error(world_position)
+		if candidate_error + 0.000001 < best_error:
+			best_error = candidate_error
+			best_yaw = current_yaw
+	current_yaw = best_yaw
+
+
+func _world_yaw_error(world_position: Vector3) -> float:
+	var emission := peek_emission()
+	if emission.is_empty():
+		return INF
+	var direction: Vector3 = emission["direction"]
+	var target_direction := _desired_firing_direction(world_position)
+	var horizontal_direction := Vector2(direction.x, direction.z)
+	var horizontal_target := Vector2(target_direction.x, target_direction.z)
+	if horizontal_direction.is_zero_approx() or horizontal_target.is_zero_approx():
+		return 0.0
+	return absf(angle_difference(
+		horizontal_direction.angle(), horizontal_target.angle()
+	))
+
+
+## The same shared pivot can amplify a pitch step and, near the point where a
+## trajectory mount changes between its high and low solutions, can also move
+## the muzzle enough to change the solution being evaluated. Choose a
+## world-space-improving fraction so the servo crosses that discontinuity
+## instead of alternating forever on its two sides.
+func _turn_pitch_toward(
+		world_position: Vector3,
+		desired_pitch: float,
+		speed_degrees: float,
+		delta: float
+	) -> void:
+	var starting_pitch := current_pitch
+	var full_step := _turn_axis(
+		starting_pitch, desired_pitch, speed_degrees, delta
+	)
+	if is_equal_approx(full_step, starting_pitch):
+		return
+	if _yaw_pivot == null or _yaw_pivot != _pitch_pivot:
+		current_pitch = full_step
+		return
+	var best_pitch := starting_pitch
+	var best_error := _world_pitch_error(world_position)
+	for fraction in [1.0, 0.5, 0.25, 0.125, 0.0625]:
+		current_pitch = lerp_angle(starting_pitch, full_step, fraction)
+		_apply_aim_transforms()
+		var candidate_error := _world_pitch_error(world_position)
+		if candidate_error + 0.000001 < best_error:
+			best_error = candidate_error
+			best_pitch = current_pitch
+	current_pitch = best_pitch
+
+
+func _world_pitch_error(world_position: Vector3) -> float:
+	var emission := peek_emission()
+	if emission.is_empty():
+		return INF
+	var direction: Vector3 = emission["direction"]
+	var target_direction := _desired_firing_direction(world_position)
+	return absf(angle_difference(
+		atan2(direction.y, Vector2(direction.x, direction.z).length()),
+		atan2(
+			target_direction.y,
+			Vector2(target_direction.x, target_direction.z).length()
+		)
+	))
 
 
 func recenter(delta: float) -> bool:
@@ -1038,7 +1143,7 @@ func _desired_firing_direction(world_position: Vector3) -> Vector3:
 	# A rigid multi-barrel mount has one shared elevation. Solve that elevation
 	# from the centre of the muzzle group rather than changing it whenever the
 	# active >> marker advances to the next barrel.
-	var trajectory_origin := _muzzle_group_origin()
+	var trajectory_origin := _ballistic_aim_origin()
 	if not trajectory_origin.is_finite():
 		trajectory_origin = emission_position
 	var target_heading := world_position - _aim_origin()
@@ -2439,6 +2544,24 @@ func _muzzle_group_origin() -> Vector3:
 	for point in points:
 		result += Vector3(point["position"])
 	return result / float(points.size())
+
+
+func _trajectory_aim_origin() -> Vector3:
+	if (
+		_model_root == null
+		or not is_instance_valid(_model_root)
+		or not _trajectory_aim_origin_local.is_finite()
+	):
+		return Vector3.INF
+	return _model_root.to_global(_trajectory_aim_origin_local)
+
+
+func _ballistic_aim_origin() -> Vector3:
+	# Separate yaw/pitch chains do not have Kobra's self-coupling and retain
+	# exact muzzle-to-projectile alignment (notably the Minotaurus salvo).
+	return _trajectory_aim_origin() \
+		if _yaw_pivot != null and _yaw_pivot == _pitch_pivot \
+		else _muzzle_group_origin()
 
 
 func _turn_axis(current: float, target: float, speed_degrees: float, delta: float) -> float:
