@@ -38,6 +38,10 @@ const SHOT_LIGHT_FADE_DURATION := 0.16
 const CASING_SEQUENCE := "!%shel"
 const LAUNCH_SMOKE_MARKER := "#smoke"
 const LAUNCH_SMOKE_SEQUENCE := "!cexp"
+## Mirrors Unit.DEPLOYED_HOLD_ANIMATION (scripts/units/unit.gd): the authored
+## held pose at the end of a combat-deploy unit's fold-out clip. Deploy-only
+## turret pivots must rest here, not at the model's undeployed default pose.
+const DEPLOYED_HOLD_ANIMATION := &"Deploy_Gun_Hold"
 const LAUNCH_SMOKE_FRAME_COUNT := 16
 const LAUNCH_SMOKE_SIZE := 1.25
 ## A continuous weapon's authored muzzle stream (the flamethrowers' `!%01fire`
@@ -214,7 +218,13 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 		if _pitch_pivot == null and _axis_speed(joint_config, &"pitch_speed") > 0.0:
 			_pitch_pivot = pivot
 
+	var deploy_only := is_active_while_deployed(true) and not is_active_while_deployed(false)
 	for pivot in [_root_pivot, _yaw_pivot, _pitch_pivot, _reference_pivot]:
+		if deploy_only:
+			var authored_rest: Variant = _authored_hold_transform(model_root, pivot)
+			if authored_rest != null:
+				_pivot_rest_transforms[pivot] = authored_rest as Transform3D
+				continue
 		_store_rest_transform(pivot)
 	current_yaw = 0.0
 	current_pitch = 0.0
@@ -410,6 +420,17 @@ func recenter(delta: float) -> bool:
 	current_pitch = _turn_axis(current_pitch, 0.0, _axis_speed(_pitch_config(), &"pitch_speed"), delta)
 	_apply_aim_transforms()
 	return is_zero_approx(current_yaw) and is_zero_approx(current_pitch)
+
+
+## Zeroes the servo bookkeeping without touching the pivot transform. Used
+## when a turret goes inactive on a deploy-state change: while inactive its
+## pivot is owned entirely by the model's own animation (Deploy_Gun_Hold /
+## Undeploy_Gun / travel idle), so stamping rest.basis here would fight or
+## outlast that animation instead of just resetting the angle for next time
+## the turret becomes active.
+func reset_aim() -> void:
+	current_yaw = 0.0
+	current_pitch = 0.0
 
 
 func is_aimed_at(world_position: Vector3) -> bool:
@@ -903,6 +924,33 @@ func _nearest_node3d_parent(node: Node) -> Node3D:
 func _store_rest_transform(pivot: Node3D) -> void:
 	if pivot != null and is_instance_valid(pivot) and not _pivot_rest_transforms.has(pivot):
 		_pivot_rest_transforms[pivot] = pivot.transform
+
+
+## The converter bakes each animated node's per-frame pose as a Value track at
+## "<path-from-AnimationPlayer-root>:transform" (see
+## converters/model_bake_builder.gd _to_godot_transform baking). Reads the
+## single authored key of DEPLOYED_HOLD_ANIMATION for `pivot`, or null if the
+## model has no such clip/track (e.g. units without a deploy-hold pose).
+func _authored_hold_transform(model_root: Node3D, pivot: Node3D):
+	if model_root == null or pivot == null or not is_instance_valid(pivot):
+		return null
+	var player := model_root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	if player == null or not player.has_animation(DEPLOYED_HOLD_ANIMATION):
+		return null
+	var animation := player.get_animation(DEPLOYED_HOLD_ANIMATION)
+	if animation == null:
+		return null
+	var root := player.get_node_or_null(player.root_node)
+	if root == null or not (root is Node3D) or not root.is_ancestor_of(pivot):
+		return null
+	var track_path := NodePath("%s:transform" % String(root.get_path_to(pivot)))
+	var track := animation.find_track(track_path, Animation.TYPE_VALUE)
+	if track < 0 or animation.track_get_key_count(track) == 0:
+		return null
+	var value: Variant = animation.track_get_key_value(track, 0)
+	if typeof(value) != TYPE_TRANSFORM3D:
+		return null
+	return value
 
 
 func _restore_pivot_transforms() -> void:

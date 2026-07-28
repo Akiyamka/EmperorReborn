@@ -9,6 +9,8 @@
 [ext_resource type="PackedScene" path="res://scenes/units/or_kobra.tscn" id="8_njd2c"]
 [ext_resource type="PackedScene" path="res://scenes/units/or_mortar.tscn" id="9_5qtuu"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="9_nabld"]
+[ext_resource type="PackedScene" path="res://scenes/units/at_mongoose.tscn" id="10_7in77"]
+[ext_resource type="PackedScene" path="res://scenes/units/at_minotaurus.tscn" id="11_frhj3"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -102,3 +104,9 @@ owner_player_id = 1
 [node name="ORMortar" parent="." unique_id=1739894269 instance=ExtResource("9_5qtuu")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 246.51733, 8.07961, 152.32619)
 owner_player_id = 1
+
+[node name="ATMongoose" parent="." unique_id=290541654 instance=ExtResource("10_7in77")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 265.9305, 7.8870974, 151.4429)
+
+[node name="ATMinotaurus" parent="." unique_id=102659162 instance=ExtResource("11_frhj3")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 257.01147, 7.882458, 151.91292)

@@ -256,7 +256,9 @@ func _process(delta: float) -> void:
 		# to the authored forward pose through the normal turret servo. Without
 		# this, the animation snaps the visible pivot to rest while current_yaw
 		# stays cached, and the stale angle reappears on the next attack order.
-		for turret in combat_turrets:
+		# Only turrets live in the current deploy state: an inactive turret's
+		# pivot is owned by its own deploy/undeploy/idle animation, not combat.
+		for turret in _active_turrets():
 			turret.recenter(delta)
 	_advance_visual_slope_alignment(delta)
 	# These shaders take their scroll/pulse phase from here: a continuous
@@ -1315,7 +1317,10 @@ func _advance_turret_engagement(
 
 
 func _recenter_unengaged_turrets(engaged_turrets: Array, delta: float) -> void:
-	for turret in combat_turrets:
+	# Inactive turrets are excluded: their pivot belongs to the model's own
+	# deploy/undeploy/idle animation while disabled for the current deploy
+	# state, not to the combat servo.
+	for turret in _active_turrets():
 		if turret not in engaged_turrets:
 			_recenter_turret_if_idle(turret, delta)
 
@@ -2216,8 +2221,12 @@ func finish_deployment(consumed: bool) -> void:
 
 ## Cancels any in-flight fire sequence and clears retained targets for every
 ## weapon whose turret just became inactive under the current deploy state,
-## then starts recentering its pivot back to the authored rest pose. Turrets
-## that stay active are left untouched.
+## then zeroes its servo angle for next time it's reactivated. Turrets that
+## stay active are left untouched. This does not touch the pivot transform:
+## while inactive, the pivot belongs to the model's own deploy/undeploy/idle
+## animation, and stamping the combat-owned rest pose here would fight or
+## outlast that animation (e.g. snapping a just-folded-away deploy-only
+## turret back to its deployed pose).
 func _sync_active_turret_weapons() -> void:
 	var active_indices := {}
 	for turret in _active_turrets():
@@ -2231,7 +2240,7 @@ func _sync_active_turret_weapons() -> void:
 		_weapon_auto_targets.erase(weapon_index)
 		_weapon_auto_target_cooldowns.erase(weapon_index)
 		_moving_fire_weapons.erase(weapon_index)
-		turret.recenter(1.0)
+		turret.reset_aim()
 
 
 func set_selected(value: bool) -> void:
