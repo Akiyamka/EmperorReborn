@@ -24,6 +24,9 @@ const ATMongooseModelScene := preload(
 const ATMinotaurusModelScene := preload(
 	"res://assets/converted/models/AT_minotaurus_H0/AT_minotaurus_H0.scn"
 )
+const ORMortarModelScene := preload(
+	"res://assets/converted/models/OR_Mortar_H0/OR_Mortar_H0.scn"
+)
 const HKMissileModelScene := preload(
 	"res://assets/converted/models/HK_missile_H0/HK_missile_H0.scn"
 )
@@ -216,6 +219,14 @@ func _initialize() -> void:
 	_run_case("attack-ground missiles descend to the sampled point", _test_attack_ground_missile)
 	_run_case("homing respects delay, turn rate and target lifetime", _test_homing_projectile)
 	_run_case("trajectory bullets follow a gravity arc", _test_trajectory_projectile)
+	_run_case(
+		"elevated-only trajectory mounts prefer the high ballistic arc",
+		_test_elevated_trajectory_mounts
+	)
+	_run_case(
+		"a deployed Mortar launches its projectile on the high ballistic arc",
+		_test_deployed_mortar_high_arc
+	)
 	await _run_async_case(
 		"trajectory misses continue until contact instead of bursting in air",
 		_test_trajectory_moving_target_miss
@@ -739,6 +750,115 @@ func _test_trajectory_projectile() -> void:
 		"the analytic arc must finish exactly at its aim position"
 	)
 	projectile.free()
+
+
+func _test_elevated_trajectory_mounts() -> void:
+	var cases: Array = [
+		[&"ORMortarInfBigGun", ORMortarModelScene, 1],
+		[&"HKInkVineGun", HKInkVineModelScene, 0],
+	]
+	for test_case in cases:
+		var turret_id: StringName = test_case[0]
+		var model := (test_case[1] as PackedScene).instantiate() as Node3D
+		root.add_child(model)
+		var turret = CombatTurretScript.new()
+		_expect(turret.configure(turret_id), "%s must configure" % turret_id)
+		_expect(
+			turret.bind_model(model, int(test_case[2])),
+			"%s must bind its authored muzzle and pitch pivot" % turret_id
+		)
+		var emission := turret.peek_emission()
+		var horizontal_direction: Vector3 = emission["direction"]
+		horizontal_direction.y = 0.0
+		var bullet = CombatBulletScript.new(
+			turret.bullet_config, turret.warhead_config,
+			turret.projectile_visual_scene, turret.impact_visual_scenes
+		)
+		var target_position := Vector3(emission["position"]) \
+			+ horizontal_direction.normalized() * bullet.maximum_range_world() * 0.92
+		var direction: Vector3 = turret._desired_firing_direction(target_position)
+		var launch_pitch := rad_to_deg(atan2(
+			direction.y, Vector2(direction.x, direction.z).length()
+		))
+		_expect(
+			launch_pitch > 45.0,
+			"%s must choose the high ballistic solution, got %.2f degrees" % [
+				turret_id, launch_pitch
+			]
+		)
+		model.free()
+
+
+func _test_deployed_mortar_high_arc() -> void:
+	var mortar = UnitScene.instantiate()
+	mortar.config_id = &"ORMortar"
+	root.add_child(mortar)
+	mortar.replace_visual_scene(ORMortarModelScene)
+	_expect(mortar.deploy(), "a travel-mode Mortar must accept the deploy command")
+	mortar.finish_deployment(true)
+	_expect(mortar.is_deployed(), "the deploy call must land the Mortar in DEPLOYED")
+	mortar._process(1.0 / 60.0)
+
+	var active_turrets: Array = mortar._active_turrets()
+	_expect(
+		active_turrets.size() == 1
+			and active_turrets[0].config.config_id == &"ORMortarInfBigGun",
+		"a deployed Mortar must expose only its trajectory turret"
+	)
+	var turret = active_turrets[0]
+	var emission: Dictionary = turret.peek_emission()
+	var forward: Vector3 = emission["direction"]
+	forward.y = 0.0
+	var bullet = CombatBulletScript.new(
+		turret.bullet_config, turret.warhead_config,
+		turret.projectile_visual_scene, turret.impact_visual_scenes
+	)
+	var target_position := Vector3(emission["position"]) \
+		+ forward.normalized() * bullet.maximum_range_world() * 0.75
+	var fired: Array = []
+	mortar.weapon_fired.connect(
+		func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+			fired.append_array(projectiles)
+	)
+	_expect(mortar.command_attack(target_position), "a deployed Mortar must accept an in-range target")
+	for frame in 600:
+		mortar._process(1.0 / 60.0)
+		if not fired.is_empty():
+			break
+	var final_emission: Dictionary = turret.peek_emission()
+	var final_direction: Vector3 = final_emission["direction"]
+	var desired_direction: Vector3 = turret._desired_firing_direction(target_position)
+	_expect(
+		not fired.is_empty(),
+		(
+			"the deployed Mortar must fire after completing its aim "
+			+ "(joint %.2f°, muzzle %.2f°, desired %.2f°, aimed=%s, range=%s)"
+		) % [
+			turret.current_pitch_degrees(),
+			rad_to_deg(atan2(
+				final_direction.y, Vector2(final_direction.x, final_direction.z).length()
+			)),
+			rad_to_deg(atan2(
+				desired_direction.y, Vector2(desired_direction.x, desired_direction.z).length()
+			)),
+			turret.is_aimed_at(target_position),
+			turret.target_range(target_position),
+		]
+	)
+	if not fired.is_empty():
+		var direction: Vector3 = fired[0].direction()
+		var launch_pitch := rad_to_deg(atan2(
+			direction.y, Vector2(direction.x, direction.z).length()
+		))
+		_expect(
+			launch_pitch > 45.0,
+			"the deployed Mortar projectile must use the high arc, got %.2f degrees" \
+				% launch_pitch
+		)
+	for projectile in fired:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	mortar.free()
 
 
 func _test_trajectory_moving_target_miss() -> void:

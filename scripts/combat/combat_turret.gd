@@ -700,12 +700,24 @@ func try_fire_at(
 	var parent := projectile_parent if projectile_parent != null else _default_projectile_parent()
 	if parent == null or not parent.is_inside_tree():
 		return result
+	# Fire animations can key the barrel away from the servo-owned aim pose
+	# before their authored shot event. Preserve the selected high solution for
+	# elevated-only trajectory mounts instead of letting CombatProjectile infer
+	# the low solution again from that transient visual muzzle direction.
+	var trajectory_launch_direction := Vector3.ZERO
+	if preview_bullet.has_trajectory() and _prefers_high_trajectory_arc():
+		trajectory_launch_direction = _desired_firing_direction(
+			target_position + aim_offset
+		)
 	var payloads := try_fire(begin_reload_after_shot, committed_sequence, damage_scale)
 	for index in payloads.size():
 		var projectile = CombatProjectileScript.new()
 		parent.add_child(projectile)
 		var emission: Dictionary = _last_emissions[index] \
 			if index < _last_emissions.size() else preview_emission
+		if not trajectory_launch_direction.is_zero_approx():
+			emission = emission.duplicate()
+			emission["direction"] = trajectory_launch_direction
 		if not projectile.launch(
 			payloads[index], emission, target_or_position,
 			source if source != null else _model_root, bullet_gravity, aim_offset,
@@ -1055,10 +1067,12 @@ func _desired_firing_direction(world_position: Vector3) -> Vector3:
 	if _pitch_pivot == null or directions.size() == 1:
 		return directions.front()
 
-	# Prefer the low ballistic solution when both arcs fit. Weapons whose rule
-	# limits impose a minimum elevation (for example the deployed mortar) select
-	# the high solution because its joint angle is the reachable one.
+	# A strictly negative TurretMaxXRotation is an authored high-angle mount:
+	# Mortar and Ink Vine cannot lower their barrels to the direct line. Prefer
+	# the high ballistic solution when both arcs fit such a mount. Other
+	# trajectory weapons retain the low solution unless their limits reject it.
 	var pitch_config := _pitch_config()
+	var prefers_high_arc := _prefers_high_trajectory_arc()
 	var best_direction: Vector3 = directions.front()
 	var best_limit_error: float = INF
 	for candidate in directions:
@@ -1068,10 +1082,23 @@ func _desired_firing_direction(world_position: Vector3) -> Vector3:
 			&"minimum_pitch", &"maximum_pitch"
 		)
 		var limit_error := absf(angle_difference(candidate_pitch, reachable_pitch))
-		if limit_error < best_limit_error:
+		if limit_error + 0.000001 < best_limit_error \
+		or (
+			prefers_high_arc
+			and is_equal_approx(limit_error, best_limit_error)
+			and candidate.y > best_direction.y
+		):
 			best_limit_error = limit_error
 			best_direction = candidate
 	return best_direction
+
+
+func _prefers_high_trajectory_arc() -> bool:
+	var pitch_config := _pitch_config()
+	if pitch_config == null:
+		return false
+	var maximum_pitch := float(pitch_config.maximum_pitch)
+	return not is_nan(maximum_pitch) and maximum_pitch < 0.0
 
 
 func _desired_pitch_for_direction(target_direction: Vector3) -> float:
