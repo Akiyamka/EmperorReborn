@@ -5,7 +5,9 @@
 [ext_resource type="Resource" uid="uid://nj40xd0p0abq" path="res://configs/camera/rts_camera_config.tres" id="3_7in77"]
 [ext_resource type="PackedScene" path="res://assets/converted/maps/#M25 GM Aprit Chard S 2/terrain.tscn" id="4_frhj3"]
 [ext_resource type="PackedScene" path="res://scenes/units/hk_flame.tscn" id="5_h47e7"]
+[ext_resource type="PackedScene" path="res://scenes/units/at_kindjal.tscn" id="7_5qtuu"]
 [ext_resource type="Script" uid="uid://c3sursjoim88" path="res://scripts/ui/selection_rectangle.gd" id="8_4rnnr"]
+[ext_resource type="PackedScene" path="res://scenes/units/fradv_fremen.tscn" id="8_7in77"]
 [ext_resource type="PackedScene" path="res://scenes/units/or_chemical.tscn" id="8_njd2c"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="9_nabld"]
 
@@ -52,6 +54,14 @@ owner_player_id = 1
 
 [node name="HKFlame" parent="Units" unique_id=1264994850 instance=ExtResource("5_h47e7")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 245.33588, 7.861115, 153.41187)
+owner_player_id = 1
+
+[node name="ATKindjal" parent="Units" unique_id=1423984407 instance=ExtResource("7_5qtuu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 255.6726, 7.996085, 161.36958)
+owner_player_id = 1
+
+[node name="FRADVFremen" parent="Units" unique_id=1512744552 instance=ExtResource("8_7in77")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 263.49823, 8.202969, 156.57541)
 owner_player_id = 1
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]

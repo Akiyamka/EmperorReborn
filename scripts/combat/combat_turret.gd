@@ -110,7 +110,6 @@ var _pivot_rest_transforms: Dictionary = {}
 var _muzzles: Array[Node3D] = []
 var _rear_muzzles: Dictionary = {}
 var _launch_smokes: Dictionary = {}
-var _uses_embedded_muzzle_flash := false
 var _next_muzzle_index := 0
 var _last_emissions: Array[Dictionary] = []
 var _rear_flash_textures: Array[Texture2D] = []
@@ -179,7 +178,6 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 		return false
 	_model_root = model_root
 	_fx_model_root = _find_fx_model_root(model_root)
-	_uses_embedded_muzzle_flash = _has_embedded_muzzle_flash(model_root)
 
 	var pivot_candidates: Array[Node3D] = []
 	_collect_markers(model_root, TURRET_MARKER, weapon_index, pivot_candidates)
@@ -238,7 +236,6 @@ func unbind_model() -> void:
 	_muzzles.clear()
 	_rear_muzzles.clear()
 	_launch_smokes.clear()
-	_uses_embedded_muzzle_flash = false
 	_next_muzzle_index = 0
 	_last_emissions.clear()
 	_casing_timeline_tween = null
@@ -681,10 +678,10 @@ func try_fire_at(
 		):
 			projectile.free()
 			continue
-		# Some infantry models use their animated bigflash geometry as the only
-		# available muzzle marker. Fire clips already reveal that embedded flash,
-		# so adding the rules TurretMuzzleFlash and runtime light would duplicate it.
-		if not _uses_embedded_muzzle_flash:
+		# TurretMuzzleFlash in Rules.txt is the authoritative signal for whether
+		# this weapon was authored with a flash at all; an empty muzzle_flash_id
+		# means no synthetic flash/light/aux effects should be spawned.
+		if muzzle_flash_scene != null:
 			_spawn_muzzle_flash(parent, emission)
 			# Continuous delivery is presented by the model's authored particle
 			# banks. A generic ballistic flash is especially wrong for gas and
@@ -776,17 +773,6 @@ func _collect_visual_muzzle_fallbacks(node: Node, result: Array[Node3D]) -> void
 			result.append(node as Node3D)
 	for child in node.get_children():
 		_collect_visual_muzzle_fallbacks(child, result)
-
-
-func _has_embedded_muzzle_flash(node: Node) -> bool:
-	if node is Node3D:
-		var lower_name := _original_name(node).to_lower()
-		if lower_name.contains("bigflash") or lower_name.contains("bflash"):
-			return true
-	for child in node.get_children():
-		if _has_embedded_muzzle_flash(child):
-			return true
-	return false
 
 
 func _find_fx_model_root(node: Node) -> Node3D:

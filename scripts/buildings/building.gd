@@ -187,7 +187,11 @@ func _process(delta: float) -> void:
 
 
 func can_set_rally_point() -> bool:
-	return building_definition != null and building_definition.ai_exit
+	if building_definition == null:
+		return false
+	# Refineries use their rally point to direct harvesters, not to route
+	# freshly produced units, so it stays available regardless of AiManufacturing.
+	return building_definition.ai_manufacturing or is_refinery()
 
 
 func set_rally_point(position: Vector3) -> bool:

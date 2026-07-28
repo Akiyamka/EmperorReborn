@@ -914,8 +914,8 @@ func _test_unit_production_rally_and_primary() -> void:
 	primary_barracks.set_owner_player_id(1)
 	await process_frame
 	_expect(
-		primary_barracks.building_definition.ai_exit,
-		"a building with AiExit must support an explicit rally point"
+		primary_barracks.building_definition.ai_manufacturing,
+		"a building with AiManufacturing must support an explicit rally point"
 	)
 
 	_expect(

@@ -180,6 +180,16 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 	}
 
 
+## Whether a move order on this building should be routed to try_undeploy
+## instead of the ordinary rally-point path. Construction Yards never carry
+## Rules.txt's AiManufacturing flag (only real production buildings do), so
+## this is checked independently of building_definition.ai_manufacturing /
+## can_set_rally_point.
+func can_undeploy(building: Node3D) -> bool:
+	var building_config := _building_config_for(building)
+	return building_config != null and building_config.is_construction_yard
+
+
 ## A Construction Yard receives this through the ordinary terrain move-command
 ## path. Result keys mirror try_deploy: handled, started, and message.
 func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dictionary:

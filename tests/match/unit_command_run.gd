@@ -89,7 +89,7 @@ class FakeBuilding extends Node3D:
 	var selected := false
 	var rally_points: Array[Vector3] = []
 	var refinery := false
-	var ai_exit := true
+	var ai_manufacturing := true
 
 	func set_selected(active: bool) -> void:
 		selected = active
@@ -104,7 +104,7 @@ class FakeBuilding extends Node3D:
 		rally_points.append(target)
 
 	func can_set_rally_point() -> bool:
-		return ai_exit
+		return ai_manufacturing
 
 	func is_refinery() -> bool:
 		return refinery
@@ -153,6 +153,7 @@ class FakeDeploymentController extends RefCounted:
 	var undeployment_calls: Array[Dictionary] = []
 	var deployment_entities: Array[Node] = []
 	var deployable_entities: Array[Node] = []
+	var undeployable_entities: Array[Node] = []
 	var availability_queries := 0
 	var result := {
 		"handled": true,
@@ -181,6 +182,9 @@ class FakeDeploymentController extends RefCounted:
 			"building": building, "target": target, "move_mode": move_mode
 		})
 		return undeployment_result
+
+	func can_undeploy(building: Node) -> bool:
+		return building in undeployable_entities
 
 
 class FakeNavigationGrid extends MapNavigationGrid:
@@ -459,8 +463,12 @@ func _test_building_move_undeployment(token: int, local_player) -> int:
 	var con_yard := FakeBuilding.new()
 	con_yard.name = "ATConYard"
 	con_yard.player = local_player
+	# Real Construction Yards never carry Rules.txt's AiManufacturing flag;
+	# undeployment must not depend on the ordinary rally-point capability.
+	con_yard.ai_manufacturing = false
 	con_yard.add_to_group("buildings")
 	root.add_child(con_yard)
+	deployment.undeployable_entities.append(con_yard)
 	var collider := Node.new()
 	con_yard.add_child(collider)
 
@@ -532,20 +540,20 @@ func _test_context_cursors(token: int, local_player, enemy_player) -> int:
 	var windtrap := FakeBuilding.new()
 	windtrap.name = "ATSmWindtrap"
 	windtrap.player = local_player
-	windtrap.ai_exit = false
+	windtrap.ai_manufacturing = false
 	windtrap.add_to_group("buildings")
 	root.add_child(windtrap)
 	commands._set_selection([windtrap])
 	commands.raycast_hits.append({})
 	_expect(
 		commands._command_cursor_at(Vector2.ZERO) == UnitCommandControllerScript.NO_CURSOR_OVERRIDE,
-		"a building without AiExit must not expose a rally-point cursor"
+		"a building without AiManufacturing must not expose a rally-point cursor"
 	)
 	commands.raycast_hits.append({})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(
 		windtrap.rally_points.is_empty(),
-		"a building without AiExit must reject right-click rally points"
+		"a building without AiManufacturing must reject right-click rally points"
 	)
 
 	commands._set_selection([])

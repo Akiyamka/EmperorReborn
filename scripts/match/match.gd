@@ -65,7 +65,7 @@ func _enter_tree() -> void:
 
 
 func _ready() -> void:
-	_match_snapshot = MatchSnapshotScript.new()
+	_match_snapshot = MatchSnapshotScript.new(_snapshot_storage_path())
 	_restore_saved_startup_state()
 	_building_option_ids = _local_player_building_option_ids()
 	_wall_building_ids = _local_player_wall_building_ids()
@@ -301,6 +301,12 @@ func _handle_snapshot_shortcut(event: InputEvent) -> bool:
 	return true
 
 
+func _snapshot_storage_path() -> String:
+	if scene_file_path.is_empty():
+		return MatchSnapshotScript.DEFAULT_PATH
+	return "user://main_snapshot_%s.json" % scene_file_path.get_file().get_basename()
+
+
 func _restore_saved_startup_state() -> void:
 	if _match_snapshot == null:
 		return
@@ -331,7 +337,7 @@ func _configure_demo_players() -> void:
 		&"Atreides",
 		[&"Fremen"],
 		1,
-		5000,
+		500000,
 		0
 	)
 	players.create_player(

@@ -15,6 +15,7 @@ extends Resource
 @export var power_generated: int
 @export var can_be_primary: bool
 @export var ai_exit: bool
+@export var ai_manufacturing: bool
 @export var is_construction_yard: bool
 @export var upgraded_primary_required: bool
 @export var primary_building_ids: Array[StringName] = []

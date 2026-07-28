@@ -287,7 +287,7 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 			continue
 		if entity.has_method("move_to"):
 			movable_entities.append(entity)
-		elif _can_set_rally_point(entity):
+		elif _can_set_rally_point(entity) or _can_undeploy(entity):
 			rally_buildings.append(entity)
 	if movable_entities.is_empty() and rally_buildings.is_empty():
 		if deploying_entities > 0:
@@ -669,7 +669,7 @@ func _can_issue_movement_order(target: Vector3) -> bool:
 			continue
 		if entity.has_method("move_to"):
 			movable_entities.append(entity)
-		elif _can_set_rally_point(entity):
+		elif _can_set_rally_point(entity) or _can_undeploy(entity):
 			has_rally_building = true
 	if has_rally_building:
 		return true
@@ -691,9 +691,15 @@ func _has_movement_or_rally_selection() -> bool:
 	for entity in _selected_entities:
 		if not is_instance_valid(entity) or not _can_control(entity):
 			continue
-		if entity.has_method("move_to") or _can_set_rally_point(entity):
+		if entity.has_method("move_to") or _can_set_rally_point(entity) or _can_undeploy(entity):
 			return true
 	return false
+
+
+func _can_undeploy(entity: Node) -> bool:
+	return _deployment_controller != null and entity.is_in_group("buildings") \
+		and _deployment_controller.has_method("can_undeploy") \
+		and bool(_deployment_controller.call("can_undeploy", entity))
 
 
 func _can_set_rally_point(entity: Node) -> bool:

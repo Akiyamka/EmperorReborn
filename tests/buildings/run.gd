@@ -230,7 +230,7 @@ func _test_wall_line_side_connectivity(token: int) -> int:
 func _test_two_segment_rally_line(token: int) -> int:
 	var building := BuildingScript.new()
 	var definition := BuildingDefinitionScript.new()
-	definition.ai_exit = true
+	definition.ai_manufacturing = true
 	definition.occupy_rows = ["oo", "oo", "ss"]
 	building.building_definition = definition
 	building.position = Vector3(12.0, 3.0, 8.0)
