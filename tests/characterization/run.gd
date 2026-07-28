@@ -51,6 +51,10 @@ func _initialize() -> void:
 	_run_case("XBF mirrored inside-out meshes are re-oriented", _test_mirrored_mesh_orientation)
 	_run_case("AT Refinery independent pads and mesh components", _test_at_refinery_partitioning)
 	_run_case("Muzzle flash clip visibility", _test_muzzle_flash_clip_visibility)
+	_run_case(
+		"combat-deploy clip rename normalizes Fire_1 to Deployed_Fire",
+		_test_combat_deploy_clip_rename
+	)
 
 	if _failures > 0:
 		printerr("Characterization tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -1231,6 +1235,61 @@ func _test_muzzle_flash_clip_visibility() -> bool:
 			_expect(stationary_values.size() == int(model_case[1]), "%s must track every muzzle flash in Stationary" % String(model_case[0]).get_file())
 			_expect(stationary_values.all(func(value: bool) -> bool: return not value), "%s must hide muzzle flashes in Stationary" % String(model_case[0]).get_file())
 			_expect(fire_values.count(true) == int(model_case[2]), "%s Fire_0 must show only its active muzzle flash geometry" % String(model_case[0]).get_file())
+		root.free()
+	return true
+
+
+## Guards converters/model_bake_builder.gd's CLIP_NAME_OVERRIDES against a
+## future re-convert: the deployed-mode fire clip is authored as "Fire 1" on
+## every combat-deployable unit (weapon index 1 = the deployed turret), and
+## must bake as the single canonical Deployed_Fire instead.
+func _test_combat_deploy_clip_rename() -> bool:
+	var cases := [
+		["res://assets/raw_original_content/3DDATA/Units/AT_Kindjal_H0.xbf", true],
+		["res://assets/raw_original_content/3DDATA/Units/OR_Mortar_H0.xbf", false],
+		["res://assets/raw_original_content/3DDATA/Units/OR_Kobra_H0.XBF", false],
+	]
+	for model_case: Array in cases:
+		var source_path := String(model_case[0])
+		var builder = ModelBakeBuilderScript.new()
+		var scene: PackedScene = builder.build(source_path)
+		_expect(scene != null, "%s must build" % source_path.get_file())
+		if scene == null:
+			continue
+		var root: Node = scene.instantiate()
+		var player := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+		_expect(player != null, "%s must contain an AnimationPlayer" % source_path.get_file())
+		if player != null:
+			var clips := player.get_animation_list()
+			_expect(
+				&"Deploy_Gun" in clips,
+				"%s must expose Deploy_Gun" % source_path.get_file()
+			)
+			_expect(
+				&"Deploy_Gun_Hold" in clips,
+				"%s must expose Deploy_Gun_Hold" % source_path.get_file()
+			)
+			_expect(
+				&"Undeploy_Gun" in clips,
+				"%s must expose Undeploy_Gun" % source_path.get_file()
+			)
+			_expect(
+				&"Deployed_Fire" in clips,
+				"%s must expose the renamed Deployed_Fire clip" % source_path.get_file()
+			)
+			_expect(
+				not (&"Fire_1" in clips),
+				"%s must not still expose Fire_1 after the deployed-fire rename" % source_path.get_file()
+			)
+			_expect(
+				&"Fire_0" in clips,
+				"%s must keep its travel-mode Fire_0" % source_path.get_file()
+			)
+			if bool(model_case[1]):
+				_expect(
+					&"Deployed_Idle_0" in clips,
+					"%s must expose its authored Deployed_Idle_0" % source_path.get_file()
+				)
 		root.free()
 	return true
 

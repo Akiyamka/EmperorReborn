@@ -148,6 +148,24 @@ class FakeNavigation extends RefCounted:
 		return accepted
 
 
+## A combat-deploy-style unit (Kindjal/Mortar/Kobra): unlike the MCV, `D` or a
+## repeated left-click on the same selected unit must toggle both directions
+## through one entry point, and the unit itself (not a separate building)
+## stays immobile while `deployed`.
+class FakeToggleUnit extends FakeUnit:
+	var deployed := false
+	var deploying := false
+
+	func is_deployed() -> bool:
+		return deployed
+
+	func is_deploying() -> bool:
+		return deploying
+
+	func set_deployed_for_test(value: bool) -> void:
+		deployed = value
+
+
 class FakeDeploymentController extends RefCounted:
 	var calls: Array[Node] = []
 	var undeployment_calls: Array[Dictionary] = []
@@ -166,8 +184,18 @@ class FakeDeploymentController extends RefCounted:
 		"message": "ATConYard packing into ATMCV",
 	}
 
+	## Mirrors UnitDeploymentController.try_deploy's real contract: one entry
+	## point that routes to undeploy when the unit reports itself deployed.
 	func try_deploy(unit: Node) -> Dictionary:
 		calls.append(unit)
+		if unit.has_method("is_deployed") and unit.has_method("set_deployed_for_test"):
+			var now_deployed := not bool(unit.call("is_deployed"))
+			unit.call("set_deployed_for_test", now_deployed)
+			return {
+				"handled": true,
+				"started": true,
+				"message": "%s %s" % [String(unit.name), "deployed" if now_deployed else "undeployed"],
+			}
 		return result
 
 	func can_issue_deploy(unit: Node3D) -> bool:
@@ -225,6 +253,9 @@ func _initialize() -> void:
 	_run_case("building selection", _test_building_selection.bind(local_player))
 	_run_case("Construction Yard move command requests undeployment", _test_building_move_undeployment.bind(local_player))
 	_run_case("command and selection cursors follow pointer context", _test_context_cursors.bind(local_player, enemy_player))
+	_run_case("D toggles deploy and undeploy", _test_deploy_key_toggles.bind(local_player))
+	_run_case("a repeated left-click on a deployed unit requests undeploy", _test_repeated_click_undeploy.bind(local_player))
+	_run_case("a deployed unit rejects move orders with a generic status", _test_deployed_unit_move_rejected.bind(local_player))
 	players.reset_for_match()
 	if _failures > 0:
 		printerr("UnitCommandController tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -895,6 +926,105 @@ func _key_event(keycode: Key, pressed: bool) -> InputEventKey:
 	event.keycode = keycode
 	event.pressed = pressed
 	return event
+
+
+func _test_deploy_key_toggles(token: int, local_player) -> int:
+	var deployment := FakeDeploymentController.new()
+	var commands := FakeUnitCommandController.new()
+	commands.setup(null, null, null, null, deployment)
+	var statuses: Array[String] = []
+	commands.status_changed.connect(func(status: String) -> void: statuses.append(status))
+	root.add_child(commands)
+
+	var unit := FakeToggleUnit.new()
+	unit.name = "ATKindjal"
+	unit.player = local_player
+	unit.add_to_group("units")
+	root.add_child(unit)
+	deployment.deployment_entities.append(unit)
+	commands._set_selection([unit])
+
+	_expect(
+		commands.handle_unhandled_input(_key_event(KEY_D, true)),
+		"D must be handled as a command input"
+	)
+	_expect(deployment.calls == [unit], "D must issue a deploy command to the selected unit")
+	_expect(unit.is_deployed(), "D must deploy a travel-mode unit")
+	_expect(statuses.back() == "ATKindjal deployed", "the deploy status must reach the selection label")
+
+	commands.handle_unhandled_input(_key_event(KEY_D, true))
+	_expect(deployment.calls.size() == 2, "a second D press must issue another deploy command")
+	_expect(not unit.is_deployed(), "D must undeploy an already-deployed unit")
+	_expect(statuses.back() == "ATKindjal undeployed", "the undeploy status must reach the selection label")
+
+	commands.queue_free()
+	unit.queue_free()
+	return token
+
+
+func _test_repeated_click_undeploy(token: int, local_player) -> int:
+	var deployment := FakeDeploymentController.new()
+	var commands := FakeUnitCommandController.new()
+	commands.setup(null, null, null, null, deployment)
+	var statuses: Array[String] = []
+	commands.status_changed.connect(func(status: String) -> void: statuses.append(status))
+	root.add_child(commands)
+
+	var unit := FakeToggleUnit.new()
+	unit.name = "ORKobra"
+	unit.player = local_player
+	unit.add_to_group("units")
+	unit.deployed = true
+	root.add_child(unit)
+	deployment.deployment_entities.append(unit)
+	var collider := Node.new()
+	unit.add_child(collider)
+
+	commands.raycast_hits.append({"collider": collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+	_expect(deployment.calls.is_empty(), "the first click must only select the deployed unit")
+
+	commands.raycast_hits.append({"collider": collider})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_LEFT))
+	_expect(deployment.calls == [unit], "the repeated click on a deployed unit must request undeploy")
+	_expect(not unit.is_deployed(), "the repeated click must undeploy the unit")
+	_expect(statuses.back() == "ORKobra undeployed", "the undeploy status must reach the selection label")
+
+	commands.queue_free()
+	unit.queue_free()
+	return token
+
+
+func _test_deployed_unit_move_rejected(token: int, local_player) -> int:
+	var navigation := FakeNavigation.new()
+	var commands := FakeUnitCommandController.new()
+	commands.setup(null, null, navigation, null, null)
+	var statuses: Array[String] = []
+	commands.status_changed.connect(func(status: String) -> void: statuses.append(status))
+	root.add_child(commands)
+
+	var unit := FakeToggleUnit.new()
+	unit.name = "ORMortar"
+	unit.player = local_player
+	unit.add_to_group("units")
+	unit.deployed = true
+	root.add_child(unit)
+	commands._set_selection([unit])
+
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({"position": Vector3(12.0, 0.0, 8.0)})
+	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
+
+	_expect(navigation.commands.is_empty(), "a deployed unit must issue no navigation command")
+	_expect(unit.move_targets.is_empty(), "a deployed unit must not receive a direct move order")
+	_expect(
+		statuses.back() == "Unit cannot move while deployed",
+		"the rejection status must be generic, not MCV-specific"
+	)
+
+	commands.queue_free()
+	unit.queue_free()
+	return token
 
 
 func _expect(condition: bool, message: String) -> void:

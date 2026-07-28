@@ -50,6 +50,15 @@ const HIDDEN_SOURCE_MESH_COMPONENTS := {
 		"at_refinery": {3: true, 10: true},
 	},
 }
+## The deployed-mode fire clip is authored as "Fire 1" (weapon index 1 = the
+## deployed turret) on every combat-deployable unit. Kindjal also ships an
+## identical "Deployed Fire"; the override is authoritative and replaces it, so
+## runtime resolves one canonical name for all three units.
+const CLIP_NAME_OVERRIDES := {
+	"at_kindjal_h0.xbf": {"Fire_1": "Deployed_Fire"},
+	"or_mortar_h0.xbf": {"Fire_1": "Deployed_Fire"},
+	"or_kobra_h0.xbf": {"Fire_1": "Deployed_Fire"},
+}
 var missing_textures: PackedStringArray = []
 var copied_textures: PackedStringArray = []
 var _material_cache := {}
@@ -159,7 +168,16 @@ func build(xbf_path: String) -> PackedScene:
 		for entry: Dictionary in xbf.animation_entries:
 			var clip := _slice_animation(anim, entry, clip_target_paths)
 			if clip != null:
-				library.add_animation(_clip_name(String(entry["name"])), clip)
+				var clip_name := _clip_name(String(entry["name"]))
+				# CLIP_NAME_OVERRIDES can make two distinct source entries
+				# collide on one output name (e.g. Kindjal's authored
+				# "Deployed Fire" and the renamed "Fire 1"). add_animation
+				# refuses to overwrite, so the result would otherwise depend
+				# on source entry order; remove any prior entry so the
+				# override always wins deterministically.
+				if library.has_animation(clip_name):
+					library.remove_animation(clip_name)
+				library.add_animation(clip_name, clip)
 		_add_timeline_muzzle_flash_visibility(anim, xbf.animation_entries)
 		library.add_animation("timeline", anim)
 		var player := AnimationPlayer.new()
@@ -1652,7 +1670,9 @@ func _muzzle_flash_active_in_range(source: Animation, mesh_path: String, start_t
 
 
 func _clip_name(value: String) -> String:
-	return value.strip_edges().replace(" ", "_")
+	var name := value.strip_edges().replace(" ", "_")
+	var overrides: Dictionary = CLIP_NAME_OVERRIDES.get(_source_file_name, {})
+	return overrides.get(name, name)
 
 
 func _is_looping_clip(value: String) -> bool:

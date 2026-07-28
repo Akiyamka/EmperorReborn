@@ -52,6 +52,12 @@ const ORAPCModelScene := preload("res://assets/converted/models/Or_apc_H0/Or_apc
 const ORLaserTankModelScene := preload(
 	"res://assets/converted/models/OR_Lasertank_H0/OR_Lasertank_H0.scn"
 )
+const ATKindjalModelScene := preload(
+	"res://assets/converted/models/AT_Kindjal_H0/AT_Kindjal_H0.scn"
+)
+const ORKobraModelScene := preload(
+	"res://assets/converted/models/OR_Kobra_H0/OR_Kobra_H0.scn"
+)
 const HKGunTurretScene := preload(
 	"res://assets/converted/buildings/HKGunTurret/HKGunTurret.scn"
 )
@@ -288,6 +294,22 @@ func _initialize() -> void:
 	_run_case("building damage visuals use equal health bands", _test_building_damage_visual_states)
 	_run_case("units and buildings expose rules-backed combat armour", _test_combat_targets)
 	_run_case("shields absorb resolved combat damage before health", _test_shield_absorption)
+	_run_case(
+		"a deployed Kindjal fires Kindjal_B and never Pistol_B, requiring hull-assist aiming",
+		_test_kindjal_deployed_fire
+	)
+	_run_case(
+		"a deployed Kobra tracks its turret with the hull frozen",
+		_test_kobra_deployed_hull_frozen
+	)
+	_run_case(
+		"IMADVSardaukar is not combat-deployable and both of its turrets are always active",
+		_test_sardaukar_not_combat_deployable
+	)
+	_run_case(
+		"a travel-mode Kobra only ever selects Fire_0 or Fire_2, never Deployed_Fire",
+		_test_kobra_travel_fire_variants
+	)
 
 	if _failures > 0:
 		printerr("Combat tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -3196,6 +3218,140 @@ func _test_shield_absorption() -> void:
 	_expect(is_zero_approx(unit.shields), "a larger hit must deplete the remaining shield")
 	_expect(is_equal_approx(unit.health, 440.0), "only spillover damage must reduce health")
 	unit.free()
+
+
+func _test_kindjal_deployed_fire() -> void:
+	var kindjal = UnitScene.instantiate()
+	kindjal.config_id = &"ATKindjal"
+	root.add_child(kindjal)
+	kindjal.replace_visual_scene(ATKindjalModelScene)
+
+	_expect(kindjal.deploy(), "a travel-mode Kindjal must accept the deploy command")
+	kindjal.finish_deployment(true)
+	_expect(kindjal.is_deployed(), "the deploy call must land the Kindjal in DEPLOYED")
+
+	var active_turrets: Array = kindjal._active_turrets()
+	_expect(
+		active_turrets.size() == 1 and active_turrets[0].config.config_id == &"ATKindjalBigGun",
+		"a deployed Kindjal must expose only its deployed turret"
+	)
+	_expect(
+		active_turrets[0].requires_hull_turn(),
+		"Kindjal's deployed gun has yaw_speed=0 (fixed) and must rely on hull-assist aiming"
+	)
+
+	var emission: Dictionary = active_turrets[0].peek_emission()
+	var forward: Vector3 = Vector3(emission["direction"])
+	forward.y = 0.0
+	var target := CombatTarget.new(&"Heavy")
+	target.position = kindjal.global_position + forward.normalized() * 20.0
+
+	var fired_bullets: Array[StringName] = []
+	var fired_projectiles: Array = []
+	kindjal.weapon_fired.connect(func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+		fired_projectiles.append_array(projectiles)
+		for projectile in projectiles:
+			fired_bullets.append(projectile.bullet.id())
+	)
+	_expect(kindjal.command_attack(target), "a deployed Kindjal must accept an attack order")
+	for frame in 300:
+		kindjal._process(1.0 / 20.0)
+		if not fired_bullets.is_empty():
+			break
+	_expect(not fired_bullets.is_empty(), "a deployed Kindjal must fire after completing its aim")
+	_expect(
+		fired_bullets.all(func(bullet_id: StringName) -> bool: return bullet_id == &"Kindjal_B"),
+		"a deployed Kindjal must fire Kindjal_B and never Pistol_B (its travel-mode bullet)"
+	)
+	for projectile in fired_projectiles:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	kindjal.free()
+
+
+func _test_kobra_deployed_hull_frozen() -> void:
+	var kindjal = UnitScene.instantiate()
+	kindjal.config_id = &"ATKindjal"
+	root.add_child(kindjal)
+	kindjal.replace_visual_scene(ATKindjalModelScene)
+	_expect(kindjal.deploy(), "Kindjal must accept the deploy command")
+	kindjal.finish_deployment(true)
+	var kindjal_turret = kindjal._active_turrets()[0]
+	_expect(
+		kindjal_turret.requires_hull_turn(),
+		"a deployed Kindjal's fixed gun must require hull-assist aiming"
+	)
+	kindjal.free()
+
+	var kobra = UnitScene.instantiate()
+	kobra.config_id = &"ORKobra"
+	root.add_child(kobra)
+	kobra.replace_visual_scene(ORKobraModelScene)
+	_expect(kobra.deploy(), "a travel-mode Kobra must accept the deploy command")
+	kobra.finish_deployment(true)
+	_expect(kobra.is_deployed(), "the deploy call must land the Kobra in DEPLOYED")
+
+	var active_turrets: Array = kobra._active_turrets()
+	_expect(
+		active_turrets.size() == 1 and active_turrets[0].config.config_id == &"ORKobraDeployedGun",
+		"a deployed Kobra must expose only its deployed turret"
+	)
+	_expect(
+		not active_turrets[0].requires_hull_turn(),
+		"Kobra's deployed gun has real yaw travel and must never ask for a hull turn"
+	)
+	kobra.free()
+
+
+func _test_sardaukar_not_combat_deployable() -> void:
+	var sardaukar = UnitScene.instantiate()
+	sardaukar.config_id = &"IMADVSardaukar"
+	root.add_child(sardaukar)
+
+	_expect(
+		not sardaukar._is_combat_deployable(),
+		"IMADVSardaukar must not be combat-deployable despite its knife/gun turret pair"
+	)
+	_expect(sardaukar.combat_turrets.size() == 2, "IMADVSardaukar must configure both its gun and knife turrets")
+	for turret in sardaukar.combat_turrets:
+		_expect(
+			turret.is_active_while_deployed(true) and turret.is_active_while_deployed(false),
+			"%s must be active in both deploy states (the Rules.txt gate is corrected at generation time)"
+				% String(turret.config.config_id)
+		)
+	sardaukar.free()
+
+
+func _test_kobra_travel_fire_variants() -> void:
+	var kobra = UnitScene.instantiate()
+	kobra.config_id = &"ORKobra"
+	root.add_child(kobra)
+	kobra.replace_visual_scene(ORKobraModelScene)
+	_expect(not kobra.is_deployed(), "a fresh Kobra must start in travel mode")
+
+	var travel_turret = kobra._active_turrets()[0]
+	_expect(
+		travel_turret.config.config_id == &"ORKobraUndeployedGun",
+		"travel mode must expose only the travel turret"
+	)
+
+	var seen_names := {}
+	for _sample in 60:
+		var binding: Dictionary = kobra._fire_animation_binding(travel_turret.weapon_index())
+		_expect(not binding.is_empty(), "a travel-mode Kobra must resolve a fire clip")
+		if binding.is_empty():
+			continue
+		seen_names[String(binding.get("name", ""))] = true
+	for clip_name in seen_names.keys():
+		_expect(
+			clip_name in ["Fire_0", "Fire_2"],
+			"a travel-mode Kobra must only ever select Fire_0 or Fire_2, got %s" % clip_name
+		)
+	_expect(
+		not seen_names.has("Deployed_Fire"),
+		"a travel-mode Kobra must never select Deployed_Fire"
+	)
+	kobra.free()
 
 
 func _runtime_bullet(_rules: Object, bullet_id: StringName):

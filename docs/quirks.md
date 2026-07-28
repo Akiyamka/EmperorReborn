@@ -81,6 +81,32 @@ it as ordinary geometry leaves its mesh visible during idle animations.
 is enabled for `Fire_0`, matching the existing handling of `bigflash`
 objects without broadening the typo to unrelated models.
 
+## Units
+
+### Advanced Sardaukar knife is flagged as a deployed-only weapon
+
+**Observed data:** `Rules.txt` marks `IMADVSardaukarKnife` as
+`turret_disable_if_unit_undeployed = yes` and `IMADVSardaukarGun` as
+`turret_disable_if_unit_deployed = yes`. Read literally, this is a deploy
+pair: gun active while undeployed, knife active only while deployed — the
+same shape as `ATKindjal` / `ORMortar` / `ORKobra`'s real travel/deployed
+turret pairs.
+
+**Original-engine quirk:** The Advanced Sardaukar has no deploy ability at
+all. The knife is a melee weapon the original engine selects by attack
+range against an adjacent target, not a mode unlocked by a deploy state.
+The `turret_disable_if_unit_*` flags on this unit are stale or mis-set data
+left over from copying a deployable unit's turret rows.
+
+**EmperorReborn compatibility decision:** `tools/generate_unit_definitions.py`
+applies a `TURRET_DEPLOY_GATE_OVERRIDES` table that clears both flags when
+generating `IMADVSardaukarGun.tres` / `IMADVSardaukarKnife.tres`, so both
+turrets are always active and the unit is excluded from the (otherwise
+data-driven) combat-deploy eligibility rule — "has at least one turret
+gated `disabled_when_deployed` and at least one gated
+`disabled_when_undeployed`" — which would otherwise spuriously match it
+alongside the three real combat-deployable units.
+
 ## Building models
 
 ### Atreides Refinery H0 contains two broken geometry components

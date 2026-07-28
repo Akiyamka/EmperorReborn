@@ -81,6 +81,10 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 		if _is_formation_modifier(event):
 			_formation_modifier_down = event.pressed
 			return false
+		if _is_deploy_key(event):
+			if event.pressed and not event.echo:
+				_deploy_selected_entities()
+			return true
 	if event is InputEventMouseMotion:
 		if _is_dragging():
 			_update_drag_selection(event.position)
@@ -197,6 +201,35 @@ func _try_deploy(entity: Node) -> bool:
 	return true
 
 
+func _is_deploy_key(event: InputEventKey) -> bool:
+	return event.keycode == KEY_D or event.physical_keycode == KEY_D
+
+
+## The first `D` binding in the project. Applies to every selected
+## controllable entity the deployment controller can handle: toggles the MCV
+## (deploy into its Construction Yard) as well as the combat-deploy units
+## (Kindjal/Mortar/Kobra, toggling stationary combat mode both ways).
+func _deploy_selected_entities() -> void:
+	if _deployment_controller == null:
+		return
+	var messages: Array[String] = []
+	for entity in _selected_entities:
+		if not is_instance_valid(entity) or not _can_control(entity) \
+		or not entity.is_in_group("units"):
+			continue
+		if not _deployment_controller.has_method("can_handle") \
+		or not bool(_deployment_controller.call("can_handle", entity)):
+			continue
+		var result: Dictionary = _deployment_controller.call("try_deploy", entity)
+		if not bool(result.get("handled", false)):
+			continue
+		var message := String(result.get("message", ""))
+		if not message.is_empty():
+			messages.append(message)
+	if not messages.is_empty():
+		status_changed.emit(" | ".join(messages))
+
+
 func _select_units_in_rectangle(rectangle: Rect2) -> void:
 	var selected: Array[Node] = []
 	for unit in get_tree().get_nodes_in_group("units"):
@@ -282,7 +315,7 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 		if not _can_control(entity):
 			status_changed.emit("Cannot command this player")
 			return
-		if entity.has_method("is_deploying") and bool(entity.call("is_deploying")):
+		if _is_immobilized_by_deployment(entity):
 			deploying_entities += 1
 			continue
 		if entity.has_method("move_to"):
@@ -291,7 +324,10 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 			rally_buildings.append(entity)
 	if movable_entities.is_empty() and rally_buildings.is_empty():
 		if deploying_entities > 0:
-			status_changed.emit("MCV cannot move while deploying")
+			status_changed.emit(
+				"Unit cannot move while deployed" if deploying_entities == 1
+				else "%d units cannot move while deployed" % deploying_entities
+			)
 		return
 
 	var hit := _raycast(screen_position, TERRAIN_COLLISION_MASK)
@@ -399,7 +435,7 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 			movement_label = "Moving %d units to %.1f, %.1f" % [moving_entities.size(), target.x, target.z]
 	var formation_status := " | formation" \
 		if not moving_entities.is_empty() and move_mode == UnitNavigationSystemScript.MoveMode.FORMATION else ""
-	var deployment_status := " | %d unit(s) deploying" % deploying_entities \
+	var deployment_status := " | %d unit(s) cannot move while deployed" % deploying_entities \
 		if deploying_entities > 0 else ""
 	var undeployment_status := " | %s" % " | ".join(undeployment_messages) \
 		if not undeployment_messages.is_empty() else ""
@@ -620,6 +656,18 @@ func _deployment_cursor_for(entity) -> int:
 	or not bool(_deployment_controller.call("can_handle", entity)):
 		return NO_CURSOR_OVERRIDE
 
+	# The combat-deploy check (a handful of state-flag reads, no world
+	# validation) is cheap enough to resolve every call; only the MCV's
+	# BuildingPlacement footprint probe below needs the throttle.
+	if _deployment_controller.has_method("is_combat_deploy_candidate") \
+	and bool(_deployment_controller.call("is_combat_deploy_candidate", entity)):
+		return (
+			CursorManagerScript.CursorType.DEPLOY
+			if _deployment_controller.has_method("can_issue_deploy")
+			and bool(_deployment_controller.call("can_issue_deploy", entity))
+			else CursorManagerScript.CursorType.CANT_DEPLOY
+		)
+
 	# A full Construction Yard footprint check is expensive. It is only needed
 	# while the pointer is over the one selected MCV, and its cursor result does
 	# not need frame-rate resolution while that unit moves across the grid.
@@ -659,13 +707,23 @@ func _can_gather_at(target: Vector3) -> bool:
 	return false
 
 
+## Both transition states and the fully-deployed state reject movement: a
+## combat-deployed unit (Kindjal/Mortar/Kobra) is immobile for its whole
+## DEPLOYING -> DEPLOYED -> UNDEPLOYING span, not just while transitioning.
+func _is_immobilized_by_deployment(entity: Node) -> bool:
+	return (
+		(entity.has_method("is_deploying") and bool(entity.call("is_deploying")))
+		or (entity.has_method("is_deployed") and bool(entity.call("is_deployed")))
+	)
+
+
 func _can_issue_movement_order(target: Vector3) -> bool:
 	var movable_entities: Array[Node] = []
 	var has_rally_building := false
 	for entity in _selected_entities:
 		if not is_instance_valid(entity) or not _can_control(entity):
 			continue
-		if entity.has_method("is_deploying") and bool(entity.call("is_deploying")):
+		if _is_immobilized_by_deployment(entity):
 			continue
 		if entity.has_method("move_to"):
 			movable_entities.append(entity)

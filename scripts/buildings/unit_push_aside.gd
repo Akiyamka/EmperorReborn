@@ -23,6 +23,17 @@ static func push_units_out_of_footprint(
 	for unit in units:
 		if not (unit is Node3D):
 			continue
+		# A deployed (or deploying/undeploying) combat unit is immobile and
+		# must not be shoved by a new building's footprint. It will then
+		# visually overlap the building, since BuildingPlacement validates
+		# against the nav grid, not against units; making a deployed unit
+		# block placement outright is a separate change to placement
+		# validation and out of scope here.
+		if (
+			(unit.has_method("is_deployed") and bool(unit.call("is_deployed")))
+			or (unit.has_method("is_deploying") and bool(unit.call("is_deploying")))
+		):
+			continue
 		var position: Vector3 = unit.global_position
 		if position.x < min_x or position.x > max_x or position.z < min_z or position.z > max_z:
 			continue

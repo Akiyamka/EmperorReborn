@@ -16,4 +16,4 @@ acceptable_yaw = 1
 acceptable_pitch = 1
 bullet_count = 1
 disabled_when_deployed = false
-disabled_when_undeployed = true
+disabled_when_undeployed = false

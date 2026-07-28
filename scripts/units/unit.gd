@@ -51,10 +51,28 @@ const IDLE_ANIMATION := &"Stationary"
 const IDLE_ANIMATION_PREFIX := "Idle"
 ## The original MCV model has no clip literally named Deploy. Move_Stop is its
 ## authored transition from driving to a braced stationary pose and is the
-## source-backed fallback for the first phase of deployment.
+## source-backed fallback for the first phase of deployment. Deploy_Gun is the
+## authored clip for the combat-deploy strategy (Kindjal/Mortar/Kobra); it is
+## first so those units resolve it before ever reaching the MCV fallback.
 const DEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
-	&"Deploy", &"Deploying", &"Unpack", &"Move_Stop"
+	&"Deploy_Gun", &"Deploy", &"Deploying", &"Unpack", &"Move_Stop"
 ]
+## Undeploy has no MCV-side authored clip at all (the Construction Yard's own
+## Deconstruct animation handles that transformation instead), so this list
+## only ever resolves for the combat-deploy strategy.
+const UNDEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
+	&"Undeploy_Gun", &"Undeploy", &"Undeploying"
+]
+## Deployed-mode idle clips (Kindjal only) mirror the travel-mode Idle_*
+## naming so the same random-variant machinery in _idle_animations applies.
+const DEPLOYED_IDLE_ANIMATION_PREFIX := "Deployed_Idle"
+## The single canonical deployed-mode fire clip after the converter-stage
+## rename (see converters/model_bake_builder.gd CLIP_NAME_OVERRIDES).
+const DEPLOYED_FIRE_ANIMATION := &"Deployed_Fire"
+## Deploy_Gun_Hold is the authored held pose at the end of the deploy clip.
+## Mortar/Kobra have no Deployed_Idle_* clips, so this is played once and
+## held rather than falling back to Stationary/Idle_* (the travel-mode pose).
+const DEPLOYED_HOLD_ANIMATION := &"Deploy_Gun_Hold"
 const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
 const ATTACK_REPATH_INTERVAL_SECONDS := 0.25
 const ATTACK_REPATH_DISTANCE := 0.5
@@ -73,6 +91,16 @@ enum MechLocomotionState {
 	TURNING_LEFT,
 	TURNING_RIGHT,
 	STOPPING,
+}
+
+## MCV deploy (TRAVEL -> DEPLOYING -> [consumed: unit freed]) uses only the
+## first half of this machine. Combat deploy (Kindjal/Mortar/Kobra) uses all
+## four states, toggling DEPLOYED <-> TRAVEL through DEPLOYING/UNDEPLOYING.
+enum DeployState {
+	TRAVEL,
+	DEPLOYING,
+	DEPLOYED,
+	UNDEPLOYING,
 }
 
 @export var config_id: StringName
@@ -141,7 +169,7 @@ var _mech_motion_cycle_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
 var _mech_locomotion_state := MechLocomotionState.IDLE
 var _mech_start_remaining := 0.0
 var _flight_controller: UnitFlightController = null
-var _is_deploying := false
+var _deploy_state := DeployState.TRAVEL
 var _deployment_aligning := false
 var _deployment_alignment_direction := Vector3.ZERO
 var _deployment_animation_player: AnimationPlayer
@@ -248,13 +276,16 @@ func _physics_process(delta: float) -> void:
 	if _flight_controller != null and _flight_controller.flight_controls_transition():
 		_flight_controller.advance(delta)
 		return
-	if _is_deploying:
+	if is_deploying():
 		velocity = Vector3.ZERO
 		if _deployment_aligning:
 			if _turn_toward(_deployment_alignment_direction, delta):
 				_deployment_aligning = false
 				_set_visual_slope_target(_last_terrain_normal)
 				_start_deployment_animation()
+		return
+	if is_deployed():
+		velocity = Vector3.ZERO
 		return
 	if _navigation_managed:
 		return
@@ -417,7 +448,7 @@ func prepare_navigation_order(
 	) -> bool:
 	if not _issuing_attack_move:
 		_replace_attack_with_move()
-	return not _is_deploying
+	return not (is_deploying() or is_deployed())
 
 
 func set_navigation_managed(active: bool) -> void:
@@ -484,7 +515,7 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 	if _flight_controller != null and _flight_controller.flight_controls_transition():
 		_flight_controller.advance(delta)
 		return
-	if _is_deploying:
+	if is_deploying() or is_deployed():
 		velocity = Vector3.ZERO
 		_set_navigation_debug_direction(Vector3.ZERO)
 		return
@@ -1015,10 +1046,23 @@ func _combat_turret_for_weapon(weapon_index: int):
 	return null
 
 
-func can_attack(target_or_position: Variant) -> bool:
-	if _is_deploying:
-		return false
+## Turrets whose TurretDefinition.disabled_when_deployed/disabled_when_undeployed
+## keep them live in the unit's current deploy state. Both transition states
+## (DEPLOYING/UNDEPLOYING) intentionally expose no active turret, preserving
+## "cannot attack while deploying" for every unit, deployable or not.
+func _active_turrets() -> Array:
+	if is_deploying():
+		return []
+	var deployed := is_deployed()
+	var active: Array = []
 	for turret in combat_turrets:
+		if turret.is_active_while_deployed(deployed):
+			active.append(turret)
+	return active
+
+
+func can_attack(target_or_position: Variant) -> bool:
+	for turret in _active_turrets():
 		if turret.can_target(target_or_position):
 			return true
 	return false
@@ -1046,7 +1090,7 @@ func command_attack(target_or_position: Variant) -> bool:
 	_weapon_auto_targets.clear()
 	_weapon_auto_target_cooldowns.clear()
 	_moving_fire_weapons.clear()
-	for turret in combat_turrets:
+	for turret in _active_turrets():
 		if turret.can_target(target_or_position):
 			_set_weapon_target(turret.weapon_index(), target_or_position)
 	attack_order_changed.emit(true, target_or_position)
@@ -1108,7 +1152,7 @@ func has_attack_order() -> bool:
 
 
 func has_active_order() -> bool:
-	return _has_attack_order or _is_deploying or _mech_has_active_move_order()
+	return _has_attack_order or is_deploying() or _mech_has_active_move_order()
 
 
 func attack_order_target() -> Variant:
@@ -1120,7 +1164,7 @@ func attack_order_target() -> Variant:
 
 
 func _advance_attack_order(delta: float) -> void:
-	if combat_turrets.is_empty() or _is_deploying:
+	if _active_turrets().is_empty():
 		return
 	if not _has_attack_order:
 		_advance_retained_weapon_targets(delta)
@@ -1141,7 +1185,7 @@ func _advance_attack_order(delta: float) -> void:
 		stop_at_current_position()
 		return
 	var in_range_turrets: Array = []
-	for turret in combat_turrets:
+	for turret in _active_turrets():
 		if turret.target_range(attack_target) == CombatTurretScript.TargetRange.IN_RANGE:
 			in_range_turrets.append(turret)
 	if in_range_turrets.is_empty():
@@ -1207,7 +1251,7 @@ func _advance_attack_order(delta: float) -> void:
 func _advance_retained_weapon_targets(delta: float) -> void:
 	if _weapon_targets.is_empty() and _moving_fire_weapons.is_empty():
 		return
-	for turret in combat_turrets:
+	for turret in _active_turrets():
 		var weapon_index: int = turret.weapon_index()
 		var autonomous := _moving_fire_weapons.has(weapon_index)
 		if not autonomous and not _weapon_targets.has(weapon_index):
@@ -1612,18 +1656,86 @@ func _decoded_target(state: Variant) -> Variant:
 	return _weak_target(state)
 
 
+## Deployed state always resolves the single canonical Deployed_Fire clip
+## (see converters/model_bake_builder.gd CLIP_NAME_OVERRIDES); the ordinary
+## Fire_<index> chain below is travel-mode only and must never be reached
+## while deployed, since Fire_0 is the travel-mode animation.
 func _fire_animation_binding(weapon_index: int) -> Dictionary:
-	var candidates: Array[StringName] = [
-		StringName("%s%d" % [FIRE_ANIMATION_PREFIX, weapon_index]),
-		&"Fire",
-	]
+	if is_deployed():
+		for player in _animation_players:
+			if player.has_animation(DEPLOYED_FIRE_ANIMATION):
+				return {"player": player, "name": DEPLOYED_FIRE_ANIMATION}
+		return {}
+	var variants := _travel_fire_variant_bindings(weapon_index)
+	if not variants.is_empty():
+		return variants[randi() % variants.size()]
+	var fallback_candidates: Array[StringName] = [&"Fire"]
 	if weapon_index != 0:
-		candidates.append(&"Fire_0")
+		fallback_candidates.append(&"Fire_0")
 	for player in _animation_players:
-		for animation_name in candidates:
+		for animation_name in fallback_candidates:
 			if player.has_animation(animation_name):
 				return {"player": player, "name": animation_name}
 	return {}
+
+
+## Every Fire_<N> clip belonging to this weapon: its own authored
+## Fire_<weapon_index>, plus — only on a combat-deployable unit (Kindjal,
+## Mortar, Kobra; see _is_combat_deployable) — any Fire_<N> whose index is not
+## claimed by any configured turret (an orphan travel-mode variant, e.g.
+## Kobra's Fire_2 once Fire_1 is renamed to Deployed_Fire). These orphan
+## clips are equivalent shot variants for the same weapon, not per-weapon-
+## index clips, and are chosen at random per shot, mirroring the idle-variant
+## selection in _idle_animations/_play_random_idle. An ordinary multi-turret
+## unit (e.g. ATMinotaurus, which authors an unrelated, unused Fire_1
+## alongside its single real turret's Fire_0) is never a combat-deployable
+## eligibility match, so it always resolves exactly one binding here — its
+## own Fire_<weapon_index> — matching the previous index-keyed lookup
+## byte-for-byte.
+func _travel_fire_variant_bindings(weapon_index: int) -> Array[Dictionary]:
+	var include_orphans := _is_combat_deployable()
+	var configured_indices := {}
+	if include_orphans:
+		for turret in combat_turrets:
+			configured_indices[turret.weapon_index()] = true
+	var seen := {}
+	var bindings: Array[Dictionary] = []
+	for player in _animation_players:
+		for animation_name in player.get_animation_list():
+			var name_text := String(animation_name)
+			if not name_text.begins_with(FIRE_ANIMATION_PREFIX):
+				continue
+			var suffix := name_text.trim_prefix(FIRE_ANIMATION_PREFIX)
+			if not suffix.is_valid_int():
+				continue
+			var suffix_index := int(suffix)
+			if suffix_index != weapon_index \
+			and (not include_orphans or configured_indices.has(suffix_index)):
+				continue
+			var key := "%d:%s" % [player.get_instance_id(), name_text]
+			if seen.has(key):
+				continue
+			seen[key] = true
+			bindings.append({"player": player, "name": animation_name})
+	return bindings
+
+
+## Data-driven combat-deploy eligibility (mirrors combat_deploy_strategy.gd):
+## at least one configured turret gated disabled_when_deployed and at least
+## one gated disabled_when_undeployed. Scoped to this unit's own turrets so it
+## needs no rules database access, unlike the strategy's version which must
+## work before any Unit instance exists.
+func _is_combat_deployable() -> bool:
+	var has_travel_gate := false
+	var has_deployed_gate := false
+	for turret in combat_turrets:
+		if turret.config == null:
+			continue
+		if bool(turret.config.disabled_when_deployed):
+			has_travel_gate = true
+		if bool(turret.config.disabled_when_undeployed):
+			has_deployed_gate = true
+	return has_travel_gate and has_deployed_gate
 
 
 func _authored_fire_shot_times(
@@ -1848,7 +1960,7 @@ func _transform_difference(a: Transform3D, b: Transform3D) -> float:
 
 
 func _primary_attack_turret(attack_target: Variant):
-	for turret in combat_turrets:
+	for turret in _active_turrets():
 		if turret.can_target(attack_target):
 			return turret
 	return null
@@ -1980,9 +2092,10 @@ func stop_at_current_position() -> void:
 ## live in UnitDeploymentController; Unit owns the common locked alignment and
 ## animation phases so future deployable units can reuse the same contract.
 func deploy(facing_direction: Vector3 = Vector3.ZERO) -> bool:
-	if _is_deploying:
+	if _deploy_state != DeployState.TRAVEL:
 		return false
-	_is_deploying = true
+	_deploy_state = DeployState.DEPLOYING
+	_sync_active_turret_weapons()
 	stop_at_current_position()
 	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
 		_navigation_system.call("set_hold_position", self, true)
@@ -2008,10 +2121,34 @@ func deploy(facing_direction: Vector3 = Vector3.ZERO) -> bool:
 	return true
 
 
+## Combat-deploy strategy's toggle-back. The MCV/Construction Yard pair never
+## calls this: its "undeploy" is a different unit (the spawned MCV) built by
+## UnitDeploymentController's own Deconstruct handling, not a state on the
+## same Unit instance.
+func undeploy() -> bool:
+	if _deploy_state != DeployState.DEPLOYED:
+		return false
+	_deploy_state = DeployState.UNDEPLOYING
+	_sync_active_turret_weapons()
+	stop_at_current_position()
+	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
+		_navigation_system.call("set_hold_position", self, true)
+	_start_undeployment_animation()
+	return true
+
+
 func _start_deployment_animation() -> void:
+	_start_transition_animation(DEPLOYMENT_ANIMATION_CANDIDATES)
+
+
+func _start_undeployment_animation() -> void:
+	_start_transition_animation(UNDEPLOYMENT_ANIMATION_CANDIDATES)
+
+
+func _start_transition_animation(candidates: Array[StringName]) -> void:
 	_deployment_animation_player = null
 	_deployment_animation_name = &""
-	for candidate in DEPLOYMENT_ANIMATION_CANDIDATES:
+	for candidate in candidates:
 		for player in _animation_players:
 			if not player.has_animation(candidate):
 				continue
@@ -2032,29 +2169,69 @@ func _start_deployment_animation() -> void:
 	_deployment_animation_player.play(_deployment_animation_name)
 
 
+## Both transition directions count as "deploying" for every gameplay lock: a
+## unit is equally immobile while folding out and while folding back in.
 func is_deploying() -> bool:
-	return _is_deploying
+	return _deploy_state == DeployState.DEPLOYING or _deploy_state == DeployState.UNDEPLOYING
+
+
+## Stationary combat mode (Kindjal/Mortar/Kobra). Never true for the MCV,
+## which has no DEPLOYED state of its own: a successful deploy consumes it
+## into a Construction Yard instead.
+func is_deployed() -> bool:
+	return _deploy_state == DeployState.DEPLOYED
 
 
 func _emit_deployment_animation_finished() -> void:
-	if _is_deploying:
+	if is_deploying():
 		deployment_animation_finished.emit()
 
 
 ## The deployment strategy calls this after the animation-to-world handoff.
-## A failed late recheck releases the unit; a successful one consumes it.
+## `consumed` means the transition completed as intended: for the MCV this is
+## true only on a successful Construction Yard placement (the unit is freed
+## immediately after by the caller, so the resulting DeployState is moot); for
+## the combat strategy it is true whenever deploy()/undeploy() simply run to
+## completion, since nothing here is ever destroyed. `false` means the
+## transition was aborted (MCV placement failed after the animation already
+## played) and must fully unwind back to the state before it started.
 func finish_deployment(consumed: bool) -> void:
-	if not _is_deploying:
+	if not is_deploying():
 		return
-	_is_deploying = false
+	var was_deploying := _deploy_state == DeployState.DEPLOYING
 	_deployment_aligning = false
 	_deployment_alignment_direction = Vector3.ZERO
 	_deployment_animation_player = null
 	_deployment_animation_name = &""
+	if consumed:
+		_deploy_state = DeployState.DEPLOYED if was_deploying else DeployState.TRAVEL
+	else:
+		_deploy_state = DeployState.TRAVEL if was_deploying else DeployState.DEPLOYED
+	_sync_active_turret_weapons()
+	var still_locked := is_deployed()
 	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
-		_navigation_system.call("set_hold_position", self, false)
-	if not consumed:
-		_set_movement_animation(false)
+		_navigation_system.call("set_hold_position", self, still_locked)
+	_set_movement_animation(false)
+
+
+## Cancels any in-flight fire sequence and clears retained targets for every
+## weapon whose turret just became inactive under the current deploy state,
+## then starts recentering its pivot back to the authored rest pose. Turrets
+## that stay active are left untouched.
+func _sync_active_turret_weapons() -> void:
+	var active_indices := {}
+	for turret in _active_turrets():
+		active_indices[turret.weapon_index()] = true
+	for turret in combat_turrets:
+		var weapon_index: int = turret.weapon_index()
+		if active_indices.has(weapon_index):
+			continue
+		_finish_fire_sequence_for(weapon_index)
+		_weapon_targets.erase(weapon_index)
+		_weapon_auto_targets.erase(weapon_index)
+		_weapon_auto_target_cooldowns.erase(weapon_index)
+		_moving_fire_weapons.erase(weapon_index)
+		turret.recenter(1.0)
 
 
 func set_selected(value: bool) -> void:
@@ -2208,7 +2385,11 @@ func _refresh_weapon_runtime() -> void:
 	_weapon_auto_targets.clear()
 	_weapon_auto_target_cooldowns.clear()
 	_moving_fire_weapons.clear()
-	for turret in combat_turrets:
+	# Only a turret active in the unit's spawn-time state (always TRAVEL) can
+	# ever fire while moving; a combat-deploy unit's deployed turret is
+	# inactive here and immobile whenever it later becomes active, so it never
+	# needs a fire-while-moving overlay bound to the wrong (travel-mode) clip.
+	for turret in _active_turrets():
 		var weapon_index: int = turret.weapon_index()
 		var binding := _fire_animation_binding(weapon_index)
 		var can_layer := false
@@ -2479,6 +2660,9 @@ func _animation_playback_duration(animation_name: StringName, speed_scale: float
 func _play_idle_sequence(player: AnimationPlayer) -> void:
 	var idle_animations := _idle_animations(player)
 	if idle_animations.is_empty():
+		if is_deployed() and player.has_animation(DEPLOYED_HOLD_ANIMATION):
+			_hold_deployed_pose(player)
+			return
 		if player.has_animation(IDLE_ANIMATION) and player.current_animation != IDLE_ANIMATION:
 			player.play(IDLE_ANIMATION)
 		return
@@ -2491,9 +2675,25 @@ func _play_idle_sequence(player: AnimationPlayer) -> void:
 	_start_stationary_batch(player, idle_animations)
 
 
+## Kobra/Mortar have no authored Deployed_Idle_* clip: rather than falling
+## back to the travel-mode Stationary/Idle_* pose, hold the braced pose at the
+## end of Deploy_Gun (Deploy_Gun_Hold) for as long as the unit stays deployed.
+func _hold_deployed_pose(player: AnimationPlayer) -> void:
+	if player.current_animation == DEPLOYED_HOLD_ANIMATION and player.is_playing():
+		return
+	var animation := player.get_animation(DEPLOYED_HOLD_ANIMATION)
+	if animation != null:
+		animation.loop_mode = Animation.LOOP_LINEAR
+	player.stop()
+	player.play(DEPLOYED_HOLD_ANIMATION)
+	_restore_combat_turret_poses()
+
+
 func _start_stationary_batch(player: AnimationPlayer, idle_animations: Array[StringName]) -> void:
 	var player_id := player.get_instance_id()
-	if player.has_animation(IDLE_ANIMATION):
+	# A deployed unit must only ever consider its Deployed_Idle_* clips here:
+	# a literal "Stationary" clip on the same model belongs to travel mode.
+	if not is_deployed() and player.has_animation(IDLE_ANIMATION):
 		_stationary_repeats_remaining[player_id] = randi_range(5, 15)
 		_play_animation_from_start(player, IDLE_ANIMATION)
 		return
@@ -2535,9 +2735,10 @@ func _restore_combat_turret_poses() -> void:
 
 
 func _idle_animations(player: AnimationPlayer) -> Array[StringName]:
+	var prefix := DEPLOYED_IDLE_ANIMATION_PREFIX if is_deployed() else IDLE_ANIMATION_PREFIX
 	var result: Array[StringName] = []
 	for animation_name in player.get_animation_list():
-		if String(animation_name).begins_with(IDLE_ANIMATION_PREFIX):
+		if String(animation_name).begins_with(prefix):
 			result.append(animation_name)
 	return result
 
@@ -2563,7 +2764,7 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 				break
 		return
 	if (
-		_is_deploying
+		is_deploying()
 		and player == _deployment_animation_player
 		and animation_name == _deployment_animation_name
 	):

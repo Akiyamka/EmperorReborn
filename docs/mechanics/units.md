@@ -228,7 +228,16 @@ revealed** by any detection means, and **cannot take damage**. This is a separat
 per unit. Known effect variants:
 
 - **transformation into a building** — MCV → Construction Yard (section 4 §1);
-- **switch to a stationary combat mode** — Kobra → artillery form (§7.1);
+- **switch to a stationary combat mode** — Kindjal, Mortar, Kobra → each swaps
+  to a different turret/projectile/animation set in place, with no
+  transformation into a building (§7.1). **Implemented**: `Unit`'s
+  `DeployState` enum (`TRAVEL`/`DEPLOYING`/`DEPLOYED`/`UNDEPLOYING`) drives a
+  data-driven eligibility rule (a unit is combat-deployable iff its
+  `turret_ids` gate at least one turret `disabled_when_deployed` and at least
+  one `disabled_when_undeployed`, generated from `Rules.txt`), a second
+  `UnitDeploymentController` strategy (`combat_deploy_strategy.gd`), and `D`
+  or a repeated left-click toggling both directions
+  (`unit_command_controller.gd`);
 - **self-destruction/detonation** — Devastator (explosion with radiation),
   Saboteur / Infiltrator (detonator countdown → powerful explosion);
 - **transition into a stationary state** (without transformation) — for some

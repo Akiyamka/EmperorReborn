@@ -12,6 +12,8 @@ const ATConYardScene := preload("res://assets/converted/buildings/ATConYard/ATCo
 const HKConYardScene := preload("res://assets/converted/buildings/HKConYard/HKConYard.scn")
 const ORConYardScene := preload("res://assets/converted/buildings/ORConYard/ORConYard.scn")
 const ORFactoryScene := preload("res://assets/converted/buildings/ORFactory/ORFactory.scn")
+const AtKindjalModelScene := preload("res://assets/converted/models/AT_Kindjal_H0/AT_Kindjal_H0.scn")
+const CombatDeployStrategyScript := preload("res://scripts/units/combat_deploy_strategy.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -65,6 +67,23 @@ class FakeMCV extends Node3D:
 		return get_node("/root/Players").player(owner_player_id)
 
 
+## Unit.deploy()/undeploy()/finish_deployment() call set_hold_position on the
+## unit's own navigation controller; this records every call so the combat
+## deploy test can assert immobility is held across the whole
+## DEPLOYING->DEPLOYED->UNDEPLOYING span and released only on the
+## UNDEPLOYING->TRAVEL edge.
+class FakeHoldNavigation extends RefCounted:
+	var held: Dictionary = {}
+	var hold_calls: Array[bool] = []
+
+	func set_hold_position(unit: Node3D, active: bool) -> void:
+		held[unit] = active
+		hold_calls.append(active)
+
+	func is_held(unit: Node3D) -> bool:
+		return bool(held.get(unit, false))
+
+
 class FakeNavigation extends RefCounted:
 	var commands: Array[Dictionary] = []
 
@@ -90,6 +109,8 @@ func _initialize() -> void:
 	await _run_case("an incomplete Construction Yard rejects packing", _test_incomplete_construction_yard_undeployment)
 	await _run_case("captured factory produces its own concrete MCV", _test_captured_factory_mcv)
 	await _run_case("invalid terrain rejects deployment before locking the MCV", _test_invalid_site)
+	await _run_case("Kindjal toggles into stationary combat mode and back", _test_combat_deploy_toggle)
+	await _run_case("a combat-deployable unit is data-driven, excluding IMADVSardaukar", _test_combat_deploy_eligibility)
 	if _failures > 0:
 		printerr("UnitDeployment tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
@@ -470,6 +491,110 @@ func _test_invalid_site() -> void:
 	_expect(bool(result.get("handled", false)) and not bool(result.get("started", false)), "an invalid MCV site must be handled as a rejected deployment")
 	_expect(mcv.deployment_calls == 0 and not mcv.deploying, "site validation must happen before the MCV is locked")
 	_expect(buildings.get_child_count() == 0, "a rejected deployment must not spawn a building")
+	world.queue_free()
+	await process_frame
+
+
+func _test_combat_deploy_toggle() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var unit := UnitScene.instantiate() as Unit
+	unit.config_id = &"ATKindjal"
+	world.add_child(unit)
+	unit.replace_visual_scene(AtKindjalModelScene)
+	var nav := FakeHoldNavigation.new()
+	unit.set_navigation_controller(nav)
+
+	_expect(
+		not unit.is_deploying() and not unit.is_deployed(),
+		"a fresh Kindjal must start in travel mode"
+	)
+	_expect(
+		_active_turret_ids(unit) == [&"ATKindjalGun"],
+		"travel mode must expose only the travel turret"
+	)
+	_expect(not nav.is_held(unit), "an undeployed unit must not hold its nav position")
+
+	_expect(unit.deploy(), "a travel-mode Kindjal must accept the deploy command")
+	_expect(unit.is_deploying() and not unit.is_deployed(), "deploy must enter the DEPLOYING transition")
+	_expect(_active_turret_ids(unit).is_empty(), "no turret may be active mid-transition")
+	_expect(nav.is_held(unit), "DEPLOYING must hold the unit in place")
+	_expect(
+		not unit.prepare_navigation_order(Vector3(20.0, 0.0, 20.0)),
+		"a deploying unit must reject new movement orders"
+	)
+
+	unit.finish_deployment(true)
+	_expect(unit.is_deployed() and not unit.is_deploying(), "a consumed DEPLOYING finish must land in DEPLOYED")
+	_expect(
+		_active_turret_ids(unit) == [&"ATKindjalBigGun"],
+		"deployed mode must expose only the deployed turret"
+	)
+	_expect(nav.is_held(unit), "DEPLOYED must keep holding the unit in place")
+	_expect(
+		not unit.prepare_navigation_order(Vector3(20.0, 0.0, 20.0)),
+		"a deployed unit must reject new movement orders"
+	)
+
+	_expect(unit.undeploy(), "a deployed Kindjal must accept the undeploy command")
+	_expect(unit.is_deploying() and not unit.is_deployed(), "undeploy must enter the UNDEPLOYING transition")
+	_expect(_active_turret_ids(unit).is_empty(), "no turret may be active mid-transition")
+	_expect(nav.is_held(unit), "UNDEPLOYING must still hold the unit in place")
+
+	unit.finish_deployment(true)
+	_expect(
+		not unit.is_deploying() and not unit.is_deployed(),
+		"a consumed UNDEPLOYING finish must land back in TRAVEL"
+	)
+	_expect(
+		_active_turret_ids(unit) == [&"ATKindjalGun"],
+		"travel mode must be restored after undeploying"
+	)
+	_expect(not nav.is_held(unit), "TRAVEL must release the nav hold")
+	_expect(
+		unit.prepare_navigation_order(Vector3(20.0, 0.0, 20.0)),
+		"a travel-mode unit must accept movement orders again"
+	)
+
+	world.queue_free()
+	await process_frame
+
+
+func _active_turret_ids(unit: Unit) -> Array[StringName]:
+	var ids: Array[StringName] = []
+	for turret in unit._active_turrets():
+		ids.append(turret.config.config_id)
+	return ids
+
+
+func _test_combat_deploy_eligibility() -> void:
+	var strategy := CombatDeployStrategyScript.new()
+	var world := Node3D.new()
+	root.add_child(world)
+
+	var kindjal := UnitScene.instantiate() as Unit
+	kindjal.config_id = &"ATKindjal"
+	world.add_child(kindjal)
+	_expect(strategy.can_handle(kindjal), "ATKindjal must be combat-deployable")
+
+	var mortar := UnitScene.instantiate() as Unit
+	mortar.config_id = &"ORMortar"
+	world.add_child(mortar)
+	_expect(strategy.can_handle(mortar), "ORMortar must be combat-deployable")
+
+	var kobra := UnitScene.instantiate() as Unit
+	kobra.config_id = &"ORKobra"
+	world.add_child(kobra)
+	_expect(strategy.can_handle(kobra), "ORKobra must be combat-deployable")
+
+	var sardaukar := UnitScene.instantiate() as Unit
+	sardaukar.config_id = &"IMADVSardaukar"
+	world.add_child(sardaukar)
+	_expect(
+		not strategy.can_handle(sardaukar),
+		"IMADVSardaukar must not be combat-deployable despite its knife/gun turret pair"
+	)
+
 	world.queue_free()
 	await process_frame
 

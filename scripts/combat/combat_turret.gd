@@ -261,6 +261,20 @@ func weapon_index() -> int:
 	return _weapon_index
 
 
+## Whether this turret is live given the unit's current deploy state (Unit's
+## TRAVEL/DEPLOYED, never during a DEPLOYING/UNDEPLOYING transition). Reads
+## TurretDefinition.disabled_when_deployed/disabled_when_undeployed, generated
+## from Rules.txt's turret_disable_if_unit_deployed/undeployed and otherwise
+## unused before the combat-deploy strategy. Ordinary units carry both flags
+## false, so this is always true regardless of `deployed`.
+func is_active_while_deployed(deployed: bool) -> bool:
+	if config == null:
+		return true
+	if deployed:
+		return not bool(config.disabled_when_deployed)
+	return not bool(config.disabled_when_undeployed)
+
+
 func requires_hull_turn() -> bool:
 	return _yaw_pivot == null
 

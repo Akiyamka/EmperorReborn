@@ -6,6 +6,10 @@ const NavigationSystemScript := preload("res://scripts/units/navigation/unit_nav
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
+const UnitScene := preload("res://scenes/units/unit.tscn")
+const ATKindjalModelScene := preload(
+	"res://assets/converted/models/AT_Kindjal_H0/AT_Kindjal_H0.scn"
+)
 
 var _assertions := 0
 var _failures := 0
@@ -163,6 +167,7 @@ func _initialize() -> void:
 	_test_lane_through_standing_formation(grid)
 	_test_overlap_is_squeezed_out(grid)
 	_test_hold_position_resists_separation(grid)
+	_test_combat_deployed_unit_resists_displacement(grid)
 	_test_large_overlap_spans_spatial_buckets(grid)
 	_test_enemy_stays_solid_under_separation(grid)
 	_test_elastic_corridor_pass(grid)
@@ -1970,6 +1975,56 @@ func _test_hold_position_resists_separation(grid: MapNavigationGrid) -> void:
 	navigation.queue_free()
 	held.queue_free()
 	overlapping.queue_free()
+
+
+## A combat-deployed unit (Kindjal/Mortar/Kobra) drives the same
+## set_hold_position seam as the generic hold-position fixture above, through
+## Unit.deploy()/finish_deployment() rather than a direct navigation call.
+func _test_combat_deployed_unit_resists_displacement(grid: MapNavigationGrid) -> void:
+	var navigation := NavigationSystemScript.new()
+	root.add_child(navigation)
+	navigation.set_physics_process(false)
+	_expect(navigation.setup(grid), "navigation system must initialize")
+
+	var kindjal := UnitScene.instantiate() as Unit
+	kindjal.config_id = &"ATKindjal"
+	root.add_child(kindjal)
+	kindjal.replace_visual_scene(ATKindjalModelScene)
+	kindjal.global_position = Vector3(210.5, 0.0, 210.5)
+	kindjal.set_navigation_controller(navigation)
+	navigation.register_unit(kindjal)
+
+	_expect(kindjal.deploy(), "a travel-mode Kindjal must accept the deploy command")
+	kindjal.finish_deployment(true)
+	_expect(kindjal.is_deployed(), "the deploy call must land the Kindjal in DEPLOYED")
+
+	var approaching := FakeUnit.new()
+	root.add_child(approaching)
+	approaching.global_position = Vector3(210.6, 0.0, 210.5)
+	navigation.register_unit(approaching)
+
+	var deployed_position := kindjal.global_position
+	var contact := float(navigation._agents[kindjal.get_instance_id()]["radius"]) \
+		+ float(navigation._agents[approaching.get_instance_id()]["radius"])
+	_expect(
+		kindjal.global_position.distance_to(approaching.global_position) < contact,
+		"deployed-unit fixture must begin with overlapping agents"
+	)
+
+	for _iteration in 60:
+		navigation.call("_navigation_tick", 0.05)
+	_expect(
+		kindjal.global_position.is_equal_approx(deployed_position),
+		"a deployed unit must not be displaced by another unit steered into it"
+	)
+	_expect(
+		kindjal.global_position.distance_to(approaching.global_position) >= contact - 0.01,
+		"the approaching unit must still separate from the deployed unit"
+	)
+
+	navigation.queue_free()
+	kindjal.queue_free()
+	approaching.queue_free()
 
 
 ## Large unit discs can overlap while their centres are more than one spatial

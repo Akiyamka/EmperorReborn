@@ -1,12 +1,17 @@
 class_name UnitDeploymentController
 extends Node
 
-## Owns both sides of the MCV/Construction Yard transformation. Unit deployment
-## resolves the Construction Yard linked from the concrete ATMCV/HKMCV/ORMCV
-## rules entry and hands off to normal building construction. A move command on
-## a completed Construction Yard plays its authored Deconstruct transition,
-## resolves the concrete MCV from the building's reciprocal rules link, then
-## gives the spawned unit the original move order.
+## Dispatches "deploy" to one of two strategies over the same {handled,
+## started, message} façade. The MCV strategy (this file's original body,
+## unchanged) owns both sides of the MCV/Construction Yard transformation.
+## Unit deployment resolves the Construction Yard linked from the concrete
+## ATMCV/HKMCV/ORMCV rules entry and hands off to normal building
+## construction. A move command on a completed Construction Yard plays its
+## authored Deconstruct transition, resolves the concrete MCV from the
+## building's reciprocal rules link, then gives the spawned unit the original
+## move order. The combat strategy (CombatDeployStrategy) instead switches a
+## unit into a stationary combat mode in place, with no building involved; see
+## that script for its (data-driven, no hardcoded id list) eligibility rule.
 
 signal construction_yard_deployed(building: Node3D)
 signal mcv_undeployed(unit: Node3D)
@@ -16,6 +21,7 @@ const SpatialOrientationScript := preload("res://scripts/world/spatial_orientati
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+const CombatDeployStrategyScript := preload("res://scripts/units/combat_deploy_strategy.gd")
 
 const MCV_IDS: Array[StringName] = [&"ATMCV", &"HKMCV", &"ORMCV"]
 const QUARTER_TURN_RADIANS := PI * 0.5
@@ -32,6 +38,7 @@ var _undeployments: Dictionary = {}
 var _building_scene_cache: Dictionary = {}
 var _unit_scene_catalog := UnitSceneCatalogScript.new()
 var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+var _combat_deploy_strategy := CombatDeployStrategyScript.new()
 
 
 func setup(
@@ -46,8 +53,11 @@ func setup(
 	_navigation = navigation
 
 
-## Result keys: handled (this is an MCV command), started, and message.
+## Result keys: handled (this command applies to this unit, by either
+## strategy), started, and message.
 func try_deploy(unit: Node3D) -> Dictionary:
+	if _combat_deploy_strategy.can_handle(unit):
+		return _combat_deploy_strategy.try_deploy(unit)
 	var candidate := _deployment_candidate(unit)
 	if not bool(candidate.get("handled", false)):
 		return {"handled": false, "started": false, "message": ""}
@@ -80,6 +90,8 @@ func try_deploy(unit: Node3D) -> Dictionary:
 
 
 func can_handle(unit: Node3D) -> bool:
+	if _combat_deploy_strategy.can_handle(unit):
+		return true
 	return (
 		unit != null
 		and StringName(String(unit.get("config_id"))) in MCV_IDS
@@ -89,7 +101,16 @@ func can_handle(unit: Node3D) -> bool:
 	)
 
 
+## Exposed so UnitCommandController's cursor probe can skip the throttle it
+## only needs for the MCV's expensive BuildingPlacement footprint check; the
+## combat strategy's check is a handful of state-flag reads.
+func is_combat_deploy_candidate(unit: Node3D) -> bool:
+	return _combat_deploy_strategy.can_handle(unit)
+
+
 func can_issue_deploy(unit: Node3D) -> bool:
+	if _combat_deploy_strategy.can_handle(unit):
+		return _combat_deploy_strategy.can_issue_deploy(unit)
 	var candidate := _deployment_candidate(unit)
 	var available := bool(candidate.get("available", false))
 	var placement := candidate.get("placement") as BuildingPlacement

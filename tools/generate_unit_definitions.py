@@ -53,6 +53,13 @@ BURST_CONFIGS = {
     "HKDevastatorGun": (2, 0.0),
     "HKDevastatorMissile": (3, 7.5),
 }
+# IMADVSardaukar has no deploy ability; its knife is range-selected melee, not a
+# deployed-mode weapon. See docs/quirks.md "Advanced Sardaukar knife is flagged
+# as a deployed-only weapon".
+TURRET_DEPLOY_GATE_OVERRIDES = {
+    "IMADVSardaukarKnife": {"disabled_when_undeployed": False},
+    "IMADVSardaukarGun": {"disabled_when_deployed": False},
+}
 
 
 def godot_string(value: str) -> str:
@@ -315,9 +322,18 @@ def turret_text(row: sqlite3.Row, muzzle_scene_path: str) -> str:
         f"acceptable_yaw = {float(row['turret_y_acceptable_aim'] or 1.0):.6g}",
         f"acceptable_pitch = {float(row['turret_x_acceptable_aim'] or 1.0):.6g}",
         f"bullet_count = {int(row['turret_bullet_count'] or 1)}",
-        f"disabled_when_deployed = {bool_text(row['turret_disable_if_unit_deployed'])}",
-        f"disabled_when_undeployed = {bool_text(row['turret_disable_if_unit_undeployed'])}",
     ]
+    gate_overrides = TURRET_DEPLOY_GATE_OVERRIDES.get(str(row["name"]), {})
+    disabled_when_deployed = gate_overrides.get(
+        "disabled_when_deployed", bool(row["turret_disable_if_unit_deployed"])
+    )
+    disabled_when_undeployed = gate_overrides.get(
+        "disabled_when_undeployed", bool(row["turret_disable_if_unit_undeployed"])
+    )
+    properties.extend([
+        f"disabled_when_deployed = {bool_text(disabled_when_deployed)}",
+        f"disabled_when_undeployed = {bool_text(disabled_when_undeployed)}",
+    ])
     burst_config = BURST_CONFIGS.get(str(row["name"]))
     if burst_config is not None:
         properties.extend([
