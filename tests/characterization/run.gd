@@ -39,6 +39,8 @@ func _initialize() -> void:
 	_run_case("XBF padded halo anchor", _test_padded_halo_anchor)
 	_run_case("XBF animated halo anchors", _test_animated_halo_anchors)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case("XBF animation transforms remain finite", _test_xbf_animation_transforms_are_finite)
+	_run_case("AT Pillbox idle excludes its source fire range", _test_at_pillbox_idle_repair)
 	_run_case("XBF mech Move timelines retain authored speeds", _test_xbf_mech_motion_events)
 	_run_case(
 		"XBF duplicate sibling animations keep independent paths",
@@ -51,6 +53,10 @@ func _initialize() -> void:
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
 	_run_case("XBF mirrored inside-out meshes are re-oriented", _test_mirrored_mesh_orientation)
 	_run_case("AT Refinery independent pads and mesh components", _test_at_refinery_partitioning)
+	_run_case(
+		"Ltmuzzle hides its fixed beam but retains the authored muzzle geometry",
+		_test_ltmuzzle_procedural_beam_replacement
+	)
 	_run_case("Muzzle flash clip visibility", _test_muzzle_flash_clip_visibility)
 	_run_case(
 		"combat-deploy clip rename normalizes Fire_1 to Deployed_Fire",
@@ -665,6 +671,159 @@ func _test_xbf_animation_table_variants() -> bool:
 	return true
 
 
+func _test_xbf_animation_transforms_are_finite() -> bool:
+	var path := "res://assets/raw_original_content/3DDATA/Units/HK_Flamer_H0.xbf"
+	var scene: PackedScene = ModelBakeBuilderScript.new().build(path)
+	_expect(scene != null, "HK_Flamer_H0 must build")
+	if scene == null:
+		return true
+
+	var root := scene.instantiate()
+	var player := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	_expect(player != null, "HK_Flamer_H0 must expose animation tracks")
+	if player != null:
+		var timeline := player.get_animation(&"timeline")
+		for node_path in [
+			"_0root_/_Fire/_box04",
+			"_0root_/_Fire/_box05",
+			"_0root_/_Fire/_box06",
+			"_0root_/_Fire/_box07",
+			"_0root_/_Fire/gunbone",
+			"_0root_/_Fire/_box08",
+			"_0root_/_Fire/_box09",
+			"_0root_/_Fire/_box10",
+			"_0root_/_Fire/_box11",
+		]:
+			var node := root.get_node(node_path) as Node3D
+			var track := timeline.find_track(
+				NodePath("%s:transform" % node_path), Animation.TYPE_VALUE
+			)
+			var first_transform := timeline.track_get_key_value(
+				track, 0
+			) as Transform3D
+			_expect(
+				node.transform.is_finite()
+					and node.transform.is_equal_approx(first_transform),
+				"%s must use its first valid animation frame as its static pose"
+					% node_path
+			)
+		for animation_name in player.get_animation_list():
+			var animation := player.get_animation(animation_name)
+			for track_index in animation.get_track_count():
+				var is_transform_track := String(
+					animation.track_get_path(track_index)
+				).ends_with(":transform")
+				if animation_name == &"timeline" and is_transform_track:
+					var final_key := animation.track_get_key_count(track_index) - 1
+					_expect(
+						final_key < 0
+						or animation.track_get_key_time(track_index, final_key)
+							<= 583.0 / 20.0,
+						"HK_Flamer_H0 timeline transform tracks must exclude "
+							+ "the corrupt unreferenced frames after 583"
+					)
+				for key_index in animation.track_get_key_count(track_index):
+					var value: Variant = animation.track_get_key_value(
+						track_index, key_index
+					)
+					if value is Transform3D:
+						_expect(
+							(value as Transform3D).is_finite(),
+							"%s track %s key %d must be finite"
+								% [
+									animation_name,
+									animation.track_get_path(track_index),
+									key_index,
+								]
+						)
+	root.free()
+	return true
+
+
+func _test_at_pillbox_idle_repair() -> bool:
+	var path := "res://assets/raw_original_content/3DDATA/Buildings/AT_MGT_H0.xbf"
+	var xbf = ModelXbfScript.load_file(path)
+	_expect(xbf != null, "AT_MGT_H0 must parse")
+	if xbf == null:
+		return true
+
+	var source_stationary := _xbf_animation_entry(xbf.animation_entries, "Stationary")
+	var source_idle := _xbf_animation_entry(xbf.animation_entries, "Idle 0")
+	var source_fire := _xbf_animation_entry(xbf.animation_entries, "Fire 0")
+	_expect(
+		int(source_idle.get("start_frame", -1)) == 200
+		and int(source_idle.get("end_frame", -1)) == 240,
+		"AT_MGT_H0 must retain its original mislabeled Idle 0 range"
+	)
+	_expect(
+		int(source_fire.get("start_frame", -1)) == 193
+		and int(source_fire.get("end_frame", -1)) == 275,
+		"AT_MGT_H0 must retain its original Fire 0 range"
+	)
+
+	var scene: PackedScene = ModelBakeBuilderScript.new().build(path)
+	_expect(scene != null, "AT_MGT_H0 must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate()
+	var player := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	_expect(player != null, "AT_MGT_H0 must contain an AnimationPlayer")
+	if player != null:
+		var idle := player.get_animation(&"Idle_0")
+		var stationary := player.get_animation(&"Stationary")
+		var fire := player.get_animation(&"Fire_0")
+		_expect(
+			idle != null and stationary != null
+			and is_equal_approx(idle.length, stationary.length),
+			"AT_MGT Idle_0 must reuse the authored Stationary duration"
+		)
+		_expect(
+			not _animation_has_varying_transform(idle),
+			"AT_MGT Idle_0 must not retain the machine-gun recoil"
+		)
+		_expect(
+			_animation_has_varying_transform(fire),
+			"AT_MGT Fire_0 must retain the machine-gun recoil"
+		)
+
+	var baked_idle := _xbf_animation_entry(
+		root.get_meta("xbf_animation_entries", []) as Array, "Idle_0"
+	)
+	_expect(
+		int(baked_idle.get("start_frame", -1))
+			== int(source_stationary.get("start_frame", -2))
+		and int(baked_idle.get("end_frame", -1))
+			== int(source_stationary.get("end_frame", -2)),
+		"AT_MGT baked FX metadata must use the repaired stationary range"
+	)
+	_expect(
+		int(baked_idle.get("source_start_frame", -1)) == 200
+		and int(baked_idle.get("source_end_frame", -1)) == 240,
+		"AT_MGT baked FX metadata must preserve the original idle range for diagnostics"
+	)
+	root.free()
+	return true
+
+
+func _animation_has_varying_transform(animation: Animation) -> bool:
+	if animation == null:
+		return false
+	for track_index in animation.get_track_count():
+		if animation.track_get_type(track_index) != Animation.TYPE_VALUE \
+		or not String(animation.track_get_path(track_index)).ends_with(":transform") \
+		or animation.track_get_key_count(track_index) < 2:
+			continue
+		var first_value: Variant = animation.track_get_key_value(track_index, 0)
+		if not first_value is Transform3D:
+			continue
+		for key_index in range(1, animation.track_get_key_count(track_index)):
+			var value: Variant = animation.track_get_key_value(track_index, key_index)
+			if value is Transform3D \
+			and not (value as Transform3D).is_equal_approx(first_value as Transform3D):
+				return true
+	return false
+
+
 func _test_xbf_mech_motion_events() -> bool:
 	var cases := [
 		["HK_devastator_H0.xbf", [15, 25, 45, 60, 90], [0.0, 1.2, 0.0, 1.2, 0.0]],
@@ -1045,6 +1204,46 @@ func _find_original_node_exact(node: Node, original_name: String) -> Node3D:
 		if found != null:
 			return found
 	return null
+
+
+func _test_ltmuzzle_procedural_beam_replacement() -> bool:
+	var builder = ModelBakeBuilderScript.new()
+	builder.bake_embedded_muzzle_flash_visibility = false
+	builder.stationary_clip_loops = false
+	var scene: PackedScene = builder.build(
+		"res://assets/raw_original_content/3DDATA/Explosion/LTMuzzle.xbf"
+	)
+	_expect(scene != null, "the original LTMuzzle XBF must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate()
+	var fixed_laser := _find_original_node_exact(root, "?laser")
+	var laser_meshes := fixed_laser.find_children(
+		"*", "MeshInstance3D", true, false
+	) if fixed_laser != null else []
+	_expect(fixed_laser != null, "Ltmuzzle must retain the _laser transform node")
+	var all_laser_meshes_hidden := not laser_meshes.is_empty()
+	for laser_mesh in laser_meshes:
+		all_laser_meshes_hidden = (
+			all_laser_meshes_hidden
+			and not (laser_mesh as MeshInstance3D).visible
+			and laser_mesh.get_meta("source_asset_quirk", "") \
+				== "procedural_laser_replacement"
+		)
+	_expect(
+		laser_meshes.size() == 2 and all_laser_meshes_hidden,
+		"the converter must hide and document every fixed-length _laser mesh"
+	)
+	for retained_name in ["?lasercoil", "?smring", "?midring", "?lring"]:
+		var retained := _find_original_node_exact(root, retained_name)
+		var retained_mesh := _plain_mesh_descendant(retained) \
+			if retained != null else null
+		_expect(
+			retained != null and retained_mesh != null and retained_mesh.visible,
+			"%s must remain visible in the authored muzzle accent" % retained_name
+		)
+	root.free()
+	return true
 
 
 func _attachment_fx_child(marker: Node) -> MeshInstance3D:

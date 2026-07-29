@@ -18,6 +18,7 @@ const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_defi
 const AIM_UPDATES_PER_SECOND := 20.0
 const DEFAULT_ACCEPTABLE_AIM_DEGREES := 1.0
 const DEFAULT_MUZZLE_FLASH_DURATION := 0.2
+const LASER_MUZZLE_VISUAL_SCALE := 0.9
 const MUZZLE3_PRIMARY_MESH := "Mesh_00"
 const MUZZLE3_PRIMARY_SCALE := 0.5
 const TURRET_MARKER := "::"
@@ -120,6 +121,7 @@ var _muzzles: Array[Node3D] = []
 var _trajectory_aim_origin_local := Vector3.INF
 var _rear_muzzles: Dictionary = {}
 var _launch_smokes: Dictionary = {}
+var _uses_embedded_muzzle_flash := false
 var _next_muzzle_index := 0
 var _last_emissions: Array[Dictionary] = []
 var _rear_flash_textures: Array[Texture2D] = []
@@ -188,6 +190,7 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 		return false
 	_model_root = model_root
 	_fx_model_root = _find_fx_model_root(model_root)
+	_uses_embedded_muzzle_flash = _has_embedded_muzzle_flash(model_root)
 
 	var pivot_candidates: Array[Node3D] = []
 	_collect_markers(model_root, TURRET_MARKER, weapon_index, pivot_candidates)
@@ -224,7 +227,8 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 		if _pitch_pivot == null and _axis_speed(joint_config, &"pitch_speed") > 0.0:
 			_pitch_pivot = pivot
 
-	var deploy_only := is_active_while_deployed(true) and not is_active_while_deployed(false)
+	var deploy_only := is_active_while_deployed(true) \
+		and not is_active_while_deployed(false)
 	for pivot in [_root_pivot, _yaw_pivot, _pitch_pivot, _reference_pivot]:
 		if deploy_only:
 			var authored_rest: Variant = _authored_hold_transform(model_root, pivot)
@@ -256,6 +260,7 @@ func unbind_model() -> void:
 	_trajectory_aim_origin_local = Vector3.INF
 	_rear_muzzles.clear()
 	_launch_smokes.clear()
+	_uses_embedded_muzzle_flash = false
 	_next_muzzle_index = 0
 	_last_emissions.clear()
 	_casing_timeline_tween = null
@@ -388,6 +393,23 @@ func restore_aim_pose() -> void:
 	_apply_aim_transforms()
 
 
+## Makes the model's currently evaluated pose the servo's new zero angle.
+## Popup buildings call this at the end of their authored deploy/undeploy
+## clips: the animation owns every transform during the transition, then the
+## combat servo takes ownership from exactly that visible endpoint.
+func capture_current_rest_pose() -> void:
+	current_yaw = 0.0
+	current_pitch = 0.0
+	_pivot_rest_transforms.clear()
+	for pivot in [_root_pivot, _yaw_pivot, _pitch_pivot, _reference_pivot]:
+		_store_rest_transform(pivot)
+	_apply_aim_transforms()
+	var neutral_muzzle_origin := _muzzle_group_origin()
+	_trajectory_aim_origin_local = _model_root.to_local(neutral_muzzle_origin) \
+		if _model_root != null and neutral_muzzle_origin.is_finite() \
+		else Vector3.INF
+
+
 func aim_at(world_position: Vector3, delta: float) -> bool:
 	if not is_bound():
 		return false
@@ -464,6 +486,7 @@ func _world_yaw_error(world_position: Vector3) -> float:
 		return INF
 	var direction: Vector3 = emission["direction"]
 	var target_direction := _desired_firing_direction(world_position)
+	target_direction = _yaw_target_direction(world_position, target_direction)
 	var horizontal_direction := Vector2(direction.x, direction.z)
 	var horizontal_target := Vector2(target_direction.x, target_direction.z)
 	if horizontal_direction.is_zero_approx() or horizontal_target.is_zero_approx():
@@ -550,15 +573,55 @@ func is_aimed_at(world_position: Vector3) -> bool:
 	if target_direction.is_zero_approx():
 		target_direction = offset.normalized()
 	var horizontal_direction := Vector2(direction.x, direction.z)
-	var horizontal_target := Vector2(target_direction.x, target_direction.z)
+	var yaw_target_direction := _yaw_target_direction(world_position, target_direction)
+	var horizontal_target := Vector2(
+		yaw_target_direction.x, yaw_target_direction.z
+	)
+	var horizontal_pitch_target := Vector2(target_direction.x, target_direction.z)
 	var yaw_error := 0.0
 	if not horizontal_direction.is_zero_approx() and not horizontal_target.is_zero_approx():
 		yaw_error = absf(
 			angle_difference(horizontal_direction.angle(), horizontal_target.angle())
 		)
 	var direction_pitch := atan2(direction.y, horizontal_direction.length())
-	var target_pitch := atan2(target_direction.y, horizontal_target.length())
+	var target_pitch := atan2(target_direction.y, horizontal_pitch_target.length())
 	var pitch_error := absf(angle_difference(direction_pitch, target_pitch))
+	return yaw_error <= deg_to_rad(_acceptable_yaw_degrees()) \
+		and (_pitch_pivot == null \
+			or pitch_error <= deg_to_rad(_acceptable_pitch_degrees()))
+
+
+## Readiness variant for a rigid multi-barrel mount whose yaw is authored
+## around the centre pivot while its active muzzle is offset sideways. Pitch
+## remains ballistic/muzzle-relative. ATRocketTurret uses this without changing
+## the established aiming contract of unit weapons such as Mongoose.
+func is_group_yaw_aimed_at(world_position: Vector3) -> bool:
+	var emission := peek_emission()
+	if emission.is_empty():
+		return false
+	var direction: Vector3 = emission["direction"]
+	var pivot_target_direction := world_position - _aim_origin()
+	var horizontal_direction := Vector2(direction.x, direction.z)
+	var horizontal_target := Vector2(
+		pivot_target_direction.x, pivot_target_direction.z
+	)
+	var yaw_error := 0.0
+	if not horizontal_direction.is_zero_approx() \
+	and not horizontal_target.is_zero_approx():
+		yaw_error = absf(angle_difference(
+			horizontal_direction.angle(), horizontal_target.angle()
+		))
+	var firing_direction := _desired_firing_direction(world_position)
+	var horizontal_firing := Vector2(
+		firing_direction.x, firing_direction.z
+	)
+	var direction_pitch := atan2(direction.y, horizontal_direction.length())
+	var target_pitch := atan2(
+		firing_direction.y, horizontal_firing.length()
+	)
+	var pitch_error := absf(
+		angle_difference(direction_pitch, target_pitch)
+	)
 	return yaw_error <= deg_to_rad(_acceptable_yaw_degrees()) \
 		and (_pitch_pivot == null \
 			or pitch_error <= deg_to_rad(_acceptable_pitch_degrees()))
@@ -830,17 +893,29 @@ func try_fire_at(
 		):
 			projectile.free()
 			continue
-		# TurretMuzzleFlash in Rules.txt is the authoritative signal for whether
-		# this weapon was authored with a flash at all; an empty muzzle_flash_id
-		# means no synthetic flash/light/aux effects should be spawned.
-		if muzzle_flash_scene != null:
-			_spawn_muzzle_flash(parent, emission)
+		# TurretMuzzleFlash in Rules.txt supplies the standalone effect unless
+		# the model already reveals embedded bigflash/bflash geometry during its
+		# Fire clip. Layering both would duplicate the flash and runtime light.
+		# A laser's full beam is drawn by CombatProjectile from the muzzle to the
+		# resolved raycast impact. Ltmuzzle remains a short authored muzzle accent,
+		# but must follow that resolved 3D segment rather than a yaw-only marker
+		# direction or it floats horizontally when the target is downhill.
+		var effect_emission := emission
+		if preview_bullet.is_laser():
+			var laser_direction := Vector3(emission["position"]).direction_to(
+				projectile.global_position
+			)
+			if not laser_direction.is_zero_approx():
+				effect_emission = emission.duplicate()
+				effect_emission["direction"] = laser_direction
+		if muzzle_flash_scene != null and not _uses_embedded_muzzle_flash:
+			_spawn_muzzle_flash(parent, effect_emission)
 			# Continuous delivery is presented by the model's authored particle
 			# banks. A generic ballistic flash is especially wrong for gas and
 			# also competes with flame streams.
 			if not preview_bullet.is_continuous():
-				_spawn_shot_light(parent, emission)
-			_spawn_auxiliary_muzzle_effects(parent, emission)
+				_spawn_shot_light(parent, effect_emission)
+			_spawn_auxiliary_muzzle_effects(parent, effect_emission)
 		result.append(projectile)
 	return result
 
@@ -925,6 +1000,17 @@ func _collect_visual_muzzle_fallbacks(node: Node, result: Array[Node3D]) -> void
 			result.append(node as Node3D)
 	for child in node.get_children():
 		_collect_visual_muzzle_fallbacks(child, result)
+
+
+func _has_embedded_muzzle_flash(node: Node) -> bool:
+	if node is Node3D:
+		var lower_name := _original_name(node).to_lower()
+		if lower_name.contains("bigflash") or lower_name.contains("bflash"):
+			return true
+	for child in node.get_children():
+		if _has_embedded_muzzle_flash(child):
+			return true
+	return false
 
 
 func _find_fx_model_root(node: Node) -> Node3D:
@@ -1110,6 +1196,27 @@ func _desired_yaw(world_position: Vector3) -> float:
 	var direction_heading := atan2(horizontal_direction.x, horizontal_direction.y)
 	var target_heading := atan2(horizontal_target.x, horizontal_target.y)
 	return current_yaw + angle_difference(direction_heading, target_heading)
+
+
+## A yaw-only turret is solved around its pivot, so readiness must use that
+## same origin. Comparing a pivot-aimed barrel against muzzle-to-target yaw
+## creates a false minimum range whenever an authored muzzle is offset sideways
+## (ORLaserTank is the prominent case). Pitch-capable and fixed weapons retain
+## their muzzle-relative direction because it carries their ballistic solution
+## or the yaw that their owner hull must still supply.
+func _yaw_target_direction(
+	world_position: Vector3, fallback := Vector3.ZERO
+) -> Vector3:
+	if _yaw_pivot != null and _pitch_pivot == null:
+		var pivot_direction := world_position - _aim_origin()
+		if not pivot_direction.is_zero_approx():
+			return pivot_direction
+	if not fallback.is_zero_approx():
+		return fallback
+	var emission := peek_emission()
+	if emission.is_empty():
+		return Vector3.ZERO
+	return world_position - Vector3(emission["position"])
 
 
 func _desired_firing_pitch(world_position: Vector3) -> float:
@@ -2045,6 +2152,8 @@ func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 		return
 	if muzzle_flash_id == &"Muzzle3":
 		_scale_muzzle3_primary_mesh(authored_visual)
+	elif muzzle_flash_id == &"Ltmuzzle":
+		authored_visual.scale *= LASER_MUZZLE_VISUAL_SCALE
 	var effect := Node3D.new()
 	effect.name = "MuzzleFlash_%s" % String(muzzle_flash_id)
 	effect.set_meta("combat_muzzle_fx", &"front_flash")

@@ -25,17 +25,23 @@ configs remain as conversion inputs and characterization fixtures, but
 - `scenes/units/*.tscn` contains editor-placeable units. A scene owns node
   structure, the concrete model, collision, preview behavior, and any special
   script such as `Harvester`.
+- `scenes/buildings/*.tscn` contains one editor-placeable scene per converted
+  building. These lightweight inherited scenes expose stable, readable paths
+  for mission authoring while reusing the complete converted building,
+  including its states, collision, and `Building` behavior.
 - `resources/units/generated_unit_manifest.gd` maps `config_id` to definition
   and scene paths. It stores paths rather than preloaded resources.
+- `resources/buildings/generated_building_manifest.gd` maps building
+  `config_id` values to definitions and the editor-placeable scenes.
 - `UnitSceneCatalog` lazily loads and caches the requested definition, scene,
   or model. Production, Construction Yard packing, and building survivors use
   this catalog. If a prepared scene is missing, it instantiates `unit.tscn` and
   applies the definition's converted model as a compatibility fallback.
 
-Because mission scenes instance the same files under `scenes/units`, the unit
-scenes remain directly reusable by Godot's editor for campaign placement. The
-runtime catalog is only a lookup layer and does not create a second scene
-format.
+Because mission scenes and runtime construction instance the same files under
+`scenes/units` and `scenes/buildings`, both entity types remain directly
+reusable by Godot's editor for campaign placement. The runtime catalogs are
+lookup layers and do not create a second scene format.
 
 ## Transitional generation
 

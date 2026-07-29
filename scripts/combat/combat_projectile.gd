@@ -38,6 +38,15 @@ const MISSILE_TRAIL_SIDES := 6
 const MAX_MISSILE_TRAIL_POINTS := 128
 const MISSILE_TRAIL_RADIUS_SCALE := SOURCE_MODEL_WORLD_SCALE * 0.65
 const NO_PROPULSION_FLASH_BULLETS: Array[StringName] = [&"KobraHowitzer_B"]
+const LASER_VISUAL_DURATION := 0.16
+const LASER_CORE_RADIUS := 0.025
+const LASER_GLOW_RADIUS := 0.07
+const LASER_TANK_GLOW_RADIUS := 0.1
+const LASER_RADIAL_SEGMENTS := 8
+const LASER_TANK_COLOR := Color(0.2, 1.0, 0.08)
+const LASER_TANK_GLOW_COLOR := Color(0.08, 0.72, 1.0, 0.24)
+const LASER_TANK_GLOW_ENERGY := 3.0
+const INFANTRY_LASER_COLOR := Color(1.0, 0.55, 0.08)
 
 var bullet
 var state := State.READY
@@ -176,7 +185,9 @@ func launch(
 
 
 func _create_visual() -> void:
-	# Hitscan bullets resolve during launch and have no flight interval to draw.
+	# Ordinary hitscan bullets resolve during launch and have no flight interval
+	# to draw. Lasers get a short-lived resolved segment in `_finish()` once the
+	# raycast has established the actual impact point.
 	if bullet == null or bullet.is_hitscan():
 		return
 	if bullet.visual_scene != null:
@@ -810,9 +821,104 @@ func _finish(reason: StringName, world_position: Vector3) -> void:
 	finish_reason = reason
 	velocity = Vector3.ZERO
 	set_physics_process(false)
+	var keeps_laser_visual: bool = (
+		bullet != null
+		and bullet.is_laser()
+		and reason in [&"impact_target", &"impact_ground"]
+		and _create_laser_visual(_launch_position, world_position)
+	)
 	finished.emit(finish_reason, world_position)
-	if is_inside_tree():
+	if not is_inside_tree():
+		return
+	if keeps_laser_visual:
+		var cleanup := Timer.new()
+		cleanup.name = "LaserCleanup"
+		cleanup.one_shot = true
+		cleanup.wait_time = LASER_VISUAL_DURATION
+		add_child(cleanup)
+		cleanup.timeout.connect(_queue_free_finished)
+		cleanup.start()
+	else:
 		call_deferred("_queue_free_finished")
+
+
+func _create_laser_visual(start_position: Vector3, end_position: Vector3) -> bool:
+	if not is_inside_tree() or get_node_or_null("LaserBeam") != null:
+		return false
+	var segment := end_position - start_position
+	var length := segment.length()
+	if length <= 0.000001:
+		return false
+
+	var direction := segment / length
+	var beam := Node3D.new()
+	beam.name = "LaserBeam"
+	beam.set_meta("start_position", start_position)
+	beam.set_meta("end_position", end_position)
+	add_child(beam)
+	# Impact resolution moves the projectile node to the hit position. Keeping
+	# the beam top-level prevents that parent move from dragging its midpoint
+	# away from the muzzle on the same frame.
+	beam.top_level = true
+	beam.global_transform = Transform3D(
+		Basis(Quaternion(Vector3.UP, direction)),
+		start_position.lerp(end_position, 0.5)
+	)
+
+	var is_infantry_laser: bool = bullet.id() == &"InfLaser_B"
+	var color: Color = INFANTRY_LASER_COLOR if is_infantry_laser else LASER_TANK_COLOR
+	var glow_color: Color = Color(color.r, color.g, color.b, 0.24) \
+		if is_infantry_laser else LASER_TANK_GLOW_COLOR
+	var glow_energy: float = 2.5 if is_infantry_laser else LASER_TANK_GLOW_ENERGY
+	var glow_radius: float = LASER_GLOW_RADIUS \
+		if is_infantry_laser else LASER_TANK_GLOW_RADIUS
+	_add_laser_layer(
+		beam, "Glow", length, glow_radius,
+		glow_color, glow_energy
+	)
+	_add_laser_layer(
+		beam, "Core", length, LASER_CORE_RADIUS,
+		Color(
+			lerpf(color.r, 1.0, 0.72),
+			lerpf(color.g, 1.0, 0.72),
+			lerpf(color.b, 1.0, 0.72),
+			0.98
+		),
+		5.0
+	)
+	return true
+
+
+func _add_laser_layer(
+		parent: Node3D,
+		layer_name: String,
+		length: float,
+		radius: float,
+		color: Color,
+		emission_energy: float
+	) -> void:
+	var mesh := CylinderMesh.new()
+	mesh.height = length
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.radial_segments = LASER_RADIAL_SEGMENTS
+	mesh.rings = 1
+
+	var material := StandardMaterial3D.new()
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = color
+	material.emission_enabled = true
+	material.emission = Color(color.r, color.g, color.b)
+	material.emission_energy_multiplier = emission_energy
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mesh.material = material
+
+	var visual := MeshInstance3D.new()
+	visual.name = layer_name
+	visual.mesh = mesh
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(visual)
 
 
 func _queue_free_finished() -> void:

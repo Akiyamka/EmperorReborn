@@ -58,6 +58,9 @@ const ORAPCModelScene := preload("res://assets/converted/models/Or_apc_H0/Or_apc
 const ORLaserTankModelScene := preload(
 	"res://assets/converted/models/OR_Lasertank_H0/OR_Lasertank_H0.scn"
 )
+const IMAdvSardaukarModelScene := preload(
+	"res://assets/converted/models/IM_ADVSardaukar_H0/IM_ADVSardaukar_H0.scn"
+)
 const ATKindjalModelScene := preload(
 	"res://assets/converted/models/AT_Kindjal_H0/AT_Kindjal_H0.scn"
 )
@@ -218,6 +221,10 @@ func _initialize() -> void:
 	_run_case("impact effects use typed acceptance and fallback damage", _test_impact_effect_contract)
 	_run_case("lingering gas delivers every authored damage tick", _test_lingering_gas_damage)
 	_run_case("hitscan resolves at launch without travel", _test_hitscan_projectile)
+	await _run_async_case(
+		"lasers span the resolved 3D hit segment and remain visible briefly",
+		_test_laser_hitscan_visual
+	)
 	_run_case("non-homing bullets keep the sampled aim point", _test_linear_projectile_no_lead)
 	_run_case("attack-ground missiles descend to the sampled point", _test_attack_ground_missile)
 	_run_case("homing respects delay, turn rate and target lifetime", _test_homing_projectile)
@@ -309,6 +316,22 @@ func _initialize() -> void:
 	_run_case("continuous flame clips schedule every stream pulse", _test_continuous_flame_sequences)
 	_run_case("pursuit enters a stable firing range", _test_far_attack_pursuit)
 	_run_case("building state replacement rebinds its turret", _test_building_turret_rebind)
+	_run_case(
+		"all seven defensive buildings automatically acquire and fire",
+		_test_defensive_building_auto_fire
+	)
+	await _run_async_case(
+		"building StatePlayer leaves visible turret aiming to the combat servo",
+		_test_defensive_building_visible_aim
+	)
+	await _run_async_case(
+		"Ordos popup turrets visibly deploy, hold, and undeploy",
+		_test_ordos_popup_turret_animations
+	)
+	_run_case(
+		"defensive buildings retain explicit out-of-range attack orders",
+		_test_building_attack_order
+	)
 	_run_case("building damage visuals use equal health bands", _test_building_damage_visual_states)
 	_run_case("units and buildings expose rules-backed combat armour", _test_combat_targets)
 	_run_case("shields absorb resolved combat damage before health", _test_shield_absorption)
@@ -662,6 +685,160 @@ func _test_hitscan_projectile() -> void:
 	_expect(is_zero_approx(projectile.traveled_distance), "hitscan must accumulate no physical travel")
 	_expect(is_equal_approx(target.damage_taken, 219.0), "hitscan must deliver its payload exactly once")
 	projectile.free()
+
+
+func _test_laser_hitscan_visual() -> void:
+	var rules = root.get_node("Rules")
+	var launch_position := Vector3(2.0, 5.0, 3.0)
+	var ground_position := Vector3(-4.0, 0.0, -7.0)
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	_expect(
+		projectile.launch(
+			_runtime_bullet(rules, &"Laser_B"),
+			_emission(launch_position, Vector3.FORWARD),
+			ground_position
+		),
+		"Laser_B must accept an in-range downhill attack-ground shot"
+	)
+	_expect(
+		projectile.is_finished()
+		and projectile.finish_reason == &"impact_ground",
+		"a laser must still resolve gameplay damage instantly"
+	)
+	var beam := projectile.get_node_or_null("LaserBeam") as Node3D
+	var core := beam.get_node_or_null("Core") as MeshInstance3D \
+		if beam != null else null
+	var glow := beam.get_node_or_null("Glow") as MeshInstance3D \
+		if beam != null else null
+	var core_mesh := core.mesh as CylinderMesh if core != null else null
+	var glow_mesh := glow.mesh as CylinderMesh if glow != null else null
+	var glow_material := glow_mesh.material as StandardMaterial3D \
+		if glow_mesh != null else null
+	var expected_direction := launch_position.direction_to(ground_position)
+	_expect(
+		beam != null
+		and Vector3(beam.get_meta("start_position", Vector3.INF)).is_equal_approx(
+			launch_position
+		)
+		and Vector3(beam.get_meta("end_position", Vector3.INF)).is_equal_approx(
+			ground_position
+		),
+		"the visual beam must retain the exact muzzle and resolved hit endpoints"
+	)
+	_expect(
+		beam != null
+		and beam.global_position.is_equal_approx(
+			launch_position.lerp(ground_position, 0.5)
+		)
+		and beam.global_basis.y.normalized().is_equal_approx(expected_direction),
+		"an elevated laser must point downhill through the hit point, not parallel to the ground"
+	)
+	_expect(
+		core_mesh != null
+		and is_equal_approx(
+			core_mesh.height, launch_position.distance_to(ground_position)
+		),
+		"the beam mesh length must equal the full 3D distance to the hit"
+	)
+	_expect(
+		glow_material != null
+		and is_equal_approx(glow_material.albedo_color.a, 0.24)
+		and glow_mesh.top_radius > CombatProjectileScript.LASER_GLOW_RADIUS
+		and glow_material.emission.b > glow_material.emission.g
+		and glow_material.emission.g > glow_material.emission.r
+		and glow_material.emission_energy_multiplier > 2.5,
+		"the Laser Tank beam must have a wider blue-azure outer glow without extra opacity"
+	)
+	await process_frame
+	_expect(
+		is_instance_valid(projectile) and not projectile.is_queued_for_deletion(),
+		"a laser must survive deferred hitscan cleanup long enough to render"
+	)
+	projectile.free()
+
+	_free_muzzle_effects()
+	var laser_tank_model := ORLaserTankModelScene.instantiate() as Node3D
+	laser_tank_model.position.y = 4.0
+	root.add_child(laser_tank_model)
+	var laser_tank_turret = CombatTurretScript.new()
+	_expect(
+		laser_tank_turret.configure(&"ORLaserTankBase")
+		and laser_tank_turret.bind_model(laser_tank_model, 0),
+		"the Laser Tank must bind its authored muzzle"
+	)
+	var tank_emission := laser_tank_turret.peek_emission()
+	var tank_target := Vector3(tank_emission.get("position", Vector3.ZERO)) \
+		+ Vector3(tank_emission.get("direction", Vector3.FORWARD)) * 5.0
+	tank_target.y = 0.0
+	for unused in 30:
+		if laser_tank_turret.aim_at(tank_target, 0.05):
+			break
+	tank_emission = laser_tank_turret.peek_emission()
+	var tank_projectiles: Array = laser_tank_turret.try_fire_at(
+		tank_target, laser_tank_model, root
+	)
+	var tank_muzzle := root.get_node_or_null("MuzzleFlash_Ltmuzzle") as Node3D
+	var tank_muzzle_visual := tank_muzzle.get_node_or_null("Visual") as Node3D \
+		if tank_muzzle != null else null
+	var fixed_laser := tank_muzzle_visual.find_child("_laser", true, false) \
+		if tank_muzzle_visual != null else null
+	var fixed_laser_meshes := fixed_laser.find_children(
+		"*", "MeshInstance3D", true, false
+	) if fixed_laser != null else []
+	var all_fixed_laser_meshes_hidden := not fixed_laser_meshes.is_empty()
+	for fixed_laser_mesh in fixed_laser_meshes:
+		all_fixed_laser_meshes_hidden = all_fixed_laser_meshes_hidden \
+			and not (fixed_laser_mesh as MeshInstance3D).visible
+	var reference_muzzle_visual := laser_tank_turret.muzzle_flash_scene.instantiate() as Node3D
+	var expected_muzzle_scale := reference_muzzle_visual.scale \
+		* CombatTurretScript.LASER_MUZZLE_VISUAL_SCALE
+	reference_muzzle_visual.free()
+	var resolved_tank_direction := Vector3(tank_emission["position"]).direction_to(
+		tank_target
+	)
+	_expect(
+		tank_projectiles.size() == 1
+		and tank_projectiles[0].get_node_or_null("LaserBeam") != null
+		and tank_muzzle != null
+		and tank_muzzle_visual != null
+		and fixed_laser_meshes.size() == 2
+		and all_fixed_laser_meshes_hidden
+		and tank_muzzle_visual.scale.is_equal_approx(expected_muzzle_scale)
+		and tank_muzzle.global_basis.z.normalized().is_equal_approx(
+			resolved_tank_direction
+		),
+		"ORLaserTank must keep a scaled Ltmuzzle accent aligned with the resolved beam"
+	)
+	for tank_projectile in tank_projectiles:
+		if is_instance_valid(tank_projectile):
+			tank_projectile.free()
+	laser_tank_model.free()
+
+	var infantry_model := IMAdvSardaukarModelScene.instantiate() as Node3D
+	root.add_child(infantry_model)
+	var infantry_turret = CombatTurretScript.new()
+	_expect(
+		infantry_turret.configure(&"IMADVSardaukarGun")
+		and infantry_turret.bind_model(infantry_model, 0),
+		"the Advanced Sardaukar gun must bind its authored firing marker"
+	)
+	var emission := infantry_turret.peek_emission()
+	var infantry_target := Vector3(emission.get("position", Vector3.ZERO)) \
+		+ Vector3(emission.get("direction", Vector3.FORWARD)) * 5.0
+	var infantry_projectiles: Array = infantry_turret.try_fire_at(
+		infantry_target, infantry_model, root
+	)
+	_expect(
+		infantry_projectiles.size() == 1
+		and infantry_projectiles[0].bullet.id() == &"InfLaser_B"
+		and infantry_projectiles[0].get_node_or_null("LaserBeam") != null,
+		"InfLaser_B must create the same visible resolved beam without a muzzle-flash resource"
+	)
+	for infantry_projectile in infantry_projectiles:
+		if is_instance_valid(infantry_projectile):
+			infantry_projectile.free()
+	infantry_model.free()
 
 
 func _test_linear_projectile_no_lead() -> void:
@@ -2025,6 +2202,30 @@ func _test_single_axis_turret() -> void:
 	_expect(not turret.is_fixed(), "a Y-only turret must not be classified as fixed")
 	_expect(not turret.requires_hull_turn(), "a Y-only turret can align without turning its hull")
 	var emission := turret.peek_emission()
+	var close_direction := Vector3(emission["direction"])
+	close_direction.y = 0.0
+	close_direction = close_direction.normalized()
+	var close_target := model.global_position + close_direction
+	for unused in 30:
+		if turret.aim_at(close_target, 0.05):
+			break
+	_expect(
+		turret.is_aimed_at(close_target),
+		"the Laser Tank must acquire a close target from its pivot despite its offset muzzle"
+	)
+	var close_projectiles: Array = turret.try_fire_at(close_target, model, root)
+	_expect(
+		close_projectiles.size() == 1,
+		"the Laser Tank must fire inside the false offset-muzzle dead zone"
+	)
+	for projectile in close_projectiles:
+		if is_instance_valid(projectile):
+			projectile.free()
+	_free_muzzle_effects()
+	for unused in 30:
+		if turret.recenter(0.05):
+			break
+	emission = turret.peek_emission()
 	var side_target: Vector3 = emission["position"] + Vector3.RIGHT * 10000.0
 	turret.aim_at(side_target, 0.05)
 	_expect(
@@ -3397,6 +3598,219 @@ func _test_building_turret_rebind() -> void:
 	if not projectiles.is_empty():
 		_expect(projectiles[0].bullet.id() == &"HKGunTurret_B", "the building API must use its rules bullet")
 		projectiles[0].free()
+	building.free()
+
+
+func _test_defensive_building_auto_fire() -> void:
+	var cases := {
+		&"HKFlameTurret": &"FlameTurret_B",
+		&"TLTurret": &"HKGunTurret_B",
+		&"HKGunTurret": &"HKGunTurret_B",
+		&"ORGasTurret": &"Gas_B",
+		&"ORPopUpTurret": &"PopUp_B",
+		&"ATPillbox": &"HMG_B",
+		&"ATRocketTurret": &"Rocket_B",
+	}
+	for building_id: StringName in cases:
+		var scene_path := (
+			"res://assets/converted/buildings/%s/%s.scn"
+			% [String(building_id), String(building_id)]
+		)
+		var scene := load(scene_path) as PackedScene
+		var building := scene.instantiate() as Building
+		building.owner_player_id = 1
+		root.add_child(building)
+		var emission: Dictionary = building.combat_turrets[0].peek_emission()
+		var direction: Vector3 = emission.get("direction", Vector3.BACK)
+		var target_position := Vector3(emission["position"]) \
+			+ direction.normalized() * 5.0
+		var target := PhysicsCombatTarget.new(target_position)
+		target.owner_player_id = 2
+		target.add_to_group(&"units")
+		root.add_child(target)
+		var fired: Array = []
+		building.weapon_fired.connect(
+			func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+				fired.append_array(projectiles)
+		)
+		for frame in 900:
+			building._process(1.0 / 60.0)
+			if not fired.is_empty():
+				break
+		_expect(
+			not fired.is_empty(),
+			"%s must acquire a nearby enemy and fire" % String(building_id)
+		)
+		if not fired.is_empty():
+			_expect(
+				fired[0].bullet.id() == cases[building_id],
+				"%s must fire %s from its rules turret"
+					% [String(building_id), String(cases[building_id])]
+			)
+		for projectile in fired:
+			if is_instance_valid(projectile) \
+			and not projectile.is_queued_for_deletion():
+				projectile.free()
+		target.free()
+		building.free()
+
+
+func _test_defensive_building_visible_aim() -> void:
+	var scene := load(
+		"res://assets/converted/buildings/ATRocketTurret/ATRocketTurret.scn"
+	) as PackedScene
+	var building := scene.instantiate() as Building
+	building.owner_player_id = 1
+	root.add_child(building)
+	await process_frame
+	var turret = building.combat_turrets[0]
+	var initial_emission: Dictionary = turret.peek_emission()
+	var initial_direction: Vector3 = initial_emission["direction"]
+	var side := initial_direction.rotated(Vector3.UP, PI * 0.5).normalized()
+	var target_position := Vector3(initial_emission["position"]) + side * 8.0
+	_expect(
+		building.command_attack(target_position),
+		"ATRocketTurret must accept a lateral ground target"
+	)
+	for frame in 60:
+		await process_frame
+		if absf(turret.current_yaw_degrees()) >= 35.0:
+			break
+	var visible_direction: Vector3 = turret.peek_emission()["direction"]
+	_expect(
+		absf(turret.current_yaw_degrees()) >= 35.0,
+		"ATRocketTurret must advance its logical yaw toward a lateral target"
+	)
+	_expect(
+		_horizontal_angle_between(initial_direction, visible_direction)
+			>= deg_to_rad(30.0),
+		"ATRocketTurret's visible authored pivot must follow its logical yaw"
+	)
+	building.cancel_attack_order()
+	building.free()
+	await process_frame
+
+
+func _test_ordos_popup_turret_animations() -> void:
+	for building_id in [&"ORGasTurret", &"ORPopUpTurret"]:
+		var scene_path := (
+			"res://assets/converted/buildings/%s/%s.scn"
+			% [String(building_id), String(building_id)]
+		)
+		var scene := load(scene_path) as PackedScene
+		var building := scene.instantiate() as Building
+		building.owner_player_id = 1
+		root.add_child(building)
+		await process_frame
+		var turret = building.combat_turrets[0]
+		var player := building._active_model_animation_player(&"Deploy_Gun")
+		var initial_emission: Dictionary = turret.peek_emission()
+		var initial_position: Vector3 = initial_emission["position"]
+		var initial_direction: Vector3 = initial_emission["direction"]
+		var side := initial_direction.rotated(Vector3.UP, PI * 0.5).normalized()
+		var target_position := initial_position + side * 8.0
+		var saw_deploy := false
+		var deploy_motion := 0.0
+		_expect(
+			building.command_attack(target_position),
+			"%s must accept a target that triggers popup deployment"
+				% String(building_id)
+		)
+		for frame in 90:
+			await process_frame
+			saw_deploy = saw_deploy \
+				or player.current_animation == &"Deploy_Gun"
+			deploy_motion = maxf(
+				deploy_motion,
+				Vector3(turret.peek_emission()["position"]).distance_to(
+					initial_position
+				)
+			)
+			if building._popup_turret_state == 2:
+				break
+		_expect(
+			saw_deploy,
+			"%s must play Deploy_Gun before aiming" % String(building_id)
+		)
+		_expect(
+			deploy_motion > 0.5,
+			"%s Deploy_Gun must visibly move its authored model"
+				% String(building_id)
+		)
+		_expect(
+			building._popup_turret_state == 2,
+			"%s must settle in its deployed hold state" % String(building_id)
+		)
+
+		building.cancel_attack_order()
+		var saw_undeploy := false
+		for frame in 120:
+			await process_frame
+			saw_undeploy = saw_undeploy \
+				or player.current_animation == &"Undeploy_Gun"
+			if saw_undeploy and building._popup_turret_state == 0:
+				break
+		_expect(
+			saw_undeploy,
+			"%s must play Undeploy_Gun after losing its target"
+				% String(building_id)
+		)
+		_expect(
+			building._popup_turret_state == 0,
+			"%s must return to its retracted state" % String(building_id)
+		)
+		building.free()
+		await process_frame
+
+
+func _test_building_attack_order() -> void:
+	var building := HKGunTurretScene.instantiate() as Building
+	building.owner_player_id = 1
+	root.add_child(building)
+	var emission: Dictionary = building.combat_turrets[0].peek_emission()
+	var direction: Vector3 = Vector3(
+		emission.get("direction", Vector3.BACK)
+	).normalized()
+	var target := PhysicsCombatTarget.new(
+		Vector3(emission["position"]) + direction * 100.0
+	)
+	target.owner_player_id = 2
+	target.add_to_group(&"units")
+	root.add_child(target)
+	var fired: Array = []
+	building.weapon_fired.connect(
+		func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+			fired.append_array(projectiles)
+	)
+	_expect(
+		building.command_attack(target),
+		"an armed building must accept a compatible target outside its range"
+	)
+	for frame in 120:
+		building._process(1.0 / 60.0)
+	_expect(
+		fired.is_empty() and building.has_attack_order(),
+		"the immobile building must retain, but not fire at, its distant target"
+	)
+	target.global_position = Vector3(emission["position"]) + direction * 5.0
+	for frame in 600:
+		building._process(1.0 / 60.0)
+		if not fired.is_empty():
+			break
+	_expect(
+		not fired.is_empty() and building.attack_order_target() == target,
+		"the retained building order must fire when its target enters range"
+	)
+	building.cancel_attack_order()
+	_expect(
+		not building.has_active_order(),
+		"cancel_attack_order must return the building command contract to idle"
+	)
+	for projectile in fired:
+		if is_instance_valid(projectile) \
+		and not projectile.is_queued_for_deletion():
+			projectile.free()
+	target.free()
 	building.free()
 
 

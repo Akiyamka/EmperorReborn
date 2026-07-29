@@ -49,6 +49,15 @@ const HIDDEN_SOURCE_MESH_COMPONENTS := {
 	"at_refinery_h0.xbf": {
 		"at_refinery": {3: "broken_geometry", 10: "broken_geometry"},
 	},
+	# Ltmuzzle's authored `_laser` is a fixed-length beam. Runtime replaces it
+	# with the resolved muzzle-to-impact segment while retaining the surrounding
+	# coil and ring geometry as the weapon's authored muzzle accent.
+	"ltmuzzle.xbf": {
+		"?laser": {
+			0: "procedural_laser_replacement",
+			1: "procedural_laser_replacement",
+		},
+	},
 	# See docs/quirks.md "OR Mortar ships a static duplicate gun barrel".
 	"or_mortar_h0.xbf": {
 		"mortorgun01": {0: "unrendered_duplicate"},
@@ -63,6 +72,28 @@ const CLIP_NAME_OVERRIDES := {
 	"at_kindjal_h0.xbf": {"Fire_1": "Deployed_Fire"},
 	"or_mortar_h0.xbf": {"Fire_1": "Deployed_Fire"},
 	"or_kobra_h0.xbf": {"Fire_1": "Deployed_Fire"},
+}
+## Exclusive frame limits for source object-transform timelines whose
+## unreferenced tail data is corrupt. Vertex animation and FX timelines keep
+## their authored lengths; only object transforms beyond these limits are
+## omitted.
+const OBJECT_TRANSFORM_FRAME_LIMITS := {
+	"hk_flamer_h0.xbf": 584,
+}
+## Objects whose stored static matrices are corrupt but whose animation
+## timelines begin with a valid authored pose.
+const STATIC_TRANSFORM_ANIMATION_FALLBACKS := {
+	"hk_flamer_h0.xbf": {
+		"!#box04": true,
+		"!#box05": true,
+		"!#box06": true,
+		"!#box07": true,
+		"gunbone": true,
+		"!#box08": true,
+		"!#box09": true,
+		"!#box10": true,
+		"!#box11": true,
+	},
 }
 var missing_textures: PackedStringArray = []
 var copied_textures: PackedStringArray = []
@@ -81,10 +112,14 @@ var _muzzle_flash_mesh_paths := PackedStringArray()
 var _attachment_fx_paths := PackedStringArray()
 var _attachment_fx_names := {}
 var _source_file_name := ""
+var _object_transform_frame_limit := 0
 
 
 func build(xbf_path: String) -> PackedScene:
 	_source_file_name = xbf_path.get_file().to_lower()
+	_object_transform_frame_limit = int(
+		OBJECT_TRANSFORM_FRAME_LIMITS.get(_source_file_name, 0)
+	)
 	missing_textures = PackedStringArray()
 	copied_textures = PackedStringArray()
 	_material_cache.clear()
@@ -102,6 +137,7 @@ func build(xbf_path: String) -> PackedScene:
 	var xbf = ModelXbfScript.load_file(xbf_path)
 	if xbf == null:
 		return null
+	var animation_entries := _repaired_animation_entries(xbf.animation_entries)
 	_prepare_animated_texture_sequences(xbf.fx_strings)
 	_prepare_attachment_fx_names(xbf)
 
@@ -136,7 +172,7 @@ func build(xbf_path: String) -> PackedScene:
 	# without leaking source-model quirks into runtime lookup.
 	root.set_meta(
 		"xbf_animation_entries",
-		_baked_animation_entries(xbf.animation_entries)
+		_baked_animation_entries(animation_entries)
 	)
 	# A small set of source files uses event payload variants that are not yet
 	# decoded. Preserve the complete original block as well, so conversion is
@@ -147,7 +183,7 @@ func build(xbf_path: String) -> PackedScene:
 	anim.resource_name = "idle"
 	anim.loop_mode = Animation.LOOP_LINEAR
 	var max_frame := 1
-	var clip_target_paths := _clip_target_paths(xbf.objects, xbf.animation_entries)
+	var clip_target_paths := _clip_target_paths(xbf.objects, animation_entries)
 
 	var root_child_names := {}
 	for object in xbf.objects:
@@ -170,12 +206,12 @@ func build(xbf_path: String) -> PackedScene:
 	# AnimationPlayer here would silently throw that duration away, collapsing
 	# the state to ~1 frame downstream in BuildingBakeBuilder.
 	if anim.get_track_count() > 0 or not _pending_frame_tracks.is_empty() \
-	or not xbf.animation_entries.is_empty() or not attachment_fx.is_empty():
+	or not animation_entries.is_empty() or not attachment_fx.is_empty():
 		anim.length = maxf(max_frame / fps, 1.0 / fps)
 		_add_attachment_fx_tracks(anim, attachment_fx)
 		_add_shader_fx_tracks(anim)
 		var library := AnimationLibrary.new()
-		for entry: Dictionary in xbf.animation_entries:
+		for entry: Dictionary in animation_entries:
 			var clip := _slice_animation(anim, entry, clip_target_paths)
 			if clip != null:
 				var clip_name := _clip_name(String(entry["name"]))
@@ -188,7 +224,7 @@ func build(xbf_path: String) -> PackedScene:
 				if library.has_animation(clip_name):
 					library.remove_animation(clip_name)
 				library.add_animation(clip_name, clip)
-		_add_timeline_muzzle_flash_visibility(anim, xbf.animation_entries)
+		_add_timeline_muzzle_flash_visibility(anim, animation_entries)
 		library.add_animation("timeline", anim)
 		var player := AnimationPlayer.new()
 		player.name = "AnimationPlayer"
@@ -226,7 +262,7 @@ func _build_object_node(
 		# #~~0 is the root of the authored collision hierarchy. It commonly has
 		# no vertices itself: its child objects contain the actual volume.
 		node.set_meta("collision_points", _collision_points_from_hierarchy(object))
-	node.transform = _to_godot_transform(object.transform)
+	node.transform = _to_godot_transform(_initial_object_transform(object))
 	if uses_mirrored_content:
 		# Godot's editor rejects a reflected Basis in a Transform3D animation
 		# key even though Node3D and the renderer can represent it. Factor the
@@ -234,6 +270,13 @@ func _build_object_node(
 		# (T * F) * F == T. This preserves the source geometry exactly while
 		# leaving the animation track with rotation-safe, positive determinants.
 		node.transform *= LOCAL_Z_REFLECTION
+	if _uses_static_transform_animation_fallback(object):
+		# Match the animation-track representation exactly. Some otherwise
+		# finite source matrices are too distorted to be valid rotation bases,
+		# so merely selecting the first finite frame is not sufficient.
+		node.transform = _sanitize_animation_transform(
+			node.transform, Transform3D.IDENTITY
+		)
 	# Selection volumes and halo anchors are authored as vertex-only XBF
 	# objects.  They have no triangles, so no MeshInstance3D is generated for
 	# them; retain the data as metadata for gameplay visuals instead.
@@ -350,13 +393,41 @@ func _halo_anchor_reference_transform(object: Dictionary) -> Transform3D:
 	return frames[frame_ids[0]]
 
 
+func _initial_object_transform(object: Dictionary) -> Transform3D:
+	if not _uses_static_transform_animation_fallback(object):
+		return object.transform
+	var object_animation: Dictionary = object.object_animation
+	var frames: Dictionary = object_animation.get("frames", {})
+	if frames.is_empty():
+		return object.transform
+	var frame_ids := frames.keys()
+	frame_ids.sort()
+	for frame_id: int in frame_ids:
+		if _object_transform_frame_limit > 0 \
+		and frame_id >= _object_transform_frame_limit:
+			break
+		var frame := frames[frame_id] as Transform3D
+		if frame.is_finite():
+			return frame
+	return object.transform
+
+
+func _uses_static_transform_animation_fallback(object: Dictionary) -> bool:
+	var fallback_names: Dictionary = STATIC_TRANSFORM_ANIMATION_FALLBACKS.get(
+		_source_file_name, {}
+	)
+	return fallback_names.has(String(object.name))
+
+
 ## Sign of the object's own runtime transform: -1 when it mirrors its content.
 ## Consistently mirrored animations override the static basis because their
 ## keys replace it as soon as any clip plays.
 func _object_parity(object: Dictionary, uses_mirrored_content: bool) -> int:
 	if uses_mirrored_content:
 		return -1
-	return -1 if (object.transform as Transform3D).basis.determinant() < 0.0 else 1
+	return -1 \
+		if _initial_object_transform(object).basis.determinant() < 0.0 \
+		else 1
 
 
 ## Objects placed under a net-mirrored transform are frequently authored
@@ -1347,12 +1418,27 @@ func _add_animation_track(
 
 	var frame_ids := frames.keys()
 	frame_ids.sort()
+	var fallback_transform := _to_godot_transform(
+		_initial_object_transform(object)
+	)
+	if uses_mirrored_content:
+		fallback_transform *= LOCAL_Z_REFLECTION
+	fallback_transform = _sanitize_animation_transform(
+		fallback_transform, Transform3D.IDENTITY
+	)
 	for frame_id: int in frame_ids:
 		var transform := _to_godot_transform(frames[frame_id])
 		if uses_mirrored_content:
 			transform *= LOCAL_Z_REFLECTION
-		transform = _sanitize_animation_transform(transform)
+		# A few original XBF files contain corrupt, unreferenced tail frames.
+		# HK_Flamer_H0 is one: named clips end at frame 583, while several
+		# object timelines continue through frame 591 with Inf matrix values.
+		# Never serialize those values into a Godot animation. Holding the last
+		# valid pose also gives a deterministic result if a malformed frame is
+		# ever referenced by a clip.
+		transform = _sanitize_animation_transform(transform, fallback_transform)
 		anim.track_insert_key(track, frame_id / fps, transform)
+		fallback_transform = transform
 
 
 func _object_animation_is_consistently_mirrored(object: Dictionary) -> bool:
@@ -1378,6 +1464,8 @@ func _dense_object_animation_frames(object_animation: Dictionary) -> Dictionary:
 	var length := int(object_animation.get("length", 1))
 	if length <= 0:
 		length = 1
+	if _object_transform_frame_limit > 0:
+		length = mini(length, _object_transform_frame_limit)
 
 	var frame_ids := source_frames.keys()
 	frame_ids.sort()
@@ -1416,7 +1504,15 @@ func _lerp_transform(a: Transform3D, b: Transform3D, weight: float) -> Transform
 	)
 
 
-func _sanitize_animation_transform(transform: Transform3D) -> Transform3D:
+func _sanitize_animation_transform(
+	transform: Transform3D,
+	fallback: Transform3D
+	) -> Transform3D:
+	if not fallback.is_finite():
+		fallback = Transform3D.IDENTITY
+	if not transform.is_finite():
+		return fallback
+
 	var source_determinant := transform.basis.determinant()
 	var x := transform.basis.x
 	var y := transform.basis.y
@@ -1448,7 +1544,7 @@ func _sanitize_animation_transform(transform: Transform3D) -> Transform3D:
 		nz = -nz
 
 	transform.basis = Basis(nx * x_scale, ny * y_scale, nz * z_scale)
-	return transform
+	return transform if transform.is_finite() else fallback
 
 
 func _perpendicular_axis(axis: Vector3) -> Vector3:
@@ -1718,6 +1814,35 @@ func _clip_name(value: String) -> String:
 	var name := value.strip_edges().replace(" ", "_")
 	var overrides: Dictionary = CLIP_NAME_OVERRIDES.get(_source_file_name, {})
 	return overrides.get(name, name)
+
+
+## Every shipped AT_MGT state and LOD labels frames 200..240 as "Idle 0",
+## although that interval is nested inside Fire 0 (193..275) and contains the
+## complete machine-gun recoil sequence (194..230). Keep ModelXbf lossless and
+## repair only the baked clip by reusing the file's own Stationary range.
+func _repaired_animation_entries(source_entries: Array[Dictionary]) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for source_entry: Dictionary in source_entries:
+		result.append(source_entry.duplicate(true))
+	if not _source_file_name.begins_with("at_mgt_"):
+		return result
+
+	var stationary := {}
+	for entry: Dictionary in result:
+		if String(entry.get("name", "")) == "Stationary":
+			stationary = entry
+			break
+	if stationary.is_empty():
+		return result
+
+	for entry: Dictionary in result:
+		if String(entry.get("name", "")) != "Idle 0":
+			continue
+		entry["source_start_frame"] = entry.get("start_frame", 0)
+		entry["source_end_frame"] = entry.get("end_frame", 0)
+		entry["start_frame"] = stationary.get("start_frame", 0)
+		entry["end_frame"] = stationary.get("end_frame", 0)
+	return result
 
 
 ## Produces the animation-range metadata consumed by runtime FX playback.

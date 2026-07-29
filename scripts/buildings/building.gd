@@ -5,6 +5,9 @@ const SpatialOrientationScript := preload("res://scripts/world/spatial_orientati
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 const WallConnectivityScript := preload("res://scripts/buildings/wall_connectivity.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
+const AuthoredFireControllerScript := preload(
+	"res://scripts/combat/authored_fire_controller.gd"
+)
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 static var _native_definition_catalog := BuildingDefinitionCatalogScript.new()
 ## Converted Emperor buildings expose their apron/door on authored local +Z.
@@ -15,6 +18,8 @@ signal health_changed(health: float, max_health: float)
 signal primary_changed(is_primary: bool)
 signal rally_point_changed(position: Vector3)
 signal construction_completed
+signal attack_order_changed(active: bool, target: Variant)
+signal weapon_fired(projectiles: Array, target: Variant, weapon_index: int)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
@@ -31,7 +36,21 @@ const REFINERY_ROLE := "Refinery"
 const WALL_BUILDING_GROUP := "Wall"
 const REFINERY_DOCK_RELEASE_DELAY_SECONDS := 3.0
 const INVALID_REFINERY_DOCK := -1
-const RULE_COMBAT_TICKS_PER_SECOND := 20.0
+const RULE_COMBAT_TICKS_PER_SECOND := 25.0
+const AUTO_TARGET_REFRESH_SECONDS := 0.25
+const POPUP_TURRET_ROLE := &"PopupTurret"
+const POPUP_DEPLOY_ANIMATION := &"Deploy_Gun"
+const POPUP_HOLD_ANIMATION := &"Deploy_Gun_Hold"
+const POPUP_UNDEPLOY_ANIMATION := &"Undeploy_Gun"
+const DEFENSIVE_TURRET_IDS: Array[StringName] = [
+	&"HKFlameTurret",
+	&"TLTurret",
+	&"HKGunTurret",
+	&"ORGasTurret",
+	&"ORPopUpTurret",
+	&"ATPillbox",
+	&"ATRocketTurret",
+]
 const WALL_ANCHOR_CELL_SPAN := 2
 const WALL_WORLD_NEIGHBOR_TOLERANCE := 0.35
 const MAX_COMBAT_HULL_VERTICES := 8
@@ -43,6 +62,7 @@ const RALLY_POINT_LINE_HEIGHT := 0.08
 ## separate Building nodes. The first/left upgrade unfolds ~~3SmallPad01 and
 ## the second/right unfolds ~~4SmallPad02; both retain their final pose.
 enum RefineryUpgradeState { NONE, LEFT_DOCK, BOTH_DOCKS }
+enum PopupTurretState { RETRACTED, DEPLOYING, DEPLOYED, UNDEPLOYING }
 
 const MAX_REFINERY_DOCKS := 2
 const REFINERY_DOCK_ANIMATIONS: Array[StringName] = [&"Refinery_Pad_1", &"Refinery_Pad_2"]
@@ -56,6 +76,8 @@ const REFINERY_DOCK_POINT_ORDER := [0, 2, 1]
 	set(value):
 		if owner_player_id == value:
 			return
+		if is_inside_tree():
+			cancel_attack_order()
 		_set_generated_energy(0)
 		owner_player_id = value
 		if is_inside_tree():
@@ -133,10 +155,32 @@ var _wall_rotation_quarters := 0
 var _combat_hull := PackedVector2Array()
 var _combat_hull_minimum_y := 0.0
 var _combat_hull_maximum_y := 0.0
+var _has_attack_order := false
+var _attack_is_ground := false
+var _attack_ground_position := Vector3.INF
+var _attack_target_ref: WeakRef
+var _automatic_target_ref: WeakRef
+var _automatic_target_cooldown := 0.0
+var _authored_fire_controller = AuthoredFireControllerScript.new()
+var _popup_turret_state := PopupTurretState.RETRACTED
+var _popup_transition_player: AnimationPlayer
+var _popup_transition_animation: StringName = &""
+var _popup_transition_elapsed := 0.0
+var _popup_transition_duration := 0.0
 
 
 func _ready() -> void:
 	add_to_group("buildings")
+	var state_player := get_node_or_null("StatePlayer") as AnimationPlayer
+	if state_player != null:
+		# The outer state clip contains a full copy of Stationary transforms.
+		# Evaluate it first, then the active model clip, then this building's
+		# combat servo. Otherwise StatePlayer overwrites both popup motion and
+		# the yaw/pitch applied later in _process.
+		state_player.process_priority = process_priority - 2
+	_authored_fire_controller.weapon_fired.connect(
+		_on_authored_weapon_fired
+	)
 	if String(config_id).is_empty() and has_meta("building_id"):
 		config_id = StringName(String(get_meta("building_id")))
 	_apply_building_definition()
@@ -166,14 +210,23 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	_authored_fire_controller.cancel()
 	if is_in_group("wall_buildings"):
 		_defer_adjacent_wall_refresh()
 	_set_generated_energy(0)
 
 
 func _process(delta: float) -> void:
+	_automatic_target_cooldown = maxf(
+		_automatic_target_cooldown - maxf(delta, 0.0), 0.0
+	)
 	for turret in combat_turrets:
 		turret.advance_ticks(delta * RULE_COMBAT_TICKS_PER_SECOND)
+	_advance_popup_transition(delta)
+	_restore_popup_hold_pose()
+	_advance_building_combat(delta)
+	_authored_fire_controller.advance(delta)
+	_restore_popup_hold_pose()
 	_advance_refinery_dock_cooldowns(delta)
 	if _scroll_fx_meshes.is_empty():
 		return
@@ -1023,6 +1076,7 @@ func _refinery_animation_player() -> AnimationPlayer:
 
 
 func setup(building_id: StringName) -> void:
+	cancel_attack_order()
 	config_id = building_id
 	if not is_inside_tree():
 		return
@@ -1037,6 +1091,7 @@ func set_invulnerable(value: bool) -> void:
 
 func begin_construction() -> void:
 	_construction_complete = false
+	cancel_attack_order()
 
 
 func finish_construction() -> void:
@@ -1231,6 +1286,230 @@ func fire_weapon_at(
 	return turret.try_fire_at(target_or_position, self, projectile_parent, aim_offset)
 
 
+func can_attack(target_or_position: Variant) -> bool:
+	if not _combat_is_operational():
+		return false
+	for turret in combat_turrets:
+		if turret.can_target(target_or_position):
+			return true
+	return false
+
+
+## Buildings accept the same explicit attack contract as units. They retain an
+## out-of-range target rather than pursuing it and begin firing if it later
+## enters range. Relation checks remain in UnitCommandController so Ctrl can
+## deliberately force fire against allied or neutral targets.
+func command_attack(target_or_position: Variant) -> bool:
+	if not can_attack(target_or_position):
+		return false
+	_authored_fire_controller.cancel()
+	_has_attack_order = true
+	_attack_is_ground = target_or_position is Vector3
+	_attack_ground_position = (
+		target_or_position if _attack_is_ground else Vector3.INF
+	)
+	_attack_target_ref = (
+		null if _attack_is_ground else weakref(target_or_position as Object)
+	)
+	_automatic_target_ref = null
+	_automatic_target_cooldown = 0.0
+	attack_order_changed.emit(true, target_or_position)
+	return true
+
+
+func cancel_attack_order() -> void:
+	_authored_fire_controller.cancel()
+	_automatic_target_ref = null
+	_automatic_target_cooldown = 0.0
+	if not _has_attack_order:
+		return
+	_has_attack_order = false
+	_attack_is_ground = false
+	_attack_ground_position = Vector3.INF
+	_attack_target_ref = null
+	attack_order_changed.emit(false, null)
+
+
+func has_attack_order() -> bool:
+	return _has_attack_order
+
+
+func has_active_order() -> bool:
+	return _has_attack_order
+
+
+func attack_order_target() -> Variant:
+	if not _has_attack_order:
+		return null
+	if _attack_is_ground:
+		return _attack_ground_position
+	return (
+		_attack_target_ref.get_ref()
+		if _attack_target_ref != null
+		else null
+	)
+
+
+func _advance_building_combat(delta: float) -> void:
+	if not _combat_is_operational() or combat_turrets.is_empty():
+		return
+	var turret = combat_turrets.front()
+	var target: Variant = attack_order_target()
+	if _has_attack_order and (
+		(not _attack_is_ground and not _combat_target_is_alive(target))
+		or not _combat_target_position(target).is_finite()
+	):
+		cancel_attack_order()
+		target = null
+	if target == null:
+		target = _automatic_target_for(turret)
+
+	var target_in_range: bool = target != null \
+		and turret.target_range(target) \
+			== CombatTurretScript.TargetRange.IN_RANGE
+	var target_position := (
+		_combat_target_position(target) if target_in_range else Vector3.INF
+	)
+	if target_in_range and turret.requires_hull_turn_for(target_position):
+		target_in_range = false
+
+	if _uses_popup_turret():
+		if _popup_turret_state in [
+			PopupTurretState.DEPLOYING,
+			PopupTurretState.UNDEPLOYING,
+		]:
+			return
+		if target_in_range \
+		and _popup_turret_state == PopupTurretState.RETRACTED:
+			_begin_popup_transition(true)
+			return
+		if not target_in_range \
+		and _popup_turret_state == PopupTurretState.DEPLOYED \
+		and not _authored_fire_controller.is_active():
+			if turret.recenter(delta):
+				_begin_popup_transition(false)
+			return
+		if _popup_turret_state != PopupTurretState.DEPLOYED:
+			return
+
+	if not target_in_range:
+		if not _authored_fire_controller.is_active():
+			turret.recenter(delta)
+		return
+	var aimed := bool(turret.aim_at(target_position, delta))
+	if config_id == &"ATRocketTurret":
+		aimed = bool(turret.is_group_yaw_aimed_at(target_position))
+	if not aimed or _authored_fire_controller.is_active():
+		return
+	if _authored_fire_controller.try_start(target):
+		return
+	if _authored_fire_controller.has_fire_animation():
+		return
+	var projectiles: Array = turret.try_fire_at(target, self)
+	if not projectiles.is_empty():
+		weapon_fired.emit(projectiles, target, turret.weapon_index())
+
+
+func _automatic_target_for(turret) -> Variant:
+	var cached: Variant = (
+		_automatic_target_ref.get_ref()
+		if _automatic_target_ref != null
+		else null
+	)
+	if _automatic_target_is_usable(turret, cached):
+		return cached
+	if _automatic_target_cooldown > 0.0:
+		return null
+	_automatic_target_cooldown = AUTO_TARGET_REFRESH_SECONDS
+	var tree := get_tree()
+	if tree == null:
+		return null
+	var best_target: Node3D
+	var best_distance := INF
+	var candidates: Array[Node] = []
+	candidates.append_array(tree.get_nodes_in_group(&"units"))
+	candidates.append_array(tree.get_nodes_in_group(&"buildings"))
+	for candidate_node in candidates:
+		if not candidate_node is Node3D or candidate_node == self:
+			continue
+		var candidate := candidate_node as Node3D
+		if not _automatic_target_is_usable(turret, candidate):
+			continue
+		var distance := global_position.distance_squared_to(
+			candidate.global_position
+		)
+		if distance < best_distance \
+		or (
+			is_equal_approx(distance, best_distance)
+			and best_target != null
+			and candidate.get_instance_id() < best_target.get_instance_id()
+		):
+			best_distance = distance
+			best_target = candidate
+	_automatic_target_ref = (
+		weakref(best_target) if best_target != null else null
+	)
+	return best_target
+
+
+func _automatic_target_is_usable(turret, target: Variant) -> bool:
+	if not target is Node3D or not is_instance_valid(target):
+		return false
+	var candidate := target as Node3D
+	if not _combat_target_is_alive(candidate) \
+	or not candidate.has_method("is_enemy_of") \
+	or not bool(candidate.call("is_enemy_of", owner_player_id)):
+		return false
+	if turret.target_range(candidate) \
+		!= CombatTurretScript.TargetRange.IN_RANGE:
+		return false
+	var target_position := _combat_target_position(candidate)
+	return target_position.is_finite() \
+		and not turret.requires_hull_turn_for(target_position)
+
+
+func _combat_target_position(target: Variant) -> Vector3:
+	if target is Vector3:
+		return target
+	if not target is Object or not is_instance_valid(target):
+		return Vector3.INF
+	var target_object := target as Object
+	if target_object.has_method("combat_aim_position_from"):
+		var value: Variant = target_object.call(
+			"combat_aim_position_from", global_position
+		)
+		if value is Vector3:
+			return value
+	if target_object.has_method("combat_aim_position"):
+		var value: Variant = target_object.call("combat_aim_position")
+		if value is Vector3:
+			return value
+	return (
+		(target_object as Node3D).global_position
+		if target_object is Node3D
+		else Vector3.INF
+	)
+
+
+func _combat_target_is_alive(target: Variant) -> bool:
+	if not target is Object or not is_instance_valid(target):
+		return false
+	var target_object := target as Object
+	if target_object is Node \
+	and (target_object as Node).is_queued_for_deletion():
+		return false
+	return not target_object.has_method("combat_is_alive") \
+		or bool(target_object.call("combat_is_alive"))
+
+
+func _combat_is_operational() -> bool:
+	return config_id in DEFENSIVE_TURRET_IDS \
+		and _construction_complete \
+		and health > 0.0 \
+		and not is_queued_for_deletion() \
+		and not combat_turrets.is_empty()
+
+
 func _combat_turret_for_weapon(weapon_index: int):
 	if weapon_index < 0:
 		return null
@@ -1298,6 +1577,7 @@ func _sync_wall_group() -> void:
 
 
 func _configure_combat_turret() -> void:
+	_authored_fire_controller.cancel()
 	combat_turrets.clear()
 	var definition := _native_definition_catalog.definition(config_id)
 	var turret_id: StringName = definition.turret_id if definition != null else &""
@@ -1310,8 +1590,153 @@ func _configure_combat_turret() -> void:
 
 
 func _bind_combat_turrets(model_root: Node3D) -> void:
+	_authored_fire_controller.cancel()
+	_reset_popup_transition()
 	for turret in combat_turrets:
 		turret.bind_model(model_root, turret.weapon_index())
+		if model_root != null:
+			for node in model_root.find_children(
+				"*", "AnimationPlayer", true, false
+			):
+				var player := node as AnimationPlayer
+				player.process_priority = mini(
+					player.process_priority, process_priority - 1
+				)
+	if not combat_turrets.is_empty():
+		_authored_fire_controller.configure(
+			self, combat_turrets.front(), model_root
+		)
+
+
+func _uses_popup_turret() -> bool:
+	return building_definition != null \
+		and POPUP_TURRET_ROLE in building_definition.roles
+
+
+func _begin_popup_transition(deploying: bool) -> void:
+	var animation_name := (
+		POPUP_DEPLOY_ANIMATION
+		if deploying
+		else POPUP_UNDEPLOY_ANIMATION
+	)
+	var player := _active_model_animation_player(animation_name)
+	if player == null:
+		_popup_turret_state = (
+			PopupTurretState.DEPLOYED
+			if deploying
+			else PopupTurretState.RETRACTED
+		)
+		return
+	var animation := player.get_animation(animation_name)
+	if animation == null:
+		return
+	_authored_fire_controller.cancel()
+	_popup_turret_state = (
+		PopupTurretState.DEPLOYING
+		if deploying
+		else PopupTurretState.UNDEPLOYING
+	)
+	_popup_transition_player = player
+	_popup_transition_animation = animation_name
+	_popup_transition_elapsed = 0.0
+	_popup_transition_duration = animation.length
+	player.speed_scale = 1.0
+	player.stop(true)
+	player.play(animation_name)
+
+
+func _advance_popup_transition(delta: float) -> void:
+	if _popup_turret_state not in [
+		PopupTurretState.DEPLOYING,
+		PopupTurretState.UNDEPLOYING,
+	]:
+		return
+	if _popup_transition_player == null \
+	or not is_instance_valid(_popup_transition_player):
+		_finish_popup_transition()
+		return
+	_popup_transition_elapsed = minf(
+		_popup_transition_elapsed + maxf(delta, 0.0),
+		_popup_transition_duration
+	)
+	if _popup_transition_elapsed + 0.0001 < _popup_transition_duration:
+		return
+	var animation := _popup_transition_player.get_animation(
+		_popup_transition_animation
+	)
+	if animation != null:
+		_popup_transition_player.seek(animation.length, true)
+	_popup_transition_player.pause()
+	_finish_popup_transition()
+
+
+func _finish_popup_transition() -> void:
+	var was_deploying := (
+		_popup_turret_state == PopupTurretState.DEPLOYING
+	)
+	var player := _popup_transition_player
+	_popup_turret_state = (
+		PopupTurretState.DEPLOYED
+		if was_deploying
+		else PopupTurretState.RETRACTED
+	)
+	_popup_transition_player = null
+	_popup_transition_animation = &""
+	_popup_transition_elapsed = 0.0
+	_popup_transition_duration = 0.0
+	if was_deploying and player != null \
+	and player.has_animation(POPUP_HOLD_ANIMATION):
+		player.stop(true)
+		player.play(POPUP_HOLD_ANIMATION)
+		player.advance(0.0)
+		player.pause()
+	for turret in combat_turrets:
+		turret.capture_current_rest_pose()
+
+
+func _restore_popup_hold_pose() -> void:
+	if not _uses_popup_turret() \
+	or _popup_turret_state != PopupTurretState.DEPLOYED \
+	or _authored_fire_controller.is_active():
+		return
+	var player := _active_model_animation_player(POPUP_HOLD_ANIMATION)
+	if player == null:
+		return
+	player.stop(true)
+	player.play(POPUP_HOLD_ANIMATION)
+	player.advance(0.0)
+	player.pause()
+	for turret in combat_turrets:
+		turret.restore_aim_pose()
+
+
+func _reset_popup_transition() -> void:
+	_popup_turret_state = PopupTurretState.RETRACTED
+	_popup_transition_player = null
+	_popup_transition_animation = &""
+	_popup_transition_elapsed = 0.0
+	_popup_transition_duration = 0.0
+
+
+func _active_model_animation_player(
+	animation_name: StringName
+	) -> AnimationPlayer:
+	var state_root := _state_root(current_state)
+	if state_root == null:
+		return null
+	for node in state_root.find_children(
+		"*", "AnimationPlayer", true, false
+	):
+		var player := node as AnimationPlayer
+		if player.has_animation(animation_name):
+			return player
+	return null
+
+
+func _on_authored_weapon_fired(
+	projectiles: Array, target: Variant, weapon_index: int
+	) -> void:
+	weapon_fired.emit(projectiles, target, weapon_index)
 
 
 func _refresh_generated_energy() -> void:

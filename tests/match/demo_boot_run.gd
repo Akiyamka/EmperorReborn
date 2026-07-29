@@ -1104,10 +1104,13 @@ func _test_real_forced_friendly_attack() -> void:
 	var fired_projectiles: Array = []
 	var fired_animation_names: Array[StringName] = []
 	var mongoose_target_durability := target.health + target.shields
-	attacker.weapon_fired.connect(func(projectiles: Array, fired_target: Variant, _weapon_index: int) -> void:
+	attacker.weapon_fired.connect(func(projectiles: Array, fired_target: Variant, weapon_index: int) -> void:
 		if fired_target == target:
 			fired_projectiles.append_array(projectiles)
-			var player := _unit_animation_player(attacker)
+			var fire_state: Dictionary = attacker._weapon_fire_sequences.get(
+				weapon_index, {}
+			)
+			var player := fire_state.get("player") as AnimationPlayer
 			fired_animation_names.append(player.current_animation if player != null else &"")
 	)
 	_expect(

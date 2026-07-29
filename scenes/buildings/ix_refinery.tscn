@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://assets/converted/buildings/IXRefinery/IXRefinery.scn" id="1_building"]
+
+[node name="IXRefinery" instance=ExtResource("1_building")]
+config_id = &"IXRefinery"

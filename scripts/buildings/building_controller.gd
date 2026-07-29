@@ -1146,6 +1146,10 @@ func _building_config(building_id: StringName) -> Resource:
 
 
 func _building_scene_path(building_id: StringName) -> String:
+	var prepared_path := _definition_catalog.scene_path(building_id)
+	if not prepared_path.is_empty() and ResourceLoader.exists(prepared_path):
+		return prepared_path
+
 	var id_text := String(building_id)
 	var id_path := _building_scene_path_for_name(id_text)
 	if ResourceLoader.exists(id_path):

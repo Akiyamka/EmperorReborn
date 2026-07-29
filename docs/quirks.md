@@ -81,6 +81,30 @@ it as ordinary geometry leaves its mesh visible during idle animations.
 is enabled for `Fire_0`, matching the existing handling of `bigflash`
 objects without broadening the typo to unrelated models.
 
+### Harkonnen Flamer has corrupt static transforms and trailing frames
+
+**Observed data:** `HK_Flamer_H0.xbf` declares 592 object-animation frames,
+but its final named clip (`Stationary`) ends at frame 583. Several object
+transforms in frames 584..591 contain `Inf`, while `!#box11` contains finite
+but implausible values around `2.9e8`. No animation-table entry references
+these eight trailing frames. The stored static transforms for `!#box04` through
+`!#box11` (including `gunbone`) are corrupted in the same way: three contain
+`Inf`, and the remaining matrices contain values as large as roughly `1e33`.
+Their animation timelines all begin with valid authored transforms.
+
+**Original-engine quirk:** The unused tail is malformed source data rather
+than part of an authored action. The original engine also replaced the bad
+static matrices from animation before rendering. Baking them verbatim makes
+Godot's 3D editor instantiate the invalid static pose before autoplay can
+apply `Stationary`, producing non-finite renderer transforms.
+
+**EmperorReborn compatibility decision:** For the nine affected nodes,
+`ModelBakeBuilder` uses the first valid animation frame as the static pose and
+omits object-transform keys after frame 583. Named clips, vertex animation,
+and FX timing remain unchanged. As a general safety invariant, any other
+non-finite source transform holds the preceding valid pose instead of being
+serialized into a converted scene.
+
 ## Units
 
 ### Advanced Sardaukar knife is flagged as a deployed-only weapon
@@ -187,6 +211,25 @@ winding and negating normals. This also corrects their lighting relative to
 the original. The detection is deliberately not applied outside mirrored
 subtrees: an unrestricted signed-volume sweep also flags concave debris
 meshes (H3 rubble) that must keep their authored orientation.
+
+### AT Pillbox's Idle 0 range is nested inside Fire 0
+
+**Observed data:** Every shipped `AT_MGT` H/M/L state uses the same clip
+table: `Stationary` is frames 104..133, `Idle 0` is 200..240, and `Fire 0` is
+193..275. The only moving gun transforms occupy frames 194..230, while the
+short-burst sound and firing events occupy frames 194..257. `Idle 0` therefore
+contains the machine-gun recoil instead of an idle motion.
+
+**Original-engine quirk:** This overlap is present verbatim in each original
+XBF; it is not an animation-table parsing error. Buildings use `Stationary` as
+their resting state, so the mislabeled optional idle clip did not affect the
+original building state.
+
+**EmperorReborn compatibility decision:** `ModelXbf` preserves the authored
+table for lossless inspection. `ModelBakeBuilder` repairs only the converted
+`AT_MGT` `Idle_0` clip by assigning it that file's `Stationary` frame range,
+while retaining frames 200..240 as `source_start_frame`/`source_end_frame`
+metadata. `Fire_0` and its event schedule remain unchanged.
 
 ### Two building art names differ from their H0 filenames
 

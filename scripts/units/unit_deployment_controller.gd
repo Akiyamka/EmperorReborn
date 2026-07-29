@@ -544,6 +544,9 @@ func _occupy_rows_for_existing_building(building: Node3D) -> Array[String]:
 
 
 func _building_scene_path(building_id: StringName) -> String:
+	var prepared_path := _building_definition_catalog.scene_path(building_id)
+	if not prepared_path.is_empty() and ResourceLoader.exists(prepared_path):
+		return prepared_path
 	var id_text := String(building_id)
 	return BUILDING_SCENE_ROOT.path_join(id_text).path_join("%s.scn" % id_text)
 
