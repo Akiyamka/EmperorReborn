@@ -1330,6 +1330,17 @@ func cancel_attack_order() -> void:
 	attack_order_changed.emit(false, null)
 
 
+## Shared Stop-command contract. Stationary buildings can only have an explicit
+## attack order, so Stop deliberately leaves rally points and production state
+## unchanged.
+func cancel_all_orders() -> bool:
+	var had_order := _has_attack_order
+	if not had_order:
+		return false
+	cancel_attack_order()
+	return true
+
+
 func has_attack_order() -> bool:
 	return _has_attack_order
 

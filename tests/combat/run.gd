@@ -3801,10 +3801,13 @@ func _test_building_attack_order() -> void:
 		not fired.is_empty() and building.attack_order_target() == target,
 		"the retained building order must fire when its target enters range"
 	)
-	building.cancel_attack_order()
 	_expect(
-		not building.has_active_order(),
-		"cancel_attack_order must return the building command contract to idle"
+		building.cancel_all_orders() and not building.has_active_order(),
+		"Stop must cancel a real building's explicit attack order"
+	)
+	_expect(
+		not building.cancel_all_orders(),
+		"Stop must ignore a building that no longer has an explicit attack order"
 	)
 	for projectile in fired:
 		if is_instance_valid(projectile) \

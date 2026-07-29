@@ -274,6 +274,32 @@ func has_active_order() -> bool:
 	)
 
 
+## Stop must also break the autonomous harvest/refinery loop; cancelling only
+## the current route would otherwise make the harvester immediately choose a
+## new field or resume unloading on the next process tick.
+func cancel_all_orders() -> bool:
+	var had_harvester_order := (
+		has_harvest_order()
+		or has_unload_order()
+		or _pending_order != PendingOrder.NONE
+		or _harvest_cycle_enabled
+	)
+	var had_unit_order := super.cancel_all_orders()
+	if not had_harvester_order:
+		return had_unit_order
+	_harvest_cycle_enabled = false
+	_cycle_spice_layer = null
+	_cycle_grid = null
+	_assigned_refinery = null
+	_return_main_base = null
+	_auto_search_cooldown = 0.0
+	_pending_order = PendingOrder.NONE
+	_pending_order_data.clear()
+	cancel_harvest_order()
+	_cancel_unload_immediately()
+	return true
+
+
 func harvest_target_cell() -> Vector2i:
 	return _harvest_target_cell
 

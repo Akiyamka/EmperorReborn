@@ -234,6 +234,7 @@ func _initialize() -> void:
 	_run_case("empty arrival and map-wide continuation", _test_empty_arrival)
 	_run_case("a crowded harvester group reaches and works the same spice field", _test_two_harvesters_share_field)
 	_run_case("remaining bunker capacity limits extraction", _test_remaining_capacity)
+	_run_case("Stop clears every harvester order and autonomous cycle", _test_stop_clears_all_orders.bind(local_player))
 	_run_case("full harvesters automatically bind to the nearest owned refinery", _test_full_harvester_auto_unload.bind(local_player))
 	_run_case("manual refinery binding persists and automatic fields honor visibility", _test_cycle_binding_and_spice_filter.bind(local_player))
 	_run_case("unload rate transfers a full bunker in 17.5 seconds", _test_full_unload.bind(local_player))
@@ -347,6 +348,57 @@ func _run_case(case_name: String, test: Callable) -> void:
 		return
 	if _failures == failures_before:
 		print("PASS: %s" % case_name)
+
+
+func _test_stop_clears_all_orders(token: int, player: PlayerData) -> int:
+	var grid := FakeGrid.new()
+	var layer := FakeSpiceLayer.new()
+	var field := Vector2i(8, 9)
+	layer.values[field] = 100
+	var refinery := FakeRefinery.new()
+	refinery.owner_player_id = player.player_id
+	root.add_child(refinery)
+	var harvester := TestHarvester.new()
+	harvester.owner_player_id = player.player_id
+	harvester.max_spice = 700.0
+	harvester.spice = 100.0
+	root.add_child(harvester)
+
+	_expect(
+		harvester.command_harvest(layer, grid, field),
+		"the Stop test must begin with an active harvest cycle"
+	)
+	_expect(harvester.has_active_order(), "harvesting must count as an active order before Stop")
+	harvester.cancel_all_orders()
+	_expect(
+		not harvester.has_harvest_order()
+		and not harvester.has_unload_order()
+		and not harvester.has_active_order(),
+		"Stop must clear harvesting, unloading, movement, and the autonomous cycle"
+	)
+	_expect(
+		harvester.target_position.is_equal_approx(harvester.global_position),
+		"Stop must leave the harvester at its current position"
+	)
+
+	_expect(
+		harvester.command_unload(refinery, grid, layer),
+		"the Stop test must begin with an active unload order"
+	)
+	_expect(
+		harvester.has_unload_order() and harvester.assigned_refinery() == refinery,
+		"manual unloading must retain its refinery binding before Stop"
+	)
+	harvester.cancel_all_orders()
+	_expect(
+		not harvester.has_active_order() and harvester.assigned_refinery() == null,
+		"Stop must clear unloading and its persistent refinery binding"
+	)
+	_expect(refinery.reserved_by == null, "Stop must release an unloading dock reservation")
+
+	harvester.queue_free()
+	refinery.queue_free()
+	return token
 
 
 func _test_cycle_and_retarget(token: int) -> int:

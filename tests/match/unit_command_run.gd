@@ -19,6 +19,7 @@ class FakeUnit extends Node3D:
 	var rejected_attack_targets: Array = []
 	var attack_capable := true
 	var active_order := false
+	var stop_commands := 0
 
 	func set_selected(active: bool) -> void:
 		selected = active
@@ -37,6 +38,14 @@ class FakeUnit extends Node3D:
 		if not can_attack(target_or_position):
 			return false
 		attack_targets.append(target_or_position)
+		active_order = true
+		return true
+
+	func cancel_all_orders() -> bool:
+		if not active_order:
+			return false
+		stop_commands += 1
+		active_order = false
 		return true
 
 	func is_owned_by(player_id: int) -> bool:
@@ -93,6 +102,7 @@ class FakeBuilding extends Node3D:
 	var attack_capable := false
 	var attack_targets: Array = []
 	var active_order := false
+	var stop_commands := 0
 
 	func set_selected(active: bool) -> void:
 		selected = active
@@ -124,6 +134,13 @@ class FakeBuilding extends Node3D:
 
 	func has_active_order() -> bool:
 		return active_order
+
+	func cancel_all_orders() -> bool:
+		if not active_order:
+			return false
+		stop_commands += 1
+		active_order = false
+		return true
 
 
 class FakeUnitCommandController extends UnitCommandController:
@@ -264,6 +281,7 @@ func _initialize() -> void:
 	_run_case("clicking the selected unit again requests deployment", _test_repeated_click_deployment.bind(local_player))
 	_run_case("rectangle unit selection", _test_rectangle_unit_selection.bind(local_player, enemy_player))
 	_run_case("J modifies movement formation", _test_formation_modifier.bind(local_player))
+	_run_case("S stops all selected units", _test_stop_shortcut.bind(local_player))
 	_run_case("spice click issues harvester order", _test_harvester_order.bind(local_player))
 	_run_case("owned refinery click issues unload order", _test_unload_order.bind(local_player, enemy_player))
 	_run_case("building selection", _test_building_selection.bind(local_player))
@@ -873,6 +891,79 @@ func _test_formation_modifier(token: int, local_player) -> int:
 
 	commands.queue_free()
 	unit.queue_free()
+	return token
+
+
+func _test_stop_shortcut(token: int, local_player) -> int:
+	var commands := FakeUnitCommandController.new()
+	var statuses: Array[String] = []
+	commands.status_changed.connect(func(status: String) -> void: statuses.append(status))
+	root.add_child(commands)
+	var scout := _make_unit("StopScout", local_player)
+	var tank := _make_unit("StopTank", local_player)
+	root.add_child(scout)
+	root.add_child(tank)
+	scout.active_order = true
+	tank.active_order = true
+	commands._set_selection([scout, tank])
+
+	var stop_event := _key_event(KEY_S, true)
+	_expect(commands.handle_unhandled_input(stop_event), "S press must be consumed as a unit command")
+	_expect(
+		scout.stop_commands == 1 and tank.stop_commands == 1,
+		"S must cancel every selected unit's orders"
+	)
+	_expect(not scout.active_order and not tank.active_order, "S must leave all selected units idle")
+	_expect(statuses.back() == "2 orders stopped", "group Stop must report how many orders stopped")
+
+	stop_event.echo = true
+	commands.handle_unhandled_input(stop_event)
+	commands.handle_unhandled_input(_key_event(KEY_S, false))
+	_expect(
+		scout.stop_commands == 1 and tank.stop_commands == 1,
+		"key echo and release must not repeat the Stop command"
+	)
+
+	scout.active_order = true
+	tank.active_order = true
+	var physical_stop := _key_event(KEY_NONE, true)
+	physical_stop.physical_keycode = KEY_S
+	commands.handle_unhandled_input(physical_stop)
+	_expect(
+		scout.stop_commands == 2 and tank.stop_commands == 2,
+		"the physical S key must work independently of the keyboard layout"
+	)
+	var status_count := statuses.size()
+	commands.handle_unhandled_input(physical_stop)
+	_expect(
+		scout.stop_commands == 2 and tank.stop_commands == 2 \
+		and statuses.size() == status_count,
+		"Stop must ignore selected entities that no longer have an active order"
+	)
+
+	var building := FakeBuilding.new()
+	building.player = local_player
+	building.attack_capable = true
+	building.active_order = true
+	building.rally_points.append(Vector3(9.0, 0.0, 12.0))
+	building.add_to_group("buildings")
+	root.add_child(building)
+	commands._set_selection([building])
+	commands.handle_unhandled_input(_key_event(KEY_S, true))
+	_expect(
+		building.stop_commands == 1 and not building.active_order,
+		"Stop must cancel a selected building's attack order"
+	)
+	_expect(
+		building.rally_points == [Vector3(9.0, 0.0, 12.0)],
+		"Stop must preserve a selected building's rally point"
+	)
+	_expect(statuses.back() == "Stopped", "a stopped building attack must report status")
+
+	commands.queue_free()
+	scout.queue_free()
+	tank.queue_free()
+	building.queue_free()
 	return token
 
 

@@ -2098,6 +2098,24 @@ func stop_at_current_position() -> void:
 	_set_movement_animation(false)
 
 
+## Shared Stop-command contract. Subclasses with additional order state
+## override this, clear their own state, and then call super.
+func cancel_all_orders() -> bool:
+	var had_order := (
+		_has_attack_order
+		or _has_pending_navigation_order
+		or _mech_has_active_move_order()
+	)
+	if not had_order:
+		return false
+	cancel_attack_order()
+	_has_pending_navigation_order = false
+	_pending_navigation_order = Vector3.ZERO
+	_pending_navigation_exit = Vector3.INF
+	stop_at_current_position()
+	return had_order
+
+
 ## Shared unit deployment interface. Eligibility and the per-unit strategy
 ## live in UnitDeploymentController; Unit owns the common locked alignment and
 ## animation phases so future deployable units can reuse the same contract.

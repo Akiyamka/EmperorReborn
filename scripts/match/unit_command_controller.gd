@@ -81,6 +81,10 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 		if _is_formation_modifier(event):
 			_formation_modifier_down = event.pressed
 			return false
+		if _is_stop_key(event):
+			if event.pressed and not event.echo:
+				_stop_selected_entities()
+			return true
 		if _is_deploy_key(event):
 			if event.pressed and not event.echo:
 				_deploy_selected_entities()
@@ -203,6 +207,27 @@ func _try_deploy(entity: Node) -> bool:
 
 func _is_deploy_key(event: InputEventKey) -> bool:
 	return event.keycode == KEY_D or event.physical_keycode == KEY_D
+
+
+func _is_stop_key(event: InputEventKey) -> bool:
+	return event.keycode == KEY_S or event.physical_keycode == KEY_S
+
+
+## Cancels movement/attack orders on every selected controllable entity through
+## its shared order contract. A building implements this as attack cancellation
+## only, so its rally point and production state remain untouched.
+func _stop_selected_entities() -> void:
+	var stopped := 0
+	for entity in _selected_entities:
+		if not is_instance_valid(entity) or not _can_control(entity) \
+		or not entity.has_method("cancel_all_orders"):
+			continue
+		if bool(entity.call("cancel_all_orders")):
+			stopped += 1
+	if stopped == 1:
+		status_changed.emit("Stopped")
+	elif stopped > 1:
+		status_changed.emit("%d orders stopped" % stopped)
 
 
 ## The first `D` binding in the project. Applies to every selected
