@@ -336,6 +336,10 @@ func _initialize() -> void:
 		"a travel-mode Kobra only ever selects Fire_0 or Fire_2, never Deployed_Fire",
 		_test_kobra_travel_fire_variants
 	)
+	_run_case(
+		"Kobra travel fire clips apply their horizontal barrel pose at both boundaries",
+		_test_kobra_travel_fire_pose_boundaries
+	)
 
 	if _failures > 0:
 		printerr("Combat tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -3680,6 +3684,37 @@ func _test_kobra_travel_fire_variants() -> void:
 		not seen_names.has("Deployed_Fire"),
 		"a travel-mode Kobra must never select Deployed_Fire"
 	)
+	kobra.free()
+
+
+func _test_kobra_travel_fire_pose_boundaries() -> void:
+	var kobra = UnitScene.instantiate()
+	kobra.config_id = &"ORKobra"
+	root.add_child(kobra)
+	kobra.replace_visual_scene(ORKobraModelScene)
+	var player := kobra.get_node("VisualRoot").find_child(
+		"AnimationPlayer", true, false
+	) as AnimationPlayer
+	var barrel := kobra.get_node("VisualRoot").find_child(
+		"barrel", true, false
+	) as Node3D
+	var deployed_turret = kobra.combat_turrets[1]
+	for animation_name in [&"Fire_0", &"Fire_2"]:
+		# Reproduce the stale inactive-turret pose that used to be written by
+		# _restore_combat_turret_poses immediately after play().
+		deployed_turret.restore_aim_pose()
+		kobra._play_animation_from_start(player, animation_name)
+		_expect(
+			absf(barrel.global_basis.z.normalized().y) < 0.1,
+			"%s must apply its horizontal barrel pose before the next animation tick"
+				% animation_name
+		)
+		kobra._play_animation_from_start(player, &"Stationary")
+		_expect(
+			absf(barrel.global_basis.z.normalized().y) < 0.1,
+			"Stationary must not expose the inactive deployed turret pose after %s"
+				% animation_name
+		)
 	kobra.free()
 
 

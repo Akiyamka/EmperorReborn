@@ -2740,16 +2740,41 @@ func _idle_animation_weight(animation_name: StringName) -> float:
 
 
 func _play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
-	# Keep the outgoing pose until the newly played clip is evaluated. Resetting
-	# the outgoing animation here can expose its first-frame effects for the
-	# remainder of the current rendered frame.
+	# Keep the outgoing pose while stopping so its first-frame effects are not
+	# exposed, then apply the incoming transform pose immediately. Waiting for
+	# the next AnimationPlayer tick leaves a one-frame hybrid of the outgoing
+	# pose and incoming playback state (notably Kobra's vertical barrel at both
+	# boundaries of its horizontal travel-mode Fire clips).
 	player.stop(true)
 	player.play(animation_name)
+	_apply_animation_start_transforms(player, animation_name)
 	_restore_combat_turret_poses()
 
 
+func _apply_animation_start_transforms(
+	player: AnimationPlayer, animation_name: StringName
+) -> void:
+	var animation := player.get_animation(animation_name)
+	if animation == null:
+		return
+	for track in animation.get_track_count():
+		if animation.track_get_type(track) != Animation.TYPE_VALUE \
+		or not String(animation.track_get_path(track)).ends_with(":transform") \
+		or animation.track_get_key_count(track) == 0 \
+		or animation.track_get_key_time(track, 0) > FIRE_EVENT_EPSILON:
+			continue
+		var target := _animation_track_node(
+			player, String(animation.track_get_path(track))
+		) as Node3D
+		var value: Variant = animation.track_get_key_value(track, 0)
+		if target != null and value is Transform3D:
+			target.transform = value as Transform3D
+
+
 func _restore_combat_turret_poses() -> void:
-	for turret in combat_turrets:
+	# An inactive deploy-state turret shares authored pivots with the active
+	# model pose but must not write its own rest transform over that animation.
+	for turret in _active_turrets():
 		if turret != null:
 			turret.restore_aim_pose()
 
