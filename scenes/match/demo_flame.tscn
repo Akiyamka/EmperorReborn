@@ -5,6 +5,7 @@
 [ext_resource type="Resource" uid="uid://nj40xd0p0abq" path="res://configs/camera/rts_camera_config.tres" id="3_7in77"]
 [ext_resource type="PackedScene" path="res://assets/converted/maps/#M25 GM Aprit Chard S 2/terrain.tscn" id="4_frhj3"]
 [ext_resource type="Script" uid="uid://c3sursjoim88" path="res://scripts/ui/selection_rectangle.gd" id="8_4rnnr"]
+[ext_resource type="PackedScene" path="res://scenes/buildings/at_pillbox.tscn" id="8_h47e7"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="9_nabld"]
 [ext_resource type="PackedScene" path="res://scenes/units/hk_flamer.tscn" id="43_6pt2m"]
 
@@ -45,8 +46,13 @@ metadata/_edit_lock_ = true
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
 
+[node name="ATPillbox" parent="Units" unique_id=1183948114 instance=ExtResource("8_h47e7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 255.28676, 14.042763, 167.86934)
+owner_player_id = 1
+
 [node name="HKFlamer" parent="Units" unique_id=830062578 instance=ExtResource("43_6pt2m")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 241.20491, 7.861271, 186.28966)
+owner_player_id = 1
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
 

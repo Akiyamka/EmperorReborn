@@ -648,9 +648,37 @@ func _state_animation(
 		animation.track_insert_key(track, 0.0, node == active_node)
 	if source_animation != null:
 		_copy_animation_tracks(
-			source_animation, animation, "States/%s" % active_node.name
+			source_animation, animation, "States/%s" % active_node.name,
+			_fire_owned_track_paths(active_node)
 		)
 	return animation
+
+
+## StatePlayer's clip is meant to hold a resting transform pose for whichever
+## state subtree is active, looped forever regardless of combat. But its
+## source Stationary clip is copied track-for-track, so any node a Fire_N clip
+## also animates (e.g. a discrete mesh-swap track driving a crew figure's
+## recoil/reload pose) ends up simultaneously keyed by two independent
+## AnimationPlayers with no blending between them. Godot does not guarantee
+## write ordering between two AnimationPlayers touching the same property, so
+## whichever one last evaluates that frame wins - the crew figure flickers
+## between the combat clip's authored pose and StatePlayer's unrelated idle
+## pose. Excluding those node paths here means StatePlayer simply stops
+## driving them; the state-local Fire_N clip already owns their pose whenever
+## it's playing, and outside of combat nothing else depends on StatePlayer's
+## copy of that specific track.
+func _fire_owned_track_paths(state_node: Node3D) -> Dictionary:
+	var result: Dictionary = {}
+	var player := state_node.get_node_or_null("AnimationPlayer") as AnimationPlayer
+	if player == null:
+		return result
+	for animation_name in player.get_animation_list():
+		if not String(animation_name).begins_with("Fire_"):
+			continue
+		var fire_animation := player.get_animation(animation_name)
+		for track in fire_animation.get_track_count():
+			result[String(fire_animation.track_get_path(track))] = true
+	return result
 
 
 func _named_state_source_animation(
@@ -696,8 +724,15 @@ func _state_source_animation(state_node: Node3D) -> Animation:
 	return null
 
 
-func _copy_animation_tracks(source: Animation, target: Animation, path_prefix: String) -> void:
+func _copy_animation_tracks(
+		source: Animation,
+		target: Animation,
+		path_prefix: String,
+		excluded_paths: Dictionary = {}
+	) -> void:
 	for source_track in source.get_track_count():
+		if excluded_paths.has(String(source.track_get_path(source_track))):
+			continue
 		var track := target.add_track(source.track_get_type(source_track))
 		target.track_set_path(track, NodePath("%s/%s" % [path_prefix, String(source.track_get_path(source_track))]))
 		target.track_set_interpolation_type(track, source.track_get_interpolation_type(source_track))
