@@ -51,6 +51,10 @@ func _initialize() -> void:
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
 	_run_case("XBF mirrored inside-out meshes are re-oriented", _test_mirrored_mesh_orientation)
 	_run_case("AT Refinery independent pads and mesh components", _test_at_refinery_partitioning)
+	_run_case(
+		"Ltmuzzle hides its fixed beam but retains the authored muzzle geometry",
+		_test_ltmuzzle_procedural_beam_replacement
+	)
 	_run_case("Muzzle flash clip visibility", _test_muzzle_flash_clip_visibility)
 	_run_case(
 		"combat-deploy clip rename normalizes Fire_1 to Deployed_Fire",
@@ -1045,6 +1049,46 @@ func _find_original_node_exact(node: Node, original_name: String) -> Node3D:
 		if found != null:
 			return found
 	return null
+
+
+func _test_ltmuzzle_procedural_beam_replacement() -> bool:
+	var builder = ModelBakeBuilderScript.new()
+	builder.bake_embedded_muzzle_flash_visibility = false
+	builder.stationary_clip_loops = false
+	var scene: PackedScene = builder.build(
+		"res://assets/raw_original_content/3DDATA/Explosion/LTMuzzle.xbf"
+	)
+	_expect(scene != null, "the original LTMuzzle XBF must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate()
+	var fixed_laser := _find_original_node_exact(root, "?laser")
+	var laser_meshes := fixed_laser.find_children(
+		"*", "MeshInstance3D", true, false
+	) if fixed_laser != null else []
+	_expect(fixed_laser != null, "Ltmuzzle must retain the _laser transform node")
+	var all_laser_meshes_hidden := not laser_meshes.is_empty()
+	for laser_mesh in laser_meshes:
+		all_laser_meshes_hidden = (
+			all_laser_meshes_hidden
+			and not (laser_mesh as MeshInstance3D).visible
+			and laser_mesh.get_meta("source_asset_quirk", "") \
+				== "procedural_laser_replacement"
+		)
+	_expect(
+		laser_meshes.size() == 2 and all_laser_meshes_hidden,
+		"the converter must hide and document every fixed-length _laser mesh"
+	)
+	for retained_name in ["?lasercoil", "?smring", "?midring", "?lring"]:
+		var retained := _find_original_node_exact(root, retained_name)
+		var retained_mesh := _plain_mesh_descendant(retained) \
+			if retained != null else null
+		_expect(
+			retained != null and retained_mesh != null and retained_mesh.visible,
+			"%s must remain visible in the authored muzzle accent" % retained_name
+		)
+	root.free()
+	return true
 
 
 func _attachment_fx_child(marker: Node) -> MeshInstance3D:

@@ -49,6 +49,15 @@ const HIDDEN_SOURCE_MESH_COMPONENTS := {
 	"at_refinery_h0.xbf": {
 		"at_refinery": {3: "broken_geometry", 10: "broken_geometry"},
 	},
+	# Ltmuzzle's authored `_laser` is a fixed-length beam. Runtime replaces it
+	# with the resolved muzzle-to-impact segment while retaining the surrounding
+	# coil and ring geometry as the weapon's authored muzzle accent.
+	"ltmuzzle.xbf": {
+		"?laser": {
+			0: "procedural_laser_replacement",
+			1: "procedural_laser_replacement",
+		},
+	},
 	# See docs/quirks.md "OR Mortar ships a static duplicate gun barrel".
 	"or_mortar_h0.xbf": {
 		"mortorgun01": {0: "unrendered_duplicate"},

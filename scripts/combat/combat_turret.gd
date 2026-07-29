@@ -18,6 +18,7 @@ const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_defi
 const AIM_UPDATES_PER_SECOND := 20.0
 const DEFAULT_ACCEPTABLE_AIM_DEGREES := 1.0
 const DEFAULT_MUZZLE_FLASH_DURATION := 0.2
+const LASER_MUZZLE_VISUAL_SCALE := 0.9
 const MUZZLE3_PRIMARY_MESH := "Mesh_00"
 const MUZZLE3_PRIMARY_SCALE := 0.5
 const TURRET_MARKER := "::"
@@ -833,14 +834,26 @@ func try_fire_at(
 		# TurretMuzzleFlash in Rules.txt is the authoritative signal for whether
 		# this weapon was authored with a flash at all; an empty muzzle_flash_id
 		# means no synthetic flash/light/aux effects should be spawned.
+		# A laser's full beam is drawn by CombatProjectile from the muzzle to the
+		# resolved raycast impact. Ltmuzzle remains a short authored muzzle accent,
+		# but must follow that resolved 3D segment rather than a yaw-only marker
+		# direction or it floats horizontally when the target is downhill.
+		var effect_emission := emission
+		if preview_bullet.is_laser():
+			var laser_direction := Vector3(emission["position"]).direction_to(
+				projectile.global_position
+			)
+			if not laser_direction.is_zero_approx():
+				effect_emission = emission.duplicate()
+				effect_emission["direction"] = laser_direction
 		if muzzle_flash_scene != null:
-			_spawn_muzzle_flash(parent, emission)
+			_spawn_muzzle_flash(parent, effect_emission)
 			# Continuous delivery is presented by the model's authored particle
 			# banks. A generic ballistic flash is especially wrong for gas and
 			# also competes with flame streams.
 			if not preview_bullet.is_continuous():
-				_spawn_shot_light(parent, emission)
-			_spawn_auxiliary_muzzle_effects(parent, emission)
+				_spawn_shot_light(parent, effect_emission)
+			_spawn_auxiliary_muzzle_effects(parent, effect_emission)
 		result.append(projectile)
 	return result
 
@@ -2045,6 +2058,8 @@ func _spawn_muzzle_flash(parent: Node, emission: Dictionary) -> void:
 		return
 	if muzzle_flash_id == &"Muzzle3":
 		_scale_muzzle3_primary_mesh(authored_visual)
+	elif muzzle_flash_id == &"Ltmuzzle":
+		authored_visual.scale *= LASER_MUZZLE_VISUAL_SCALE
 	var effect := Node3D.new()
 	effect.name = "MuzzleFlash_%s" % String(muzzle_flash_id)
 	effect.set_meta("combat_muzzle_fx", &"front_flash")

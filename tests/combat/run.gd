@@ -58,6 +58,9 @@ const ORAPCModelScene := preload("res://assets/converted/models/Or_apc_H0/Or_apc
 const ORLaserTankModelScene := preload(
 	"res://assets/converted/models/OR_Lasertank_H0/OR_Lasertank_H0.scn"
 )
+const IMAdvSardaukarModelScene := preload(
+	"res://assets/converted/models/IM_ADVSardaukar_H0/IM_ADVSardaukar_H0.scn"
+)
 const ATKindjalModelScene := preload(
 	"res://assets/converted/models/AT_Kindjal_H0/AT_Kindjal_H0.scn"
 )
@@ -218,6 +221,10 @@ func _initialize() -> void:
 	_run_case("impact effects use typed acceptance and fallback damage", _test_impact_effect_contract)
 	_run_case("lingering gas delivers every authored damage tick", _test_lingering_gas_damage)
 	_run_case("hitscan resolves at launch without travel", _test_hitscan_projectile)
+	await _run_async_case(
+		"lasers span the resolved 3D hit segment and remain visible briefly",
+		_test_laser_hitscan_visual
+	)
 	_run_case("non-homing bullets keep the sampled aim point", _test_linear_projectile_no_lead)
 	_run_case("attack-ground missiles descend to the sampled point", _test_attack_ground_missile)
 	_run_case("homing respects delay, turn rate and target lifetime", _test_homing_projectile)
@@ -644,6 +651,142 @@ func _test_hitscan_projectile() -> void:
 	_expect(is_zero_approx(projectile.traveled_distance), "hitscan must accumulate no physical travel")
 	_expect(is_equal_approx(target.damage_taken, 219.0), "hitscan must deliver its payload exactly once")
 	projectile.free()
+
+
+func _test_laser_hitscan_visual() -> void:
+	var rules = root.get_node("Rules")
+	var launch_position := Vector3(2.0, 5.0, 3.0)
+	var ground_position := Vector3(-4.0, 0.0, -7.0)
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	_expect(
+		projectile.launch(
+			_runtime_bullet(rules, &"Laser_B"),
+			_emission(launch_position, Vector3.FORWARD),
+			ground_position
+		),
+		"Laser_B must accept an in-range downhill attack-ground shot"
+	)
+	_expect(
+		projectile.is_finished()
+		and projectile.finish_reason == &"impact_ground",
+		"a laser must still resolve gameplay damage instantly"
+	)
+	var beam := projectile.get_node_or_null("LaserBeam") as Node3D
+	var core := beam.get_node_or_null("Core") as MeshInstance3D \
+		if beam != null else null
+	var core_mesh := core.mesh as CylinderMesh if core != null else null
+	var expected_direction := launch_position.direction_to(ground_position)
+	_expect(
+		beam != null
+		and Vector3(beam.get_meta("start_position", Vector3.INF)).is_equal_approx(
+			launch_position
+		)
+		and Vector3(beam.get_meta("end_position", Vector3.INF)).is_equal_approx(
+			ground_position
+		),
+		"the visual beam must retain the exact muzzle and resolved hit endpoints"
+	)
+	_expect(
+		beam != null
+		and beam.global_position.is_equal_approx(
+			launch_position.lerp(ground_position, 0.5)
+		)
+		and beam.global_basis.y.normalized().is_equal_approx(expected_direction),
+		"an elevated laser must point downhill through the hit point, not parallel to the ground"
+	)
+	_expect(
+		core_mesh != null
+		and is_equal_approx(
+			core_mesh.height, launch_position.distance_to(ground_position)
+		),
+		"the beam mesh length must equal the full 3D distance to the hit"
+	)
+	await process_frame
+	_expect(
+		is_instance_valid(projectile) and not projectile.is_queued_for_deletion(),
+		"a laser must survive deferred hitscan cleanup long enough to render"
+	)
+	projectile.free()
+
+	_free_muzzle_effects()
+	var laser_tank_model := ORLaserTankModelScene.instantiate() as Node3D
+	laser_tank_model.position.y = 4.0
+	root.add_child(laser_tank_model)
+	var laser_tank_turret = CombatTurretScript.new()
+	_expect(
+		laser_tank_turret.configure(&"ORLaserTankBase")
+		and laser_tank_turret.bind_model(laser_tank_model, 0),
+		"the Laser Tank must bind its authored muzzle"
+	)
+	var tank_emission := laser_tank_turret.peek_emission()
+	var tank_target := Vector3(tank_emission.get("position", Vector3.ZERO)) \
+		+ Vector3(tank_emission.get("direction", Vector3.FORWARD)) * 5.0
+	tank_target.y = 0.0
+	var tank_projectiles: Array = laser_tank_turret.try_fire_at(
+		tank_target, laser_tank_model, root
+	)
+	var tank_muzzle := root.get_node_or_null("MuzzleFlash_Ltmuzzle") as Node3D
+	var tank_muzzle_visual := tank_muzzle.get_node_or_null("Visual") as Node3D \
+		if tank_muzzle != null else null
+	var fixed_laser := tank_muzzle_visual.find_child("_laser", true, false) \
+		if tank_muzzle_visual != null else null
+	var fixed_laser_meshes := fixed_laser.find_children(
+		"*", "MeshInstance3D", true, false
+	) if fixed_laser != null else []
+	var all_fixed_laser_meshes_hidden := not fixed_laser_meshes.is_empty()
+	for fixed_laser_mesh in fixed_laser_meshes:
+		all_fixed_laser_meshes_hidden = all_fixed_laser_meshes_hidden \
+			and not (fixed_laser_mesh as MeshInstance3D).visible
+	var reference_muzzle_visual := laser_tank_turret.muzzle_flash_scene.instantiate() as Node3D
+	var expected_muzzle_scale := reference_muzzle_visual.scale \
+		* CombatTurretScript.LASER_MUZZLE_VISUAL_SCALE
+	reference_muzzle_visual.free()
+	var resolved_tank_direction := Vector3(tank_emission["position"]).direction_to(
+		tank_target
+	)
+	_expect(
+		tank_projectiles.size() == 1
+		and tank_projectiles[0].get_node_or_null("LaserBeam") != null
+		and tank_muzzle != null
+		and tank_muzzle_visual != null
+		and fixed_laser_meshes.size() == 2
+		and all_fixed_laser_meshes_hidden
+		and tank_muzzle_visual.scale.is_equal_approx(expected_muzzle_scale)
+		and tank_muzzle.global_basis.z.normalized().is_equal_approx(
+			resolved_tank_direction
+		),
+		"ORLaserTank must keep a scaled Ltmuzzle accent aligned with the resolved beam"
+	)
+	for tank_projectile in tank_projectiles:
+		if is_instance_valid(tank_projectile):
+			tank_projectile.free()
+	laser_tank_model.free()
+
+	var infantry_model := IMAdvSardaukarModelScene.instantiate() as Node3D
+	root.add_child(infantry_model)
+	var infantry_turret = CombatTurretScript.new()
+	_expect(
+		infantry_turret.configure(&"IMADVSardaukarGun")
+		and infantry_turret.bind_model(infantry_model, 0),
+		"the Advanced Sardaukar gun must bind its authored firing marker"
+	)
+	var emission := infantry_turret.peek_emission()
+	var infantry_target := Vector3(emission.get("position", Vector3.ZERO)) \
+		+ Vector3(emission.get("direction", Vector3.FORWARD)) * 5.0
+	var infantry_projectiles: Array = infantry_turret.try_fire_at(
+		infantry_target, infantry_model, root
+	)
+	_expect(
+		infantry_projectiles.size() == 1
+		and infantry_projectiles[0].bullet.id() == &"InfLaser_B"
+		and infantry_projectiles[0].get_node_or_null("LaserBeam") != null,
+		"InfLaser_B must create the same visible resolved beam without a muzzle-flash resource"
+	)
+	for infantry_projectile in infantry_projectiles:
+		if is_instance_valid(infantry_projectile):
+			infantry_projectile.free()
+	infantry_model.free()
 
 
 func _test_linear_projectile_no_lead() -> void:
