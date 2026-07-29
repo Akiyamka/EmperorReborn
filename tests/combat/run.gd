@@ -675,7 +675,12 @@ func _test_laser_hitscan_visual() -> void:
 	var beam := projectile.get_node_or_null("LaserBeam") as Node3D
 	var core := beam.get_node_or_null("Core") as MeshInstance3D \
 		if beam != null else null
+	var glow := beam.get_node_or_null("Glow") as MeshInstance3D \
+		if beam != null else null
 	var core_mesh := core.mesh as CylinderMesh if core != null else null
+	var glow_mesh := glow.mesh as CylinderMesh if glow != null else null
+	var glow_material := glow_mesh.material as StandardMaterial3D \
+		if glow_mesh != null else null
 	var expected_direction := launch_position.direction_to(ground_position)
 	_expect(
 		beam != null
@@ -701,6 +706,15 @@ func _test_laser_hitscan_visual() -> void:
 			core_mesh.height, launch_position.distance_to(ground_position)
 		),
 		"the beam mesh length must equal the full 3D distance to the hit"
+	)
+	_expect(
+		glow_material != null
+		and is_equal_approx(glow_material.albedo_color.a, 0.24)
+		and glow_mesh.top_radius > CombatProjectileScript.LASER_GLOW_RADIUS
+		and glow_material.emission.b > glow_material.emission.g
+		and glow_material.emission.g > glow_material.emission.r
+		and glow_material.emission_energy_multiplier > 2.5,
+		"the Laser Tank beam must have a wider blue-azure outer glow without extra opacity"
 	)
 	await process_frame
 	_expect(

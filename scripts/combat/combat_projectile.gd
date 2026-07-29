@@ -40,8 +40,11 @@ const NO_PROPULSION_FLASH_BULLETS: Array[StringName] = [&"KobraHowitzer_B"]
 const LASER_VISUAL_DURATION := 0.16
 const LASER_CORE_RADIUS := 0.025
 const LASER_GLOW_RADIUS := 0.07
+const LASER_TANK_GLOW_RADIUS := 0.1
 const LASER_RADIAL_SEGMENTS := 8
 const LASER_TANK_COLOR := Color(0.2, 1.0, 0.08)
+const LASER_TANK_GLOW_COLOR := Color(0.08, 0.72, 1.0, 0.24)
+const LASER_TANK_GLOW_ENERGY := 3.0
 const INFANTRY_LASER_COLOR := Color(1.0, 0.55, 0.08)
 
 var bullet
@@ -836,11 +839,16 @@ func _create_laser_visual(start_position: Vector3, end_position: Vector3) -> boo
 		start_position.lerp(end_position, 0.5)
 	)
 
-	var color := INFANTRY_LASER_COLOR \
-		if bullet.id() == &"InfLaser_B" else LASER_TANK_COLOR
+	var is_infantry_laser: bool = bullet.id() == &"InfLaser_B"
+	var color: Color = INFANTRY_LASER_COLOR if is_infantry_laser else LASER_TANK_COLOR
+	var glow_color: Color = Color(color.r, color.g, color.b, 0.24) \
+		if is_infantry_laser else LASER_TANK_GLOW_COLOR
+	var glow_energy: float = 2.5 if is_infantry_laser else LASER_TANK_GLOW_ENERGY
+	var glow_radius: float = LASER_GLOW_RADIUS \
+		if is_infantry_laser else LASER_TANK_GLOW_RADIUS
 	_add_laser_layer(
-		beam, "Glow", length, LASER_GLOW_RADIUS,
-		Color(color.r, color.g, color.b, 0.24), 2.5
+		beam, "Glow", length, glow_radius,
+		glow_color, glow_energy
 	)
 	_add_laser_layer(
 		beam, "Core", length, LASER_CORE_RADIUS,
