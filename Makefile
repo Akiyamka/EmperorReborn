@@ -36,6 +36,7 @@ godot-test:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/ui/side_panel_pagination_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/audio/voice_feedback_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/building_scene_catalog_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/placement_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/wall_connectivity_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/controller_run.gd

@@ -3,8 +3,37 @@ extends RefCounted
 
 const Manifest := preload("res://resources/buildings/generated_building_manifest.gd")
 var _cache: Dictionary = {}
+var _scene_cache: Dictionary = {}
 var _construction_yard_house_ids: Array[StringName] = []
 var _construction_yard_houses_loaded := false
+
+
+func has_scene(config_id: StringName) -> bool:
+	return Manifest.SCENE_PATHS.has(config_id)
+
+
+func scene_path(config_id: StringName) -> String:
+	return String(Manifest.SCENE_PATHS.get(config_id, ""))
+
+
+func scene(config_id: StringName) -> PackedScene:
+	if _scene_cache.has(config_id):
+		return _scene_cache[config_id] as PackedScene
+	var path := scene_path(config_id)
+	var result := load(path) as PackedScene \
+		if not path.is_empty() and ResourceLoader.exists(path) else null
+	_scene_cache[config_id] = result
+	return result
+
+
+func instantiate(config_id: StringName) -> Node:
+	var packed_scene := scene(config_id)
+	if packed_scene == null:
+		return null
+	var instance := packed_scene.instantiate()
+	if instance != null:
+		instance.set("config_id", config_id)
+	return instance
 
 
 func definition(config_id: StringName) -> Resource:

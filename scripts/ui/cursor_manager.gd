@@ -147,6 +147,12 @@ var _missing_model_warnings: Dictionary = {}
 
 
 func _ready() -> void:
+	# Autoloads enter the tree while the editor displays project scenes. The
+	# model cursor is runtime UI, so do not create its private 3D viewports
+	# inside the editor's rendering world.
+	if Engine.is_editor_hint():
+		set_process(false)
+		return
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_setup_cursor_output()
 	_setup_model_viewport()

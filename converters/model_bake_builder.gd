@@ -73,6 +73,28 @@ const CLIP_NAME_OVERRIDES := {
 	"or_mortar_h0.xbf": {"Fire_1": "Deployed_Fire"},
 	"or_kobra_h0.xbf": {"Fire_1": "Deployed_Fire"},
 }
+## Exclusive frame limits for source object-transform timelines whose
+## unreferenced tail data is corrupt. Vertex animation and FX timelines keep
+## their authored lengths; only object transforms beyond these limits are
+## omitted.
+const OBJECT_TRANSFORM_FRAME_LIMITS := {
+	"hk_flamer_h0.xbf": 584,
+}
+## Objects whose stored static matrices are corrupt but whose animation
+## timelines begin with a valid authored pose.
+const STATIC_TRANSFORM_ANIMATION_FALLBACKS := {
+	"hk_flamer_h0.xbf": {
+		"!#box04": true,
+		"!#box05": true,
+		"!#box06": true,
+		"!#box07": true,
+		"gunbone": true,
+		"!#box08": true,
+		"!#box09": true,
+		"!#box10": true,
+		"!#box11": true,
+	},
+}
 var missing_textures: PackedStringArray = []
 var copied_textures: PackedStringArray = []
 var _material_cache := {}
@@ -90,10 +112,14 @@ var _muzzle_flash_mesh_paths := PackedStringArray()
 var _attachment_fx_paths := PackedStringArray()
 var _attachment_fx_names := {}
 var _source_file_name := ""
+var _object_transform_frame_limit := 0
 
 
 func build(xbf_path: String) -> PackedScene:
 	_source_file_name = xbf_path.get_file().to_lower()
+	_object_transform_frame_limit = int(
+		OBJECT_TRANSFORM_FRAME_LIMITS.get(_source_file_name, 0)
+	)
 	missing_textures = PackedStringArray()
 	copied_textures = PackedStringArray()
 	_material_cache.clear()
@@ -236,7 +262,7 @@ func _build_object_node(
 		# #~~0 is the root of the authored collision hierarchy. It commonly has
 		# no vertices itself: its child objects contain the actual volume.
 		node.set_meta("collision_points", _collision_points_from_hierarchy(object))
-	node.transform = _to_godot_transform(object.transform)
+	node.transform = _to_godot_transform(_initial_object_transform(object))
 	if uses_mirrored_content:
 		# Godot's editor rejects a reflected Basis in a Transform3D animation
 		# key even though Node3D and the renderer can represent it. Factor the
@@ -244,6 +270,13 @@ func _build_object_node(
 		# (T * F) * F == T. This preserves the source geometry exactly while
 		# leaving the animation track with rotation-safe, positive determinants.
 		node.transform *= LOCAL_Z_REFLECTION
+	if _uses_static_transform_animation_fallback(object):
+		# Match the animation-track representation exactly. Some otherwise
+		# finite source matrices are too distorted to be valid rotation bases,
+		# so merely selecting the first finite frame is not sufficient.
+		node.transform = _sanitize_animation_transform(
+			node.transform, Transform3D.IDENTITY
+		)
 	# Selection volumes and halo anchors are authored as vertex-only XBF
 	# objects.  They have no triangles, so no MeshInstance3D is generated for
 	# them; retain the data as metadata for gameplay visuals instead.
@@ -360,13 +393,41 @@ func _halo_anchor_reference_transform(object: Dictionary) -> Transform3D:
 	return frames[frame_ids[0]]
 
 
+func _initial_object_transform(object: Dictionary) -> Transform3D:
+	if not _uses_static_transform_animation_fallback(object):
+		return object.transform
+	var object_animation: Dictionary = object.object_animation
+	var frames: Dictionary = object_animation.get("frames", {})
+	if frames.is_empty():
+		return object.transform
+	var frame_ids := frames.keys()
+	frame_ids.sort()
+	for frame_id: int in frame_ids:
+		if _object_transform_frame_limit > 0 \
+		and frame_id >= _object_transform_frame_limit:
+			break
+		var frame := frames[frame_id] as Transform3D
+		if frame.is_finite():
+			return frame
+	return object.transform
+
+
+func _uses_static_transform_animation_fallback(object: Dictionary) -> bool:
+	var fallback_names: Dictionary = STATIC_TRANSFORM_ANIMATION_FALLBACKS.get(
+		_source_file_name, {}
+	)
+	return fallback_names.has(String(object.name))
+
+
 ## Sign of the object's own runtime transform: -1 when it mirrors its content.
 ## Consistently mirrored animations override the static basis because their
 ## keys replace it as soon as any clip plays.
 func _object_parity(object: Dictionary, uses_mirrored_content: bool) -> int:
 	if uses_mirrored_content:
 		return -1
-	return -1 if (object.transform as Transform3D).basis.determinant() < 0.0 else 1
+	return -1 \
+		if _initial_object_transform(object).basis.determinant() < 0.0 \
+		else 1
 
 
 ## Objects placed under a net-mirrored transform are frequently authored
@@ -1357,12 +1418,27 @@ func _add_animation_track(
 
 	var frame_ids := frames.keys()
 	frame_ids.sort()
+	var fallback_transform := _to_godot_transform(
+		_initial_object_transform(object)
+	)
+	if uses_mirrored_content:
+		fallback_transform *= LOCAL_Z_REFLECTION
+	fallback_transform = _sanitize_animation_transform(
+		fallback_transform, Transform3D.IDENTITY
+	)
 	for frame_id: int in frame_ids:
 		var transform := _to_godot_transform(frames[frame_id])
 		if uses_mirrored_content:
 			transform *= LOCAL_Z_REFLECTION
-		transform = _sanitize_animation_transform(transform)
+		# A few original XBF files contain corrupt, unreferenced tail frames.
+		# HK_Flamer_H0 is one: named clips end at frame 583, while several
+		# object timelines continue through frame 591 with Inf matrix values.
+		# Never serialize those values into a Godot animation. Holding the last
+		# valid pose also gives a deterministic result if a malformed frame is
+		# ever referenced by a clip.
+		transform = _sanitize_animation_transform(transform, fallback_transform)
 		anim.track_insert_key(track, frame_id / fps, transform)
+		fallback_transform = transform
 
 
 func _object_animation_is_consistently_mirrored(object: Dictionary) -> bool:
@@ -1388,6 +1464,8 @@ func _dense_object_animation_frames(object_animation: Dictionary) -> Dictionary:
 	var length := int(object_animation.get("length", 1))
 	if length <= 0:
 		length = 1
+	if _object_transform_frame_limit > 0:
+		length = mini(length, _object_transform_frame_limit)
 
 	var frame_ids := source_frames.keys()
 	frame_ids.sort()
@@ -1426,7 +1504,15 @@ func _lerp_transform(a: Transform3D, b: Transform3D, weight: float) -> Transform
 	)
 
 
-func _sanitize_animation_transform(transform: Transform3D) -> Transform3D:
+func _sanitize_animation_transform(
+	transform: Transform3D,
+	fallback: Transform3D
+	) -> Transform3D:
+	if not fallback.is_finite():
+		fallback = Transform3D.IDENTITY
+	if not transform.is_finite():
+		return fallback
+
 	var source_determinant := transform.basis.determinant()
 	var x := transform.basis.x
 	var y := transform.basis.y
@@ -1458,7 +1544,7 @@ func _sanitize_animation_transform(transform: Transform3D) -> Transform3D:
 		nz = -nz
 
 	transform.basis = Basis(nx * x_scale, ny * y_scale, nz * z_scale)
-	return transform
+	return transform if transform.is_finite() else fallback
 
 
 func _perpendicular_axis(axis: Vector3) -> Vector3:

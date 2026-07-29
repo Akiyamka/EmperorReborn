@@ -39,6 +39,7 @@ func _initialize() -> void:
 	_run_case("XBF padded halo anchor", _test_padded_halo_anchor)
 	_run_case("XBF animated halo anchors", _test_animated_halo_anchors)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case("XBF animation transforms remain finite", _test_xbf_animation_transforms_are_finite)
 	_run_case("AT Pillbox idle excludes its source fire range", _test_at_pillbox_idle_repair)
 	_run_case("XBF mech Move timelines retain authored speeds", _test_xbf_mech_motion_events)
 	_run_case(
@@ -667,6 +668,75 @@ func _test_xbf_animation_table_variants() -> bool:
 		for entry: Dictionary in xbf.animation_entries:
 			names.append(String(entry.get("name", "")))
 		_expect(names.has("Stationary"), "%s must expose Stationary" % file_name)
+	return true
+
+
+func _test_xbf_animation_transforms_are_finite() -> bool:
+	var path := "res://assets/raw_original_content/3DDATA/Units/HK_Flamer_H0.xbf"
+	var scene: PackedScene = ModelBakeBuilderScript.new().build(path)
+	_expect(scene != null, "HK_Flamer_H0 must build")
+	if scene == null:
+		return true
+
+	var root := scene.instantiate()
+	var player := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	_expect(player != null, "HK_Flamer_H0 must expose animation tracks")
+	if player != null:
+		var timeline := player.get_animation(&"timeline")
+		for node_path in [
+			"_0root_/_Fire/_box04",
+			"_0root_/_Fire/_box05",
+			"_0root_/_Fire/_box06",
+			"_0root_/_Fire/_box07",
+			"_0root_/_Fire/gunbone",
+			"_0root_/_Fire/_box08",
+			"_0root_/_Fire/_box09",
+			"_0root_/_Fire/_box10",
+			"_0root_/_Fire/_box11",
+		]:
+			var node := root.get_node(node_path) as Node3D
+			var track := timeline.find_track(
+				NodePath("%s:transform" % node_path), Animation.TYPE_VALUE
+			)
+			var first_transform := timeline.track_get_key_value(
+				track, 0
+			) as Transform3D
+			_expect(
+				node.transform.is_finite()
+					and node.transform.is_equal_approx(first_transform),
+				"%s must use its first valid animation frame as its static pose"
+					% node_path
+			)
+		for animation_name in player.get_animation_list():
+			var animation := player.get_animation(animation_name)
+			for track_index in animation.get_track_count():
+				var is_transform_track := String(
+					animation.track_get_path(track_index)
+				).ends_with(":transform")
+				if animation_name == &"timeline" and is_transform_track:
+					var final_key := animation.track_get_key_count(track_index) - 1
+					_expect(
+						final_key < 0
+						or animation.track_get_key_time(track_index, final_key)
+							<= 583.0 / 20.0,
+						"HK_Flamer_H0 timeline transform tracks must exclude "
+							+ "the corrupt unreferenced frames after 583"
+					)
+				for key_index in animation.track_get_key_count(track_index):
+					var value: Variant = animation.track_get_key_value(
+						track_index, key_index
+					)
+					if value is Transform3D:
+						_expect(
+							(value as Transform3D).is_finite(),
+							"%s track %s key %d must be finite"
+								% [
+									animation_name,
+									animation.track_get_path(track_index),
+									key_index,
+								]
+						)
+	root.free()
 	return true
 
 

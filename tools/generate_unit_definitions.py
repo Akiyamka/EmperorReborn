@@ -41,6 +41,8 @@ COMBAT_MANIFEST_PATH = COMBAT_DIR / "generated_combat_manifest.gd"
 COMBAT_SETTINGS_PATH = COMBAT_DIR / "combat_settings.tres"
 BUILDING_DEFINITION_DIR = ROOT / "resources/buildings/definitions"
 BUILDING_MANIFEST_PATH = ROOT / "resources/buildings/generated_building_manifest.gd"
+BUILDING_SCENE_DIR = ROOT / "scenes/buildings"
+CONVERTED_BUILDING_DIR = ROOT / "assets/converted/buildings"
 GAME_SETTINGS_PATH = ROOT / "resources/rules/game_settings.tres"
 SPICE_DEFINITION_PATH = ROOT / "resources/world/spice_mound.tres"
 CONFIG_RE = re.compile(r'^config_id = &"([^"]+)"$', re.MULTILINE)
@@ -60,6 +62,16 @@ TURRET_DEPLOY_GATE_OVERRIDES = {
     "IMADVSardaukarKnife": {"disabled_when_undeployed": False},
     "IMADVSardaukarGun": {"disabled_when_deployed": False},
 }
+BUILDING_ID_PREFIXES = sorted([
+    "GPSFX", "AKIN", "ATIN", "CNIN", "GPIN", "HKIN", "HLIN", "INFR",
+    "INGU", "INIM", "INIX", "INTL", "ORIN", "TLIN",
+    "AT", "FR", "GU", "HK", "IM", "IN", "IX", "OR", "SM", "TL",
+], key=len, reverse=True)
+# These two compatibility values were authored when rally-point command
+# eligibility moved from AiExit to AiManufacturing. They are not present in
+# the normalized source column, so keep them explicit until that data is
+# reconciled with Rules.txt.
+BUILDING_AI_MANUFACTURING_OVERRIDES = {"HKSmWindtrap", "ORSmWindtrap"}
 
 
 def godot_string(value: str) -> str:
@@ -120,6 +132,35 @@ def resource_text(script_class: str, script_path: str, properties: list[str]) ->
         "[resource]",
         'script = ExtResource("1_definition")',
         *properties,
+        "",
+    ])
+
+
+def snake_case(value: str) -> str:
+    return re.sub(
+        r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])",
+        "_",
+        value,
+    ).lower()
+
+
+def building_scene_stem(config_id: str) -> str:
+    folded = config_id.casefold()
+    for prefix in BUILDING_ID_PREFIXES:
+        if folded.startswith(prefix.casefold()) and len(config_id) > len(prefix):
+            suffix = snake_case(config_id[len(prefix):]).lstrip("_")
+            return f"{prefix.lower()}_{suffix}"
+    return snake_case(config_id)
+
+
+def building_scene_text(config_id: str, converted_scene_path: str) -> str:
+    return "\n".join([
+        "[gd_scene load_steps=2 format=3]",
+        "",
+        f'[ext_resource type="PackedScene" path="{converted_scene_path}" id="1_building"]',
+        "",
+        f'[node name="{config_id}" instance=ExtResource("1_building")]',
+        f"config_id = {string_name(config_id)}",
         "",
     ])
 
@@ -448,6 +489,12 @@ def building_definition_text(row: sqlite3.Row, occupy_rows: list[str], links: li
             f"power_generated = {int(row['power_generated'] or 0)}",
             f"can_be_primary = {bool_text(row['can_be_primary'])}",
             *(["ai_exit = true"] if bool(row["ai_exit"]) else []),
+            *(
+                ["ai_manufacturing = true"]
+                if bool(row["ai_manufacturing"])
+                or str(row["name"]) in BUILDING_AI_MANUFACTURING_OVERRIDES
+                else []
+            ),
             f"is_construction_yard = {bool_text(row['is_con_yard'])}",
             f"upgraded_primary_required = {bool_text(row['upgraded_primary_required'])}",
             f"primary_building_ids = {array_text(primary)}",
@@ -615,6 +662,8 @@ def main() -> int:
         ) and ok
 
         building_paths: dict[str, str] = {}
+        building_scene_paths: dict[str, str] = {}
+        building_scene_outputs: dict[str, str] = {}
         for building in connection.execute("""
             SELECT b.*, t.name AS turret_name, h.name AS house_name,
                    bg.name AS building_group_name, armour.name AS armour_name,
@@ -628,8 +677,32 @@ def main() -> int:
               LEFT JOIN art_configs art ON art.entity_type='building' AND art.entity_id=b.id
              ORDER BY b.id
         """):
-            output = BUILDING_DEFINITION_DIR / f"{building['name']}.tres"
-            building_paths[str(building["name"])] = "res://" + output.relative_to(ROOT).as_posix()
+            building_id = str(building["name"])
+            output = BUILDING_DEFINITION_DIR / f"{building_id}.tres"
+            building_paths[building_id] = "res://" + output.relative_to(ROOT).as_posix()
+            converted = (
+                CONVERTED_BUILDING_DIR / building_id / f"{building_id}.scn"
+            )
+            if converted.exists():
+                scene_output = (
+                    BUILDING_SCENE_DIR / f"{building_scene_stem(building_id)}.tscn"
+                )
+                previous_id = building_scene_outputs.get(scene_output.name)
+                if previous_id is not None:
+                    raise ValueError(
+                        f"building scene filename collision: {previous_id} and "
+                        f"{building_id} both map to {scene_output.name}"
+                    )
+                building_scene_outputs[scene_output.name] = building_id
+                converted_path = "res://" + converted.relative_to(ROOT).as_posix()
+                building_scene_paths[building_id] = (
+                    "res://" + scene_output.relative_to(ROOT).as_posix()
+                )
+                ok = write_or_check(
+                    scene_output,
+                    building_scene_text(building_id, converted_path),
+                    args.check,
+                ) and ok
             occupy = unit_list(connection, "SELECT pattern FROM building_occupy_rows WHERE building_id=? ORDER BY row_index", int(building["id"]))
             # Converted models negate source Z when moving from Emperor's
             # left-handed space to Godot. Runtime footprint row 0 points toward
@@ -647,7 +720,7 @@ def main() -> int:
             ok = write_or_check(output, building_definition_text(building, occupy, links, primary, secondary, roles, deploy_points), args.check) and ok
         ok = write_or_check(
             BUILDING_MANIFEST_PATH,
-            manifest_text(building_paths, {}),
+            manifest_text(building_paths, building_scene_paths),
             args.check,
         ) and ok
 
@@ -684,7 +757,8 @@ def main() -> int:
         print(
             f"generated {len(definition_paths)} units, {len(turret_paths)} turrets, "
             f"{len(bullet_paths)} bullets, {len(warhead_paths)} warheads and "
-            f"{len(scene_paths)} scene mappings"
+            f"{len(scene_paths)} unit scenes, {len(building_paths)} buildings and "
+            f"{len(building_scene_paths)} building scenes"
         )
     return 0 if ok else 1
 

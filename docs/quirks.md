@@ -81,6 +81,30 @@ it as ordinary geometry leaves its mesh visible during idle animations.
 is enabled for `Fire_0`, matching the existing handling of `bigflash`
 objects without broadening the typo to unrelated models.
 
+### Harkonnen Flamer has corrupt static transforms and trailing frames
+
+**Observed data:** `HK_Flamer_H0.xbf` declares 592 object-animation frames,
+but its final named clip (`Stationary`) ends at frame 583. Several object
+transforms in frames 584..591 contain `Inf`, while `!#box11` contains finite
+but implausible values around `2.9e8`. No animation-table entry references
+these eight trailing frames. The stored static transforms for `!#box04` through
+`!#box11` (including `gunbone`) are corrupted in the same way: three contain
+`Inf`, and the remaining matrices contain values as large as roughly `1e33`.
+Their animation timelines all begin with valid authored transforms.
+
+**Original-engine quirk:** The unused tail is malformed source data rather
+than part of an authored action. The original engine also replaced the bad
+static matrices from animation before rendering. Baking them verbatim makes
+Godot's 3D editor instantiate the invalid static pose before autoplay can
+apply `Stationary`, producing non-finite renderer transforms.
+
+**EmperorReborn compatibility decision:** For the nine affected nodes,
+`ModelBakeBuilder` uses the first valid animation frame as the static pose and
+omits object-transform keys after frame 583. Named clips, vertex animation,
+and FX timing remain unchanged. As a general safety invariant, any other
+non-finite source transform holds the preceding valid pose instead of being
+serialized into a converted scene.
+
 ## Units
 
 ### Advanced Sardaukar knife is flagged as a deployed-only weapon
