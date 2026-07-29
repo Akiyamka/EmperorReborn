@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://assets/converted/buildings/HKFactory/HKFactory.scn" id="1_building"]
+
+[node name="HKFactory" instance=ExtResource("1_building")]
+config_id = &"HKFactory"
