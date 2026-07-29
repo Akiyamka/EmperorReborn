@@ -22,7 +22,6 @@
 [ext_resource type="PackedScene" path="res://scenes/units/hk_buzzsaw.tscn" id="19_hgmnm"]
 [ext_resource type="PackedScene" path="res://scenes/units/hk_devastator.tscn" id="20_p2qqq"]
 [ext_resource type="PackedScene" path="res://scenes/units/hk_engineer.tscn" id="21_gdh57"]
-[ext_resource type="PackedScene" path="res://scenes/units/hk_flamer.tscn" id="23_vnp7h"]
 [ext_resource type="PackedScene" path="res://scenes/units/hk_general.tscn" id="24_7mh2h"]
 [ext_resource type="PackedScene" path="res://scenes/units/hk_gunship.tscn" id="25_4uvq8"]
 [ext_resource type="PackedScene" path="res://scenes/units/hk_ink_vine.tscn" id="26_cohx3"]
@@ -81,36 +80,152 @@ metadata/_edit_lock_ = true
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
 
+[node name="FRFremen" parent="Units" unique_id=1607891181 instance=ExtResource("14_5l5ba")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 259.38043, 7.864619, 200.60196)
+owner_player_id = 1
+
+[node name="FRADVFremen" parent="Units" unique_id=1545689906 instance=ExtResource("8_7in77")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 269.68854, 8.205178, 201.11961)
+owner_player_id = 1
+
+[node name="GUMaker" parent="Units" unique_id=1836150926 instance=ExtResource("16_6gj2j")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 247.3889, 8.746647, 192.96631)
+owner_player_id = 1
+
+[node name="GUScavenger" parent="Units" unique_id=1747247209 instance=ExtResource("17_hb6dm")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 266.3688, 11.893553, 198.79376)
+owner_player_id = 1
+
+[node name="HKAssault" parent="Units" unique_id=446030649 instance=ExtResource("18_qwf54")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 219.15727, 7.85959, 134.24199)
+owner_player_id = 1
+
+[node name="HKBuzzsaw" parent="Units" unique_id=1675676870 instance=ExtResource("19_hgmnm")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 244.74254, 8.380506, 197.44794)
+owner_player_id = 1
+
+[node name="HKDevastator" parent="Units" unique_id=167308700 instance=ExtResource("20_p2qqq")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 278.98108, 7.9144382, 195.41048)
+owner_player_id = 1
+
+[node name="HKEngineer" parent="Units" unique_id=1983573659 instance=ExtResource("21_gdh57")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 256.60397, 7.8592205, 196.50572)
+owner_player_id = 1
+
+[node name="HKFlame" parent="Units" unique_id=2125359358 instance=ExtResource("5_h47e7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 241.20491, 7.861271, 186.28966)
+owner_player_id = 1
+
+[node name="HKGeneral" parent="Units" unique_id=886736131 instance=ExtResource("24_7mh2h")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 251.2878, 7.882738, 191.84363)
+owner_player_id = 1
+
+[node name="HKGunship" parent="Units" unique_id=1453099759 instance=ExtResource("25_4uvq8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 252.15883, 8.818456, 185.63165)
+owner_player_id = 1
+
+[node name="HKInkVine" parent="Units" unique_id=1736732004 instance=ExtResource("26_cohx3")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 274.18878, 7.869121, 198.75278)
+owner_player_id = 1
+
+[node name="HKLightInf" parent="Units" unique_id=58348842 instance=ExtResource("27_1xx26")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 245.68431, 8.320654, 185.60156)
+owner_player_id = 1
+
+[node name="HKMissile" parent="Units" unique_id=39818686 instance=ExtResource("28_2at75")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 235.70175, 7.90901, 197.42108)
+owner_player_id = 1
+
+[node name="HKTrooper" parent="Units" unique_id=48952192 instance=ExtResource("29_bghy6")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 220.25186, 8.415657, 140.17143)
+owner_player_id = 1
+
+[node name="IMADVSardaukar" parent="Units" unique_id=2120824385 instance=ExtResource("30_iaoq5")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 261.101, 7.8589344, 198.25658)
+owner_player_id = 1
+
+[node name="IMSardaukar" parent="Units" unique_id=1659313 instance=ExtResource("31_i3end")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 247.41972, 7.8610616, 200.23878)
+owner_player_id = 1
+
+[node name="IXProjector" parent="Units" unique_id=1972556953 instance=ExtResource("32_33d1w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 258.09222, 7.8575478, 188.08623)
+owner_player_id = 1
+
+[node name="NIABTank" parent="Units" unique_id=1667790914 instance=ExtResource("33_pm0tn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 248.35419, 7.869091, 213.98268)
+owner_player_id = 1
+
+[node name="ORAATrooper" parent="Units" unique_id=1793973300 instance=ExtResource("34_lbj1s")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 262.81406, 8.3203335, 217.29062)
+owner_player_id = 1
+
+[node name="OrdosAPC" parent="Units" unique_id=65022990 instance=ExtResource("35_cfq2o")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 238.6411, 7.865116, 207.14377)
+owner_player_id = 1
+
+[node name="ORChemical" parent="Units" unique_id=1226742760 instance=ExtResource("36_0l0x7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 257.91708, 7.899295, 213.18031)
+owner_player_id = 1
+
+[node name="ORDeviator" parent="Units" unique_id=1632924057 instance=ExtResource("37_ryw65")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 274.89713, 8.545216, 215.37152)
+owner_player_id = 1
+
+[node name="ORDustScout" parent="Units" unique_id=603277496 instance=ExtResource("38_qmw1e")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 264.49933, 7.940469, 210.548)
+owner_player_id = 1
+
+[node name="ORGeneral" parent="Units" unique_id=455280650 instance=ExtResource("39_7trp4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 253.12898, 7.8919773, 218.49637)
+owner_player_id = 1
+
+[node name="ORLaserTank" parent="Units" unique_id=34463397 instance=ExtResource("40_50577")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 281.67862, 7.856125, 214.05107)
+owner_player_id = 1
+
+[node name="SMQuad" parent="Units" unique_id=243369703 instance=ExtResource("41_j6xc8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 238.88432, 8.087298, 217.04028)
+owner_player_id = 1
+
+[node name="TLLeech" parent="Units" unique_id=5063584 instance=ExtResource("42_tiqsg")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 242.63347, 7.9240985, 176.70897)
+owner_player_id = 1
+
+[node name="TLContaminator" parent="Units" unique_id=1216382019 instance=ExtResource("43_8pc7f")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 271.30997, 7.85938, 211.93965)
+owner_player_id = 1
+
 [node name="ATKindjal" parent="Units" unique_id=1423984407 instance=ExtResource("7_5qtuu")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 255.6726, 7.996085, 161.36958)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 260.13147, 7.996085, 192.80467)
 owner_player_id = 1
 
 [node name="ATKindjal2" parent="Units" unique_id=49633457 instance=ExtResource("7_5qtuu")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 255.6726, 7.996085, 161.36958)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 224.45879, 7.996085, 134.74017)
 owner_player_id = 1
 
 [node name="ORKobra" parent="Units" unique_id=904303402 instance=ExtResource("8_njd2c")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 264.6678, 7.886095, 158.19226)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 225.55943, 7.886095, 129.15335)
 owner_player_id = 1
 
 [node name="ORMortar" parent="Units" unique_id=1739894269 instance=ExtResource("9_5qtuu")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 246.51733, 8.07961, 152.32619)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 228.15776, 8.07961, 136.73697)
 owner_player_id = 1
 
 [node name="ATMongoose" parent="Units" unique_id=290541654 instance=ExtResource("10_7in77")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 265.9305, 7.8870974, 151.4429)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 270.38937, 7.8870974, 182.87799)
 owner_player_id = 1
 
 [node name="ATMinotaurus" parent="Units" unique_id=102659162 instance=ExtResource("11_frhj3")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 257.01147, 7.882458, 151.91292)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 261.47034, 7.882458, 183.348)
 owner_player_id = 1
 
 [node name="ATSniper" parent="Units" unique_id=1253552339 instance=ExtResource("10_6pt2m")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 234.48616, 9.646929, 162.75644)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 234.48616, 9.646929, 134.77823)
 owner_player_id = 1
 
 [node name="ATTrike" parent="Units" unique_id=633443687 instance=ExtResource("11_nrmfh")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 247.80287, 8.494999, 167.64459)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 252.26173, 8.494999, 199.07968)
 owner_player_id = 1
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1178120540]
@@ -152,123 +267,3 @@ horizontal_alignment = 2
 
 [node name="SidePanel" parent="HUD" unique_id=1902101368 instance=ExtResource("9_nabld")]
 layout_mode = 3
-
-[node name="FRFremen" parent="." unique_id=1607891181 instance=ExtResource("14_5l5ba")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 254.92155, 7.864619, 169.16687)
-owner_player_id = 1
-
-[node name="FRADVFremen" parent="." unique_id=1545689906 instance=ExtResource("8_7in77")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 265.22968, 8.205178, 169.68452)
-owner_player_id = 1
-
-[node name="GUMaker" parent="." unique_id=1836150926 instance=ExtResource("16_6gj2j")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 242.93004, 8.746647, 161.53122)
-owner_player_id = 1
-
-[node name="GUScavenger" parent="." unique_id=1747247209 instance=ExtResource("17_hb6dm")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 261.90994, 11.893553, 167.35867)
-owner_player_id = 1
-
-[node name="HKAssault" parent="." unique_id=446030649 instance=ExtResource("18_qwf54")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 235.52895, 7.85959, 146.71002)
-owner_player_id = 1
-
-[node name="HKBuzzsaw" parent="." unique_id=1675676870 instance=ExtResource("19_hgmnm")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 240.28368, 8.380506, 166.01285)
-owner_player_id = 1
-
-[node name="HKDevastator" parent="." unique_id=167308700 instance=ExtResource("20_p2qqq")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 274.52222, 7.9144382, 163.97539)
-owner_player_id = 1
-
-[node name="HKEngineer" parent="." unique_id=1983573659 instance=ExtResource("21_gdh57")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 252.14511, 7.8592205, 165.07063)
-owner_player_id = 1
-
-[node name="HKFlame" parent="." unique_id=2125359358 instance=ExtResource("5_h47e7")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 236.74605, 7.861271, 154.85457)
-owner_player_id = 1
-
-[node name="HKFlamer" parent="." unique_id=364266521 instance=ExtResource("23_vnp7h")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.8471302e+26, 1.5503706e+30, 2.1679219e+26)
-owner_player_id = 1
-
-[node name="HKGeneral" parent="." unique_id=886736131 instance=ExtResource("24_7mh2h")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 246.82893, 7.882738, 160.40854)
-owner_player_id = 1
-
-[node name="HKGunship" parent="." unique_id=1453099759 instance=ExtResource("25_4uvq8")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 247.69997, 8.818456, 137.80516)
-owner_player_id = 1
-
-[node name="HKInkVine" parent="." unique_id=1736732004 instance=ExtResource("26_cohx3")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 269.72992, 7.869121, 167.31769)
-owner_player_id = 1
-
-[node name="HKLightInf" parent="." unique_id=58348842 instance=ExtResource("27_1xx26")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 241.22545, 8.320654, 145.46393)
-owner_player_id = 1
-
-[node name="HKMissile" parent="." unique_id=39818686 instance=ExtResource("28_2at75")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 226.90306, 7.90901, 153.2195)
-owner_player_id = 1
-
-[node name="HKTrooper" parent="." unique_id=48952192 instance=ExtResource("29_bghy6")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 249.10535, 8.415657, 156.95164)
-owner_player_id = 1
-
-[node name="IMADVSardaukar" parent="." unique_id=2120824385 instance=ExtResource("30_iaoq5")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 256.64215, 7.8589344, 166.82149)
-owner_player_id = 1
-
-[node name="IMSardaukar" parent="." unique_id=1659313 instance=ExtResource("31_i3end")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 242.96086, 7.8610616, 168.8037)
-owner_player_id = 1
-
-[node name="IXProjector" parent="." unique_id=1972556953 instance=ExtResource("32_33d1w")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 253.63338, 7.8575478, 156.65114)
-owner_player_id = 1
-
-[node name="NIABTank" parent="." unique_id=1667790914 instance=ExtResource("33_pm0tn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 243.89532, 7.869091, 182.54759)
-owner_player_id = 1
-
-[node name="ORAATrooper" parent="." unique_id=1793973300 instance=ExtResource("34_lbj1s")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 258.3552, 8.3203335, 185.85553)
-owner_player_id = 1
-
-[node name="OrdosAPC" parent="." unique_id=65022990 instance=ExtResource("35_cfq2o")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 234.18224, 7.865116, 175.70868)
-owner_player_id = 1
-
-[node name="ORChemical" parent="." unique_id=1226742760 instance=ExtResource("36_0l0x7")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 253.45822, 7.899295, 181.74522)
-owner_player_id = 1
-
-[node name="ORDeviator" parent="." unique_id=1632924057 instance=ExtResource("37_ryw65")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 270.43826, 8.545216, 183.93643)
-owner_player_id = 1
-
-[node name="ORDustScout" parent="." unique_id=603277496 instance=ExtResource("38_qmw1e")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 260.04047, 7.940469, 179.11292)
-owner_player_id = 1
-
-[node name="ORGeneral" parent="." unique_id=455280650 instance=ExtResource("39_7trp4")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 248.67012, 7.8919773, 187.06128)
-owner_player_id = 1
-
-[node name="ORLaserTank" parent="." unique_id=34463397 instance=ExtResource("40_50577")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 277.21976, 7.856125, 182.61598)
-owner_player_id = 1
-
-[node name="SMQuad" parent="." unique_id=243369703 instance=ExtResource("41_j6xc8")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 234.42546, 8.087298, 185.6052)
-owner_player_id = 1
-
-[node name="TLLeech" parent="." unique_id=5063584 instance=ExtResource("42_tiqsg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 225.30797, 7.9240985, 167.00943)
-owner_player_id = 1
-
-[node name="TLContaminator" parent="." unique_id=1216382019 instance=ExtResource("43_8pc7f")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 266.8511, 7.85938, 180.50456)
-owner_player_id = 1

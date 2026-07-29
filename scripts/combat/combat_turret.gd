@@ -1233,9 +1233,17 @@ func start_authored_fire_fx(
 	var casing_started := _start_model_casing_timeline(
 		animation_name, parent, playback_speed
 	)
-	var particles_started := _start_model_particle_timelines(
-		animation_name, parent, playback_speed
-	)
+	# Non-casing model banks on ordinary guns describe short muzzle smoke and
+	# blast accents, not sustained projectile streams. Replaying their authored
+	# speed as forward travel turns those accents into long rows of fast puffs.
+	# Continuous bullets are the only weapons whose Fire banks represent a
+	# visible stream; discrete weapons still retain their separate casing bank
+	# and TurretMuzzleFlash effect.
+	var particles_started := false
+	if is_continuous_bullet():
+		particles_started = _start_model_particle_timelines(
+			animation_name, parent, playback_speed
+		)
 	_authored_fire_fx_active = casing_started or particles_started
 	return _authored_fire_fx_active
 

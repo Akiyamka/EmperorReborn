@@ -48,6 +48,9 @@ const ORChemicalModelScene := preload(
 const HKTrooperModelScene := preload(
 	"res://assets/converted/models/HK_Trooper_H0/HK_Trooper_H0.scn"
 )
+const HKAssaultModelScene := preload(
+	"res://assets/converted/models/HK_assault_H0/HK_assault_H0.scn"
+)
 const ORAATrooperModelScene := preload(
 	"res://assets/converted/models/OR_AATrooper_H0/OR_AATrooper_H0.scn"
 )
@@ -254,6 +257,10 @@ func _initialize() -> void:
 		"model FX banks emit authored casing counts and sizes",
 		_test_model_fx_bank_casings
 	)
+	_run_case(
+		"discrete Fire clips do not turn muzzle accents into particle streams",
+		_test_discrete_fire_skips_particle_streams
+	)
 	await _run_async_case(
 		"flame and chemical Fire clips emit authored particle streams",
 		_test_model_fx_bank_streams
@@ -308,6 +315,10 @@ func _initialize() -> void:
 	_run_case(
 		"a deployed Kindjal fires Kindjal_B and never Pistol_B, requiring hull-assist aiming",
 		_test_kindjal_deployed_fire
+	)
+	_run_case(
+		"deployed fire completion does not replay its first-frame bigflash",
+		_test_deployed_fire_completion_preserves_hidden_flash
 	)
 	_run_case(
 		"a deployed Kobra tracks its turret with the hull frozen",
@@ -1358,6 +1369,36 @@ func _test_model_fx_bank_casings() -> void:
 	kobra_turret.cancel_authored_fire_fx()
 	_free_muzzle_effects()
 	kobra_model.free()
+
+
+func _test_discrete_fire_skips_particle_streams() -> void:
+	var cases := [
+		[ATKindjalModelScene, &"ATKindjalBigGun", 1, &"Deployed_Fire"],
+		[ORKobraModelScene, &"ORKobraUndeployedGun", 0, &"Fire_0"],
+		[HKAssaultModelScene, &"HKAssaultTankBase", 0, &"Fire_0"],
+		[HKTrooperModelScene, &"HKTrooperGun", 0, &"Fire_0"],
+		[ATSniperModelScene, &"ATSniperGun", 0, &"Fire_0"],
+		[ORMortarModelScene, &"ORMortarInfBigGun", 1, &"Deployed_Fire"],
+	]
+	for discrete_case: Array in cases:
+		var model := (discrete_case[0] as PackedScene).instantiate() as Node3D
+		root.add_child(model)
+		var turret = CombatTurretScript.new()
+		var turret_id := StringName(discrete_case[1])
+		_expect(
+			turret.configure(turret_id)
+			and turret.bind_model(model, int(discrete_case[2]))
+			and not turret.is_continuous_bullet(),
+			"%s must bind as a discrete weapon" % String(turret_id)
+		)
+		turret.start_authored_fire_fx(StringName(discrete_case[3]), root)
+		_expect(
+			turret._particle_timeline_tweens.is_empty(),
+			"%s must not schedule its muzzle smoke/blast bank as a forward stream"
+				% String(turret_id)
+		)
+		turret.cancel_authored_fire_fx()
+		model.free()
 
 
 func _test_model_fx_bank_streams() -> void:
@@ -3420,6 +3461,78 @@ func _test_kindjal_deployed_fire() -> void:
 		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
 			projectile.free()
 	kindjal.free()
+
+
+func _test_deployed_fire_completion_preserves_hidden_flash() -> void:
+	var cases := [
+		[&"ATKindjal", ATKindjalModelScene],
+		[&"ORMortar", ORMortarModelScene],
+	]
+	for deployed_case: Array in cases:
+		var unit = UnitScene.instantiate()
+		unit.config_id = StringName(deployed_case[0])
+		root.add_child(unit)
+		unit.replace_visual_scene(deployed_case[1] as PackedScene)
+		var deploy_started: bool = unit.deploy()
+		unit.finish_deployment(true)
+		_expect(
+			deploy_started and unit.is_deployed(),
+			"%s must enter its deployed pose" % String(deployed_case[0])
+		)
+		var player := unit.get_node("VisualRoot").find_child(
+			"AnimationPlayer", true, false
+		) as AnimationPlayer
+		var animation := player.get_animation(&"Deployed_Fire") \
+			if player != null else null
+		var flash: Node3D
+		if animation != null:
+			var animation_root := player.get_node(player.root_node)
+			for track_index in animation.get_track_count():
+				var path := String(animation.track_get_path(track_index))
+				if not path.to_lower().contains("bigflash") \
+				or not path.ends_with(":transform") \
+				or animation.track_get_key_count(track_index) < 2:
+					continue
+				var first := animation.track_get_key_value(
+					track_index, 0
+				) as Transform3D
+				var last := animation.track_get_key_value(
+					track_index,
+					animation.track_get_key_count(track_index) - 1
+				) as Transform3D
+				if first.basis.get_scale().length() \
+				<= last.basis.get_scale().length() * 2.0:
+					continue
+				flash = animation_root.get_node_or_null(
+					NodePath(path.get_slice(":", 0))
+				) as Node3D
+				break
+		_expect(
+			player != null and animation != null and flash != null,
+			"%s Deployed_Fire must expose its shrinking bigflash track"
+				% String(deployed_case[0])
+		)
+		if player == null or animation == null or flash == null:
+			unit.free()
+			continue
+		player.play(&"Deployed_Fire")
+		player.advance(animation.length)
+		var hidden_end_scale := flash.scale
+		unit._weapon_fire_sequences[1] = {
+			"player": player,
+			"turret": null,
+			"blocking": true,
+			"shots_emitted": 0,
+		}
+		unit._finish_fire_sequence_for(1)
+		_expect(
+			flash.scale.is_equal_approx(hidden_end_scale),
+			(
+				"%s fire completion must retain the hidden final bigflash pose "
+				+ "until Deploy_Gun_Hold is evaluated"
+			) % String(deployed_case[0])
+		)
+		unit.free()
 
 
 func _test_kobra_deployed_hull_frozen() -> void:

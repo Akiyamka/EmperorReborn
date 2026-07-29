@@ -1566,7 +1566,11 @@ func _finish_fire_sequence_for(weapon_index: int) -> void:
 	_weapon_fire_sequences.erase(weapon_index)
 	var player := state.get("player") as AnimationPlayer
 	if player != null and is_instance_valid(player):
-		player.stop()
+		# stop() without keep_state rewinds the just-finished Fire clip to its
+		# first frame immediately. Deployed Kindjal/Mortar clips begin with a
+		# large embedded bigflash, while Deploy_Gun_Hold is not evaluated until
+		# the next animation tick, producing a duplicate one-frame muzzle flash.
+		player.stop(true)
 	var turret = state.get("turret")
 	if turret != null:
 		turret.cancel_authored_fire_fx()
@@ -1586,7 +1590,7 @@ func _cancel_all_fire_sequences(restore_idle := true) -> void:
 		had_blocking = had_blocking or bool(state.get("blocking", false))
 		var player := state.get("player") as AnimationPlayer
 		if player != null and is_instance_valid(player):
-			player.stop()
+			player.stop(true)
 		var turret = state.get("turret")
 		if turret != null:
 			turret.cancel_authored_fire_fx()
@@ -1613,7 +1617,7 @@ func _cancel_blocking_fire_sequences() -> void:
 			continue
 		var player := state.get("player") as AnimationPlayer
 		if player != null and is_instance_valid(player):
-			player.stop()
+			player.stop(true)
 		var turret = state.get("turret")
 		if turret != null:
 			turret.cancel_authored_fire_fx()
@@ -2693,7 +2697,10 @@ func _hold_deployed_pose(player: AnimationPlayer) -> void:
 	var animation := player.get_animation(DEPLOYED_HOLD_ANIMATION)
 	if animation != null:
 		animation.loop_mode = Animation.LOOP_LINEAR
-	player.stop()
+	# Preserve the hidden final bigflash pose until the hold clip receives its
+	# first animation tick. Rewinding the completed Deployed_Fire here exposes
+	# its large first-frame flash for one rendered frame.
+	player.stop(true)
 	player.play(DEPLOYED_HOLD_ANIMATION)
 	_restore_combat_turret_poses()
 
@@ -2732,7 +2739,10 @@ func _idle_animation_weight(animation_name: StringName) -> float:
 
 
 func _play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
-	player.stop()
+	# Keep the outgoing pose until the newly played clip is evaluated. Resetting
+	# the outgoing animation here can expose its first-frame effects for the
+	# remainder of the current rendered frame.
+	player.stop(true)
 	player.play(animation_name)
 	_restore_combat_turret_poses()
 
