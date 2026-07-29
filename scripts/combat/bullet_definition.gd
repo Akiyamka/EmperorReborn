@@ -40,6 +40,8 @@ extends Resource
 @export var linger_damage: float
 @export var explosion_type_id: StringName
 @export var explosion_effect_ids: Array[StringName] = []
+## Original ExplosionType.DamageToTile value. Positive values leave a crater
+## decal where a ground-capable detonation reaches the terrain.
+@export var damage_to_tile: float
 @export_file("*.scn", "*.tscn") var projectile_scene_path: String
 @export var impact_scene_paths: Dictionary = {}
-

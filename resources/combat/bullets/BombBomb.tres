@@ -43,5 +43,6 @@ linger_duration = 0
 linger_damage = 0
 explosion_type_id = &"DHBigExplosion"
 explosion_effect_ids = [&"DHBigExplosion"]
+damage_to_tile = 100
 projectile_scene_path = ""
 impact_scene_paths = {&"DHBigExplosion": "res://assets/converted/impact_effects/dhbigexplosion/dhbigexplosion.scn"}

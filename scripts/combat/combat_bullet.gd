@@ -96,6 +96,10 @@ func explosion_visual_scene(effect_id: StringName) -> PackedScene:
 	return impact_visual_scenes.get(effect_id) as PackedScene
 
 
+func damage_to_tile() -> float:
+	return maxf(float(config.damage_to_tile), 0.0) if config != null else 0.0
+
+
 func friendly_damage_amount() -> float:
 	return clampf(float(config.friendly_damage_amount), 0.0, 100.0) \
 		if config != null else 0.0

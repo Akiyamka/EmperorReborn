@@ -3,6 +3,7 @@ extends Node3D
 
 const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
 const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
+const CombatGroundDecalScript := preload("res://scripts/combat/combat_ground_decal.gd")
 const CombatLingerEffectScript := preload("res://scripts/combat/combat_linger_effect.gd")
 
 ## A physical, world-space delivery instance for one CombatBullet payload.
@@ -736,6 +737,7 @@ func _resolve_impact(direct_target: Object, world_position: Vector3) -> void:
 	if explosion_type != &"" or not explosion_effects.is_empty():
 		explosion_requested.emit(explosion_type, explosion_effects, world_position)
 	_spawn_explosion_visuals(world_position)
+	_spawn_ground_decal(direct_target, world_position)
 	_spawn_linger_effect(direct_target, world_position)
 
 
@@ -768,6 +770,30 @@ func _spawn_explosion_visuals(world_position: Vector3) -> void:
 		get_parent().add_child(effect)
 		if not effect.configure(effect_id, scene, world_position):
 			effect.free()
+
+
+func _spawn_ground_decal(direct_target: Object, world_position: Vector3) -> void:
+	if (
+		bullet == null
+		or bullet.damage_to_tile() <= 0.0
+		or get_parent() == null
+		or not get_parent().is_inside_tree()
+	):
+		return
+	# MissileHit also belongs to air-only projectiles. Their detonation does not
+	# touch a terrain tile and therefore must not paint a crater underneath an
+	# aircraft.
+	if (
+		direct_target != null
+		and is_instance_valid(direct_target)
+		and direct_target.has_method("combat_is_airborne")
+		and bool(direct_target.call("combat_is_airborne"))
+	):
+		return
+	var ground_decal = CombatGroundDecalScript.new()
+	get_parent().add_child(ground_decal)
+	if not ground_decal.configure(bullet.damage_to_tile(), world_position):
+		ground_decal.free()
 
 
 func _finish_impact(reason: StringName, world_position: Vector3) -> void:

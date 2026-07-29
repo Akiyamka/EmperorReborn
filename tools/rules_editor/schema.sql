@@ -214,6 +214,8 @@ CREATE TABLE turrets (
 
 CREATE TABLE explosion_configs (
     explosion_type_id        INTEGER PRIMARY KEY REFERENCES explosion_types(id) ON DELETE CASCADE,
+    -- Геометрия ландшафта статична; положительный DamageToTile задаёт
+    -- остающийся на тайле кратер/декаль.
     damage_to_tile           REAL,
     face_camera               INTEGER,  -- bool
     chained_explosion_type_id INTEGER REFERENCES explosion_types(id)

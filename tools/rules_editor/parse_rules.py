@@ -118,6 +118,17 @@ def get_data_section(data_secs, data_secs_lower, name):
         return data_secs.get(exact_key)
     return None
 
+
+def get_all_data_sections_casefold(data_secs, name):
+    """Return every occurrence of a logical section, including case variants."""
+    result = []
+    folded_name = name.lower()
+    for section_name, occurrences in data_secs.items():
+        if section_name.lower() == folded_name:
+            result.extend(occurrences)
+    return sorted(result, key=lambda occurrence: occurrence[0])
+
+
 CATEGORY_LISTS = [
     'BuildingTypes', 'UnitTypes', 'TurretTypes', 'BulletTypes', 'ExplosionTypes',
     'WarheadTypes', 'ArmourTypes', 'SplatTypes', 'CrateTypes', 'SpiceMoundTypes',
@@ -1002,13 +1013,23 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
     # explosion_configs (DamageToTile/FaceCamera) для тех explosion-имён,
     # у которых есть собственное тело секции
     for idx, ename in enumerate(order.get('ExplosionTypes', [])):
-        occs = get_data_section(data_secs, data_secs_lower, ename)
+        occs = get_all_data_sections_casefold(data_secs, ename)
         if not occs:
             continue
-        start, body = occs[0]
-        used = set()
         row = {}
-        apply_fields(body, used, EXPLOSION_CONFIG_SCALAR, {}, reg, 'explosion_config', row, overflow)
+        # Rules.txt may extend one logical explosion in several sections.
+        # DHBigExplosion, for example, declares FaceCamera first and
+        # DamageToTile later; InkvineExplosion also differs only in casing.
+        # Merge every occurrence in source order so the normalized config
+        # retains all authored presentation/terrain fields.
+        for _start, body in occs:
+            used = set()
+            occurrence = {}
+            apply_fields(
+                body, used, EXPLOSION_CONFIG_SCALAR, {}, reg,
+                'explosion_config', occurrence, overflow
+            )
+            row.update(occurrence)
         if row:
             eid = reg.resolve('explosion_types', ename)
             cur.execute(

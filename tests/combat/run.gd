@@ -413,6 +413,20 @@ func _free_impact_effects() -> void:
 			child.free()
 
 
+func _ground_decals() -> Array[Node3D]:
+	var result: Array[Node3D] = []
+	for child in root.get_children():
+		if child is Node3D and child.has_meta("combat_ground_decal"):
+			result.append(child as Node3D)
+	return result
+
+
+func _free_ground_decals() -> void:
+	for child in root.get_children():
+		if child.has_meta("combat_ground_decal"):
+			child.free()
+
+
 func _test_armour_matrix() -> void:
 	var bullet = CombatBulletScript.new(_combat_catalog.bullet(&"LMG_B"), _combat_catalog.warhead(&"LMG_W"))
 	_expect(bullet.is_hitscan(), "LMG_B's negative conceptual speed must make it hitscan")
@@ -523,6 +537,10 @@ func _test_bullet_delivery_rules() -> void:
 	_expect(is_equal_approx(mortar.friendly_damage_amount(), 50.0), "friendly splash amount must remain a percentage")
 	_expect(mortar.explosion_type() == &"ShellHit", "the bullet must retain its explosion presentation id")
 	_expect(mortar.explosion_effects() == ["ShellHit"], "all normalized explosion effects must stay available")
+	_expect(
+		is_equal_approx(mortar.damage_to_tile(), 30.0),
+		"ShellHit must retain its original DamageToTile crater strength"
+	)
 	var kobra_shell = _runtime_bullet(rules, &"KobraHowitzer_B")
 	_expect(
 		kobra_shell.has_missile_trail()
@@ -1487,6 +1505,7 @@ func _test_model_fx_bank_streams() -> void:
 
 func _test_turret_projectile_launch() -> void:
 	var rules = root.get_node("Rules")
+	_free_ground_decals()
 	var model := ATMinotaurusModelScene.instantiate() as Node3D
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
@@ -1617,6 +1636,10 @@ func _test_turret_projectile_launch() -> void:
 		projectile.advance(10.0)
 		var shell_hits := _impact_effects(&"ShellHit")
 		var shell_hit: Node3D = shell_hits.front() if not shell_hits.is_empty() else null
+		var craters := _ground_decals()
+		var crater: Node3D = craters.front() if not craters.is_empty() else null
+		var crater_mesh := crater.get_node_or_null("Decal") as MeshInstance3D \
+			if crater != null else null
 		var impact_visual := shell_hit.get_node_or_null("Visual") as Node3D \
 			if shell_hit != null else null
 		var impact_player := impact_visual.find_child(
@@ -1630,6 +1653,14 @@ func _test_turret_projectile_launch() -> void:
 			and shell_hits.size() == 1
 			and shell_hit.global_position.is_equal_approx(expected_impact_position),
 			"one ShellHit visual must spawn at the resolved shell impact position"
+		)
+		_expect(
+			craters.size() == 1
+			and crater.global_position.distance_to(expected_impact_position) < 0.05
+			and is_equal_approx(float(crater.get_meta("damage_to_tile", 0.0)), 30.0)
+			and crater_mesh != null
+			and crater_mesh.mesh is PlaneMesh,
+			"ShellHit must leave one original-atlas crater decal on the ground"
 		)
 		var emitter_meshes := impact_visual.find_children(
 			"*", "MeshInstance3D", true, false
@@ -1711,11 +1742,13 @@ func _test_turret_projectile_launch() -> void:
 			muzzle_flash.free()
 		_free_muzzle_effects()
 		_free_impact_effects()
+		_free_ground_decals()
 	model.free()
 
 
 func _test_mongoose_launch_and_impact_fx() -> void:
 	var rules = root.get_node("Rules")
+	_free_ground_decals()
 	var model := ATMongooseModelScene.instantiate() as Node3D
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
@@ -1794,11 +1827,18 @@ func _test_mongoose_launch_and_impact_fx() -> void:
 	projectile.advance(1.0)
 	var missile_hits := _impact_effects(&"MissileHit")
 	var missile_hit: Node3D = missile_hits.front() if not missile_hits.is_empty() else null
+	var craters := _ground_decals()
 	_expect(
 		projectile.finish_reason == &"impact_ground"
 		and missile_hits.size() == 1
 		and missile_hit.global_position.is_equal_approx(target_position),
 		"one MissileHit composition must spawn at the resolved ground impact"
+	)
+	_expect(
+		craters.size() == 1
+		and craters.front().global_position.distance_to(target_position) < 0.05
+		and int(craters.front().get_meta("crater_variant", -1)) in range(4),
+		"MissileHit must leave one randomized original crater variant"
 	)
 	var impact_visual := missile_hit.get_node_or_null("Visual") as Node3D \
 		if missile_hit != null else null
@@ -1876,6 +1916,7 @@ func _test_mongoose_launch_and_impact_fx() -> void:
 		projectile.free()
 	_free_muzzle_effects()
 	_free_impact_effects()
+	_free_ground_decals()
 	model.free()
 
 

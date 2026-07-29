@@ -43,5 +43,6 @@ linger_duration = 0
 linger_damage = 0
 explosion_type_id = &"MissileHit"
 explosion_effect_ids = [&"MissileHit"]
+damage_to_tile = 30
 projectile_scene_path = "res://assets/converted/projectiles/trailmissile/trailmissile.scn"
 impact_scene_paths = {&"MissileHit": "res://assets/converted/impact_effects/missilehit/missilehit.scn"}

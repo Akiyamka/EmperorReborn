@@ -388,6 +388,10 @@ def bullet_text(row: sqlite3.Row, effects: list[str], projectile_path: str,
         f"linger_damage = {float(row['linger_damage'] or 0.0):.6g}",
         f"explosion_type_id = {string_name(row['explosion_name'])}",
         f"explosion_effect_ids = {array_text(effects)}",
+        *(
+            [f"damage_to_tile = {float(row['damage_to_tile']):.6g}"]
+            if float(row["damage_to_tile"] or 0.0) > 0.0 else []
+        ),
         f"projectile_scene_path = {godot_string(projectile_path)}",
         "impact_scene_paths = " + "{" + ", ".join(
             f"{string_name(key)}: {godot_string(impact_paths[key])}" for key in sorted(impact_paths)
@@ -572,9 +576,12 @@ def main() -> int:
 
         bullet_paths: dict[str, str] = {}
         for row in connection.execute("""
-            SELECT b.*, w.name AS warhead_name, e.name AS explosion_name, art.xaf AS xaf
+            SELECT b.*, w.name AS warhead_name, e.name AS explosion_name,
+                   explosion.damage_to_tile, art.xaf AS xaf
               FROM bullets b LEFT JOIN warheads w ON w.id=b.warhead_id
               LEFT JOIN explosion_types e ON e.id=b.explosion_type_id
+              LEFT JOIN explosion_configs explosion
+                ON explosion.explosion_type_id=e.id
               LEFT JOIN art_configs art ON art.entity_type='bullet' AND art.entity_id=b.id
              ORDER BY b.id
         """):
@@ -661,6 +668,7 @@ def main() -> int:
             [
                 f"max_building_placement_tile_dist = {int(placement_distance or 6)}",
                 f"building_repair_rate = {float(repair_rate or 12):.1f}",
+                "maximum_ground_decals = 256",
             ],
         ), args.check) and ok
         spice = connection.execute("""

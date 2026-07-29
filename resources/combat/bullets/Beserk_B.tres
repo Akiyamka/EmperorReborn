@@ -43,5 +43,6 @@ linger_duration = 0
 linger_damage = 0
 explosion_type_id = &"ORLightning"
 explosion_effect_ids = [&"ORLightning"]
+damage_to_tile = 80
 projectile_scene_path = "res://assets/converted/projectiles/conceptual/conceptual.scn"
 impact_scene_paths = {&"ORLightning": "res://assets/converted/impact_effects/ordoslightning/ordoslightning.scn"}

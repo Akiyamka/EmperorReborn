@@ -43,5 +43,6 @@ linger_duration = 0
 linger_damage = 0
 explosion_type_id = &"ShellHit"
 explosion_effect_ids = [&"ShellHit"]
+damage_to_tile = 30
 projectile_scene_path = "res://assets/converted/projectiles/eitsbomb/eitsbomb.scn"
 impact_scene_paths = {&"ShellHit": "res://assets/converted/impact_effects/shellhit/shellhit.scn"}
