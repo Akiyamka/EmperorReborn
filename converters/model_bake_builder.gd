@@ -58,8 +58,7 @@ const HIDDEN_SOURCE_MESH_COMPONENTS := {
 }
 ## The deployed-mode fire clip is authored as "Fire 1" (weapon index 1 = the
 ## deployed turret) on every combat-deployable unit. Kindjal also ships an
-## identical "Deployed Fire"; the override is authoritative and replaces it, so
-## runtime resolves one canonical name for all three units.
+## identical later "Deployed Fire"; both resolve to one canonical runtime name.
 const CLIP_NAME_OVERRIDES := {
 	"at_kindjal_h0.xbf": {"Fire_1": "Deployed_Fire"},
 	"or_mortar_h0.xbf": {"Fire_1": "Deployed_Fire"},
@@ -131,9 +130,14 @@ func build(xbf_path: String) -> PackedScene:
 	root.set_meta("xbf_fx_event_counts", xbf.fx_event_counts)
 	root.set_meta("xbf_fx_events", xbf.fx_events.duplicate(true))
 	root.set_meta("xbf_fx_events_complete", xbf.fx_events_complete)
-	# FX event frames are absolute in the source timeline. Runtime needs the
-	# authored clip ranges to align bank emissions with sliced Fire_0 animations.
-	root.set_meta("xbf_animation_entries", xbf.animation_entries.duplicate(true))
+	# FX event frames are absolute in the source timeline. Store their clip
+	# ranges under the same final names used by the baked AnimationLibrary.
+	# Model-specific clip-name repairs therefore cover every authored FX bank
+	# without leaking source-model quirks into runtime lookup.
+	root.set_meta(
+		"xbf_animation_entries",
+		_baked_animation_entries(xbf.animation_entries)
+	)
 	# A small set of source files uses event payload variants that are not yet
 	# decoded. Preserve the complete original block as well, so conversion is
 	# lossless even when xbf_fx_events_complete is false.
@@ -1679,6 +1683,28 @@ func _clip_name(value: String) -> String:
 	var name := value.strip_edges().replace(" ", "_")
 	var overrides: Dictionary = CLIP_NAME_OVERRIDES.get(_source_file_name, {})
 	return overrides.get(name, name)
+
+
+## Produces the animation-range metadata consumed by runtime FX playback.
+## Preserve the source label for diagnostics, but expose the repaired baked
+## name as `name`, matching AnimationLibrary exactly. Apply the same
+## last-entry-wins collision rule used while adding clips above.
+func _baked_animation_entries(source_entries: Array) -> Array:
+	var result: Array = []
+	var index_by_name := {}
+	for source_value: Variant in source_entries:
+		var source_entry := source_value as Dictionary
+		var baked_entry := source_entry.duplicate(true)
+		var source_name := String(source_entry.get("name", ""))
+		var baked_name := _clip_name(source_name)
+		baked_entry["source_name"] = source_name
+		baked_entry["name"] = baked_name
+		if index_by_name.has(baked_name):
+			result[int(index_by_name[baked_name])] = baked_entry
+		else:
+			index_by_name[baked_name] = result.size()
+			result.append(baked_entry)
+	return result
 
 
 func _is_looping_clip(value: String) -> bool:

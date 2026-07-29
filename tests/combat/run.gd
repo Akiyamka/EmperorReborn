@@ -1330,6 +1330,35 @@ func _test_model_fx_bank_casings() -> void:
 		_free_muzzle_effects()
 		model.free()
 
+	# Kobra's deployed clip is repaired from source "Fire 1" to
+	# "Deployed_Fire" during conversion. Its FX range must carry the same baked
+	# name so the generic runtime lookup can still find the authored shell bank.
+	var kobra_model := ORKobraModelScene.instantiate() as Node3D
+	root.add_child(kobra_model)
+	var kobra_turret = CombatTurretScript.new()
+	_expect(
+		kobra_turret.configure(&"ORKobraDeployedGun")
+		and kobra_turret.bind_model(kobra_model, 1),
+		"the deployed Kobra turret must bind for casing-bank playback"
+	)
+	var kobra_casings: Array[Node] = []
+	var observe_kobra_casing := func(child: Node) -> void:
+		if child.get_meta("combat_muzzle_fx", &"") == &"casing":
+			kobra_casings.append(child)
+	root.child_entered_tree.connect(observe_kobra_casing)
+	var kobra_started := kobra_turret.start_authored_fire_fx(
+		&"Deployed_Fire", root
+	)
+	await create_timer(0.15).timeout
+	root.child_entered_tree.disconnect(observe_kobra_casing)
+	_expect(
+		kobra_started and kobra_casings.size() == 1,
+		"Deployed_Fire must emit Kobra's authored Fire 1 casing after conversion"
+	)
+	kobra_turret.cancel_authored_fire_fx()
+	_free_muzzle_effects()
+	kobra_model.free()
+
 
 func _test_model_fx_bank_streams() -> void:
 	var cases := [

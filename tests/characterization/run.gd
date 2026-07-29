@@ -707,7 +707,7 @@ func _test_xbf_fx_banks() -> bool:
 		)
 		var baked_events := root.get_meta("xbf_fx_events", []) as Array
 		var baked_fire := _xbf_animation_entry(
-			root.get_meta("xbf_animation_entries", []) as Array, "Fire 0"
+			root.get_meta("xbf_animation_entries", []) as Array, "Fire_0"
 		)
 		_expect(
 			bool(root.get_meta("xbf_fx_events_complete", false))
@@ -1245,9 +1245,21 @@ func _test_muzzle_flash_clip_visibility() -> bool:
 ## must bake as the single canonical Deployed_Fire instead.
 func _test_combat_deploy_clip_rename() -> bool:
 	var cases := [
-		["res://assets/raw_original_content/3DDATA/Units/AT_Kindjal_H0.xbf", true],
-		["res://assets/raw_original_content/3DDATA/Units/OR_Mortar_H0.xbf", false],
-		["res://assets/raw_original_content/3DDATA/Units/OR_Kobra_H0.XBF", false],
+		[
+			"res://assets/raw_original_content/3DDATA/Units/AT_Kindjal_H0.xbf",
+			true,
+			"Deployed Fire",
+		],
+		[
+			"res://assets/raw_original_content/3DDATA/Units/OR_Mortar_H0.xbf",
+			false,
+			"Fire 1",
+		],
+		[
+			"res://assets/raw_original_content/3DDATA/Units/OR_Kobra_H0.XBF",
+			false,
+			"Fire 1",
+		],
 	]
 	for model_case: Array in cases:
 		var source_path := String(model_case[0])
@@ -1261,6 +1273,12 @@ func _test_combat_deploy_clip_rename() -> bool:
 		_expect(player != null, "%s must contain an AnimationPlayer" % source_path.get_file())
 		if player != null:
 			var clips := player.get_animation_list()
+			var fx_entries := root.get_meta(
+				"xbf_animation_entries", []
+			) as Array
+			var deployed_fx_entry := _xbf_animation_entry(
+				fx_entries, "Deployed_Fire"
+			)
 			_expect(
 				&"Deploy_Gun" in clips,
 				"%s must expose Deploy_Gun" % source_path.get_file()
@@ -1280,6 +1298,29 @@ func _test_combat_deploy_clip_rename() -> bool:
 			_expect(
 				not (&"Fire_1" in clips),
 				"%s must not still expose Fire_1 after the deployed-fire rename" % source_path.get_file()
+			)
+			_expect(
+				not deployed_fx_entry.is_empty()
+				and String(deployed_fx_entry.get("source_name", ""))
+					== String(model_case[2]),
+				"%s FX ranges must follow the Fire_1 to Deployed_Fire repair"
+					% source_path.get_file()
+			)
+			_expect(
+				_xbf_animation_entry(fx_entries, "Fire_1").is_empty(),
+				"%s must not retain the broken Fire_1 name in baked FX metadata"
+					% source_path.get_file()
+			)
+			var all_fx_names_are_baked := true
+			for entry_value: Variant in fx_entries:
+				var entry := entry_value as Dictionary
+				if StringName(String(entry.get("name", ""))) not in clips:
+					all_fx_names_are_baked = false
+					break
+			_expect(
+				all_fx_names_are_baked,
+				"%s every FX clip range must name a real baked animation"
+					% source_path.get_file()
 			)
 			_expect(
 				&"Fire_0" in clips,

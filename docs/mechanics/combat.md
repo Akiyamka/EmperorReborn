@@ -189,10 +189,13 @@ than once for the complete firing animation.
 
 Converted model roots retain the source FX bank records in `xbf_fx_banks`,
 their timeline records in `xbf_fx_events`, and the absolute source clip ranges
-in `xbf_animation_entries`; undecoded words and the raw event block remain
-available as metadata as well. Bank parameter 05 is signed gravity per source
-update squared, while parameter 06 is particle size in source-model
-coordinates. Thus the `!%shel` values 10 (Minotaurus), 6
+in `xbf_animation_entries`. Those range entries use the final baked animation
+name, after model-specific conversion repairs, while `source_name` preserves
+the original XBF label. Consequently every authored bank follows a repaired
+clip name without a corresponding runtime workaround. Undecoded words and the
+raw event block remain available as metadata as well. Bank parameter 05 is
+signed gravity per source update squared, while parameter 06 is particle size
+in source-model coordinates. Thus the `!%shel` values 10 (Minotaurus), 6
 (Trike), 4 (APC), and 3 (light infantry and Sniper) become 0.625, 0.375, 0.25,
 and 0.1875 world units at the normal 1/16 model scale. Casing count is encoded
 by the frames strictly between the bank's type-3 start and type-4 stop events,
