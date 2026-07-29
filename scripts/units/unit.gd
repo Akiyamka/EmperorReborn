@@ -935,6 +935,7 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 	# state after swapping the visual (for example during F7 snapshot restore).
 	_refresh_shield_visibility()
 	_refresh_owner_visuals()
+	_rebuild_selection_halo()
 
 
 func set_invulnerable(value: bool) -> void:
@@ -2957,9 +2958,22 @@ func _add_selection_halo() -> void:
 	_selection_halo = SelectionHaloScript.new()
 	_selection_halo.name = "SelectionHalo"
 	add_child(_selection_halo)
-	_selection_halo.configure(self, _selection_radius(), _selection_position())
+	var anchor := _halo_anchor_node(visual_root)
+	_selection_halo.configure(
+		self, _selection_radius(), _selection_position(), anchor
+	)
 	_selection_halo.set_movement_direction(_navigation_requested_velocity)
 	_selection_halo.set_movement_debug_visible(_navigation_debug_visible)
+
+
+func _rebuild_selection_halo() -> void:
+	if not is_instance_valid(_selection_halo):
+		return
+	remove_child(_selection_halo)
+	_selection_halo.free()
+	_add_selection_halo()
+	_selection_halo.set_selected(is_selected)
+	_selection_halo.set_hovered(is_hovered)
 
 
 func _selection_radius() -> float:
@@ -2987,10 +3001,21 @@ func _halo_anchor_bounds() -> AABB:
 	if anchor == null or not anchor.has_meta("halo_anchor_bounds"):
 		return AABB()
 	var source_bounds: AABB = anchor.get_meta("halo_anchor_bounds")
+	var source_to_global := anchor.global_transform
+	var reference_basis: Variant = (
+		anchor.get_meta("halo_anchor_reference_basis")
+		if anchor.has_meta("halo_anchor_reference_basis")
+		else null
+	)
+	var anchor_parent := anchor.get_parent() as Node3D
+	if reference_basis is Basis and anchor_parent != null:
+		source_to_global.basis = (
+			anchor_parent.global_transform.basis * (reference_basis as Basis)
+		)
 	var bounds := AABB()
 	var has_bounds := false
 	for corner in _aabb_corners(source_bounds):
-		var point := to_local(anchor.to_global(corner))
+		var point := to_local(source_to_global * corner)
 		if has_bounds:
 			bounds = bounds.expand(point)
 		else:

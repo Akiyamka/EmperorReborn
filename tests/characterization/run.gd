@@ -37,6 +37,7 @@ func _initialize() -> void:
 	_run_case("TechnologyTree unit requirements", _test_technology_tree_unit_requirements)
 	_run_case("XBF vertex animation fixed-point scale", _test_xbf_vertex_animation_scale)
 	_run_case("XBF padded halo anchor", _test_padded_halo_anchor)
+	_run_case("XBF animated halo anchors", _test_animated_halo_anchors)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
 	_run_case("XBF mech Move timelines retain authored speeds", _test_xbf_mech_motion_events)
 	_run_case(
@@ -376,6 +377,123 @@ func _test_padded_halo_anchor() -> bool:
 		_expect(bounds.size.x > 100.0, "HK Engineer halo anchor must retain its authored bounds")
 	root.free()
 	return true
+
+
+func _test_animated_halo_anchors() -> bool:
+	var kobra_scene := _build_model_scene(
+		"res://assets/raw_original_content/3DDATA/Units/OR_Kobra_H0.XBF"
+	)
+	_expect(kobra_scene != null, "Kobra model must build")
+	if kobra_scene != null:
+		var model := kobra_scene.instantiate() as Node3D
+		var anchor := _find_node_with_meta(model, "halo_anchor")
+		var player := model.get_node_or_null("AnimationPlayer") as AnimationPlayer
+		var deploy := player.get_animation(&"Deploy_Gun") if player != null else null
+		var track := _anchor_transform_track(model, anchor, deploy)
+		_expect(
+			track >= 0,
+			"Kobra Deploy_Gun must retain the authored #^^0 transform track"
+		)
+		if track >= 0:
+			var travel_transform: Transform3D = deploy.value_track_interpolate(
+				track, 0.0
+			)
+			var deployed_transform: Transform3D = deploy.value_track_interpolate(
+				track, 1.5
+			)
+			_expect(
+				deployed_transform.origin.y > travel_transform.origin.y + 50.0,
+				"Kobra #^^0 track must raise the halo while the gun deploys"
+			)
+		model.free()
+
+	var missile_scene := _build_model_scene(
+		"res://assets/raw_original_content/3DDATA/Units/HK_missile_H0.xbf"
+	)
+	_expect(missile_scene != null, "HK Missile model must build")
+	if missile_scene != null:
+		var model := missile_scene.instantiate() as Node3D
+		var anchor := _find_node_with_meta(model, "halo_anchor")
+		var player := model.get_node_or_null("AnimationPlayer") as AnimationPlayer
+		var stationary := player.get_animation(&"Stationary") if player != null else null
+		var track := _anchor_transform_track(model, anchor, stationary)
+		_expect(
+			track >= 0,
+			"HK Missile Stationary must retain the authored #^^0 transform track"
+		)
+		if anchor != null:
+			var reference_basis: Basis = anchor.get_meta(
+				"halo_anchor_reference_basis", Basis.IDENTITY
+			)
+			_expect(
+				is_equal_approx(reference_basis.x.length(), 0.451613),
+				"HK Missile halo footprint must use its animated 0.451613 scale"
+			)
+			var source_bounds: AABB = anchor.get_meta("halo_anchor_bounds")
+			var expected_radius := 1.50636
+			var reference_radius := (
+				source_bounds.size.x
+				* reference_basis.x.length()
+				* model.scale.x
+				* 0.5
+			)
+			_expect(
+				absf(reference_radius - expected_radius) < 0.01,
+				"HK Missile halo radius must be %.5f, got %.5f"
+					% [expected_radius, reference_radius]
+			)
+			if track >= 0:
+				var terminal_transform: Transform3D = stationary.value_track_interpolate(
+					track, stationary.length - 1.0 / 20.0
+				)
+				_expect(
+					is_equal_approx(terminal_transform.basis.x.length(), 1.0)
+					and not is_equal_approx(
+						reference_basis.x.length(),
+						terminal_transform.basis.x.length()
+					),
+					"HK Missile footprint must ignore its terminal identity key"
+				)
+		model.free()
+
+	var sardaukar_scene := _build_model_scene(
+		"res://assets/raw_original_content/3DDATA/Units/IM_Sardaukar_H0.xbf"
+	)
+	_expect(sardaukar_scene != null, "IM Sardaukar model must build")
+	if sardaukar_scene != null:
+		var model := sardaukar_scene.instantiate() as Node3D
+		var anchor := _find_node_with_meta(model, "halo_anchor")
+		var player := model.get_node_or_null("AnimationPlayer") as AnimationPlayer
+		var stationary := player.get_animation(&"Stationary") if player != null else null
+		var track := _anchor_transform_track(model, anchor, stationary)
+		_expect(
+			track >= 0 and stationary.track_get_key_count(track) == 1,
+			"IM Sardaukar Stationary must hold the final authored #^^0 pose"
+		)
+		if track >= 0 and stationary.track_get_key_count(track) == 1:
+			var held_transform: Transform3D = stationary.track_get_key_value(
+				track, 0
+			)
+			_expect(
+				held_transform.origin.y > 40.0,
+				"IM Sardaukar Stationary halo must remain above the unit"
+			)
+		model.free()
+	return true
+
+
+func _build_model_scene(path: String) -> PackedScene:
+	var builder = ModelBakeBuilderScript.new()
+	return builder.build(path)
+
+
+func _anchor_transform_track(
+	model: Node3D, anchor: Node3D, animation: Animation
+) -> int:
+	if anchor == null or animation == null:
+		return -1
+	var path := NodePath("%s:transform" % String(model.get_path_to(anchor)))
+	return animation.find_track(path, Animation.TYPE_VALUE)
 
 
 func _find_node_with_meta(node: Node, key: String) -> Node3D:

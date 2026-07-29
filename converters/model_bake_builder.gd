@@ -248,13 +248,21 @@ func _build_object_node(
 	elif raw_name.begins_with("#^^0"):
 		node.set_meta("halo_anchor", true)
 		node.set_meta("halo_anchor_bounds", _object_bounds(object.positions))
+		# The marker's footprint is UI geometry: it stays constant while the
+		# marker's authored position follows object animation. HK Missile
+		# demonstrates why the static node transform is not a reliable size
+		# source: its rest transform is identity, almost every animation frame
+		# uses 0.451613 scale, and the terminal Stationary frame returns to
+		# identity. Keep the first authored animated basis as the stable
+		# footprint, independent of which frame is active when Unit becomes
+		# ready.
+		var reference_transform := _halo_anchor_reference_transform(object)
+		var reference_node_transform := _to_godot_transform(reference_transform)
+		if uses_mirrored_content:
+			reference_node_transform *= LOCAL_Z_REFLECTION
+		node.set_meta("halo_anchor_reference_basis", reference_node_transform.basis)
 	var child_path: String = "%s/%s" % [node_path, node.name] if node_path != "." else node.name
-	# Halo anchors are static UI attachment points sampled once at spawn
-	# (Unit._add_selection_halo); baking per-frame animation onto them would
-	# make the selection halo's position and size depend on whichever pose
-	# happens to be playing at the moment the unit spawns.
-	if not node.has_meta("halo_anchor"):
-		_add_animation_track(anim, child_path, object, uses_mirrored_content)
+	_add_animation_track(anim, child_path, object, uses_mirrored_content)
 
 	var content_root := node
 	var content_path := child_path
@@ -328,6 +336,18 @@ func _build_object_node(
 		content_root.add_child(child)
 
 	return node
+
+
+func _halo_anchor_reference_transform(object: Dictionary) -> Transform3D:
+	var object_animation: Dictionary = object.object_animation
+	if object_animation.is_empty():
+		return object.transform
+	var frames: Dictionary = object_animation.get("frames", {})
+	if frames.is_empty():
+		return object.transform
+	var frame_ids := frames.keys()
+	frame_ids.sort()
+	return frames[frame_ids[0]]
 
 
 ## Sign of the object's own runtime transform: -1 when it mirrors its content.
@@ -1537,6 +1557,7 @@ func _slice_animation(source: Animation, entry: Dictionary, target_paths := {}) 
 		if source.track_get_type(source_track) == Animation.TYPE_VALUE:
 			clip.value_track_set_update_mode(track, source.value_track_get_update_mode(source_track))
 
+		var inserted_keys := 0
 		for key_index in source.track_get_key_count(source_track):
 			var key_time := source.track_get_key_time(source_track, key_index)
 			if key_time < start_time or key_time > end_time:
@@ -1547,6 +1568,20 @@ func _slice_animation(source: Animation, entry: Dictionary, target_paths := {}) 
 				source.track_get_key_value(source_track, key_index),
 				source.track_get_key_transition(source_track, key_index)
 			)
+			inserted_keys += 1
+		# Some authored object tracks end immediately before a later clip
+		# begins. IM Sardaukar's #^^0 ends at frame 629 while Stationary starts
+		# at 630. Leaving the sliced transform track empty makes AnimationPlayer
+		# apply Transform3D.IDENTITY, dropping the halo to ground level. Hold the
+		# source track's last available pose at the start of such clips.
+		if inserted_keys == 0 \
+		and source.track_get_type(source_track) == Animation.TYPE_VALUE \
+		and String(source.track_get_path(source_track)).ends_with(":transform"):
+			var held_transform: Variant = source.value_track_interpolate(
+				source_track, start_time
+			)
+			if held_transform is Transform3D:
+				clip.track_insert_key(track, 0.0, held_transform)
 	_seed_clip_attachment_fx_tracks(clip, source, start_time)
 	_add_clip_muzzle_flash_visibility(clip, String(entry.get("name", "")), source, start_time, end_time)
 	return clip

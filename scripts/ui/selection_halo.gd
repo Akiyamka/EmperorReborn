@@ -31,10 +31,17 @@ var _movement_arrow_material: StandardMaterial3D
 var _movement_direction := Vector3.ZERO
 var _movement_debug_visible := false
 var _indicator_radius := 1.0
+var _position_anchor: Node3D
 
 
-func configure(entity: Node3D, radius: float, local_position: Vector3) -> void:
+func configure(
+	entity: Node3D,
+	radius: float,
+	local_position: Vector3,
+	position_anchor: Node3D = null,
+) -> void:
 	_entity = entity
+	_position_anchor = position_anchor
 	_indicator_radius = maxf(radius, 0.1)
 	position = local_position
 	var diameter := maxf(radius * 2.0, 0.1)
@@ -92,6 +99,11 @@ func is_movement_debug_visible() -> bool:
 func _process(delta: float) -> void:
 	if _entity == null:
 		return
+	# #^^0 is an authored attachment, not merely a spawn-time hint. Some units
+	# move it during animation (Kobra raises it while deploying), so follow its
+	# position every frame while keeping the indicator itself horizontal.
+	if is_instance_valid(_position_anchor):
+		position = _entity.to_local(_position_anchor.to_global(Vector3.ZERO))
 	# Units rotate while moving, but the original indicators retain their north
 	# orientation.  The parent only rotates around Y, so cancel just that axis.
 	rotation.y = -_entity.rotation.y

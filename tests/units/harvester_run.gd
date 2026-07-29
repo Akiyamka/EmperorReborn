@@ -292,9 +292,11 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 
 	var cargo := FakeCargoEntity.new()
 	root.add_child(cargo)
+	var halo_anchor := Node3D.new()
+	cargo.add_child(halo_anchor)
 	var halo := SelectionHaloScript.new()
 	cargo.add_child(halo)
-	halo.configure(cargo, 1.0, Vector3.ZERO)
+	halo.configure(cargo, 1.0, Vector3.ZERO, halo_anchor)
 	halo.set_selected(true)
 	halo.set_movement_direction(Vector3.RIGHT)
 	halo._process(0.0)
@@ -322,6 +324,12 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 	halo.set_movement_debug_visible(true)
 	halo.set_selected(false)
 	_expect(not movement_arrow.visible, "the navigation course arrow must disappear with selection")
+	halo_anchor.position = Vector3(0.25, 2.0, -0.5)
+	halo._process(0.0)
+	_expect(
+		halo.position.is_equal_approx(halo_anchor.position),
+		"the selection halo must follow its authored animated anchor"
+	)
 	harvester.queue_free()
 	cargo.queue_free()
 	return token
