@@ -111,6 +111,7 @@ func build(xbf_path: String) -> PackedScene:
 	var xbf = ModelXbfScript.load_file(xbf_path)
 	if xbf == null:
 		return null
+	var animation_entries := _repaired_animation_entries(xbf.animation_entries)
 	_prepare_animated_texture_sequences(xbf.fx_strings)
 	_prepare_attachment_fx_names(xbf)
 
@@ -145,7 +146,7 @@ func build(xbf_path: String) -> PackedScene:
 	# without leaking source-model quirks into runtime lookup.
 	root.set_meta(
 		"xbf_animation_entries",
-		_baked_animation_entries(xbf.animation_entries)
+		_baked_animation_entries(animation_entries)
 	)
 	# A small set of source files uses event payload variants that are not yet
 	# decoded. Preserve the complete original block as well, so conversion is
@@ -156,7 +157,7 @@ func build(xbf_path: String) -> PackedScene:
 	anim.resource_name = "idle"
 	anim.loop_mode = Animation.LOOP_LINEAR
 	var max_frame := 1
-	var clip_target_paths := _clip_target_paths(xbf.objects, xbf.animation_entries)
+	var clip_target_paths := _clip_target_paths(xbf.objects, animation_entries)
 
 	var root_child_names := {}
 	for object in xbf.objects:
@@ -179,12 +180,12 @@ func build(xbf_path: String) -> PackedScene:
 	# AnimationPlayer here would silently throw that duration away, collapsing
 	# the state to ~1 frame downstream in BuildingBakeBuilder.
 	if anim.get_track_count() > 0 or not _pending_frame_tracks.is_empty() \
-	or not xbf.animation_entries.is_empty() or not attachment_fx.is_empty():
+	or not animation_entries.is_empty() or not attachment_fx.is_empty():
 		anim.length = maxf(max_frame / fps, 1.0 / fps)
 		_add_attachment_fx_tracks(anim, attachment_fx)
 		_add_shader_fx_tracks(anim)
 		var library := AnimationLibrary.new()
-		for entry: Dictionary in xbf.animation_entries:
+		for entry: Dictionary in animation_entries:
 			var clip := _slice_animation(anim, entry, clip_target_paths)
 			if clip != null:
 				var clip_name := _clip_name(String(entry["name"]))
@@ -197,7 +198,7 @@ func build(xbf_path: String) -> PackedScene:
 				if library.has_animation(clip_name):
 					library.remove_animation(clip_name)
 				library.add_animation(clip_name, clip)
-		_add_timeline_muzzle_flash_visibility(anim, xbf.animation_entries)
+		_add_timeline_muzzle_flash_visibility(anim, animation_entries)
 		library.add_animation("timeline", anim)
 		var player := AnimationPlayer.new()
 		player.name = "AnimationPlayer"
@@ -1727,6 +1728,35 @@ func _clip_name(value: String) -> String:
 	var name := value.strip_edges().replace(" ", "_")
 	var overrides: Dictionary = CLIP_NAME_OVERRIDES.get(_source_file_name, {})
 	return overrides.get(name, name)
+
+
+## Every shipped AT_MGT state and LOD labels frames 200..240 as "Idle 0",
+## although that interval is nested inside Fire 0 (193..275) and contains the
+## complete machine-gun recoil sequence (194..230). Keep ModelXbf lossless and
+## repair only the baked clip by reusing the file's own Stationary range.
+func _repaired_animation_entries(source_entries: Array[Dictionary]) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for source_entry: Dictionary in source_entries:
+		result.append(source_entry.duplicate(true))
+	if not _source_file_name.begins_with("at_mgt_"):
+		return result
+
+	var stationary := {}
+	for entry: Dictionary in result:
+		if String(entry.get("name", "")) == "Stationary":
+			stationary = entry
+			break
+	if stationary.is_empty():
+		return result
+
+	for entry: Dictionary in result:
+		if String(entry.get("name", "")) != "Idle 0":
+			continue
+		entry["source_start_frame"] = entry.get("start_frame", 0)
+		entry["source_end_frame"] = entry.get("end_frame", 0)
+		entry["start_frame"] = stationary.get("start_frame", 0)
+		entry["end_frame"] = stationary.get("end_frame", 0)
+	return result
 
 
 ## Produces the animation-range metadata consumed by runtime FX playback.

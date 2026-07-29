@@ -316,6 +316,22 @@ func _initialize() -> void:
 	_run_case("continuous flame clips schedule every stream pulse", _test_continuous_flame_sequences)
 	_run_case("pursuit enters a stable firing range", _test_far_attack_pursuit)
 	_run_case("building state replacement rebinds its turret", _test_building_turret_rebind)
+	_run_case(
+		"all seven defensive buildings automatically acquire and fire",
+		_test_defensive_building_auto_fire
+	)
+	await _run_async_case(
+		"building StatePlayer leaves visible turret aiming to the combat servo",
+		_test_defensive_building_visible_aim
+	)
+	await _run_async_case(
+		"Ordos popup turrets visibly deploy, hold, and undeploy",
+		_test_ordos_popup_turret_animations
+	)
+	_run_case(
+		"defensive buildings retain explicit out-of-range attack orders",
+		_test_building_attack_order
+	)
 	_run_case("building damage visuals use equal health bands", _test_building_damage_visual_states)
 	_run_case("units and buildings expose rules-backed combat armour", _test_combat_targets)
 	_run_case("shields absorb resolved combat damage before health", _test_shield_absorption)
@@ -3541,6 +3557,219 @@ func _test_building_turret_rebind() -> void:
 	if not projectiles.is_empty():
 		_expect(projectiles[0].bullet.id() == &"HKGunTurret_B", "the building API must use its rules bullet")
 		projectiles[0].free()
+	building.free()
+
+
+func _test_defensive_building_auto_fire() -> void:
+	var cases := {
+		&"HKFlameTurret": &"FlameTurret_B",
+		&"TLTurret": &"HKGunTurret_B",
+		&"HKGunTurret": &"HKGunTurret_B",
+		&"ORGasTurret": &"Gas_B",
+		&"ORPopUpTurret": &"PopUp_B",
+		&"ATPillbox": &"HMG_B",
+		&"ATRocketTurret": &"Rocket_B",
+	}
+	for building_id: StringName in cases:
+		var scene_path := (
+			"res://assets/converted/buildings/%s/%s.scn"
+			% [String(building_id), String(building_id)]
+		)
+		var scene := load(scene_path) as PackedScene
+		var building := scene.instantiate() as Building
+		building.owner_player_id = 1
+		root.add_child(building)
+		var emission: Dictionary = building.combat_turrets[0].peek_emission()
+		var direction: Vector3 = emission.get("direction", Vector3.BACK)
+		var target_position := Vector3(emission["position"]) \
+			+ direction.normalized() * 5.0
+		var target := PhysicsCombatTarget.new(target_position)
+		target.owner_player_id = 2
+		target.add_to_group(&"units")
+		root.add_child(target)
+		var fired: Array = []
+		building.weapon_fired.connect(
+			func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+				fired.append_array(projectiles)
+		)
+		for frame in 900:
+			building._process(1.0 / 60.0)
+			if not fired.is_empty():
+				break
+		_expect(
+			not fired.is_empty(),
+			"%s must acquire a nearby enemy and fire" % String(building_id)
+		)
+		if not fired.is_empty():
+			_expect(
+				fired[0].bullet.id() == cases[building_id],
+				"%s must fire %s from its rules turret"
+					% [String(building_id), String(cases[building_id])]
+			)
+		for projectile in fired:
+			if is_instance_valid(projectile) \
+			and not projectile.is_queued_for_deletion():
+				projectile.free()
+		target.free()
+		building.free()
+
+
+func _test_defensive_building_visible_aim() -> void:
+	var scene := load(
+		"res://assets/converted/buildings/ATRocketTurret/ATRocketTurret.scn"
+	) as PackedScene
+	var building := scene.instantiate() as Building
+	building.owner_player_id = 1
+	root.add_child(building)
+	await process_frame
+	var turret = building.combat_turrets[0]
+	var initial_emission: Dictionary = turret.peek_emission()
+	var initial_direction: Vector3 = initial_emission["direction"]
+	var side := initial_direction.rotated(Vector3.UP, PI * 0.5).normalized()
+	var target_position := Vector3(initial_emission["position"]) + side * 8.0
+	_expect(
+		building.command_attack(target_position),
+		"ATRocketTurret must accept a lateral ground target"
+	)
+	for frame in 60:
+		await process_frame
+		if absf(turret.current_yaw_degrees()) >= 35.0:
+			break
+	var visible_direction: Vector3 = turret.peek_emission()["direction"]
+	_expect(
+		absf(turret.current_yaw_degrees()) >= 35.0,
+		"ATRocketTurret must advance its logical yaw toward a lateral target"
+	)
+	_expect(
+		_horizontal_angle_between(initial_direction, visible_direction)
+			>= deg_to_rad(30.0),
+		"ATRocketTurret's visible authored pivot must follow its logical yaw"
+	)
+	building.cancel_attack_order()
+	building.free()
+	await process_frame
+
+
+func _test_ordos_popup_turret_animations() -> void:
+	for building_id in [&"ORGasTurret", &"ORPopUpTurret"]:
+		var scene_path := (
+			"res://assets/converted/buildings/%s/%s.scn"
+			% [String(building_id), String(building_id)]
+		)
+		var scene := load(scene_path) as PackedScene
+		var building := scene.instantiate() as Building
+		building.owner_player_id = 1
+		root.add_child(building)
+		await process_frame
+		var turret = building.combat_turrets[0]
+		var player := building._active_model_animation_player(&"Deploy_Gun")
+		var initial_emission: Dictionary = turret.peek_emission()
+		var initial_position: Vector3 = initial_emission["position"]
+		var initial_direction: Vector3 = initial_emission["direction"]
+		var side := initial_direction.rotated(Vector3.UP, PI * 0.5).normalized()
+		var target_position := initial_position + side * 8.0
+		var saw_deploy := false
+		var deploy_motion := 0.0
+		_expect(
+			building.command_attack(target_position),
+			"%s must accept a target that triggers popup deployment"
+				% String(building_id)
+		)
+		for frame in 90:
+			await process_frame
+			saw_deploy = saw_deploy \
+				or player.current_animation == &"Deploy_Gun"
+			deploy_motion = maxf(
+				deploy_motion,
+				Vector3(turret.peek_emission()["position"]).distance_to(
+					initial_position
+				)
+			)
+			if building._popup_turret_state == 2:
+				break
+		_expect(
+			saw_deploy,
+			"%s must play Deploy_Gun before aiming" % String(building_id)
+		)
+		_expect(
+			deploy_motion > 0.5,
+			"%s Deploy_Gun must visibly move its authored model"
+				% String(building_id)
+		)
+		_expect(
+			building._popup_turret_state == 2,
+			"%s must settle in its deployed hold state" % String(building_id)
+		)
+
+		building.cancel_attack_order()
+		var saw_undeploy := false
+		for frame in 120:
+			await process_frame
+			saw_undeploy = saw_undeploy \
+				or player.current_animation == &"Undeploy_Gun"
+			if saw_undeploy and building._popup_turret_state == 0:
+				break
+		_expect(
+			saw_undeploy,
+			"%s must play Undeploy_Gun after losing its target"
+				% String(building_id)
+		)
+		_expect(
+			building._popup_turret_state == 0,
+			"%s must return to its retracted state" % String(building_id)
+		)
+		building.free()
+		await process_frame
+
+
+func _test_building_attack_order() -> void:
+	var building := HKGunTurretScene.instantiate() as Building
+	building.owner_player_id = 1
+	root.add_child(building)
+	var emission: Dictionary = building.combat_turrets[0].peek_emission()
+	var direction: Vector3 = Vector3(
+		emission.get("direction", Vector3.BACK)
+	).normalized()
+	var target := PhysicsCombatTarget.new(
+		Vector3(emission["position"]) + direction * 100.0
+	)
+	target.owner_player_id = 2
+	target.add_to_group(&"units")
+	root.add_child(target)
+	var fired: Array = []
+	building.weapon_fired.connect(
+		func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+			fired.append_array(projectiles)
+	)
+	_expect(
+		building.command_attack(target),
+		"an armed building must accept a compatible target outside its range"
+	)
+	for frame in 120:
+		building._process(1.0 / 60.0)
+	_expect(
+		fired.is_empty() and building.has_attack_order(),
+		"the immobile building must retain, but not fire at, its distant target"
+	)
+	target.global_position = Vector3(emission["position"]) + direction * 5.0
+	for frame in 600:
+		building._process(1.0 / 60.0)
+		if not fired.is_empty():
+			break
+	_expect(
+		not fired.is_empty() and building.attack_order_target() == target,
+		"the retained building order must fire when its target enters range"
+	)
+	building.cancel_attack_order()
+	_expect(
+		not building.has_active_order(),
+		"cancel_attack_order must return the building command contract to idle"
+	)
+	for projectile in fired:
+		if is_instance_valid(projectile) \
+		and not projectile.is_queued_for_deletion():
+			projectile.free()
+	target.free()
 	building.free()
 
 

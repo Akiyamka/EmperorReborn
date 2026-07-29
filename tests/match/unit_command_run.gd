@@ -90,6 +90,9 @@ class FakeBuilding extends Node3D:
 	var rally_points: Array[Vector3] = []
 	var refinery := false
 	var ai_manufacturing := true
+	var attack_capable := false
+	var attack_targets: Array = []
+	var active_order := false
 
 	func set_selected(active: bool) -> void:
 		selected = active
@@ -108,6 +111,19 @@ class FakeBuilding extends Node3D:
 
 	func is_refinery() -> bool:
 		return refinery
+
+	func can_attack(_target_or_position: Variant) -> bool:
+		return attack_capable
+
+	func command_attack(target_or_position: Variant) -> bool:
+		if not can_attack(target_or_position):
+			return false
+		attack_targets.append(target_or_position)
+		active_order = true
+		return true
+
+	func has_active_order() -> bool:
+		return active_order
 
 
 class FakeUnitCommandController extends UnitCommandController:
@@ -251,6 +267,10 @@ func _initialize() -> void:
 	_run_case("spice click issues harvester order", _test_harvester_order.bind(local_player))
 	_run_case("owned refinery click issues unload order", _test_unload_order.bind(local_player, enemy_player))
 	_run_case("building selection", _test_building_selection.bind(local_player))
+	_run_case(
+		"selected defensive buildings receive attack orders",
+		_test_building_attack_order.bind(local_player, enemy_player)
+	)
 	_run_case("Construction Yard move command requests undeployment", _test_building_move_undeployment.bind(local_player))
 	_run_case("command and selection cursors follow pointer context", _test_context_cursors.bind(local_player, enemy_player))
 	_run_case("D toggles deploy and undeploy", _test_deploy_key_toggles.bind(local_player))
@@ -480,6 +500,73 @@ func _test_building_selection(token: int, local_player) -> int:
 
 	commands.queue_free()
 	building.queue_free()
+	return token
+
+
+func _test_building_attack_order(
+	token: int, local_player, enemy_player
+	) -> int:
+	var commands := FakeUnitCommandController.new()
+	var statuses: Array[String] = []
+	commands.status_changed.connect(
+		func(status: String) -> void: statuses.append(status)
+	)
+	root.add_child(commands)
+	var turret := FakeBuilding.new()
+	turret.name = "ATRocketTurret"
+	turret.player = local_player
+	turret.ai_manufacturing = false
+	turret.attack_capable = true
+	turret.add_to_group("buildings")
+	root.add_child(turret)
+	var enemy := _make_unit("Enemy", enemy_player)
+	enemy.config_id = &"Enemy"
+	root.add_child(enemy)
+	var enemy_collider := Node.new()
+	enemy.add_child(enemy_collider)
+	commands._set_selection([turret])
+	commands.raycast_hits.append({"collider": enemy_collider})
+	commands.handle_unhandled_input(
+		_mouse_event(MOUSE_BUTTON_RIGHT)
+	)
+	_expect(
+		turret.attack_targets == [enemy],
+		"right click on an enemy must route through the building combat API"
+	)
+	_expect(
+		statuses.back() == "Attacking Enemy",
+		"a single selected turret must report the shared attack status"
+	)
+	commands.raycast_hits.append({"collider": enemy_collider})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) \
+			== CursorManagerScript.CursorType.ATTACK,
+		"an attackable enemy must expose the turret's attack cursor"
+	)
+	var ground_target := Vector3(12.0, 0.0, 14.0)
+	commands.handle_unhandled_input(_key_event(KEY_CTRL, true))
+	commands.raycast_hits.append({})
+	commands.raycast_hits.append({"position": ground_target})
+	_expect(
+		commands._command_cursor_at(Vector2.ZERO) \
+			== CursorManagerScript.CursorType.ATTACK,
+		"a stationary turret's attack-ground command must expose its attack cursor"
+	)
+	commands.handle_unhandled_input(_key_event(KEY_CTRL, false))
+	commands._refresh_idle_status()
+	_expect(
+		statuses.back() == "Attacking Enemy",
+		"the building's active attack order must keep the status non-idle"
+	)
+	turret.active_order = false
+	commands._refresh_idle_status()
+	_expect(
+		statuses.back() == "Idle",
+		"finishing a building attack order must report Idle"
+	)
+	commands.queue_free()
+	turret.queue_free()
+	enemy.queue_free()
 	return token
 
 

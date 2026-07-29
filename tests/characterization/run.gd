@@ -39,6 +39,7 @@ func _initialize() -> void:
 	_run_case("XBF padded halo anchor", _test_padded_halo_anchor)
 	_run_case("XBF animated halo anchors", _test_animated_halo_anchors)
 	_run_case("XBF animation table variants", _test_xbf_animation_table_variants)
+	_run_case("AT Pillbox idle excludes its source fire range", _test_at_pillbox_idle_repair)
 	_run_case("XBF mech Move timelines retain authored speeds", _test_xbf_mech_motion_events)
 	_run_case(
 		"XBF duplicate sibling animations keep independent paths",
@@ -667,6 +668,90 @@ func _test_xbf_animation_table_variants() -> bool:
 			names.append(String(entry.get("name", "")))
 		_expect(names.has("Stationary"), "%s must expose Stationary" % file_name)
 	return true
+
+
+func _test_at_pillbox_idle_repair() -> bool:
+	var path := "res://assets/raw_original_content/3DDATA/Buildings/AT_MGT_H0.xbf"
+	var xbf = ModelXbfScript.load_file(path)
+	_expect(xbf != null, "AT_MGT_H0 must parse")
+	if xbf == null:
+		return true
+
+	var source_stationary := _xbf_animation_entry(xbf.animation_entries, "Stationary")
+	var source_idle := _xbf_animation_entry(xbf.animation_entries, "Idle 0")
+	var source_fire := _xbf_animation_entry(xbf.animation_entries, "Fire 0")
+	_expect(
+		int(source_idle.get("start_frame", -1)) == 200
+		and int(source_idle.get("end_frame", -1)) == 240,
+		"AT_MGT_H0 must retain its original mislabeled Idle 0 range"
+	)
+	_expect(
+		int(source_fire.get("start_frame", -1)) == 193
+		and int(source_fire.get("end_frame", -1)) == 275,
+		"AT_MGT_H0 must retain its original Fire 0 range"
+	)
+
+	var scene: PackedScene = ModelBakeBuilderScript.new().build(path)
+	_expect(scene != null, "AT_MGT_H0 must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate()
+	var player := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	_expect(player != null, "AT_MGT_H0 must contain an AnimationPlayer")
+	if player != null:
+		var idle := player.get_animation(&"Idle_0")
+		var stationary := player.get_animation(&"Stationary")
+		var fire := player.get_animation(&"Fire_0")
+		_expect(
+			idle != null and stationary != null
+			and is_equal_approx(idle.length, stationary.length),
+			"AT_MGT Idle_0 must reuse the authored Stationary duration"
+		)
+		_expect(
+			not _animation_has_varying_transform(idle),
+			"AT_MGT Idle_0 must not retain the machine-gun recoil"
+		)
+		_expect(
+			_animation_has_varying_transform(fire),
+			"AT_MGT Fire_0 must retain the machine-gun recoil"
+		)
+
+	var baked_idle := _xbf_animation_entry(
+		root.get_meta("xbf_animation_entries", []) as Array, "Idle_0"
+	)
+	_expect(
+		int(baked_idle.get("start_frame", -1))
+			== int(source_stationary.get("start_frame", -2))
+		and int(baked_idle.get("end_frame", -1))
+			== int(source_stationary.get("end_frame", -2)),
+		"AT_MGT baked FX metadata must use the repaired stationary range"
+	)
+	_expect(
+		int(baked_idle.get("source_start_frame", -1)) == 200
+		and int(baked_idle.get("source_end_frame", -1)) == 240,
+		"AT_MGT baked FX metadata must preserve the original idle range for diagnostics"
+	)
+	root.free()
+	return true
+
+
+func _animation_has_varying_transform(animation: Animation) -> bool:
+	if animation == null:
+		return false
+	for track_index in animation.get_track_count():
+		if animation.track_get_type(track_index) != Animation.TYPE_VALUE \
+		or not String(animation.track_get_path(track_index)).ends_with(":transform") \
+		or animation.track_get_key_count(track_index) < 2:
+			continue
+		var first_value: Variant = animation.track_get_key_value(track_index, 0)
+		if not first_value is Transform3D:
+			continue
+		for key_index in range(1, animation.track_get_key_count(track_index)):
+			var value: Variant = animation.track_get_key_value(track_index, key_index)
+			if value is Transform3D \
+			and not (value as Transform3D).is_equal_approx(first_value as Transform3D):
+				return true
+	return false
 
 
 func _test_xbf_mech_motion_events() -> bool:

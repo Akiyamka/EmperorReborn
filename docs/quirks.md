@@ -188,6 +188,25 @@ the original. The detection is deliberately not applied outside mirrored
 subtrees: an unrestricted signed-volume sweep also flags concave debris
 meshes (H3 rubble) that must keep their authored orientation.
 
+### AT Pillbox's Idle 0 range is nested inside Fire 0
+
+**Observed data:** Every shipped `AT_MGT` H/M/L state uses the same clip
+table: `Stationary` is frames 104..133, `Idle 0` is 200..240, and `Fire 0` is
+193..275. The only moving gun transforms occupy frames 194..230, while the
+short-burst sound and firing events occupy frames 194..257. `Idle 0` therefore
+contains the machine-gun recoil instead of an idle motion.
+
+**Original-engine quirk:** This overlap is present verbatim in each original
+XBF; it is not an animation-table parsing error. Buildings use `Stationary` as
+their resting state, so the mislabeled optional idle clip did not affect the
+original building state.
+
+**EmperorReborn compatibility decision:** `ModelXbf` preserves the authored
+table for lossless inspection. `ModelBakeBuilder` repairs only the converted
+`AT_MGT` `Idle_0` clip by assigning it that file's `Stationary` frame range,
+while retaining frames 200..240 as `source_start_frame`/`source_end_frame`
+metadata. `Fire_0` and its event schedule remain unchanged.
+
 ### Two building art names differ from their H0 filenames
 
 **Observed data:** The `INGUCyclopseHouse` art entry names its model

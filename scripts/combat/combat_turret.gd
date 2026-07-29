@@ -227,7 +227,8 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 		if _pitch_pivot == null and _axis_speed(joint_config, &"pitch_speed") > 0.0:
 			_pitch_pivot = pivot
 
-	var deploy_only := is_active_while_deployed(true) and not is_active_while_deployed(false)
+	var deploy_only := is_active_while_deployed(true) \
+		and not is_active_while_deployed(false)
 	for pivot in [_root_pivot, _yaw_pivot, _pitch_pivot, _reference_pivot]:
 		if deploy_only:
 			var authored_rest: Variant = _authored_hold_transform(model_root, pivot)
@@ -390,6 +391,23 @@ func current_pitch_degrees() -> float:
 ## transform for one rendered frame without changing the logical aim angles.
 func restore_aim_pose() -> void:
 	_apply_aim_transforms()
+
+
+## Makes the model's currently evaluated pose the servo's new zero angle.
+## Popup buildings call this at the end of their authored deploy/undeploy
+## clips: the animation owns every transform during the transition, then the
+## combat servo takes ownership from exactly that visible endpoint.
+func capture_current_rest_pose() -> void:
+	current_yaw = 0.0
+	current_pitch = 0.0
+	_pivot_rest_transforms.clear()
+	for pivot in [_root_pivot, _yaw_pivot, _pitch_pivot, _reference_pivot]:
+		_store_rest_transform(pivot)
+	_apply_aim_transforms()
+	var neutral_muzzle_origin := _muzzle_group_origin()
+	_trajectory_aim_origin_local = _model_root.to_local(neutral_muzzle_origin) \
+		if _model_root != null and neutral_muzzle_origin.is_finite() \
+		else Vector3.INF
 
 
 func aim_at(world_position: Vector3, delta: float) -> bool:
@@ -568,6 +586,42 @@ func is_aimed_at(world_position: Vector3) -> bool:
 	var direction_pitch := atan2(direction.y, horizontal_direction.length())
 	var target_pitch := atan2(target_direction.y, horizontal_pitch_target.length())
 	var pitch_error := absf(angle_difference(direction_pitch, target_pitch))
+	return yaw_error <= deg_to_rad(_acceptable_yaw_degrees()) \
+		and (_pitch_pivot == null \
+			or pitch_error <= deg_to_rad(_acceptable_pitch_degrees()))
+
+
+## Readiness variant for a rigid multi-barrel mount whose yaw is authored
+## around the centre pivot while its active muzzle is offset sideways. Pitch
+## remains ballistic/muzzle-relative. ATRocketTurret uses this without changing
+## the established aiming contract of unit weapons such as Mongoose.
+func is_group_yaw_aimed_at(world_position: Vector3) -> bool:
+	var emission := peek_emission()
+	if emission.is_empty():
+		return false
+	var direction: Vector3 = emission["direction"]
+	var pivot_target_direction := world_position - _aim_origin()
+	var horizontal_direction := Vector2(direction.x, direction.z)
+	var horizontal_target := Vector2(
+		pivot_target_direction.x, pivot_target_direction.z
+	)
+	var yaw_error := 0.0
+	if not horizontal_direction.is_zero_approx() \
+	and not horizontal_target.is_zero_approx():
+		yaw_error = absf(angle_difference(
+			horizontal_direction.angle(), horizontal_target.angle()
+		))
+	var firing_direction := _desired_firing_direction(world_position)
+	var horizontal_firing := Vector2(
+		firing_direction.x, firing_direction.z
+	)
+	var direction_pitch := atan2(direction.y, horizontal_direction.length())
+	var target_pitch := atan2(
+		firing_direction.y, horizontal_firing.length()
+	)
+	var pitch_error := absf(
+		angle_difference(direction_pitch, target_pitch)
+	)
 	return yaw_error <= deg_to_rad(_acceptable_yaw_degrees()) \
 		and (_pitch_pivot == null \
 			or pitch_error <= deg_to_rad(_acceptable_pitch_degrees()))

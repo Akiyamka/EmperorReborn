@@ -575,20 +575,29 @@ func _command_cursor_at(screen_position: Vector2) -> int:
 		return CursorManagerScript.CursorType.OVER_UNIT
 	if _selected_entities.is_empty():
 		return NO_CURSOR_OVERRIDE
+	return _terrain_command_cursor_at(screen_position)
+
+
+## Resolve terrain orders by intent before considering movement capabilities.
+## A stationary entity can still contribute an attack-ground command, while
+## ordinary terrain hover remains silent when no move/rally command exists.
+func _terrain_command_cursor_at(screen_position: Vector2) -> int:
+	if _attack_modifier_down:
+		var attack_hit := _raycast(screen_position, TERRAIN_COLLISION_MASK)
+		if attack_hit.is_empty():
+			return NO_CURSOR_OVERRIDE
+		var attack_target: Vector3 = attack_hit["position"]
+		return CursorManagerScript.CursorType.ATTACK \
+			if _can_issue_attack_order(attack_target) else NO_CURSOR_OVERRIDE
+
 	if not _has_movement_or_rally_selection():
 		return NO_CURSOR_OVERRIDE
-
 	var terrain_hit := _raycast(screen_position, TERRAIN_COLLISION_MASK)
 	if terrain_hit.is_empty():
-		if _attack_modifier_down:
-			return NO_CURSOR_OVERRIDE
 		if _has_rally_point_selection():
 			return CursorManagerScript.CursorType.CANT_PLACE_FLAG
 		return CursorManagerScript.CursorType.CANT_MOVE
 	var target: Vector3 = terrain_hit["position"]
-	if _attack_modifier_down:
-		return CursorManagerScript.CursorType.ATTACK \
-			if _can_issue_attack_order(target) else NO_CURSOR_OVERRIDE
 	if not _can_issue_movement_order(target):
 		if _has_rally_point_selection():
 			return CursorManagerScript.CursorType.CANT_PLACE_FLAG
