@@ -723,6 +723,10 @@ func _test_laser_hitscan_visual() -> void:
 	var tank_target := Vector3(tank_emission.get("position", Vector3.ZERO)) \
 		+ Vector3(tank_emission.get("direction", Vector3.FORWARD)) * 5.0
 	tank_target.y = 0.0
+	for unused in 30:
+		if laser_tank_turret.aim_at(tank_target, 0.05):
+			break
+	tank_emission = laser_tank_turret.peek_emission()
 	var tank_projectiles: Array = laser_tank_turret.try_fire_at(
 		tank_target, laser_tank_model, root
 	)
@@ -2127,6 +2131,30 @@ func _test_single_axis_turret() -> void:
 	_expect(not turret.is_fixed(), "a Y-only turret must not be classified as fixed")
 	_expect(not turret.requires_hull_turn(), "a Y-only turret can align without turning its hull")
 	var emission := turret.peek_emission()
+	var close_direction := Vector3(emission["direction"])
+	close_direction.y = 0.0
+	close_direction = close_direction.normalized()
+	var close_target := model.global_position + close_direction
+	for unused in 30:
+		if turret.aim_at(close_target, 0.05):
+			break
+	_expect(
+		turret.is_aimed_at(close_target),
+		"the Laser Tank must acquire a close target from its pivot despite its offset muzzle"
+	)
+	var close_projectiles: Array = turret.try_fire_at(close_target, model, root)
+	_expect(
+		close_projectiles.size() == 1,
+		"the Laser Tank must fire inside the false offset-muzzle dead zone"
+	)
+	for projectile in close_projectiles:
+		if is_instance_valid(projectile):
+			projectile.free()
+	_free_muzzle_effects()
+	for unused in 30:
+		if turret.recenter(0.05):
+			break
+	emission = turret.peek_emission()
 	var side_target: Vector3 = emission["position"] + Vector3.RIGHT * 10000.0
 	turret.aim_at(side_target, 0.05)
 	_expect(
