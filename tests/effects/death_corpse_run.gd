@@ -5,6 +5,8 @@ extends SceneTree
 ## contract DeathCorpse offers around it.
 
 const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
+const SoundEventScript := preload("res://scripts/audio/sound_event.gd")
+const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -19,6 +21,7 @@ func _initialize() -> void:
 	await _run_case("never joins the units group", _test_not_in_units_group)
 	await _run_case("frees once the death clip finishes", _test_frees_on_animation_finished)
 	await _run_case("collision shape is fit from the model's own mesh AABB, not a constant", _test_collision_shape_fits_model)
+	await _run_case("death sound is tuned to be audible at this game's real camera distances, not Godot's point-blank defaults", _test_death_sound_attenuation_tuned)
 	if _failures > 0:
 		printerr("DeathCorpse tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
@@ -181,6 +184,49 @@ func _test_collision_shape_fits_model() -> void:
 			"two differently sized models must not collapse to the same collider"
 		)
 
+	world.queue_free()
+	await process_frame
+
+
+## Regression for the reported "vehicle death plays no sound" bug: at
+## Godot's stock AudioStreamPlayer3D defaults (unit_size=10, unbounded
+## max_distance), the inverse-distance falloff at this game's real camera
+## distances (RTSCameraConfig puts the camera 17.5-300 world units from a
+## dying unit across its zoom range — see death_sound_player.gd's derivation)
+## is quiet enough to read as silence, not merely "a bit quiet". This checks
+## the actual node both infantry and vehicle deaths share (DeathSoundPlayer)
+## carries the widened tuning, so nothing can silently regress it back to
+## the point-blank stock defaults. Not gated behind DeathCorpse's manifest
+## lookup: both death paths construct exactly this class, so testing the
+## class directly covers both without needing a real resolvable sound id.
+func _test_death_sound_attenuation_tuned() -> void:
+	var player := DeathSoundPlayerScript.new()
+	_expect(
+		player.unit_size > 10.0,
+		"unit_size must be widened well past Godot's stock 10.0, or the sound is inaudible at normal play zoom, got %s" % player.unit_size
+	)
+	_expect(
+		player.max_distance > 300.0,
+		"max_distance must reach past the camera's farthest real distance (~300 units at max_zoom) so the sound never hard-cuts mid-falloff, got %s" % player.max_distance
+	)
+	_expect(
+		player.attenuation_model == AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE,
+		"attenuation model must stay inverse-distance (a real, if gentler, distance cue), not disabled or squared, got %s" % player.attenuation_model
+	)
+
+	# playing an event must not reset the tuning back to class/script defaults.
+	var world := Node3D.new()
+	root.add_child(world)
+	world.add_child(player)
+	await process_frame
+	var event := SoundEventScript.new()
+	event.sample_paths = ["res://assets/converted/audio/sfx/explosion_vehicle_2.wav"]
+	event.volume = 80
+	player.play_event(event)
+	_expect(
+		player.unit_size > 10.0 and player.max_distance > 300.0,
+		"play_event() must not disturb the attenuation tuning set at construction"
+	)
 	world.queue_free()
 	await process_frame
 
