@@ -1060,6 +1060,13 @@ func _begin_death_sequence(cause: StringName) -> void:
 ## a leftover fire-overlay AnimationPlayer would otherwise keep acting like a
 ## live unit under the corpse's ownership.
 func _prepare_model_for_corpse() -> void:
+	# Must run before any overlay player is freed below: a fire sequence's
+	# state dict can still hold that same player in state["player"], and
+	# freeing it out from under a live entry leaves a dangling reference that
+	# _exit_tree()'s teardown (_cancel_all_fire_sequences) would later cast.
+	# restore_idle=false because the unit is being discarded this frame, same
+	# as every other pre-teardown call site (setup(), replace_visual_scene()).
+	_cancel_all_fire_sequences(false)
 	for turret in combat_turrets:
 		turret.unbind_model()
 	for mesh_instance in _shield_meshes:
@@ -1686,13 +1693,17 @@ func _finish_fire_sequence_for(weapon_index: int) -> void:
 		return
 	var state: Dictionary = _weapon_fire_sequences[weapon_index]
 	_weapon_fire_sequences.erase(weapon_index)
-	var player := state.get("player") as AnimationPlayer
-	if player != null and is_instance_valid(player):
+	var player_value: Variant = state.get("player")
+	# is_instance_valid() must run before the `as` cast: casting an already
+	# freed object raises "Trying to cast a freed object" even though the
+	# guard right after would have caught it (see unit.gd's freed-overlay
+	# regression, tests/units/death_animation_run.gd).
+	if is_instance_valid(player_value) and player_value is AnimationPlayer:
 		# stop() without keep_state rewinds the just-finished Fire clip to its
 		# first frame immediately. Deployed Kindjal/Mortar clips begin with a
 		# large embedded bigflash, while Deploy_Gun_Hold is not evaluated until
 		# the next animation tick, producing a duplicate one-frame muzzle flash.
-		player.stop(true)
+		(player_value as AnimationPlayer).stop(true)
 	var turret = state.get("turret")
 	if turret != null:
 		turret.cancel_authored_fire_fx()
@@ -1710,9 +1721,10 @@ func _cancel_all_fire_sequences(restore_idle := true) -> void:
 	for weapon_index: Variant in _weapon_fire_sequences.keys():
 		var state: Dictionary = _weapon_fire_sequences[weapon_index]
 		had_blocking = had_blocking or bool(state.get("blocking", false))
-		var player := state.get("player") as AnimationPlayer
-		if player != null and is_instance_valid(player):
-			player.stop(true)
+		var player_value: Variant = state.get("player")
+		# Validity must be checked before the cast (see _finish_fire_sequence_for).
+		if is_instance_valid(player_value) and player_value is AnimationPlayer:
+			(player_value as AnimationPlayer).stop(true)
 		var turret = state.get("turret")
 		if turret != null:
 			turret.cancel_authored_fire_fx()
@@ -1737,9 +1749,10 @@ func _cancel_blocking_fire_sequences() -> void:
 		var state: Dictionary = _weapon_fire_sequences[weapon_index]
 		if not bool(state.get("blocking", false)):
 			continue
-		var player := state.get("player") as AnimationPlayer
-		if player != null and is_instance_valid(player):
-			player.stop(true)
+		var player_value: Variant = state.get("player")
+		# Validity must be checked before the cast (see _finish_fire_sequence_for).
+		if is_instance_valid(player_value) and player_value is AnimationPlayer:
+			(player_value as AnimationPlayer).stop(true)
 		var turret = state.get("turret")
 		if turret != null:
 			turret.cancel_authored_fire_fx()

@@ -18,6 +18,7 @@ func _initialize() -> void:
 	await _run_case("a shot infantry unit is freed immediately and leaves exactly one corpse", _test_infantry_death)
 	await _run_case("an exploded vehicle is freed immediately and leaves an Explode corpse", _test_vehicle_death)
 	await _run_case("an unmatched death cause frees the unit with no corpse at all", _test_no_matching_clip)
+	await _run_case("a unit mid-fire-sequence is freed without casting a freed overlay player", _test_death_mid_fire_sequence)
 	if _failures > 0:
 		printerr("Death animation tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
@@ -109,6 +110,55 @@ func _test_no_matching_clip() -> void:
 
 	_expect(unit.is_queued_for_deletion(), "the unit must still be freed even with no matching death clip")
 	_expect(_corpses_in(world).is_empty(), "no corpse may be spawned when no clip matches")
+	world.queue_free()
+	await process_frame
+
+
+## Regression for _prepare_model_for_corpse() freeing a weapon-fire overlay
+## AnimationPlayer that _weapon_fire_sequences still references: the killing
+## blow must not try to cast that freed player when _exit_tree() cancels
+## in-flight fire sequences. Reproduces the real crash by injecting a fake
+## fire-while-moving sequence the same way tests/combat/run.gd pokes
+## _weapon_fire_sequences directly, since driving a real Mongoose to a
+## mid-overlay-fire frame needs a full attack simulation this file otherwise
+## has no use for.
+func _test_death_mid_fire_sequence() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var unit := UnitScene.instantiate() as Unit
+	world.add_child(unit)
+	await process_frame
+
+	var overlay := AnimationPlayer.new()
+	unit.add_child(overlay)
+	unit._weapon_fire_overlays[0] = overlay
+	unit._weapon_fire_sequences[0] = {
+		"turret": null,
+		"target": {},
+		"player": overlay,
+		"animation": &"",
+		"duration": 1.0,
+		"elapsed": 0.0,
+		"shot_times": [],
+		"next_shot": 0,
+		"shots_emitted": 0,
+		"blocking": false,
+	}
+
+	unit.take_damage(unit.max_health + unit.max_shields + 10.0, &"Shot")
+
+	_expect(unit.is_queued_for_deletion(), "a unit killed mid-fire-sequence must still be freed")
+	_expect(not is_instance_valid(overlay), "the fire overlay handed to the corpse prep must have been freed")
+	_expect(
+		unit._weapon_fire_sequences.is_empty(),
+		"the fire sequence referencing the freed overlay must be cleared, not left dangling"
+	)
+	# The actual free (and thus _exit_tree()'s _cancel_all_fire_sequences(false))
+	# is deferred until here — this is the frame where the reported crash
+	# ("Trying to cast a freed object", unit.gd _cancel_all_fire_sequences)
+	# used to happen.
+	await process_frame
+
 	world.queue_free()
 	await process_frame
 
