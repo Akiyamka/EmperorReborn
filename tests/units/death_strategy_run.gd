@@ -2,6 +2,7 @@ extends SceneTree
 
 const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
 const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
+const ExplosionTierPools := preload("res://scripts/audio/explosion_tier_pools.gd")
 const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
 
 var _assertions := 0
@@ -24,10 +25,15 @@ func _initialize() -> void:
 	_run_case("infantry sound id: unmapped house falls back to the generic hook", _test_infantry_sound_unmapped_house)
 	_run_case("infantry sound id: empty house_id falls back to the generic hook", _test_infantry_sound_empty_house)
 	_run_case("infantry sound resolution: Atreides/Harkonnen fall through their shadowed per-house hook to a real generic sample", _test_infantry_sound_resolves_to_real_samples)
-	_run_case("infantry sound id: HKFlamer adds its own boom on top of every cause", _test_infantry_sound_flamer_extra_layer)
-	_run_case("vehicle sound id: personal hooks play alongside the size tier", _test_vehicle_sound_personal_hooks)
-	_run_case("vehicle sound id: everyone else gets exactly one size-tier layer", _test_vehicle_sound_tiers)
-	_run_case("vehicle sound ids are all really generated, with samples", _test_vehicle_sound_ids_are_generated)
+	_run_case("infantry sound id: HKFlamer's own boom moved to death_start_sound_paths", _test_infantry_sound_flamer_extra_layer)
+	_run_case("infantry death_start_sound_paths: only HKFlamer gets the small pool", _test_infantry_start_sound_paths)
+	_run_case("vehicle death_vfx_sound_paths: named units resolve their tier pool", _test_vehicle_vfx_sound_paths_named)
+	_run_case("vehicle death_vfx_sound_paths: unnamed unit defaults to medium", _test_vehicle_vfx_sound_paths_default)
+	_run_case("vehicle death_vfx_sound_paths depends only on config_id", _test_vehicle_vfx_sound_paths_unit_only)
+	_run_case("vehicle death_start_sound_paths: Harkonnen gets the vehicle_* layer", _test_vehicle_start_sound_paths_harkonnen)
+	_run_case("vehicle death_start_sound_paths: Ordos gets the ordos* layer", _test_vehicle_start_sound_paths_ordos)
+	_run_case("vehicle death_start_sound_paths: Atreides/other factions get no extra layer", _test_vehicle_start_sound_paths_none)
+	_run_case("vehicle death_sound_event_layers is always empty (manifest bypassed)", _test_vehicle_sound_event_layers_empty)
 	_run_case("infantry launch impulse: Blow_Up only", _test_infantry_launch_impulse)
 	_run_case("vehicle launch impulse is always zero", _test_vehicle_launch_impulse)
 	if _failures > 0:
@@ -236,9 +242,10 @@ func _cause_layer(strategy, cause: StringName, faction: StringName) -> Array:
 	return layers[0] if not layers.is_empty() else []
 
 
-## HKFlamer always adds a small-tier boom on top of whatever its cause resolved
-## to, because its own fuel tank ruptures no matter what killed it — including
-## Blow_Up, where the cause itself contributes nothing (so the boom is alone).
+## HKFlamer's cause layer is unaffected: death_sound_event_layers() proposes
+## only the ordinary cause layer now (its extra boom moved to
+## death_start_sound_paths, see the next test) — including Blow_Up, which
+## still contributes nothing.
 func _test_infantry_sound_flamer_extra_layer() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
 	var expected_cause_layers := {
@@ -250,102 +257,123 @@ func _test_infantry_sound_flamer_extra_layer() -> void:
 	for cause: StringName in expected_cause_layers:
 		var layers: Array = strategy.death_sound_event_layers(cause, &"Harkonnen", &"HKFlamer")
 		var expected_cause: Array = expected_cause_layers[cause]
-		var expected_size := (1 if expected_cause.is_empty() else 2)
+		var expected_size := (0 if expected_cause.is_empty() else 1)
 		_expect(
 			layers.size() == expected_size,
 			"HKFlamer %s must propose %d layer(s), got %s" % [cause, expected_size, layers]
 		)
-		if layers.size() != expected_size:
-			continue
-		if not expected_cause.is_empty():
+		if not expected_cause.is_empty() and layers.size() == expected_size:
 			_expect(
 				layers[0] == expected_cause,
 				"HKFlamer %s must keep its ordinary cause layer %s, got %s" % [cause, expected_cause, layers[0]]
 			)
+
+
+## HKFlamer always gets a `small`-tier direct-WAV pool from
+## death_start_sound_paths, unconditional on cause/faction; every other
+## infantry unit gets none — scoped to HKFlamer alone since no equivalent
+## hook exists for any other infantry unit.
+func _test_infantry_start_sound_paths() -> void:
+	var strategy := InfantryDeathStrategyScript.new()
+	for faction: StringName in [&"", &"Harkonnen", &"Atreides"]:
+		var paths := strategy.death_start_sound_paths(faction, &"HKFlamer")
 		_expect(
-			layers[-1] == [&"small"],
-			"HKFlamer %s must add its own small-tier boom as the last layer, got %s" % [cause, layers[-1]]
+			paths == ExplosionTierPools.SMALL,
+			"HKFlamer must always get the small-tier pool regardless of faction (%s), got %s" % [faction, paths]
 		)
-	# Scoped to HKFlamer alone: no other infantry unit has such a hook.
 	_expect(
-		strategy.death_sound_event_layers(&"Shot", &"Harkonnen", &"HKTrooper").size() == 1,
-		"an ordinary infantry unit must propose only its cause layer, never a self-destruct boom"
+		strategy.death_start_sound_paths(&"Harkonnen", &"HKTrooper").is_empty(),
+		"an ordinary infantry unit must get no self-destruct sound layer"
 	)
 
 
-## The four Harkonnen personal hooks play *alongside* the generic size tier —
-## the user hears two booms on these units and one on everything else.
-func _test_vehicle_sound_personal_hooks() -> void:
+## Every explicitly named unit from the user's tier table resolves its
+## correct pool via death_vfx_sound_paths — the VFX-timed size-tier boom.
+func _test_vehicle_vfx_sound_paths_named() -> void:
 	var strategy := VehicleDeathStrategyScript.new()
 	var cases := {
-		&"HKAssault": [&"hkmedium1", &"medium"],
-		&"HKInkVine": [&"hkmedium2", &"medium"],
-		&"HKBuzzsaw": [&"hksmall1", &"medium"],
-		&"HKDevastator": [&"explode", &"large"],
+		&"HKDevastator": ExplosionTierPools.LARGE,
+		&"ATTrike": ExplosionTierPools.SMALL,
+		&"ATAPC": ExplosionTierPools.SMALL,
+		&"ATMinotaurus": ExplosionTierPools.LARGE,
+		&"ORDustScout": ExplosionTierPools.SMALL,
+		&"ORKobra": ExplosionTierPools.LARGE,
+		&"Harvester": ExplosionTierPools.LARGE,
+		&"FakeHarvester": ExplosionTierPools.LARGE,
+		&"GUNIABTank": ExplosionTierPools.LARGE,
 	}
 	for config_id: StringName in cases:
-		var layers: Array = strategy.death_sound_event_layers(&"Explode", &"Harkonnen", config_id)
-		var expected: Array = cases[config_id]
+		var paths := strategy.death_vfx_sound_paths(config_id)
 		_expect(
-			layers.size() == 2,
-			"%s must propose two concurrent layers (personal hook + size tier), got %s" % [config_id, layers]
-		)
-		if layers.size() != 2:
-			continue
-		_expect(
-			layers[0] == [expected[0]] and layers[1] == [expected[1]],
-			"%s must propose [[%s], [%s]], got %s" % [config_id, expected[0], expected[1], layers]
+			paths == cases[config_id],
+			"%s must resolve to its named tier pool, got %s" % [config_id, paths]
 		)
 
 
-## Everyone else gets exactly one layer, the size tier — never `explode`, which
-## is HKDevastator's personal hook, not a generic explosion id.
-func _test_vehicle_sound_tiers() -> void:
+## Any vehicle not explicitly named defaults to the medium pool, including a
+## Harkonnen vehicle other than HKDevastator (HKAssault) and an Atreides
+## vehicle with no override (ATMongoose, ORAPC).
+func _test_vehicle_vfx_sound_paths_default() -> void:
 	var strategy := VehicleDeathStrategyScript.new()
-	var cases := {
-		&"ATTrike": &"small",
-		&"ORDustScout": &"small",
-		&"ORAPC": &"medium",
-		&"ATMongoose": &"medium",
-	}
-	for config_id: StringName in cases:
-		var layers: Array = strategy.death_sound_event_layers(&"Explode", &"Atreides", config_id)
+	for config_id in [&"HKAssault", &"ATMongoose", &"ORAPC", &"ORLaserTank"]:
+		var paths := strategy.death_vfx_sound_paths(config_id)
 		_expect(
-			layers.size() == 1 and layers[0] == [cases[config_id]],
-			"%s must propose exactly one layer, [%s], got %s" % [config_id, cases[config_id], layers]
+			paths == ExplosionTierPools.MEDIUM,
+			"%s must default to the medium pool, got %s" % [config_id, paths]
 		)
+
+
+func _test_vehicle_vfx_sound_paths_unit_only() -> void:
+	var strategy := VehicleDeathStrategyScript.new()
 	_expect(
-		strategy.death_sound_event_layers(&"Explode", &"", &"ORAPC")
-			== strategy.death_sound_event_layers(&"Blow_Up", &"Harkonnen", &"ORAPC"),
-		"vehicle sound layers must depend on the unit alone, never on faction or cause"
+		strategy.death_vfx_sound_paths(&"ORAPC") == strategy.death_vfx_sound_paths(&"ORAPC"),
+		"the vfx sound pool must depend only on config_id"
 	)
 
 
-## Every id either strategy can propose must actually exist in the generated
-## manifest — a personal hook has no fallback candidate behind it, so a
-## shadowed-away id (see tools/generate_voice_feedback.py's
-## SHADOW_PROOF_EVENT_IDS, docs/quirks.md) would be silent loss, not a
-## graceful degrade.
-func _test_vehicle_sound_ids_are_generated() -> void:
+## Every Harkonnen vehicle gets the explosion_vehicle_* pool, unconditionally
+## (driven by house_id, not a per-unit list).
+func _test_vehicle_start_sound_paths_harkonnen() -> void:
 	var strategy := VehicleDeathStrategyScript.new()
-	var ids: Array[StringName] = []
-	for config_id: StringName in strategy.PERSONAL_DEATH_HOOKS:
-		ids.append(strategy.PERSONAL_DEATH_HOOKS[config_id])
-	for config_id: StringName in strategy.TIER_OVERRIDES:
-		ids.append(strategy.TIER_OVERRIDES[config_id])
-	ids.append(strategy.DEFAULT_TIER)
-	for id: StringName in ids:
-		var key := _manifest_key(id)
+	for config_id in [&"HKAssault", &"HKDevastator", &"HKMCV"]:
+		var paths := strategy.death_start_sound_paths(&"Harkonnen", config_id)
 		_expect(
-			GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(key),
-			"%s must be present in the generated DEATH_EVENT_PATHS manifest" % id
+			paths == ExplosionTierPools.HARKONNEN_START,
+			"%s (Harkonnen) must get the explosion_vehicle_* pool, got %s" % [config_id, paths]
 		)
-		if not GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(key):
-			continue
-		var event := load(String(GeneratedVoiceManifest.DEATH_EVENT_PATHS[key])) as SoundEvent
+
+
+## Every Ordos vehicle gets the explosionordos* pool, unconditionally.
+func _test_vehicle_start_sound_paths_ordos() -> void:
+	var strategy := VehicleDeathStrategyScript.new()
+	for config_id in [&"ORKobra", &"ORDustScout", &"ORMCV"]:
+		var paths := strategy.death_start_sound_paths(&"Ordos", config_id)
 		_expect(
-			event != null and not event.sample_paths.is_empty(),
-			"%s must carry at least one real converted sample" % id
+			paths == ExplosionTierPools.ORDOS_START,
+			"%s (Ordos) must get the explosionordos* pool, got %s" % [config_id, paths]
+		)
+
+
+## Atreides and every other faction get no extra start-of-animation layer.
+func _test_vehicle_start_sound_paths_none() -> void:
+	var strategy := VehicleDeathStrategyScript.new()
+	for faction: StringName in [&"Atreides", &"", &"Imperial", &"Guild", &"Tleilaxu"]:
+		var paths := strategy.death_start_sound_paths(faction, &"ATMinotaurus")
+		_expect(
+			paths.is_empty(),
+			"%s must get no extra start-of-animation layer, got %s" % [faction, paths]
+		)
+
+
+## Vehicle death explosions no longer go through GeneratedVoiceManifest at
+## all — this is the regression that would catch a stray manifest lookup
+## creeping back in.
+func _test_vehicle_sound_event_layers_empty() -> void:
+	var strategy := VehicleDeathStrategyScript.new()
+	for config_id in [&"HKDevastator", &"ATTrike", &"ORAPC"]:
+		_expect(
+			strategy.death_sound_event_layers(&"Explode", &"Harkonnen", config_id).is_empty(),
+			"%s death_sound_event_layers must be empty" % config_id
 		)
 
 

@@ -256,11 +256,11 @@ samples, so there was nothing to change, and applying the same drop rule to
 voice events would need `tests/audio/voice_feedback_run.gd`'s expectations
 revisited first.
 
-### `explode` is one vehicle's personal death hook, not a generic explosion
+### Vehicle death explosions: the "personal hook" theory was falsified; size tiers are hand-picked instead
 
-**Observed data:** `HarkonnenSFX.txt` contains four death-sound sections whose
-names were renamed away from a per-unit label that survives only as a
-commented-out line directly above each one:
+**Observed data (the now-abandoned theory):** `HarkonnenSFX.txt` contains four
+death-sound sections whose names were renamed away from a per-unit label that
+survives only as a commented-out line directly above each one:
 
 | section | commented-out original label | unit |
 | --- | --- | --- |
@@ -269,42 +269,62 @@ commented-out line directly above each one:
 | `[hksmall1]` | `;dko[HarkBuzzsawDie]` | `HKBuzzsaw` |
 | `[explode]` | `;dko[HarkDevastatorDie]` | `HKDevastator` |
 
-So `explode` is **`HarkDevastatorDie`** — it was never a generic id, and using
-it for arbitrary vehicles (or for infantry `Blow_Up`) gave every unit in the
-game one specific Harkonnen unit's death sound. Grep-confirmed exhaustive: no
-equivalent renamed-hook pattern exists in `AtreidesSFX.txt` or `ORDOSSFX.TXT`
-(Ordos's similarly named `ormedium1`/`ormedium2` are the pop-up turret's own
-explosion, not a vehicle-death hook).
+An earlier design (commit `105928f`) took this at face value: each of these
+four units plays its "personal hook" concurrently with a generic
+`GeneralSFX.txt` `[Small]`/`[Medium]`/`[Large]` size-tier boom.
 
-**The genuinely generic family is separate:** `GeneralSFX.txt`'s `[Small]`/
-`[Medium]`/`[Large]` sections, commented as firing "when small/medium/large
-vehicles are destroyed". A vehicle with a personal hook plays **both** layers
-at once — user-confirmed against the reference game, where `HKAssault`,
-`HKInkVine`, and `HKBuzzsaw` are each heard booming twice while e.g. `ATTrike`
-booms once.
+**This was falsified by testing against the reference build.** `HKAssault`
+empirically played `explosion_large_3.wav` + `explosion_medium_5.wav` —
+*neither* of which is in `[hkmedium1]`'s own sample list
+(`bigxplosion04`/`explosion_vehicle_1`/`explosion_vehicle_2`). `HKBuzzsaw`
+played `explosion_large_5.wav` + `explosion_vehicle_2.wav`, and
+`explosion_vehicle_2` is not even in `[hksmall1]`, its own supposed personal
+hook. Further investigation (grepping every `SFX/*.txt` file and every
+converted XBF model's embedded `sound_names` strings) found that essentially
+every unit's model references *some* personal-hook-shaped name, but almost
+all of them are dead, `$`-prefixed localized stubs in `ImportedSfx.txt` with
+zero real samples behind them — these four just happen to be the only ones
+that survived with real English samples, which is a fact about which stubs
+got localized, not evidence that these four units are audio-special.
+**Conclusion: the original engine's actual per-unit death-sample selection is
+hardcoded in the shipped binary and is not recoverable from any available
+source data.** `explode` is still specifically `HarkDevastatorDie`, not a
+generic id (so it must never be handed to an arbitrary vehicle or to
+infantry) — that grep fact stands — but "personal hook + generic tier, both
+concurrent" as a *selection mechanism* does not.
 
-**EmperorReborn compatibility decision:** `VehicleDeathStrategy` carries the
-four personal hooks and a size-tier table, and `Unit`/`DeathCorpse` play every
-resolved layer concurrently instead of picking the first. The per-unit tier
-itself was hardcoded in the original engine's binary and left no trace in the
-source data — in particular `explosion_type_id` (the visual VFX bank) does
-*not* correlate with it (`HKDevastator` and `ATMongoose` share the same generic
-`Explosion` bank; `MidExplosion` is used by zero units) — so everything outside
-the table defaults to `medium`, an **approximation, not sourced data**. The
-table's contents come from user listening tests in the reference build:
-`ATTrike` and `ORDustScout` are `small`, `HKDevastator` is `large`. `ATMongoose`
-is deliberately *not* listed as `small` despite a `GeneralSFX.txt` comment
-naming it as a "Small" example — the user hears it play the medium family, and
-the live observation overrides the stale comment.
+**EmperorReborn compatibility decision:** abandon precision. `VehicleDeathStrategy`
+drops `PERSONAL_DEATH_HOOKS` and the whole `GeneratedVoiceManifest`
+indirection for this mechanism entirely, replaced by a hand-specified
+three-pool system (`ExplosionTierPools`: `small`/`medium`/`large`, each a
+pool of `explosion_{small,medium,large}_*.wav` referenced directly, bypassing
+`SoundEvent`/the generated manifest) confirmed by ear-testing several units
+against the reference build. `TIER_OVERRIDES` lists every unit the user
+specified by ear; everything else defaults to `medium` — an **approximation,
+not sourced data**, since the per-unit tier itself is still hardcoded in the
+binary and `explosion_type_id` (the visual VFX bank) does not correlate with
+it at all (`HKDevastator` and `ATMongoose` share the same generic `Explosion`
+bank). Current overrides: Harkonnen vehicles are all `medium` except
+`HKDevastator` (`large`); Atreides `ATTrike`/`ATAPC` are `small`,
+`ATMinotaurus` is `large`; Ordos `ORDustScout` is `small`, `ORKobra` is
+`large`; the shared `Harvester`/`FakeHarvester` and the Guild `GUNIABTank`
+are `large`.
 
-**Related shadowing fix:** `hkmedium1`/`hkmedium2`/`hksmall1` are themselves
-shadowed by `ImportedSfx.txt` localized stubs (see the previous section), which
-would normally drop them from `DEATH_EVENT_PATHS` entirely. Unlike the infantry
-per-house hooks, a personal vehicle hook has no fallback candidate behind it to
-fall through to, so dropping it is silent loss rather than a graceful degrade.
-`tools/generate_voice_feedback.py`'s `SHADOW_PROOF_EVENT_IDS` keeps the earlier
-real definition for exactly these three ids; the set is deliberately narrow, so
-the infantry ids keep their existing fall-through behavior unchanged.
+**Separately, an unconditional per-house layer:** every Harkonnen vehicle
+additionally plays one of `explosion_vehicle_1.wav`/`explosion_vehicle_2.wav`,
+and every Ordos vehicle plays one of `explosionordos01..06.wav`, both at the
+start of the death animation regardless of size tier (`VehicleDeathStrategy.
+death_start_sound_paths`, keyed off `house_id` rather than a per-unit list, so
+it covers every vehicle in those houses automatically). Atreides and every
+other faction get no such layer. This approximates the doubled-boom behavior
+the original falsified theory was trying to explain, without claiming it is
+the same mechanism.
+
+`explosion_medium_1.wav` is deliberately excluded from the `medium` pool: it
+was renamed to `explosion_fire.wav` at convert time
+(`converters/convert_audio_bag.gd`'s `RENAMED_ENTRIES`) because that sample is
+actually used in-game for the (not yet implemented) Inkvine special ability,
+not for generic medium explosions.
 
 ### Infantry `Blow_Up` has no corpse sound of its own
 
@@ -324,11 +344,16 @@ keep their unrelated per-house/generic hooks unchanged.
 **`HKFlamer` is the one exception:** user-confirmed, it emits a `small`-tier
 boom *regardless of what killed it*, because its own fuel tank ruptures as part
 of dying. Its converted model carries only the ordinary infantry clip set (no
-bespoke "tank explodes" clip), so this is modelled as an extra concurrent sound
-layer on top of whatever the cause resolved to — not a forced `Blow_Up` cause —
-and no visual effect (`HKFlamer.explosion_type_id` is already `None`). Scoped to
+bespoke "tank explodes" clip), so this is modelled as an extra sound layer
+alongside whatever the cause resolved to — not a forced `Blow_Up` cause — and
+no visual effect (`HKFlamer.explosion_type_id` is already `None`). Scoped to
 this one unit: no equivalent hook or comment exists for any other infantry, so
 this is a recorded observation, not an extrapolated "special payload" rule.
+Same `ExplosionTierPools` direct-WAV pool the vehicle size tiers use
+(`InfantryDeathStrategy.death_start_sound_paths`), not the manifest, and it
+plays immediately alongside its per-cause scream — infantry has no separate
+VFX-spawn call site to time against the way vehicles do, and the user
+confirmed no artificial delay/sync attempt is wanted here.
 
 ## Building models
 

@@ -10,6 +10,7 @@ const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death
 const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
 const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
 const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
+const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
 const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
 static var _definition_catalog := UnitSceneCatalogScript.new()
 
@@ -1023,6 +1024,11 @@ func _begin_death_sequence(cause: StringName) -> void:
 		# — the death clip and the explosion FX are independent per the
 		# original data (ExplosionType/ExplosionEffects vs Explode animation),
 		# so losing one must not silently drop the other.
+		var start_paths: Array[String] = (
+			_death_strategy.death_start_sound_paths(_owner_faction_id(), config_id)
+			if _death_strategy != null else []
+		)
+		DeathSoundPlayerScript.play_pool(parent, global_position, start_paths)
 		_spawn_death_explosion_effects(parent, global_position)
 		queue_free()
 		return
@@ -1051,13 +1057,19 @@ func _begin_death_sequence(cause: StringName) -> void:
 		)
 		momentum = inherited_velocity + launch_impulse
 
+	var owner_faction := _owner_faction_id()
 	var sound_layers: Array = (
-		_death_strategy.death_sound_event_layers(cause, _owner_faction_id(), config_id)
+		_death_strategy.death_sound_event_layers(cause, owner_faction, config_id)
 		if _death_strategy != null else []
 	)
 	var sound_event_ids := _resolve_sound_event_ids(sound_layers)
+	var start_paths: Array[String] = (
+		_death_strategy.death_start_sound_paths(owner_faction, config_id)
+		if _death_strategy != null else []
+	)
 	DeathCorpseScript.spawn(
-		parent, model, world_transform, clip, sound_event_ids, momentum, owner_player_id
+		parent, model, world_transform, clip, sound_event_ids, momentum, owner_player_id,
+		start_paths,
 	)
 	_spawn_death_explosion_effects(parent, world_transform.origin)
 	queue_free()
@@ -1071,9 +1083,25 @@ func _begin_death_sequence(cause: StringName) -> void:
 ## would take a child effect down with it. Infantry naturally get no effect
 ## here since their UnitDefinition carries no explosion ids at all — nothing
 ## unit-type-specific needed.
+##
+## Also plays the death strategy's VFX-timed sound layer
+## (death_vfx_sound_paths(), vehicles' size-tier boom) right here rather than
+## from DeathCorpse or attached to the CombatImpactEffect node itself: this
+## is the one call site that already fires at "the explosion SFX is shown"
+## for both branches of _begin_death_sequence (with a corpse and the early
+## no-corpse return alike), so tying the sound to it directly is explicit
+## rather than coincidental. It is deliberately NOT a child of the spawned
+## CombatImpactEffect — that node's own Cleanup timer frees it after its
+## (short, ~0.5s) visual lifetime, which would cut an explosion sample short;
+## playing it as a parent-level fire-and-forget layer (DeathSoundPlayer.
+## play_pool) instead lets it run to completion independent of the visual.
 func _spawn_death_explosion_effects(parent: Node, world_position: Vector3) -> void:
 	if unit_definition == null or parent == null or not parent.is_inside_tree():
 		return
+	var vfx_sound_paths: Array[String] = (
+		_death_strategy.death_vfx_sound_paths(config_id) if _death_strategy != null else []
+	)
+	DeathSoundPlayerScript.play_pool(parent, world_position, vfx_sound_paths)
 	for effect_id in _death_explosion_effect_ids():
 		var scene_path := String(unit_definition.explosion_scene_paths.get(effect_id, ""))
 		if scene_path.is_empty():
@@ -1209,13 +1237,15 @@ func _sever_connections_into(subtree_root: Node) -> void:
 					node.disconnect(signal_name, callable)
 
 
-## Resolves every sound *layer* the strategy proposed, collapsing each layer's
-## candidate list to the single first id the SFX-hook converter actually
-## generated a resource for (per-unit hook -> faction hook -> generic hook ->
-## nothing). Layers are concurrent, so all survivors are returned and
-## DeathCorpse plays them together; a layer whose candidates all went
-## ungenerated simply drops out, without taking the other layers with it. See
-## UnitDeathStrategy.death_sound_event_layers for why the two levels differ.
+## Resolves every manifest-backed sound *layer* the strategy proposed,
+## collapsing each layer's candidate list to the single first id the SFX-hook
+## converter actually generated a resource for (per-house hook -> generic
+## hook -> nothing); a layer whose candidates all went ungenerated simply
+## drops out without taking the others with it. This is infantry-only now —
+## vehicle death explosions bypass GeneratedVoiceManifest entirely via
+## death_vfx_sound_paths()/death_start_sound_paths() (direct WAV pools, see
+## VehicleDeathStrategy/docs/quirks.md), so `layers` here is at most the one
+## per-cause layer InfantryDeathStrategy.death_sound_event_layers() returns.
 func _resolve_sound_event_ids(layers: Array) -> Array[StringName]:
 	var resolved: Array[StringName] = []
 	for layer: Array in layers:

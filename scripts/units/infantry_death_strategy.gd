@@ -1,6 +1,8 @@
 class_name InfantryDeathStrategy
 extends UnitDeathStrategy
 
+const ExplosionTierPools := preload("res://scripts/audio/explosion_tier_pools.gd")
+
 ## Death policy for `unit_definition.infantry` units. Clip families mirror the
 ## converted model content directly (`Blow_Up_1/2`, `Shot_1/2`, `Gassed_1`,
 ## `Burnt_1`, `Deployed_Death_1/2`) and the flags come from
@@ -86,21 +88,8 @@ func death_animation_candidates(cause: StringName, deployed: bool) -> Array[Stri
 ## one and the cause has a per-house stem at all), then the generic fallback,
 ## the two being alternative spellings of the same sound, so `Unit` plays only
 ## the first that resolves. `Blow_Up` contributes no layer at all (see above).
-##
-## HKFlamer adds a second, concurrent layer: user-confirmed, it always emits a
-## `small`-tier boom no matter what killed it, because its own fuel tank
-## ruptures as part of dying. Its converted model carries only the ordinary
-## infantry clip set (no bespoke "tank explodes" clip), so the correct
-## per-cause clip and sound still play unchanged — this is purely an extra
-## sound layer, not a forced Blow_Up cause. Scoped to this one unit: no
-## equivalent hook or comment exists for any other infantry.
-const SELF_DESTRUCT_SOUND_UNITS := {
-	&"HKFlamer": &"small",
-}
-
-
 func death_sound_event_layers(
-		cause: StringName, faction: StringName, config_id: StringName
+		cause: StringName, faction: StringName, _config_id: StringName
 	) -> Array:
 	var family: Dictionary = CAUSE_SOUND_FAMILIES.get(cause, {
 		"stem": DEFAULT_SOUND_STEM,
@@ -118,10 +107,32 @@ func death_sound_event_layers(
 	var layers: Array = []
 	if not cause_layer.is_empty():
 		layers.append(cause_layer)
-	var self_destruct: StringName = SELF_DESTRUCT_SOUND_UNITS.get(config_id, &"")
-	if self_destruct != &"":
-		layers.append([self_destruct] as Array[StringName])
 	return layers
+
+
+## `HKFlamer` always emits a `small`-tier boom no matter what killed it,
+## because its own fuel tank ruptures as part of dying. Its converted model
+## carries only the ordinary infantry clip set (no bespoke "tank explodes"
+## clip), so the correct per-cause clip and sound (death_sound_event_layers
+## above) still play unchanged — this is purely an extra, unconditional sound
+## layer, not a forced Blow_Up cause. Scoped to this one unit: no equivalent
+## hook or comment exists for any other infantry. Plays immediately (no
+## VFX-spawn timing to hook into: infantry has no separate explosion-effect
+## call site the way vehicles do via `_spawn_death_explosion_effects`, and
+## `HKFlamer.explosion_type_id` is already `None`), same direct-WAV pool
+## system vehicles use for their size tiers (ExplosionTierPools) rather than
+## the manifest — user-confirmed: play it immediately, no artificial delay/
+## sync attempt.
+const SELF_DESTRUCT_SOUND_UNITS := {
+	&"HKFlamer": &"small",
+}
+
+
+func death_start_sound_paths(_faction: StringName, config_id: StringName) -> Array[String]:
+	var tier: StringName = SELF_DESTRUCT_SOUND_UNITS.get(config_id, &"")
+	if tier == &"":
+		return []
+	return ExplosionTierPools.pool_for_tier(tier)
 
 
 func death_launch_impulse(cause: StringName) -> Vector3:

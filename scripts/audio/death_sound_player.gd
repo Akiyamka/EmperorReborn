@@ -71,3 +71,42 @@ func play_event(event: SoundEvent) -> void:
 
 func _on_finished() -> void:
 	sound_finished.emit()
+
+
+## Loads and plays `stream` directly, bypassing SoundEvent entirely — used by
+## the direct-WAV explosion-tier system (ExplosionTierPools) which
+## deliberately does not go through GeneratedVoiceManifest (see
+## VehicleDeathStrategy/docs/quirks.md for why). Unlike `play_event()`, the
+## caller picks the sample (one random file from a tier/faction pool) and
+## just wants it played; connecting to `finished`/`sound_finished` is the
+## caller's job since some callers (a corpse's pending-sound count) need to
+## track completion and some (a fire-and-forget standalone layer) don't.
+func play_stream(stream: AudioStream) -> void:
+	if stream == null:
+		sound_finished.emit()
+		return
+	self.stream = stream
+	finished.connect(_on_finished)
+	play()
+
+
+## Fire-and-forget playback of one random sample from `paths`, parented
+## directly under `parent` at `world_position` and freeing itself once done.
+## For layers that have no owner tracking their completion (the VFX-timed
+## size-tier layer, and the corpse-less early-out death path in
+## Unit._begin_death_sequence) — contrast with DeathCorpse's own
+## _pending_sounds tracking, which callers that DO need to wait on a layer
+## should use instead.
+static func play_pool(parent: Node, world_position: Vector3, paths: Array) -> void:
+	if paths.is_empty() or parent == null or not parent.is_inside_tree():
+		return
+	var path: String = paths[randi() % paths.size()]
+	var stream := load(path) as AudioStream
+	if stream == null:
+		return
+	var player := DeathSoundPlayer.new()
+	parent.add_child(player)
+	player.global_position = world_position
+	player.finished.connect(player.queue_free)
+	player.stream = stream
+	player.play()

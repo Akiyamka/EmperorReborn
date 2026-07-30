@@ -9,6 +9,16 @@ const AudioBagScript := preload("res://converters/bag/audio_bag.gd")
 const DEFAULT_SOURCE := "res://assets/raw_original_content/SFX/AUDIO.BAG"
 const DEFAULT_OUTPUT := "res://assets/converted/audio/sfx"
 
+## Explicit output-filename overrides, keyed case-insensitively against the
+## archive entry's own name. `explosion_medium_1` is not a generic medium
+## explosion despite its name — it is the sample actually used in-game for
+## the (not yet implemented) Inkvine special ability — so it is renamed at
+## convert time rather than left in the generic `medium` size-tier pool
+## (ExplosionTierPools) where it would misfire. See docs/quirks.md.
+const RENAMED_ENTRIES := {
+	"explosion_medium_1": "explosion_fire",
+}
+
 
 func _init() -> void:
 	var args := _parse_args(OS.get_cmdline_user_args())
@@ -38,7 +48,7 @@ func _init() -> void:
 				failures.append("%s conflicts with %s by case" % [entry.name, original.name])
 			continue
 		entries_by_name[folded_name] = entry
-		var entry_path := output.path_join("%s.wav" % String(entry.name))
+		var entry_path := output.path_join("%s.wav" % _output_name(entry))
 		var err := _write_wav(entry_path, entry)
 		if err != OK:
 			failures.append(String(entry.name))
@@ -56,6 +66,17 @@ func _init() -> void:
 		push_error("convert_audio_bag: skipped %d entries with unrecognized format: %s" % [unknown.size(), ", ".join(unknown)])
 
 	quit(1 if (not failures.is_empty() or not bag.unknown_formats.is_empty()) else 0)
+
+
+## The entry's own name, unless RENAMED_ENTRIES overrides it
+## (case-insensitively) for exactly this stage — used consistently for both
+## the first write and case-duplicate cleanup so a renamed entry's original
+## name never resurfaces on disk.
+func _output_name(entry: Dictionary) -> String:
+	var folded_name := String(entry.name).to_lower()
+	if RENAMED_ENTRIES.has(folded_name):
+		return String(RENAMED_ENTRIES[folded_name])
+	return String(entry.name)
 
 
 func _same_audio(first: Dictionary, second: Dictionary) -> bool:
@@ -77,7 +98,7 @@ func _remove_case_duplicate_outputs(output: String, entries_by_name: Dictionary)
 		var folded_name := file_name.get_basename().to_lower()
 		if not entries_by_name.has(folded_name):
 			continue
-		var canonical_name := "%s.wav" % String(entries_by_name[folded_name].name)
+		var canonical_name := "%s.wav" % _output_name(entries_by_name[folded_name])
 		if file_name != canonical_name:
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(output.path_join(file_name)))
 

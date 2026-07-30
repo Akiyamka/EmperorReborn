@@ -69,6 +69,7 @@ static func spawn(
 		sound_event_ids: Array[StringName],
 		momentum: Vector3,
 		owner_player_id: int,
+		start_sound_paths: Array[String] = [],
 	) -> DeathCorpse:
 	var corpse := DeathCorpseScene.instantiate() as DeathCorpse
 	corpse.owner_player_id = owner_player_id
@@ -81,6 +82,7 @@ static func spawn(
 	corpse._play_death_clip(clip)
 	corpse._configure_physics(momentum)
 	corpse._configure_sounds(sound_event_ids)
+	corpse._configure_start_sound(start_sound_paths)
 	corpse._maybe_free()
 	return corpse
 
@@ -259,6 +261,26 @@ func _configure_sounds(sound_event_ids: Array[StringName]) -> void:
 		add_child(player)
 		player.sound_finished.connect(_on_sound_finished)
 		player.play_event(event)
+
+
+## The faction/self-destruct "start of animation" extra layer (see
+## VehicleDeathStrategy.death_start_sound_paths / InfantryDeathStrategy's
+## HKFlamer case): one random direct-WAV pick, played immediately alongside
+## the death clip rather than through GeneratedVoiceManifest. Counted in
+## _pending_sounds exactly like _configure_sounds's layers, so this corpse
+## doesn't free itself out from under its own explosion sample.
+func _configure_start_sound(paths: Array[String]) -> void:
+	if paths.is_empty():
+		return
+	var path: String = paths[randi() % paths.size()]
+	var stream := load(path) as AudioStream
+	if stream == null:
+		return
+	_pending_sounds += 1
+	var player := DeathSoundPlayerScript.new()
+	add_child(player)
+	player.sound_finished.connect(_on_sound_finished)
+	player.play_stream(stream)
 
 
 func _on_sound_finished() -> void:
