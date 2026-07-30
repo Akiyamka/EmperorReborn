@@ -1051,13 +1051,13 @@ func _begin_death_sequence(cause: StringName) -> void:
 		)
 		momentum = inherited_velocity + launch_impulse
 
-	var sound_candidates: Array[StringName] = (
-		_death_strategy.death_sound_event_id(cause, _owner_faction_id())
+	var sound_layers: Array = (
+		_death_strategy.death_sound_event_layers(cause, _owner_faction_id(), config_id)
 		if _death_strategy != null else []
 	)
-	var sound_event_id := _resolve_sound_event_id(sound_candidates)
+	var sound_event_ids := _resolve_sound_event_ids(sound_layers)
 	DeathCorpseScript.spawn(
-		parent, model, world_transform, clip, sound_event_id, momentum, owner_player_id
+		parent, model, world_transform, clip, sound_event_ids, momentum, owner_player_id
 	)
 	_spawn_death_explosion_effects(parent, world_transform.origin)
 	queue_free()
@@ -1209,15 +1209,23 @@ func _sever_connections_into(subtree_root: Node) -> void:
 					node.disconnect(signal_name, callable)
 
 
-## Picks the first candidate id (per-house hook, then generic fallback —
-## see UnitDeathStrategy.death_sound_event_id) that the SFX-hook converter
-## actually generated a resource for. Resolution order: per-unit hook (not
-## produced by any strategy yet) -> faction hook -> generic hook -> nothing.
-func _resolve_sound_event_id(candidates: Array[StringName]) -> StringName:
-	for candidate in candidates:
-		if GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(_death_sound_key(candidate)):
-			return candidate
-	return &""
+## Resolves every sound *layer* the strategy proposed, collapsing each layer's
+## candidate list to the single first id the SFX-hook converter actually
+## generated a resource for (per-unit hook -> faction hook -> generic hook ->
+## nothing). Layers are concurrent, so all survivors are returned and
+## DeathCorpse plays them together; a layer whose candidates all went
+## ungenerated simply drops out, without taking the other layers with it. See
+## UnitDeathStrategy.death_sound_event_layers for why the two levels differ.
+func _resolve_sound_event_ids(layers: Array) -> Array[StringName]:
+	var resolved: Array[StringName] = []
+	for layer: Array in layers:
+		for candidate: StringName in layer:
+			if not GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(_death_sound_key(candidate)):
+				continue
+			if not resolved.has(candidate):
+				resolved.append(candidate)
+			break
+	return resolved
 
 
 func _death_sound_key(sound_event_id: StringName) -> StringName:

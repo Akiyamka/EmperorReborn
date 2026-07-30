@@ -17,10 +17,14 @@ const DEPLOYED_CANDIDATES: Array[StringName] = [&"Deployed_Death_1", &"Deployed_
 ## Confirmed sections in assets/raw_original_content/SFX/*.txt (grepped
 ## directly, not trusted from an earlier draft of this plan):
 ##
-## - `Blow_Up` has no per-house hook at all — the only "exploding person"
-##   sound the source models is the same `[explode]` family vehicles use, and
-##   there is no man-scream hook for a physical blow-up. So Blow_Up always
-##   resolves to the generic `explode` id regardless of faction.
+## - `Blow_Up` has **no corpse-level sound at all**, per-house or generic:
+##   `Blow_Up_1/2` is purely a "corpse gets launched by an explosion"
+##   animation, and the boom the player hears belongs to the weapon that
+##   detonated, which is a separate system (combat_impact_resolver.gd /
+##   combat_projectile.gd, no SFX wiring yet). Giving the corpse its own boom
+##   would double it up once weapon-impact SFX lands. The `[explode]` family it
+##   used to borrow is not generic anyway — it is HarkDevastatorDie, one
+##   vehicle's personal hook (see vehicle_death_strategy.gd, docs/quirks.md).
 ## - `Shot`/unmapped causes fall back to the `*normalmandying` family: the
 ##   generic `[NormalManDying]` hook plus per-faction `[atnormalmandying]`/
 ##   `[hknormalmandying]`/`[ORNORMALMANDYING]` variants.
@@ -39,7 +43,7 @@ const DEPLOYED_CANDIDATES: Array[StringName] = [&"Deployed_Death_1", &"Deployed_
 ## composition here stops at the faction tier; wiring a per-unit hook in
 ## later is additive, not a rework.
 const CAUSE_SOUND_FAMILIES := {
-	&"Blow_Up": {"stem": "", "generic": &"explode"},
+	&"Blow_Up": {"stem": "", "generic": &""},
 	&"Burn": {"stem": "burningmandying", "generic": &"burningsmall"},
 	&"Gassed": {"stem": "choking", "generic": &"choking"},
 }
@@ -78,23 +82,46 @@ func death_animation_candidates(cause: StringName, deployed: bool) -> Array[Stri
 	return result
 
 
-## Ordered candidates, per-house hook first (when the faction has one and the
-## cause has a per-house stem at all) then the generic fallback. `Unit`
-## resolves this against the generated `DEATH_EVENT_PATHS` and plays the
-## first id that actually exists — see `unit_death_strategy.gd` for why a
-## list is needed instead of one composed id.
-func death_sound_event_id(cause: StringName, faction: StringName) -> Array[StringName]:
+## One layer for the cause itself — per-house hook first (when the faction has
+## one and the cause has a per-house stem at all), then the generic fallback,
+## the two being alternative spellings of the same sound, so `Unit` plays only
+## the first that resolves. `Blow_Up` contributes no layer at all (see above).
+##
+## HKFlamer adds a second, concurrent layer: user-confirmed, it always emits a
+## `small`-tier boom no matter what killed it, because its own fuel tank
+## ruptures as part of dying. Its converted model carries only the ordinary
+## infantry clip set (no bespoke "tank explodes" clip), so the correct
+## per-cause clip and sound still play unchanged — this is purely an extra
+## sound layer, not a forced Blow_Up cause. Scoped to this one unit: no
+## equivalent hook or comment exists for any other infantry.
+const SELF_DESTRUCT_SOUND_UNITS := {
+	&"HKFlamer": &"small",
+}
+
+
+func death_sound_event_layers(
+		cause: StringName, faction: StringName, config_id: StringName
+	) -> Array:
 	var family: Dictionary = CAUSE_SOUND_FAMILIES.get(cause, {
 		"stem": DEFAULT_SOUND_STEM,
 		"generic": DEFAULT_SOUND_GENERIC,
 	})
 	var stem: String = family.get("stem", "")
 	var prefix: String = HOUSE_SOUND_PREFIXES.get(faction, "")
-	var result: Array[StringName] = []
+	var generic: StringName = family.get("generic", &"")
+	var cause_layer: Array[StringName] = []
 	if not stem.is_empty() and not prefix.is_empty():
-		result.append(StringName(prefix + stem))
-	result.append(family.get("generic", &""))
-	return result
+		cause_layer.append(StringName(prefix + stem))
+	if generic != &"":
+		cause_layer.append(generic)
+
+	var layers: Array = []
+	if not cause_layer.is_empty():
+		layers.append(cause_layer)
+	var self_destruct: StringName = SELF_DESTRUCT_SOUND_UNITS.get(config_id, &"")
+	if self_destruct != &"":
+		layers.append([self_destruct] as Array[StringName])
+	return layers
 
 
 func death_launch_impulse(cause: StringName) -> Vector3:

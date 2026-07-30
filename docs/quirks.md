@@ -256,6 +256,80 @@ samples, so there was nothing to change, and applying the same drop rule to
 voice events would need `tests/audio/voice_feedback_run.gd`'s expectations
 revisited first.
 
+### `explode` is one vehicle's personal death hook, not a generic explosion
+
+**Observed data:** `HarkonnenSFX.txt` contains four death-sound sections whose
+names were renamed away from a per-unit label that survives only as a
+commented-out line directly above each one:
+
+| section | commented-out original label | unit |
+| --- | --- | --- |
+| `[hkmedium1]` | `;dko[HarkAssaultTankDie]` | `HKAssault` |
+| `[hkmedium2]` | `;dko[HarkInkvineDie]` | `HKInkVine` |
+| `[hksmall1]` | `;dko[HarkBuzzsawDie]` | `HKBuzzsaw` |
+| `[explode]` | `;dko[HarkDevastatorDie]` | `HKDevastator` |
+
+So `explode` is **`HarkDevastatorDie`** — it was never a generic id, and using
+it for arbitrary vehicles (or for infantry `Blow_Up`) gave every unit in the
+game one specific Harkonnen unit's death sound. Grep-confirmed exhaustive: no
+equivalent renamed-hook pattern exists in `AtreidesSFX.txt` or `ORDOSSFX.TXT`
+(Ordos's similarly named `ormedium1`/`ormedium2` are the pop-up turret's own
+explosion, not a vehicle-death hook).
+
+**The genuinely generic family is separate:** `GeneralSFX.txt`'s `[Small]`/
+`[Medium]`/`[Large]` sections, commented as firing "when small/medium/large
+vehicles are destroyed". A vehicle with a personal hook plays **both** layers
+at once — user-confirmed against the reference game, where `HKAssault`,
+`HKInkVine`, and `HKBuzzsaw` are each heard booming twice while e.g. `ATTrike`
+booms once.
+
+**EmperorReborn compatibility decision:** `VehicleDeathStrategy` carries the
+four personal hooks and a size-tier table, and `Unit`/`DeathCorpse` play every
+resolved layer concurrently instead of picking the first. The per-unit tier
+itself was hardcoded in the original engine's binary and left no trace in the
+source data — in particular `explosion_type_id` (the visual VFX bank) does
+*not* correlate with it (`HKDevastator` and `ATMongoose` share the same generic
+`Explosion` bank; `MidExplosion` is used by zero units) — so everything outside
+the table defaults to `medium`, an **approximation, not sourced data**. The
+table's contents come from user listening tests in the reference build:
+`ATTrike` and `ORDustScout` are `small`, `HKDevastator` is `large`. `ATMongoose`
+is deliberately *not* listed as `small` despite a `GeneralSFX.txt` comment
+naming it as a "Small" example — the user hears it play the medium family, and
+the live observation overrides the stale comment.
+
+**Related shadowing fix:** `hkmedium1`/`hkmedium2`/`hksmall1` are themselves
+shadowed by `ImportedSfx.txt` localized stubs (see the previous section), which
+would normally drop them from `DEATH_EVENT_PATHS` entirely. Unlike the infantry
+per-house hooks, a personal vehicle hook has no fallback candidate behind it to
+fall through to, so dropping it is silent loss rather than a graceful degrade.
+`tools/generate_voice_feedback.py`'s `SHADOW_PROOF_EVENT_IDS` keeps the earlier
+real definition for exactly these three ids; the set is deliberately narrow, so
+the infantry ids keep their existing fall-through behavior unchanged.
+
+### Infantry `Blow_Up` has no corpse sound of its own
+
+**Observed data:** `Blow_Up_1`/`Blow_Up_2` (present on every converted infantry
+model) is purely a "corpse gets launched by an explosion" animation. There is
+no per-house or generic `*ManDying`-family hook for a physical blow-up at all —
+the `[explode]` family it appears to want is `HarkDevastatorDie` (above), a
+vehicle's personal hook.
+
+**EmperorReborn compatibility decision:** `InfantryDeathStrategy` proposes no
+sound layer for `Blow_Up`. The boom the player hears in the original belongs to
+the *weapon's* detonation, a separate system (`combat_impact_resolver.gd` /
+`combat_projectile.gd`) that has no SFX wiring yet; giving the corpse its own
+boom would double it up once weapon-impact SFX lands. `Burn`/`Shot`/`Gassed`
+keep their unrelated per-house/generic hooks unchanged.
+
+**`HKFlamer` is the one exception:** user-confirmed, it emits a `small`-tier
+boom *regardless of what killed it*, because its own fuel tank ruptures as part
+of dying. Its converted model carries only the ordinary infantry clip set (no
+bespoke "tank explodes" clip), so this is modelled as an extra concurrent sound
+layer on top of whatever the cause resolved to — not a forced `Blow_Up` cause —
+and no visual effect (`HKFlamer.explosion_type_id` is already `None`). Scoped to
+this one unit: no equivalent hook or comment exists for any other infantry, so
+this is a recorded observation, not an extrapolated "special payload" rule.
+
 ## Building models
 
 ### Atreides Refinery H0 contains two broken geometry components

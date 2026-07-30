@@ -45,12 +45,14 @@ var _fitted_local_aabb := AABB()
 var _death_animation_player: AnimationPlayer
 var _death_clip: StringName = &""
 var _animation_done := false
-## True whenever no sound is playing (no resolvable event, or none has been
-## started yet). _configure_sound() flips this to false the moment a
-## DeathSoundPlayer actually starts playing a sample, and _maybe_free() waits
-## for it to flip back before freeing the corpse — an explosion sample must
-## not be cut off by a short death clip finishing first.
-var _sound_done := true
+## How many DeathSoundPlayer children are still playing. A corpse can carry
+## more than one concurrent sound layer (see
+## UnitDeathStrategy.death_sound_event_layers), so this is a count, not a
+## flag: _maybe_free() waits for every layer before freeing the corpse — an
+## explosion sample must not be cut off by a short death clip finishing first.
+## Layers with no resolvable sample are never counted at all, so one bad layer
+## can neither block the others nor keep the corpse alive forever.
+var _pending_sounds := 0
 
 
 ## Entry point called by Unit (and later BuildingDeathStrategy) before the
@@ -64,7 +66,7 @@ static func spawn(
 		model: Node3D,
 		world_transform: Transform3D,
 		clip: StringName,
-		sound_event_id: StringName,
+		sound_event_ids: Array[StringName],
 		momentum: Vector3,
 		owner_player_id: int,
 	) -> DeathCorpse:
@@ -78,7 +80,7 @@ static func spawn(
 	corpse._adopt_model(model)
 	corpse._play_death_clip(clip)
 	corpse._configure_physics(momentum)
-	corpse._configure_sound(sound_event_id)
+	corpse._configure_sounds(sound_event_ids)
 	corpse._maybe_free()
 	return corpse
 
@@ -228,8 +230,8 @@ func _on_settle_timeout() -> void:
 	freeze = true
 
 
-## Looks up `sound_event_id` (already the single id `Unit` resolved from its
-## death strategy's ordered candidate list) in the generated
+## Looks up `sound_event_id` (already one of the ids `Unit` resolved from its
+## death strategy's sound layers) in the generated
 ## `DEATH_EVENT_PATHS` manifest. Keyed case-insensitively: the manifest keys
 ## by the id casefolded (tools/generate_voice_feedback.py), since the
 ## surviving section's own casing depends on which source SFX file last
@@ -241,29 +243,29 @@ func _resolve_sound_path(sound_event_id: StringName) -> String:
 	return String(GeneratedVoiceManifest.DEATH_EVENT_PATHS.get(key, ""))
 
 
-func _configure_sound(sound_event_id: StringName) -> void:
-	var sample_path := _resolve_sound_path(sound_event_id)
-	if sample_path.is_empty():
-		_sound_done = true
-		return
-	var event := load(sample_path) as SoundEvent
-	if event == null or event.sample_paths.is_empty():
-		# A generated event with no samples (missing from the converted WAV
-		# archive) must degrade to silence, not to a corpse that never frees.
-		_sound_done = true
-		return
-	_sound_done = false
-	var player := DeathSoundPlayerScript.new()
-	add_child(player)
-	player.sound_finished.connect(_on_sound_finished)
-	player.play_event(event)
+## One throwaway DeathSoundPlayer per resolved layer, all started together.
+func _configure_sounds(sound_event_ids: Array[StringName]) -> void:
+	for sound_event_id in sound_event_ids:
+		var sample_path := _resolve_sound_path(sound_event_id)
+		if sample_path.is_empty():
+			continue
+		var event := load(sample_path) as SoundEvent
+		if event == null or event.sample_paths.is_empty():
+			# A generated event with no samples (missing from the converted WAV
+			# archive) must degrade to silence, not to a corpse that never frees.
+			continue
+		_pending_sounds += 1
+		var player := DeathSoundPlayerScript.new()
+		add_child(player)
+		player.sound_finished.connect(_on_sound_finished)
+		player.play_event(event)
 
 
 func _on_sound_finished() -> void:
-	_sound_done = true
+	_pending_sounds = maxi(_pending_sounds - 1, 0)
 	_maybe_free()
 
 
 func _maybe_free() -> void:
-	if _animation_done and _sound_done:
+	if _animation_done and _pending_sounds == 0:
 		queue_free()

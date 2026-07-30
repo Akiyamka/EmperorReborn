@@ -23,10 +23,28 @@ VOICE_SUFFIXES = ("Selection", "Move", "Attack")
 # set of category hooks that do not end in "Dying" at all.
 DEATH_SUFFIXES = ("Dying",)
 DEATH_EVENT_IDS = {
-    "explode", "small", "medium", "large",
+    # "explode" is HarkDevastatorDie, not a generic explosion — like
+    # hkmedium1/hkmedium2/hksmall1 it is a per-vehicle personal death hook
+    # renamed away from a label that survives only as a commented-out line
+    # above the section. small/medium/large are the genuinely generic,
+    # size-tiered vehicle family. See docs/quirks.md.
+    "explode", "hkmedium1", "hkmedium2", "hksmall1",
+    "small", "medium", "large",
     "burningsmall", "burninglarge",
     "choking", "contamchoking", "atchoking", "hkchoking", "orchoking",
 }
+# ImportedSfx.txt redefines a number of already-defined sections with a single
+# localized ($-prefixed) sample name that was never converted, and the merge
+# below is last-file-wins, so such a redefinition normally wipes out the real
+# English definition (docs/quirks.md). For most ids that is harmless — the
+# event drops out of DEATH_EVENT_PATHS and the runtime falls through to a
+# generic hook. These three have no fallback to fall through to: they are
+# per-vehicle personal death hooks (HarkAssaultTankDie / HarkInkvineDie /
+# HarkBuzzsawDie), so losing them means losing the sound outright. For them
+# only, the earlier real definition wins over the localization stub. Scoped
+# deliberately: widening this to every shadowed id would also resurrect the
+# per-house infantry dying hooks and change sounds this plan never touched.
+SHADOW_PROOF_EVENT_IDS = {"hkmedium1", "hkmedium2", "hksmall1"}
 SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:;.*)?$")
 PROPERTY_RE = re.compile(r"^\s*([^=;]+?)\s*=\s*(.*?)\s*$")
 UNIT_ID_RE = re.compile(r'^config_id = &"([^"]+)"$', re.MULTILINE)
@@ -111,6 +129,11 @@ def parse_sources() -> dict[str, Event]:
                 if section_name.casefold() == "localdefaults":
                     current = None
                     defaults = {}
+                elif section_name.casefold() in SHADOW_PROOF_EVENT_IDS and section_name.casefold() in events:
+                    # Parse the redefinition into a throwaway Event so its
+                    # properties don't leak onto the kept one, but leave the
+                    # earlier, real definition in `events`.
+                    current = Event(section_name)
                 else:
                     current = Event(
                         section_name,

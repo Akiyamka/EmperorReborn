@@ -17,16 +17,21 @@ func death_animation_candidates(_cause: StringName, _deployed: bool) -> Array[St
 	return []
 
 
-## Ordered candidate sound-event ids for the given cause/faction pair, most-
-## preferred first (e.g. a per-house hook before the generic fallback). The
-## caller (Unit) resolves this against the generated
-## `GeneratedVoiceManifest.DEATH_EVENT_PATHS` and picks the first id actually
-## present, then hands that single resolved id to `DeathCorpse`. A list
-## rather than one composed id because the per-house hook's stem does not
-## always match the generic hook's stem (e.g. Burn's per-house
-## `atburningmandying` vs. the generic `BurningSmall`), so a single string
-## template cannot express the fallback.
-func death_sound_event_id(_cause: StringName, _faction: StringName) -> Array[StringName]:
+## Sound layers to play for this death, as a list of *layers*, each layer
+## itself an ordered candidate list, most-preferred first. Every layer that
+## resolves plays **concurrently** — a unit can legitimately carry more than
+## one sound at once (a Harkonnen vehicle's personal death hook alongside its
+## generic size-tier boom; HKFlamer's own fuel tank on top of its normal
+## per-cause scream). Within one layer the candidates are a *fallback* chain,
+## not extra sounds: the caller (Unit) resolves each layer against the
+## generated `GeneratedVoiceManifest.DEATH_EVENT_PATHS` and keeps only the
+## first id actually present, since e.g. Burn's per-house `atburningmandying`
+## and its generic `BurningSmall` are two spellings of one sound, not two.
+## The two nesting levels therefore mean different things and must not be
+## flattened into each other.
+func death_sound_event_layers(
+		_cause: StringName, _faction: StringName, _config_id: StringName
+	) -> Array:
 	return []
 
 

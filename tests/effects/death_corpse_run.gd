@@ -21,6 +21,9 @@ func _initialize() -> void:
 	await _run_case("never joins the units group", _test_not_in_units_group)
 	await _run_case("frees once the death clip finishes", _test_frees_on_animation_finished)
 	await _run_case("collision shape is fit from the model's own mesh AABB, not a constant", _test_collision_shape_fits_model)
+	await _run_case("two sound layers both play, and both hold the corpse open", _test_two_sound_layers_both_played)
+	await _run_case("a single sound layer behaves as before", _test_single_sound_layer)
+	await _run_case("an unresolvable sound layer never blocks cleanup", _test_unresolvable_sound_layer_frees_promptly)
 	await _run_case("death sound is tuned to be audible at this game's real camera distances, not Godot's point-blank defaults", _test_death_sound_attenuation_tuned)
 	if _failures > 0:
 		printerr("DeathCorpse tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -62,12 +65,27 @@ func _make_model(clip: StringName, mesh_size := Vector3.ZERO) -> Dictionary:
 	return {"model": model, "player": player, "animation": animation}
 
 
+## Typed empty list for the "no sound at all" cases: DeathCorpse.spawn() takes
+## a typed Array[StringName], which an inline `[]` literal cannot satisfy.
+func _no_sounds() -> Array[StringName]:
+	var ids: Array[StringName] = []
+	return ids
+
+
+func _sound_players(corpse: Node) -> Array[Node]:
+	var players: Array[Node] = []
+	for child in corpse.get_children():
+		if child.get_script() == DeathSoundPlayerScript:
+			players.append(child)
+	return players
+
+
 func _test_plays_clip() -> void:
 	var world := Node3D.new()
 	root.add_child(world)
 	var fixture := _make_model(&"Shot_1")
 	var corpse := DeathCorpseScript.spawn(
-		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", &"", Vector3.ZERO, 1
+		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", _no_sounds(), Vector3.ZERO, 1
 	)
 	var player: AnimationPlayer = fixture["player"]
 	_expect(player.current_animation == &"Shot_1", "the resolved clip must be playing")
@@ -84,7 +102,7 @@ func _test_freeze_zero_momentum() -> void:
 	root.add_child(world)
 	var fixture := _make_model(&"Shot_1")
 	var corpse := DeathCorpseScript.spawn(
-		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", &"", Vector3.ZERO, 1
+		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", _no_sounds(), Vector3.ZERO, 1
 	)
 	_expect(corpse.freeze, "an in-place death (zero momentum) must spawn frozen, never simulated")
 	world.queue_free()
@@ -97,7 +115,7 @@ func _test_simulate_nonzero_momentum() -> void:
 	var fixture := _make_model(&"Blow_Up_1")
 	var momentum := Vector3(1.0, 6.0, 0.5)
 	var corpse := DeathCorpseScript.spawn(
-		world, fixture["model"], Transform3D.IDENTITY, &"Blow_Up_1", &"", momentum, 1
+		world, fixture["model"], Transform3D.IDENTITY, &"Blow_Up_1", _no_sounds(), momentum, 1
 	)
 	_expect(not corpse.freeze, "a thrown corpse must simulate physics, not spawn frozen")
 	_expect(
@@ -113,7 +131,7 @@ func _test_collision_layer_mask() -> void:
 	root.add_child(world)
 	var fixture := _make_model(&"Shot_1")
 	var corpse := DeathCorpseScript.spawn(
-		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", &"", Vector3.ZERO, 1
+		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", _no_sounds(), Vector3.ZERO, 1
 	)
 	_expect(corpse.collision_layer == 4, "a corpse must sit on its own free bit (layer 4)")
 	_expect(corpse.collision_mask == 1, "a corpse must only ever collide with terrain (mask 1)")
@@ -126,7 +144,7 @@ func _test_not_in_units_group() -> void:
 	root.add_child(world)
 	var fixture := _make_model(&"Shot_1")
 	var corpse := DeathCorpseScript.spawn(
-		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", &"", Vector3.ZERO, 1
+		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", _no_sounds(), Vector3.ZERO, 1
 	)
 	_expect(
 		not corpse.is_in_group("units"),
@@ -141,7 +159,7 @@ func _test_frees_on_animation_finished() -> void:
 	root.add_child(world)
 	var fixture := _make_model(&"Shot_1")
 	var corpse := DeathCorpseScript.spawn(
-		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", &"", Vector3.ZERO, 1
+		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", _no_sounds(), Vector3.ZERO, 1
 	)
 	_expect(not corpse.is_queued_for_deletion(), "a corpse must outlive its own spawn call")
 	var player: AnimationPlayer = fixture["player"]
@@ -160,11 +178,11 @@ func _test_collision_shape_fits_model() -> void:
 
 	var small_fixture := _make_model(&"Shot_1", Vector3(0.6, 1.8, 0.6))
 	var small_corpse := DeathCorpseScript.spawn(
-		world, small_fixture["model"], Transform3D.IDENTITY, &"Shot_1", &"", Vector3.ZERO, 1
+		world, small_fixture["model"], Transform3D.IDENTITY, &"Shot_1", _no_sounds(), Vector3.ZERO, 1
 	)
 	var large_fixture := _make_model(&"Explode", Vector3(3.0, 2.5, 5.0))
 	var large_corpse := DeathCorpseScript.spawn(
-		world, large_fixture["model"], Transform3D.IDENTITY, &"Explode", &"", Vector3.ZERO, 1
+		world, large_fixture["model"], Transform3D.IDENTITY, &"Explode", _no_sounds(), Vector3.ZERO, 1
 	)
 
 	var small_shape := (small_corpse.get_node("CollisionShape3D") as CollisionShape3D).shape as BoxShape3D
@@ -226,6 +244,80 @@ func _test_death_sound_attenuation_tuned() -> void:
 	_expect(
 		player.unit_size > 10.0 and player.max_distance > 300.0,
 		"play_event() must not disturb the attenuation tuning set at construction"
+	)
+	world.queue_free()
+	await process_frame
+
+
+## A vehicle with a personal death hook carries two concurrent sound layers
+## (see UnitDeathStrategy.death_sound_event_layers), so the corpse must spawn
+## one player per layer and outlive *all* of them — a second boom must not be
+## cut off just because the first one, or the death clip, ended early.
+func _test_two_sound_layers_both_played() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var fixture := _make_model(&"Explode")
+	var ids: Array[StringName] = [&"hkmedium1", &"medium"]
+	var corpse := DeathCorpseScript.spawn(
+		world, fixture["model"], Transform3D.IDENTITY, &"Explode", ids, Vector3.ZERO, 1
+	)
+	var players := _sound_players(corpse)
+	_expect(players.size() == 2, "two resolved sound ids must spawn two players, got %d" % players.size())
+	(fixture["player"] as AnimationPlayer).animation_finished.emit(&"Explode")
+	_expect(not corpse.is_queued_for_deletion(), "the corpse must wait for its sounds, not just its clip")
+	if players.size() == 2:
+		players[0].sound_finished.emit()
+		_expect(
+			not corpse.is_queued_for_deletion(),
+			"one finished layer must not free the corpse while the other is still playing"
+		)
+		players[1].sound_finished.emit()
+	_expect(corpse.is_queued_for_deletion(), "the corpse must free once every layer has finished")
+	world.queue_free()
+	await process_frame
+
+
+func _test_single_sound_layer() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var fixture := _make_model(&"Explode")
+	var ids: Array[StringName] = [&"medium"]
+	var corpse := DeathCorpseScript.spawn(
+		world, fixture["model"], Transform3D.IDENTITY, &"Explode", ids, Vector3.ZERO, 1
+	)
+	var players := _sound_players(corpse)
+	_expect(players.size() == 1, "one resolved sound id must spawn exactly one player, got %d" % players.size())
+	(fixture["player"] as AnimationPlayer).animation_finished.emit(&"Explode")
+	_expect(not corpse.is_queued_for_deletion(), "the corpse must outlive its clip while its sound plays")
+	if players.size() == 1:
+		players[0].sound_finished.emit()
+	_expect(corpse.is_queued_for_deletion(), "the corpse must free once its single sound finishes")
+	world.queue_free()
+	await process_frame
+
+
+## An id the SFX-hook generator never produced must degrade to silence for that
+## layer alone: it spawns no player and, crucially, never keeps the corpse
+## alive waiting for a sound that will never start.
+func _test_unresolvable_sound_layer_frees_promptly() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var fixture := _make_model(&"Explode")
+	var ids: Array[StringName] = [&"no_such_death_event", &"medium"]
+	var corpse := DeathCorpseScript.spawn(
+		world, fixture["model"], Transform3D.IDENTITY, &"Explode", ids, Vector3.ZERO, 1
+	)
+	var players := _sound_players(corpse)
+	_expect(
+		players.size() == 1,
+		"an unresolvable id must spawn no player, leaving only the good layer's, got %d" % players.size()
+	)
+	(fixture["player"] as AnimationPlayer).animation_finished.emit(&"Explode")
+	if players.size() == 1:
+		players[0].sound_finished.emit()
+	_expect(
+		corpse.is_queued_for_deletion(),
+		"a bad layer must never block the corpse from freeing once the real one finished"
 	)
 	world.queue_free()
 	await process_frame

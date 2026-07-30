@@ -24,7 +24,10 @@ func _initialize() -> void:
 	_run_case("infantry sound id: unmapped house falls back to the generic hook", _test_infantry_sound_unmapped_house)
 	_run_case("infantry sound id: empty house_id falls back to the generic hook", _test_infantry_sound_empty_house)
 	_run_case("infantry sound resolution: Atreides/Harkonnen fall through their shadowed per-house hook to a real generic sample", _test_infantry_sound_resolves_to_real_samples)
-	_run_case("vehicle sound id is always explode", _test_vehicle_sound)
+	_run_case("infantry sound id: HKFlamer adds its own boom on top of every cause", _test_infantry_sound_flamer_extra_layer)
+	_run_case("vehicle sound id: personal hooks play alongside the size tier", _test_vehicle_sound_personal_hooks)
+	_run_case("vehicle sound id: everyone else gets exactly one size-tier layer", _test_vehicle_sound_tiers)
+	_run_case("vehicle sound ids are all really generated, with samples", _test_vehicle_sound_ids_are_generated)
 	_run_case("infantry launch impulse: Blow_Up only", _test_infantry_launch_impulse)
 	_run_case("vehicle launch impulse is always zero", _test_vehicle_launch_impulse)
 	if _failures > 0:
@@ -108,22 +111,23 @@ func _test_vehicle_candidates() -> void:
 			)
 
 
+## An ordinary infantry unit's Blow_Up carries no corpse sound at all: the boom
+## belongs to the weapon that detonated (a separate, not-yet-wired system), and
+## the `explode` family it used to borrow is HarkDevastatorDie, one vehicle's
+## personal hook, never a generic explosion.
 func _test_infantry_sound_blow_up() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
-	_expect(
-		strategy.death_sound_event_id(&"Blow_Up", &"") == [&"explode"],
-		"Blow_Up must resolve to exactly the explosion sound group regardless of faction"
-	)
-	_expect(
-		strategy.death_sound_event_id(&"Blow_Up", &"Atreides") == [&"explode"],
-		"Blow_Up sound must not vary by faction: there is no per-house blow-up hook at all"
-	)
+	for house_id: StringName in [&"", &"Atreides", &"Harkonnen", &"Ordos"]:
+		_expect(
+			strategy.death_sound_event_layers(&"Blow_Up", house_id, &"ATInfantry").is_empty(),
+			"Blow_Up must contribute no corpse sound layer at all (house %s)" % house_id
+		)
 
 
 func _test_infantry_sound_burn() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
 	_expect(
-		strategy.death_sound_event_id(&"Burn", &"") == [&"burningsmall"],
+		_cause_layer(strategy, &"Burn", &"") == [&"burningsmall"],
 		"Burn with no faction must resolve to only the generic burning sound group"
 	)
 
@@ -134,7 +138,7 @@ func _test_infantry_sound_burn() -> void:
 func _test_infantry_sound_gassed() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
 	_expect(
-		strategy.death_sound_event_id(&"Gassed", &"") == [&"choking"],
+		_cause_layer(strategy, &"Gassed", &"") == [&"choking"],
 		"Gassed with no faction must resolve to only the generic choking sound group"
 	)
 
@@ -143,14 +147,14 @@ func _test_infantry_sound_generic_fallback() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
 	for cause in [&"Shot", &""]:
 		_expect(
-			strategy.death_sound_event_id(cause, &"") == [&"normalmandying"],
+			_cause_layer(strategy, cause, &"") == [&"normalmandying"],
 			"%s with no faction must fall back to only the generic dying hook" % cause
 		)
 
 
 ## Burn's per-house stem ("burningmandying") differs from its generic
 ## fallback ("burningsmall") — a single composed id could not express this,
-## which is exactly why death_sound_event_id returns a candidate list.
+## which is exactly why a layer is a candidate list, not one composed id.
 func _test_infantry_sound_burn_candidates() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
 	var cases := {
@@ -160,9 +164,9 @@ func _test_infantry_sound_burn_candidates() -> void:
 	}
 	for house_id: StringName in cases:
 		_expect(
-			strategy.death_sound_event_id(&"Burn", house_id) == [cases[house_id], &"burningsmall"],
+			_cause_layer(strategy, &"Burn", house_id) == [cases[house_id], &"burningsmall"],
 			"%s Burn must propose [%s, burningsmall], got %s" % [
-				house_id, cases[house_id], strategy.death_sound_event_id(&"Burn", house_id)
+				house_id, cases[house_id], _cause_layer(strategy, &"Burn", house_id)
 			]
 		)
 
@@ -178,9 +182,9 @@ func _test_infantry_sound_gassed_candidates() -> void:
 	}
 	for house_id: StringName in cases:
 		_expect(
-			strategy.death_sound_event_id(&"Gassed", house_id) == [cases[house_id], &"choking"],
+			_cause_layer(strategy, &"Gassed", house_id) == [cases[house_id], &"choking"],
 			"%s Gassed must propose [%s, choking], got %s" % [
-				house_id, cases[house_id], strategy.death_sound_event_id(&"Gassed", house_id)
+				house_id, cases[house_id], _cause_layer(strategy, &"Gassed", house_id)
 			]
 		)
 
@@ -199,9 +203,9 @@ func _test_infantry_sound_mapped_houses() -> void:
 	}
 	for house_id: StringName in cases:
 		_expect(
-			strategy.death_sound_event_id(&"Shot", house_id) == [cases[house_id], &"normalmandying"],
+			_cause_layer(strategy, &"Shot", house_id) == [cases[house_id], &"normalmandying"],
 			"%s must propose [%s, normalmandying], got %s" % [
-				house_id, cases[house_id], strategy.death_sound_event_id(&"Shot", house_id)
+				house_id, cases[house_id], _cause_layer(strategy, &"Shot", house_id)
 			]
 		)
 
@@ -212,7 +216,7 @@ func _test_infantry_sound_mapped_houses() -> void:
 func _test_infantry_sound_unmapped_house() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
 	_expect(
-		strategy.death_sound_event_id(&"Gassed", &"Fremen") == [&"choking"],
+		_cause_layer(strategy, &"Gassed", &"Fremen") == [&"choking"],
 		"an unmapped house must fall back to only the generic choking hook"
 	)
 
@@ -220,15 +224,129 @@ func _test_infantry_sound_unmapped_house() -> void:
 func _test_infantry_sound_empty_house() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
 	_expect(
-		strategy.death_sound_event_id(&"Shot", &"") == [&"normalmandying"],
+		_cause_layer(strategy, &"Shot", &"") == [&"normalmandying"],
 		"an empty house_id must fall back to only the generic dying hook"
 	)
 
 
-func _test_vehicle_sound() -> void:
+## The cause layer is the first one the infantry strategy proposes; HKFlamer's
+## own fuel-tank boom (if any) comes after it, and is asserted separately.
+func _cause_layer(strategy, cause: StringName, faction: StringName) -> Array:
+	var layers: Array = strategy.death_sound_event_layers(cause, faction, &"ATInfantry")
+	return layers[0] if not layers.is_empty() else []
+
+
+## HKFlamer always adds a small-tier boom on top of whatever its cause resolved
+## to, because its own fuel tank ruptures no matter what killed it — including
+## Blow_Up, where the cause itself contributes nothing (so the boom is alone).
+func _test_infantry_sound_flamer_extra_layer() -> void:
+	var strategy := InfantryDeathStrategyScript.new()
+	var expected_cause_layers := {
+		&"Shot": [&"hknormalmandying", &"normalmandying"],
+		&"Burn": [&"hkburningmandying", &"burningsmall"],
+		&"Gassed": [&"hkchoking", &"choking"],
+		&"Blow_Up": [],
+	}
+	for cause: StringName in expected_cause_layers:
+		var layers: Array = strategy.death_sound_event_layers(cause, &"Harkonnen", &"HKFlamer")
+		var expected_cause: Array = expected_cause_layers[cause]
+		var expected_size := (1 if expected_cause.is_empty() else 2)
+		_expect(
+			layers.size() == expected_size,
+			"HKFlamer %s must propose %d layer(s), got %s" % [cause, expected_size, layers]
+		)
+		if layers.size() != expected_size:
+			continue
+		if not expected_cause.is_empty():
+			_expect(
+				layers[0] == expected_cause,
+				"HKFlamer %s must keep its ordinary cause layer %s, got %s" % [cause, expected_cause, layers[0]]
+			)
+		_expect(
+			layers[-1] == [&"small"],
+			"HKFlamer %s must add its own small-tier boom as the last layer, got %s" % [cause, layers[-1]]
+		)
+	# Scoped to HKFlamer alone: no other infantry unit has such a hook.
+	_expect(
+		strategy.death_sound_event_layers(&"Shot", &"Harkonnen", &"HKTrooper").size() == 1,
+		"an ordinary infantry unit must propose only its cause layer, never a self-destruct boom"
+	)
+
+
+## The four Harkonnen personal hooks play *alongside* the generic size tier —
+## the user hears two booms on these units and one on everything else.
+func _test_vehicle_sound_personal_hooks() -> void:
 	var strategy := VehicleDeathStrategyScript.new()
-	_expect(strategy.death_sound_event_id(&"Explode", &"") == [&"explode"], "vehicle sound id must be [explode]")
-	_expect(strategy.death_sound_event_id(&"Explode", &"Atreides") == [&"explode"], "vehicle sound id must ignore faction")
+	var cases := {
+		&"HKAssault": [&"hkmedium1", &"medium"],
+		&"HKInkVine": [&"hkmedium2", &"medium"],
+		&"HKBuzzsaw": [&"hksmall1", &"medium"],
+		&"HKDevastator": [&"explode", &"large"],
+	}
+	for config_id: StringName in cases:
+		var layers: Array = strategy.death_sound_event_layers(&"Explode", &"Harkonnen", config_id)
+		var expected: Array = cases[config_id]
+		_expect(
+			layers.size() == 2,
+			"%s must propose two concurrent layers (personal hook + size tier), got %s" % [config_id, layers]
+		)
+		if layers.size() != 2:
+			continue
+		_expect(
+			layers[0] == [expected[0]] and layers[1] == [expected[1]],
+			"%s must propose [[%s], [%s]], got %s" % [config_id, expected[0], expected[1], layers]
+		)
+
+
+## Everyone else gets exactly one layer, the size tier — never `explode`, which
+## is HKDevastator's personal hook, not a generic explosion id.
+func _test_vehicle_sound_tiers() -> void:
+	var strategy := VehicleDeathStrategyScript.new()
+	var cases := {
+		&"ATTrike": &"small",
+		&"ORDustScout": &"small",
+		&"ORAPC": &"medium",
+		&"ATMongoose": &"medium",
+	}
+	for config_id: StringName in cases:
+		var layers: Array = strategy.death_sound_event_layers(&"Explode", &"Atreides", config_id)
+		_expect(
+			layers.size() == 1 and layers[0] == [cases[config_id]],
+			"%s must propose exactly one layer, [%s], got %s" % [config_id, cases[config_id], layers]
+		)
+	_expect(
+		strategy.death_sound_event_layers(&"Explode", &"", &"ORAPC")
+			== strategy.death_sound_event_layers(&"Blow_Up", &"Harkonnen", &"ORAPC"),
+		"vehicle sound layers must depend on the unit alone, never on faction or cause"
+	)
+
+
+## Every id either strategy can propose must actually exist in the generated
+## manifest — a personal hook has no fallback candidate behind it, so a
+## shadowed-away id (see tools/generate_voice_feedback.py's
+## SHADOW_PROOF_EVENT_IDS, docs/quirks.md) would be silent loss, not a
+## graceful degrade.
+func _test_vehicle_sound_ids_are_generated() -> void:
+	var strategy := VehicleDeathStrategyScript.new()
+	var ids: Array[StringName] = []
+	for config_id: StringName in strategy.PERSONAL_DEATH_HOOKS:
+		ids.append(strategy.PERSONAL_DEATH_HOOKS[config_id])
+	for config_id: StringName in strategy.TIER_OVERRIDES:
+		ids.append(strategy.TIER_OVERRIDES[config_id])
+	ids.append(strategy.DEFAULT_TIER)
+	for id: StringName in ids:
+		var key := _manifest_key(id)
+		_expect(
+			GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(key),
+			"%s must be present in the generated DEATH_EVENT_PATHS manifest" % id
+		)
+		if not GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(key):
+			continue
+		var event := load(String(GeneratedVoiceManifest.DEATH_EVENT_PATHS[key])) as SoundEvent
+		_expect(
+			event != null and not event.sample_paths.is_empty(),
+			"%s must carry at least one real converted sample" % id
+		)
 
 
 func _test_infantry_launch_impulse() -> void:
@@ -258,8 +376,10 @@ func _test_infantry_launch_impulse() -> void:
 func _test_infantry_sound_resolves_to_real_samples() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
 	for house_id: StringName in [&"Atreides", &"Harkonnen", &"Ordos"]:
-		for cause in [&"Shot", &"Burn", &"Gassed", &"Blow_Up"]:
-			var candidates := strategy.death_sound_event_id(cause, house_id)
+		# Blow_Up excluded deliberately: it proposes no layer at all now, since
+		# the boom belongs to the weapon, not to the corpse.
+		for cause in [&"Shot", &"Burn", &"Gassed"]:
+			var candidates: Array = _cause_layer(strategy, cause, house_id)
 			var resolved_id := _resolve_against_manifest(candidates)
 			_expect(
 				resolved_id != &"",
@@ -279,7 +399,7 @@ func _test_infantry_sound_resolves_to_real_samples() -> void:
 
 ## Mirrors Unit._resolve_sound_event_id(): picks the first candidate id that
 ## is actually a key in the generated DEATH_EVENT_PATHS manifest.
-func _resolve_against_manifest(candidates: Array[StringName]) -> StringName:
+func _resolve_against_manifest(candidates: Array) -> StringName:
 	for candidate in candidates:
 		if GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(_manifest_key(candidate)):
 			return candidate
