@@ -8,6 +8,7 @@ extends SceneTree
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const OrApcModelScene := preload("res://assets/converted/models/Or_apc_H0/Or_apc_H0.scn")
 const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
+const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -18,6 +19,7 @@ func _initialize() -> void:
 	await _run_case("a shot infantry unit is freed immediately and leaves exactly one corpse", _test_infantry_death)
 	await _run_case("an exploded vehicle is freed immediately and leaves an Explode corpse", _test_vehicle_death)
 	await _run_case("an unmatched death cause frees the unit with no corpse at all", _test_no_matching_clip)
+	await _run_case("a vehicle with no Explode clip still spawns its death explosion", _test_vehicle_death_no_clip)
 	await _run_case("a unit mid-fire-sequence is freed without casting a freed overlay player", _test_death_mid_fire_sequence)
 	if _failures > 0:
 		printerr("Death animation tests: %d failures after %d assertions" % [_failures, _assertions])
@@ -43,6 +45,14 @@ func _corpses_in(world: Node3D) -> Array:
 	return result
 
 
+func _explosion_effects_in(world: Node3D) -> Array:
+	var result: Array = []
+	for child in world.get_children():
+		if child is CombatImpactEffectScript:
+			result.append(child)
+	return result
+
+
 func _test_infantry_death() -> void:
 	var world := Node3D.new()
 	root.add_child(world)
@@ -63,6 +73,14 @@ func _test_infantry_death() -> void:
 			player != null and String(player.current_animation).begins_with("Shot_"),
 			"the corpse must be playing one of the Shot_ variants, got %s" % (player.current_animation if player != null else "<no player>")
 		)
+	# ATInfantry's UnitDefinition carries no explosion_effect_ids and no
+	# explosion_type_id (infantry never had a Rules.txt ExplosionType), so no
+	# CombatImpactEffect must be spawned — this must fall out naturally from
+	# the empty list, not from any infantry-specific check in the spawn code.
+	_expect(
+		_explosion_effects_in(world).is_empty(),
+		"infantry must not gain a death explosion effect it never had"
+	)
 	world.queue_free()
 	await process_frame
 
@@ -92,6 +110,21 @@ func _test_vehicle_death() -> void:
 			player != null and player.current_animation == &"Explode",
 			"a vehicle corpse must always play Explode regardless of damage type"
 		)
+	# ORAPC's UnitDefinition carries explosion_effect_ids = [&"Explosion"], so
+	# the death sequence must spawn the same CombatImpactEffect a bullet
+	# impact would (see CombatProjectile._spawn_explosion_visuals) — parented
+	# as a sibling of the unit, since the unit itself is freed this frame.
+	var explosion_effects := _explosion_effects_in(world)
+	_expect(
+		explosion_effects.size() == 1,
+		"exactly one death explosion effect must be spawned for the vehicle, got %d" % explosion_effects.size()
+	)
+	if not explosion_effects.is_empty():
+		var effect := explosion_effects[0] as CombatImpactEffectScript
+		_expect(
+			effect.effect_id == &"Explosion",
+			"the vehicle's death explosion must use its rules-authored effect id, got %s" % effect.effect_id
+		)
 	world.queue_free()
 	await process_frame
 
@@ -110,6 +143,38 @@ func _test_no_matching_clip() -> void:
 
 	_expect(unit.is_queued_for_deletion(), "the unit must still be freed even with no matching death clip")
 	_expect(_corpses_in(world).is_empty(), "no corpse may be spawned when no clip matches")
+	world.queue_free()
+	await process_frame
+
+
+## A vehicle with no model at all under VisualRoot (the degenerate case
+## _begin_death_sequence's `model == null` branch exists for) must still
+## degrade to queue_free() with no corpse — exactly like
+## _test_no_matching_clip — but, per work item 3, must NOT also lose its
+## rules-authored explosion visual: the ExplosionType/ExplosionEffects data
+## and the Explode clip are independent in the original data, so a unit that
+## can't produce a corpse must still explode.
+func _test_vehicle_death_no_clip() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var vehicle := UnitScene.instantiate() as Unit
+	vehicle.config_id = &"ORAPC"
+	var visual_root := vehicle.get_node("VisualRoot") as Node3D
+	for child in visual_root.get_children():
+		visual_root.remove_child(child)
+		child.free()
+	world.add_child(vehicle)
+	await process_frame
+
+	vehicle.take_damage(vehicle.max_health + vehicle.max_shields + 10.0, &"")
+
+	_expect(vehicle.is_queued_for_deletion(), "the vehicle must still be freed even with no matching death clip")
+	_expect(_corpses_in(world).is_empty(), "no corpse may be spawned when no clip matches")
+	var explosion_effects := _explosion_effects_in(world)
+	_expect(
+		explosion_effects.size() == 1,
+		"a vehicle with no Explode clip must still spawn its death explosion, got %d" % explosion_effects.size()
+	)
 	world.queue_free()
 	await process_frame
 

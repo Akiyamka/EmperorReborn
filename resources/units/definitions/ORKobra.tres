@@ -59,5 +59,6 @@ chaos_effect_id = &"LargeChaosFX"
 hawk_effect_id = &"LargeHawkFX"
 damage_effect_id = &"LargeDamageFX"
 explosion_type_id = &"Explosion"
+explosion_scene_paths = {&"Explosion": "res://assets/converted/impact_effects/explosion/explosion.scn"}
 veterancy_level_paths = ["res://resources/units/veterancy/ORKobra_1.tres", "res://resources/units/veterancy/ORKobra_2.tres", "res://resources/units/veterancy/ORKobra_3.tres"]
 turret_ids = [&"ORKobraUndeployedGun", &"ORKobraDeployedGun"]

@@ -12,6 +12,7 @@ const ModelBakeBuilderScript := preload("res://converters/model_bake_builder.gd"
 
 const ART_DIR := "res://assets/converted/rules/art"
 const BULLET_DIR := "res://assets/converted/rules/bullets"
+const UNIT_DIR := "res://assets/converted/rules/units"
 const TURRET_DIR := "res://assets/converted/rules/turrets"
 const PROJECTILE_SOURCE_DIR := "res://assets/raw_original_content/3DDATA/bullets"
 const EFFECT_SOURCE_DIR := "res://assets/raw_original_content/3DDATA/Explosion"
@@ -162,34 +163,56 @@ func _muzzle_flash_visual_names() -> PackedStringArray:
 	return result
 
 
+## Impact effects are referenced from two independent Rules.txt sources —
+## a bullet's ExplosionType/ExplosionEffects (its impact) and a unit's own
+## ExplosionType/ExplosionEffects (its death explosion, see the
+## death-animation plan). Scanning only BULLET_DIR silently dropped every
+## effect id that only a unit ever references (AerialExplosion, SmExplosion,
+## BigExplosion, WormSign3): those units got a UnitDefinition.explosion_*
+## field pointing at art that never got converted. Union both sources so a
+## unit-only explosion id is still a conversion candidate.
 func _impact_effect_visual_names() -> PackedStringArray:
 	var art_xaf_by_id := _art_xaf_by_id()
 	var names := {}
-	var dir := DirAccess.open(BULLET_DIR)
+	for effect_id in _explosion_effect_ids_in(BULLET_DIR) + _explosion_effect_ids_in(UNIT_DIR):
+		var xaf := String(art_xaf_by_id.get(String(effect_id).to_lower(), ""))
+		if not xaf.is_empty():
+			names[xaf.get_file().get_basename().to_lower()] = true
+	var result: PackedStringArray = []
+	for visual_name in names:
+		result.append(String(visual_name))
+	result.sort()
+	return result
+
+
+## Reads every RuleEntityConfig .tres in `config_dir` (BulletConfig or
+## UnitConfig — both expose the same field()/list() accessors via their
+## shared RuleEntityConfig base) and returns the explosion effect ids it
+## authors: its explicit "explosion_effects" list, falling back to the single
+## "explosion_type" only when that list is empty — the same fallback
+## CombatBullet.explosion_effect_ids() and Unit._death_explosion_effect_ids()
+## apply at runtime, so whatever they could resolve to is guaranteed a
+## conversion candidate here.
+func _explosion_effect_ids_in(config_dir: String) -> Array:
+	var result: Array = []
+	var dir := DirAccess.open(config_dir)
 	if dir == null:
-		push_error("convert_all_projectiles: cannot open %s" % BULLET_DIR)
-		return PackedStringArray()
+		push_error("convert_all_projectiles: cannot open %s" % config_dir)
+		return result
 	dir.list_dir_begin()
 	var file_name := dir.get_next()
 	while not file_name.is_empty():
 		if not dir.current_is_dir() and file_name.get_extension() == "tres":
-			var config = ResourceLoader.load(BULLET_DIR.path_join(file_name))
+			var config = ResourceLoader.load(config_dir.path_join(file_name))
 			if config != null and config.has_method("list"):
 				var effect_ids: Array = config.list(&"explosion_effects")
 				if effect_ids.is_empty():
 					var primary_id := String(config.field(&"explosion_type", ""))
 					if not primary_id.is_empty():
 						effect_ids.append(primary_id)
-				for effect_id in effect_ids:
-					var xaf := String(art_xaf_by_id.get(String(effect_id).to_lower(), ""))
-					if not xaf.is_empty():
-						names[xaf.get_file().get_basename().to_lower()] = true
+				result.append_array(effect_ids)
 		file_name = dir.get_next()
 	dir.list_dir_end()
-	var result: PackedStringArray = []
-	for visual_name in names:
-		result.append(String(visual_name))
-	result.sort()
 	return result
 
 

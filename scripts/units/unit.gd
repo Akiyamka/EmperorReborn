@@ -9,6 +9,7 @@ const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit
 const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
 const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
 const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
+const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
 const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
 static var _definition_catalog := UnitSceneCatalogScript.new()
 
@@ -1017,6 +1018,12 @@ func _begin_death_sequence(cause: StringName) -> void:
 		if visual_root != null and visual_root.get_child_count() > 0 else null
 	)
 	if player == null or model == null or parent == null:
+		# No corpse at all (no clip matched, or nothing to detach), but a
+		# vehicle with a rules-authored explosion must still visually explode
+		# — the death clip and the explosion FX are independent per the
+		# original data (ExplosionType/ExplosionEffects vs Explode animation),
+		# so losing one must not silently drop the other.
+		_spawn_death_explosion_effects(parent, global_position)
 		queue_free()
 		return
 
@@ -1052,7 +1059,50 @@ func _begin_death_sequence(cause: StringName) -> void:
 	DeathCorpseScript.spawn(
 		parent, model, world_transform, clip, sound_event_id, momentum, owner_player_id
 	)
+	_spawn_death_explosion_effects(parent, world_transform.origin)
 	queue_free()
+
+
+## Spawns this unit's rules-authored death explosion (UnitDefinition's
+## explosion_effect_ids, falling back to its single explosion_type_id —
+## mirrors CombatBullet.explosion_effect_ids()) as a sibling of the dying
+## unit, exactly like CombatProjectile._spawn_explosion_visuals(). Must never
+## parent to `self`: the unit is freed the instant this call returns, which
+## would take a child effect down with it. Infantry naturally get no effect
+## here since their UnitDefinition carries no explosion ids at all — nothing
+## unit-type-specific needed.
+func _spawn_death_explosion_effects(parent: Node, world_position: Vector3) -> void:
+	if unit_definition == null or parent == null or not parent.is_inside_tree():
+		return
+	for effect_id in _death_explosion_effect_ids():
+		var scene_path := String(unit_definition.explosion_scene_paths.get(effect_id, ""))
+		if scene_path.is_empty():
+			continue
+		var scene := load(scene_path) as PackedScene
+		if scene == null:
+			continue
+		var effect = CombatImpactEffectScript.new()
+		parent.add_child(effect)
+		if not effect.configure(effect_id, scene, world_position):
+			effect.free()
+
+
+## Mirrors CombatBullet.explosion_effect_ids(): an explicit effect list wins,
+## falling back to the single ExplosionType id only when no effect list was
+## authored, so a unit's death visual resolves its two Rules.txt fields the
+## same way its own bullets already do.
+func _death_explosion_effect_ids() -> Array[StringName]:
+	var result: Array[StringName] = []
+	if unit_definition == null:
+		return result
+	for value in unit_definition.explosion_effect_ids:
+		var effect_id := StringName(value)
+		if effect_id != &"" and effect_id not in result:
+			result.append(effect_id)
+	var primary_id: StringName = unit_definition.explosion_type_id
+	if result.is_empty() and primary_id != &"":
+		result.append(primary_id)
+	return result
 
 
 ## Scrubs the runtime state Unit bound onto the model subtree before handing
