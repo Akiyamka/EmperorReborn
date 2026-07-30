@@ -1,0 +1,245 @@
+class_name DeathCorpse
+extends RigidBody3D
+
+## Throwaway node spawned by `Unit._begin_death_sequence()` the instant a unit
+## dies (and, per the death-animation plan's §8, later reused for building
+## destruction). Deliberately not under scripts/units/: it is not a unit and
+## is shared across both callers. Its only job is to carry the already-
+## instantiated model subtree the dying node handed off, play one death clip,
+## optionally fall/tumble under gravity, and free itself once the clip (and,
+## from a later pass, its death sound) finish.
+##
+## Not under the "units" group by construction: unit_command_controller.gd
+## filters selection by that group and match_snapshot.gd serialises it: a
+## corpse has no place in a save and must never become selectable.
+
+const PlayerDataScript := preload("res://scripts/players/player_data.gd")
+const DeathCorpseScene := preload("res://scenes/effects/death_corpse.tscn")
+
+## The corpse's own free layer/mask (docs/... see death-animation plan §5):
+## terrain = 1, units/buildings = 2, so bit 3 (value 4) is unclaimed. A
+## terrain-only mask means projectiles (mask 3) and units (mask 0 at runtime)
+## never test against a corpse at all — "fully ignored in collisions with
+## other units" falls out for free rather than needing an exclusion list.
+const COLLISION_LAYER := 4
+const COLLISION_MASK := 1
+
+## Simulated corpses freeze once asleep or after this timeout, whichever
+## first — a corpse must not keep simulating physics for the rest of the
+## match just because it landed somewhere that never quite settles.
+const SETTLE_TIMEOUT_SECONDS := 2.0
+const MAX_TUMBLE_ANGULAR_SPEED := 2.0
+## A degenerate/absent mesh (or the corpse test's stand-in models) must not
+## produce a zero-thickness collider on any axis.
+const MIN_SHAPE_DIMENSION := 0.2
+
+var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID
+
+var _model: Node3D
+var _collision_shape: CollisionShape3D
+## Kept for tests/introspection: the AABB the box collider was actually fit
+## to, in the corpse's own local space.
+var _fitted_local_aabb := AABB()
+var _death_animation_player: AnimationPlayer
+var _death_clip: StringName = &""
+var _animation_done := false
+## No SFX generator exists yet (that lands in a later pass), so every corpse
+## starts "sound already done" and frees purely on animation completion.
+## Once real playback is wired in, _configure_sound() will flip this to
+## false until DeathSoundPlayer reports back.
+var _sound_done := true
+
+
+## Entry point called by Unit (and later BuildingDeathStrategy) before the
+## dying node frees itself. `model` must already be detached from its old
+## parent (Unit.visual_root) with its local transform intact — the corpse
+## reparents it as-is under `world_transform`. `momentum` is
+## Vector3.ZERO for in-place deaths: no physics simulation runs at all in
+## that case (see _configure_physics()).
+static func spawn(
+		world: Node,
+		model: Node3D,
+		world_transform: Transform3D,
+		clip: StringName,
+		sound_event_id: StringName,
+		momentum: Vector3,
+		owner_player_id: int,
+	) -> DeathCorpse:
+	var corpse := DeathCorpseScene.instantiate() as DeathCorpse
+	corpse.owner_player_id = owner_player_id
+	# Parent first, then stamp the global transform: assigning `.transform`
+	# before the node is inside the tree would only equal the intended world
+	# transform if `world` itself sits at the scene origin.
+	world.add_child(corpse)
+	corpse.global_transform = world_transform
+	corpse._adopt_model(model)
+	corpse._play_death_clip(clip)
+	corpse._configure_physics(momentum)
+	corpse._configure_sound(sound_event_id)
+	corpse._maybe_free()
+	return corpse
+
+
+func _adopt_model(model: Node3D) -> void:
+	_model = model
+	add_child(model)
+	_fit_collision_shape()
+
+
+## Sizes the corpse's collider from the adopted model's own mesh geometry
+## rather than a fixed constant: a fixed sphere would make a large vehicle
+## corpse sink into (or hover above) the terrain, and — worse — makes any
+## simulated corpse roll away like a ball once it lands, which reads as a
+## bug rather than a body/wreck coming to rest. Mirrors the AABB-over-meshes
+## approach Unit._selection_bounds()/_mesh_instances() already use for
+## combat_aim_position(), just computed in the corpse's own local frame
+## since the CollisionShape3D here is a sibling of the model, not a child
+## of it.
+func _fit_collision_shape() -> void:
+	_collision_shape = get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if _collision_shape == null:
+		return
+	_fitted_local_aabb = _model_local_aabb()
+	var box := BoxShape3D.new()
+	box.size = Vector3(
+		maxf(_fitted_local_aabb.size.x, MIN_SHAPE_DIMENSION),
+		maxf(_fitted_local_aabb.size.y, MIN_SHAPE_DIMENSION),
+		maxf(_fitted_local_aabb.size.z, MIN_SHAPE_DIMENSION),
+	)
+	_collision_shape.shape = box
+	_collision_shape.transform = Transform3D(Basis.IDENTITY, _fitted_local_aabb.get_center())
+
+
+func _model_local_aabb() -> AABB:
+	var meshes: Array[MeshInstance3D] = []
+	_collect_mesh_instances(_model, meshes)
+	var bounds := AABB()
+	var has_bounds := false
+	for mesh_instance in meshes:
+		for corner in _aabb_corners(mesh_instance.get_aabb()):
+			var point := to_local(mesh_instance.to_global(corner))
+			if has_bounds:
+				bounds = bounds.expand(point)
+			else:
+				bounds = AABB(point, Vector3.ZERO)
+				has_bounds = true
+	if has_bounds:
+		return bounds
+	# No mesh geometry at all (a bare test stand-in, or a stripped model) —
+	# a small default box beats a zero-size collider.
+	return AABB(Vector3(-0.5, -0.25, -0.5), Vector3(1.0, 0.5, 1.0))
+
+
+func _collect_mesh_instances(node: Node, result: Array[MeshInstance3D]) -> void:
+	if node is MeshInstance3D:
+		result.append(node)
+	for child in node.get_children():
+		_collect_mesh_instances(child, result)
+
+
+func _aabb_corners(bounds: AABB) -> Array[Vector3]:
+	var corners: Array[Vector3] = []
+	for x in [bounds.position.x, bounds.end.x]:
+		for y in [bounds.position.y, bounds.end.y]:
+			for z in [bounds.position.z, bounds.end.z]:
+				corners.append(Vector3(x, y, z))
+	return corners
+
+
+func _play_death_clip(clip: StringName) -> void:
+	_death_clip = clip
+	var players := _collect_animation_players()
+	for player in players:
+		# Stop whatever the dying unit's idle/movement logic left running and
+		# drop the process-order priority Unit imposed
+		# (_prioritize_animations_before_unit_logic): that ordering existed
+		# only to keep combat turret transforms authoritative over Unit's own
+		# per-frame logic, which no longer runs here.
+		player.stop()
+		player.process_priority = 0
+	for player in players:
+		if player.has_animation(clip):
+			_death_animation_player = player
+			break
+	if _death_animation_player == null:
+		_animation_done = true
+		return
+	var animation := _death_animation_player.get_animation(clip)
+	if animation != null:
+		animation.loop_mode = Animation.LOOP_NONE
+	# The unit that originally connected animation_finished on this player is
+	# gone (Godot auto-disconnects a freed object's signal connections), so
+	# this is the only listener left.
+	_death_animation_player.animation_finished.connect(_on_death_animation_finished)
+	_death_animation_player.play(clip)
+
+
+func _collect_animation_players() -> Array[AnimationPlayer]:
+	var result: Array[AnimationPlayer] = []
+	if _model == null:
+		return result
+	for node in _model.find_children("*", "AnimationPlayer", true, false):
+		result.append(node as AnimationPlayer)
+	return result
+
+
+func _on_death_animation_finished(animation_name: StringName) -> void:
+	if animation_name != _death_clip:
+		return
+	_animation_done = true
+	_maybe_free()
+
+
+func _configure_physics(momentum: Vector3) -> void:
+	collision_layer = COLLISION_LAYER
+	collision_mask = COLLISION_MASK
+	if momentum.is_zero_approx():
+		# In-place death clips must not be simulated at all: gravity pulling
+		# the body while the animation drives the skeleton is exactly the
+		# terrain-triangle-edge jitter Unit avoids by disabling its own
+		# terrain collision (see unit.gd's COLLISION_OBJECT_NAME comment). A
+		# frozen corpse is the "almost logic-free placeholder" this design
+		# wants; the RigidBody3D root is simply carried along unused.
+		freeze = true
+		return
+	freeze = false
+	linear_velocity = momentum
+	angular_velocity = Vector3(
+		randf_range(-MAX_TUMBLE_ANGULAR_SPEED, MAX_TUMBLE_ANGULAR_SPEED),
+		randf_range(-MAX_TUMBLE_ANGULAR_SPEED, MAX_TUMBLE_ANGULAR_SPEED),
+		randf_range(-MAX_TUMBLE_ANGULAR_SPEED, MAX_TUMBLE_ANGULAR_SPEED),
+	)
+	sleeping_state_changed.connect(_on_sleeping_state_changed)
+	if is_inside_tree():
+		get_tree().create_timer(SETTLE_TIMEOUT_SECONDS).timeout.connect(_on_settle_timeout)
+
+
+func _on_sleeping_state_changed() -> void:
+	if sleeping:
+		freeze = true
+
+
+func _on_settle_timeout() -> void:
+	freeze = true
+
+
+## No manifest resolves a sound-event id to a sample path yet — that lands
+## with the SFX-hook converter pass. Until then this always returns an empty
+## path, so playback is always skipped and _sound_done stays true.
+func _resolve_sound_path(_sound_event_id: StringName) -> String:
+	return ""
+
+
+func _configure_sound(sound_event_id: StringName) -> void:
+	var sample_path := _resolve_sound_path(sound_event_id)
+	if sample_path.is_empty():
+		_sound_done = true
+		return
+	_sound_done = false
+	# Playback itself (a DeathSoundPlayer AudioStreamPlayer3D one-shot) is
+	# wired in once _resolve_sound_path can return something real.
+
+
+func _maybe_free() -> void:
+	if _animation_done and _sound_done:
+		queue_free()

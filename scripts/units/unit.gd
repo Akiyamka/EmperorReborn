@@ -6,6 +6,9 @@ const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
+const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
+const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
 static var _definition_catalog := UnitSceneCatalogScript.new()
 
 signal owner_changed(player_id: int)
@@ -169,6 +172,16 @@ var _mech_motion_cycle_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
 var _mech_locomotion_state := MechLocomotionState.IDLE
 var _mech_start_remaining := 0.0
 var _flight_controller: UnitFlightController = null
+## Policy object picked once in _apply_unit_definition, alongside where it
+## already reads unit_definition.infantry today. See unit_death_strategy.gd.
+var _death_strategy: UnitDeathStrategy = null
+## Not `velocity`: navigation_step() zeroes its vertical component, and
+## UnitFlightController writes global_position directly, bypassing velocity
+## entirely during takeoff/landing. Updated at the top of every
+## _physics_process call (see the comment there) so it always holds the
+## unit's position at the start of the most recent physics step, regardless
+## of which movement path is active.
+var _previous_global_position := Vector3.ZERO
 var _deploy_state := DeployState.TRAVEL
 var _deployment_aligning := false
 var _deployment_alignment_direction := Vector3.ZERO
@@ -211,6 +224,7 @@ func _ready() -> void:
 		_visual_slope_target_basis = _visual_root_rest_basis
 	_apply_unit_definition()
 	target_position = global_position
+	_previous_global_position = global_position
 	# Terrain height is sampled explicitly below. Letting CharacterBody collide
 	# with the terrain mesh makes each triangle edge behave like a small wall,
 	# which prevents units from climbing otherwise traversable slopes. The
@@ -275,6 +289,12 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	# Captured before this frame's movement runs, so by the time anything
+	# reads it later (death momentum, see _begin_death_sequence) it holds
+	# "position at the start of the most recent physics step" — equivalent to
+	# updating it at the end of the previous call, but without duplicating
+	# the assignment above every early return below.
+	_previous_global_position = global_position
 	if _flight_controller != null and _flight_controller.flight_controls_transition():
 		_flight_controller.advance(delta)
 		return
@@ -949,7 +969,7 @@ func grant_temporary_invulnerability(duration: float) -> void:
 	get_tree().create_timer(duration).timeout.connect(_clear_invulnerability)
 
 
-func take_damage(amount: float, _death_cause: StringName = &"") -> void:
+func take_damage(amount: float, death_cause: StringName = &"") -> void:
 	if invulnerable or amount <= 0.0 or health <= 0.0:
 		return
 
@@ -962,7 +982,7 @@ func take_damage(amount: float, _death_cause: StringName = &"") -> void:
 		return
 	health -= remaining_damage
 	if health <= 0.0:
-		queue_free()
+		_begin_death_sequence(death_cause)
 
 
 func combat_armour_type() -> StringName:
@@ -971,6 +991,90 @@ func combat_armour_type() -> StringName:
 
 func combat_is_airborne() -> bool:
 	return unit_definition != null and unit_definition.can_fly
+
+
+## Called on the killing blow instead of queue_free() directly. The unit is
+## still freed the instant health crosses zero, exactly as before this
+## feature — see the death-animation plan's "Core design decision" for why a
+## `_dying` guard living through the animation was rejected (it would need
+## mirroring across is_deploying()-style checks scattered through this file,
+## plus an explicit deselect UnitCommandController does not otherwise need).
+## A corpse node is spawned in the unit's place only when an authored clip
+## actually matches; otherwise this degrades byte-for-byte to today's
+## behaviour so units without a death clip never regress.
+func _begin_death_sequence(cause: StringName) -> void:
+	var candidates: Array[StringName] = (
+		_death_strategy.death_animation_candidates(cause, is_deployed())
+		if _death_strategy != null else []
+	)
+	var found := _find_animation_player(candidates)
+	var player := found.get("player") as AnimationPlayer
+	var clip := StringName(found.get("name", &""))
+	var parent := get_parent()
+	var model := (
+		visual_root.get_child(0) as Node3D
+		if visual_root != null and visual_root.get_child_count() > 0 else null
+	)
+	if player == null or model == null or parent == null:
+		queue_free()
+		return
+
+	var world_transform := visual_root.global_transform
+	_prepare_model_for_corpse()
+	visual_root.remove_child(model)
+
+	var launch_impulse: Vector3 = (
+		_death_strategy.death_launch_impulse(cause) if _death_strategy != null else Vector3.ZERO
+	)
+	# Inherited momentum is a property of the death cause, not of body type
+	# (death-animation plan, "Momentum policy"): Shot/Burn/Gassed clips are
+	# authored in place and must drop whatever velocity the unit had, while a
+	# flying unit's corpse must always fall regardless of what killed it.
+	var carries_momentum: bool = (
+		(unit_definition != null and unit_definition.can_fly)
+		or not launch_impulse.is_zero_approx()
+	)
+	var momentum := Vector3.ZERO
+	if carries_momentum:
+		var physics_delta := get_physics_process_delta_time()
+		var inherited_velocity := (
+			(global_position - _previous_global_position) / physics_delta
+			if physics_delta > 0.0 else Vector3.ZERO
+		)
+		momentum = inherited_velocity + launch_impulse
+
+	var sound_event_id: StringName = (
+		_death_strategy.death_sound_event_id(cause, _owner_faction_id())
+		if _death_strategy != null else &""
+	)
+	DeathCorpseScript.spawn(
+		parent, model, world_transform, clip, sound_event_id, momentum, owner_player_id
+	)
+	queue_free()
+
+
+## Scrubs the runtime state Unit bound onto the model subtree before handing
+## it to the corpse: an unbound combat turret, a lit shield/scroll-fx mesh or
+## a leftover fire-overlay AnimationPlayer would otherwise keep acting like a
+## live unit under the corpse's ownership.
+func _prepare_model_for_corpse() -> void:
+	for turret in combat_turrets:
+		turret.unbind_model()
+	for mesh_instance in _shield_meshes:
+		mesh_instance.visible = false
+	for mesh_instance in _scroll_fx_meshes:
+		mesh_instance.visible = false
+	for overlay_value: Variant in _weapon_fire_overlays.values():
+		if is_instance_valid(overlay_value):
+			(overlay_value as Node).free()
+	_weapon_fire_overlays.clear()
+
+
+func _owner_faction_id() -> StringName:
+	var roster_player = owner_player()
+	if roster_player == null:
+		return &""
+	return roster_player.house_id
 
 
 func combat_aim_position() -> Vector3:
@@ -2174,17 +2278,9 @@ func _start_undeployment_animation() -> void:
 
 
 func _start_transition_animation(candidates: Array[StringName]) -> void:
-	_deployment_animation_player = null
-	_deployment_animation_name = &""
-	for candidate in candidates:
-		for player in _animation_players:
-			if not player.has_animation(candidate):
-				continue
-			_deployment_animation_player = player
-			_deployment_animation_name = candidate
-			break
-		if _deployment_animation_player != null:
-			break
+	var found := _find_animation_player(candidates)
+	_deployment_animation_player = found.get("player") as AnimationPlayer
+	_deployment_animation_name = StringName(found.get("name", &""))
 
 	if _deployment_animation_player == null:
 		call_deferred("_emit_deployment_animation_finished")
@@ -2195,6 +2291,17 @@ func _start_transition_animation(candidates: Array[StringName]) -> void:
 		animation.loop_mode = Animation.LOOP_NONE
 	_deployment_animation_player.stop()
 	_deployment_animation_player.play(_deployment_animation_name)
+
+
+## Shared "first player owning one of these candidate clips" scan, in
+## candidate-preference order. Used by both deployment transitions and death
+## animation selection (_begin_death_sequence) so the two don't drift apart.
+func _find_animation_player(candidates: Array[StringName]) -> Dictionary:
+	for candidate in candidates:
+		for player in _animation_players:
+			if player.has_animation(candidate):
+				return {"player": player, "name": candidate}
+	return {"player": null, "name": &""}
 
 
 ## Both transition directions count as "deploying" for every gameplay lock: a
@@ -2353,6 +2460,10 @@ func _apply_unit_definition() -> void:
 	max_health = float(unit_definition.health)
 	max_shields = float(unit_definition.shield_health)
 	armour_type = unit_definition.armour_type
+	_death_strategy = (
+		InfantryDeathStrategyScript.new() if unit_definition.infantry
+		else VehicleDeathStrategyScript.new()
+	)
 	_configure_combat_turrets()
 	if unit_definition.can_fly:
 		if _flight_controller == null:
