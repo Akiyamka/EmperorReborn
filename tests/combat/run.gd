@@ -4,6 +4,7 @@ const LegacyRulesFixture := preload("res://tests/support/legacy_rules_fixture.gd
 
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
 const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
+const CombatGroundDecalScript := preload("res://scripts/combat/combat_ground_decal.gd")
 const CombatLingerEffectScript := preload("res://scripts/combat/combat_linger_effect.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
@@ -272,6 +273,10 @@ func _initialize() -> void:
 		"flame and chemical Fire clips emit authored particle streams",
 		_test_model_fx_bank_streams
 	)
+	_run_case(
+		"ground decals fade through seven overlapping crater layers",
+		_test_ground_decal_overlap_budget
+	)
 	await _run_async_case(
 		"turret launches projectiles and composes the authored impact FX",
 		_test_turret_projectile_launch
@@ -448,6 +453,70 @@ func _free_ground_decals() -> void:
 	for child in root.get_children():
 		if child.has_meta("combat_ground_decal"):
 			child.free()
+
+
+func _test_ground_decal_overlap_budget() -> void:
+	_free_ground_decals()
+	var created_decals: Array[Node3D] = []
+	for index in CombatGroundDecalScript.MAXIMUM_OVERLAPPING_DECALS:
+		var decal = CombatGroundDecalScript.new()
+		root.add_child(decal)
+		_expect(
+			decal.configure(30.0, Vector3(20.0, 0.0, 20.0)),
+			"overlap-budget fixture decal %d must configure" % index
+		)
+		created_decals.append(decal)
+	var oldest_mesh := created_decals.front().get_node("Decal") as MeshInstance3D
+	var oldest_material := (oldest_mesh.mesh as PlaneMesh).material \
+		as StandardMaterial3D
+	_expect(
+		int(created_decals.front().get_meta("overlap_fade_steps", 0))
+			== CombatGroundDecalScript.MAXIMUM_OVERLAPPING_DECALS - 1
+			and is_equal_approx(
+				oldest_material.albedo_color.a,
+				1.0 / float(CombatGroundDecalScript.MAXIMUM_OVERLAPPING_DECALS)
+			),
+		"each newer overlap must progressively fade the oldest crater"
+	)
+
+	var eighth_decal = CombatGroundDecalScript.new()
+	root.add_child(eighth_decal)
+	_expect(
+		eighth_decal.configure(30.0, Vector3(20.0, 0.0, 20.0)),
+		"eighth overlap-budget fixture decal must configure"
+	)
+	created_decals.append(eighth_decal)
+	var clustered_decals := _ground_decals()
+	_expect(
+		clustered_decals.size() \
+			== CombatGroundDecalScript.MAXIMUM_OVERLAPPING_DECALS,
+		"an eighth overlapping crater must remove the oldest one"
+	)
+	_expect(
+		not is_instance_valid(created_decals.front())
+			and is_instance_valid(created_decals.back())
+			and int(created_decals[1].get_meta("overlap_fade_steps", 0))
+				== CombatGroundDecalScript.MAXIMUM_OVERLAPPING_DECALS - 1,
+		"the seventh fade step must remove only the oldest crater"
+	)
+
+	var surviving_oldest_steps := int(
+		created_decals[1].get_meta("overlap_fade_steps", 0)
+	)
+	var distant_decal = CombatGroundDecalScript.new()
+	root.add_child(distant_decal)
+	_expect(
+		distant_decal.configure(30.0, Vector3(30.0, 0.0, 20.0)),
+		"distant overlap-budget fixture decal must configure"
+	)
+	_expect(
+		_ground_decals().size() \
+			== CombatGroundDecalScript.MAXIMUM_OVERLAPPING_DECALS + 1
+			and int(created_decals[1].get_meta("overlap_fade_steps", 0))
+				== surviving_oldest_steps,
+		"a distant crater must not fade or remove a separate stack"
+	)
+	_free_ground_decals()
 
 
 func _test_armour_matrix() -> void:
