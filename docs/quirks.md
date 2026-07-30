@@ -159,6 +159,39 @@ duplicate of the real barrel sitting near the mount point in every clip.
 broken geometry. The node, its transform, and the `::1gun#`/`>>1gun#`
 attachment markers are kept so the `Fire_1` muzzle FX still anchors correctly.
 
+## Explosions
+
+### `chained_explosion_type_id` was speculative schema, not lost data
+
+**Observed data:** `explosion_configs.chained_explosion_type_id` was NULL for
+all 11 rows in `assets/converted/rules.db`. `tools/rules_editor/parse_rules.py`
+never populated it (the file does not contain the string "chain" at all), and
+`assets/raw_original_content/MODEL/*.txt` (`Rules.txt`, `ArtIni.txt`, etc.)
+have no "chain" hits either, case-insensitively. Explosion sections in the
+source only ever carry `FaceCamera` and `DamageToTile`, matching the table's
+other two real columns (`face_camera`, `damage_to_tile`).
+
+**Original-engine quirk:** There is no distinction here to record — unlike
+the `Shot` bullet flag (fixed in `44fb405`), where the source data genuinely
+had the value and the parser dropped it, `chained_explosion_type_id` was
+never backed by anything in the source. It was added to the schema alongside
+a foreign-key mapping entry in `converters/import_rules.gd` in anticipation of
+a "chained/secondary explosion" concept that the original engine's data does
+not express. Do not read "chained explosions are unimplemented" out of this;
+the concept simply does not exist in the source to implement.
+
+**EmperorReborn compatibility decision:** The column, its schema declarations
+(`assets/converted/schema.sql`, `tools/rules_editor/schema.sql`), and its
+`FK_TARGETS` mapping entry were removed, with a comment left in the schema
+files so the column is not reintroduced. `assets/converted/rules.db` had the
+column dropped in place (not reparsed, to preserve unrelated manual
+convert-stage fixes such as the per-house MCV split).
+
+Contrast with `explosion_configs.face_camera`: also unread by any runtime
+code today, but it *is* real data — set for `DHBigExplosion`, `ATHawk`, and
+`VetLevelFX`, all super-weapon effects that are simply not implemented yet.
+That one stays; it is pending, not dead.
+
 ## Audio
 
 ### ImportedSfx.txt shadows several death hooks with unconverted localized names

@@ -214,8 +214,11 @@ CREATE TABLE explosion_configs (
     -- Terrain geometry is static; positive DamageToTile drives the persistent
     -- crater/decal left on the impacted tile.
     damage_to_tile           REAL,
-    face_camera               INTEGER,  -- bool
-    chained_explosion_type_id INTEGER REFERENCES explosion_types(id)
+    face_camera               INTEGER  -- bool
+    -- No chained/secondary explosion concept exists in the source data
+    -- (Rules.txt/ArtIni.txt explosion sections carry only FaceCamera and
+    -- DamageToTile). A speculative chained_explosion_type_id column was
+    -- dropped for being permanently NULL; do not re-add it.
 );
 
 -- ExplosionType= can occur several times in one source section with different
