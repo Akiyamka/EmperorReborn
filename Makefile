@@ -45,6 +45,7 @@ godot-test:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/upgrade_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/rules/run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/combat/run.gd
+	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/combat/death_category_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/unit_command_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/deployment_run.gd
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/unit_scene_catalog_run.gd

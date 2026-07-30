@@ -15,7 +15,7 @@ class HazardUnit:
 	var unit_definition: Resource
 	var damage_taken := 0.0
 
-	func take_damage(amount: float) -> void:
+	func take_damage(amount: float, _death_cause: StringName = &"") -> void:
 		damage_taken += amount
 
 

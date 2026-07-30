@@ -228,6 +228,7 @@ const BOOL_COLUMNS := {
 	],
 	"bullets": [
 		"blow_up",
+		"shot",
 		"reduce_damage_with_distance",
 		"anti_aircraft",
 		"anti_ground",

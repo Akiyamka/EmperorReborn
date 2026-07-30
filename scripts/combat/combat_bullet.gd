@@ -194,6 +194,20 @@ func effect_flags() -> Dictionary:
 	return result
 
 
+func death_category() -> StringName:
+	if config == null:
+		return &""
+	if bool(config.gassed):
+		return &"Gassed"
+	if bool(config.blow_up):
+		return &"Blow_Up"
+	if bool(config.burnt) or bool(config.ignites):
+		return &"Burn"
+	if bool(config.shot):
+		return &"Shot"
+	return &""
+
+
 func active_effect_flags() -> Array[StringName]:
 	var result: Array[StringName] = []
 	var flags := effect_flags()

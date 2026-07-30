@@ -949,7 +949,7 @@ func grant_temporary_invulnerability(duration: float) -> void:
 	get_tree().create_timer(duration).timeout.connect(_clear_invulnerability)
 
 
-func take_damage(amount: float) -> void:
+func take_damage(amount: float, _death_cause: StringName = &"") -> void:
 	if invulnerable or amount <= 0.0 or health <= 0.0:
 		return
 

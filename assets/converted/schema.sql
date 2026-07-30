@@ -143,7 +143,7 @@ CREATE TABLE bullets (
     explosion_type_id           INTEGER REFERENCES explosion_types(id),
     blow_up                     INTEGER,  -- bool (only TRUE occurs in source data)
     blast_radius                REAL,
-    shot                        INTEGER,
+    shot                        INTEGER,  -- bool (only TRUE occurs in source data)
     reduce_damage_with_distance INTEGER,  -- bool
     missile_trail                INTEGER,
     missile_trail_size           INTEGER,

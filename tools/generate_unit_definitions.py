@@ -421,7 +421,7 @@ def bullet_text(row: sqlite3.Row, effects: list[str], projectile_path: str,
         f"missile_trail_delta = {float(row['missile_trail_delta'] or 0.0):.6g}",
         *[f"{field} = {bool_text(row[field])}" for field in [
             "burnt", "ignites", "gassed", "leech", "infantry", "damage_column",
-            "deviate", "beserk", "retreat",
+            "deviate", "beserk", "retreat", "blow_up", "shot",
         ]],
         f"effect_health = {float(row['health'] or 0.0):.6g}",
         f"effect_damage_per_tick = {float(row['shield_health'] or 0.0):.6g}",

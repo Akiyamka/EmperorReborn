@@ -34,6 +34,8 @@ extends Resource
 @export var deviate: bool
 @export var beserk: bool
 @export var retreat: bool
+@export var blow_up: bool
+@export var shot: bool
 @export var effect_health: float
 @export var effect_damage_per_tick: float
 @export var linger_duration: float

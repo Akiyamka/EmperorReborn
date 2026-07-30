@@ -81,7 +81,7 @@ func _deliver_tick(target: Object) -> void:
 	var armour_type := StringName(String(target.call("combat_armour_type")))
 	var damage: float = bullet.linger_damage_against(armour_type)
 	if damage > 0.0:
-		target.call("take_damage", damage)
+		target.call("take_damage", damage, bullet.death_category())
 
 
 func _target() -> Object:

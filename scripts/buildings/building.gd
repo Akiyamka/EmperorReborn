@@ -1127,7 +1127,11 @@ func set_hovered(value: bool) -> void:
 		_selection_halo.set_hovered(value)
 
 
-func take_damage(amount: float) -> void:
+func take_damage(amount: float, _death_cause: StringName = &"") -> void:
+	# Building destruction has only one outcome (see §2.1 below) regardless of
+	# damage type, so the death cause is accepted for signature parity with
+	# Unit.take_damage() — callers don't need to branch by target type — but
+	# genuinely unused here.
 	if invulnerable or amount <= 0.0 or health <= 0.0:
 		return
 
