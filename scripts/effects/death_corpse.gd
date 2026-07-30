@@ -170,9 +170,11 @@ func _play_death_clip(clip: StringName) -> void:
 	var animation := _death_animation_player.get_animation(clip)
 	if animation != null:
 		animation.loop_mode = Animation.LOOP_NONE
-	# The unit that originally connected animation_finished on this player is
-	# gone (Godot auto-disconnects a freed object's signal connections), so
-	# this is the only listener left.
+	# Unit._prepare_model_for_corpse() explicitly disconnects every
+	# connection it made onto this subtree before handing it off (see
+	# Unit._sever_connections_into()), so this is guaranteed to be the only
+	# listener left — not merely assumed to be, since queue_free() alone
+	# would not have removed it until the end of this same frame.
 	_death_animation_player.animation_finished.connect(_on_death_animation_finished)
 	_death_animation_player.play(clip)
 

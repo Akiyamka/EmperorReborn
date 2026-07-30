@@ -1028,7 +1028,7 @@ func _begin_death_sequence(cause: StringName) -> void:
 		return
 
 	var world_transform := visual_root.global_transform
-	_prepare_model_for_corpse()
+	_prepare_model_for_corpse(model)
 	visual_root.remove_child(model)
 
 	var launch_impulse: Vector3 = (
@@ -1109,7 +1109,20 @@ func _death_explosion_effect_ids() -> Array[StringName]:
 ## it to the corpse: an unbound combat turret, a lit shield/scroll-fx mesh or
 ## a leftover fire-overlay AnimationPlayer would otherwise keep acting like a
 ## live unit under the corpse's ownership.
-func _prepare_model_for_corpse() -> void:
+##
+## THIS IS THE HANDOFF NEUTRALIZATION STEP. queue_free() does not stop the
+## rest of this frame's ticks or signal emissions — cdc79b6 and 2b745b2 were
+## the same defect (a "dead" unit still running code that reaches into a
+## subtree it no longer owns) caught at two different symptom sites. Rather
+## than trust that every future caching site gets remembered by hand, this
+## function is the single place that must be extended whenever a new field
+## caches a reference into `model`'s subtree, or a new signal gets connected
+## onto one of its nodes: everything below is redundant with
+## tests/units/death_animation_run.gd's reflection-based invariant test,
+## which walks this instance's own script variables after a death and fails
+## if anything still points at a node under the corpse — so forgetting an
+## entry here fails loudly in that test rather than regressing silently.
+func _prepare_model_for_corpse(model: Node3D) -> void:
 	# Must run before any overlay player is freed below: a fire sequence's
 	# state dict can still hold that same player in state["player"], and
 	# freeing it out from under a live entry leaves a dangling reference that
@@ -1127,21 +1140,73 @@ func _prepare_model_for_corpse() -> void:
 		if is_instance_valid(overlay_value):
 			(overlay_value as Node).free()
 	_weapon_fire_overlays.clear()
+	# Generic: disconnect every signal connection THIS unit made onto `model`
+	# or any of its descendants, regardless of which signal or when it was
+	# connected. This is what closes _prepare_idle_animations()'s
+	# `player.animation_finished.connect(_on_animation_finished.bind(player))`
+	# (the connection lives on the AnimationPlayer node handed to the corpse,
+	# not on this Unit, so clearing _animation_players below never touched
+	# it) without needing to know the exact signal/callable shape, and
+	# without needing to be revisited if a future change adds another
+	# connection onto a model node.
+	_sever_connections_into(model)
 	# The model subtree (and every AnimationPlayer/mesh inside it) now belongs
-	# to the corpse. queue_free() does not stop this frame's remaining
-	# _process()/_physics_process() calls, so without severing these
-	# references and halting processing here, a still-pending tick (e.g. a
-	# blocking fire sequence's was_blocking branch in
-	# _finish_fire_sequence_for calling _set_movement_animation) can reach
-	# straight into the corpse's players and play IDLE over the death clip
-	# that was already handed off — replacing a playing animation only ever
-	# emits animation_changed, never animation_finished, so the corpse would
-	# then wait forever for a signal that will never come.
+	# to the corpse. Direct references into it must be dropped too — a signal
+	# disconnect alone does not help a plain field that some other code path
+	# reads without going through a signal.
 	_animation_players.clear()
 	_shield_meshes.clear()
 	_scroll_fx_meshes.clear()
+	# _deployment_animation_player is populated straight from
+	# _animation_players (_start_deployment_animation(), line ~2408) but,
+	# unlike _animation_players itself, is a scalar field that keeps pointing
+	# at that same model AnimationPlayer until explicitly cleared — nothing
+	# else resets it on death, so a unit killed while deploying kept a live
+	# direct pointer into the corpse's subtree here. This is the newly-found
+	# third site in the same class as cdc79b6/2b745b2.
+	# (_fire_sequence_player/_fire_sequence_turret are the same shape of
+	# field, but _cancel_all_fire_sequences() above already zeroes them via
+	# _sync_legacy_fire_sequence(); cleared again here anyway so this
+	# function stays the single, self-sufficient place to look.)
+	_deployment_animation_player = null
+	_deployment_animation_name = &""
+	_fire_sequence_player = null
+	_fire_sequence_turret = null
+	# Reachable only via _on_animation_finished (now unreachable, see above),
+	# but nulled anyway so nothing can call back into it and so it no longer
+	# holds this Unit and one of the corpse's players alive together.
+	_flight_controller = null
+	# queue_free() does not stop this frame's remaining _process()/
+	# _physics_process() calls, so without halting processing here, a still-
+	# pending tick (e.g. a blocking fire sequence's was_blocking branch in
+	# _finish_fire_sequence_for calling _set_movement_animation) can still
+	# run this frame and try to act on a unit that has already given
+	# everything away.
 	set_process(false)
 	set_physics_process(false)
+
+
+## Disconnects every signal connection this Unit made onto `subtree_root` or
+## any of its descendants. Generic on purpose: rather than track down each
+## individual `.connect()` call site that targets a model node (today just
+## _prepare_idle_animations()'s animation_finished hookup, but nothing stops
+## a future change from adding another), this walks every signal already
+## live on the subtree at handoff time and drops any connection whose
+## callable belongs to `self`. Connections other objects made onto these
+## nodes (e.g. DeathCorpse's own animation_finished hookup, added after this
+## runs) are left untouched.
+func _sever_connections_into(subtree_root: Node) -> void:
+	var stack: Array[Node] = [subtree_root]
+	while not stack.is_empty():
+		var node := stack.pop_back() as Node
+		for child in node.get_children():
+			stack.append(child)
+		for signal_info: Dictionary in node.get_signal_list():
+			var signal_name := StringName(signal_info.get("name", &""))
+			for connection: Dictionary in node.get_signal_connection_list(signal_name):
+				var callable := connection.get("callable") as Callable
+				if callable.get_object() == self:
+					node.disconnect(signal_name, callable)
 
 
 ## Picks the first candidate id (per-house hook, then generic fallback —

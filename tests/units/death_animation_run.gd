@@ -22,6 +22,7 @@ func _initialize() -> void:
 	await _run_case("a vehicle with no Explode clip still spawns its death explosion", _test_vehicle_death_no_clip)
 	await _run_case("a unit mid-fire-sequence is freed without casting a freed overlay player", _test_death_mid_fire_sequence)
 	await _run_case("a unit killed mid-own-fire-animation keeps its corpse on the death clip, not a replayed idle", _test_death_mid_own_fire_animation)
+	await _run_case("a dying unit retains no reference into the corpse it just handed its model to", _test_dying_unit_leaves_no_reference_into_its_corpse)
 	if _failures > 0:
 		printerr("Death animation tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
@@ -319,6 +320,142 @@ func _test_death_mid_own_fire_animation() -> void:
 
 	world.queue_free()
 	await process_frame
+
+
+## Generic invariant, not tied to either past bug by name: after a death
+## handoff, a Unit's own state (walked by reflection, exactly like a future
+## reviewer with no memory of cdc79b6/2b745b2 might check) must retain no
+## reference to anything now belonging to the corpse, and must no longer be
+## ticking. Reproduces both historical preconditions at once —
+## cdc79b6's "fire sequence still names an overlay player that gets freed"
+## and 2b745b2's "a blocking fire sequence bound to the unit's own
+## model-owned player, with a live attack order" — plus
+## _deployment_animation_player, the third such field this audit found that
+## neither past fix had touched. The point is that _find_dangling_references
+## does not need to know any of that: it would flag a dangling/live
+## reference in ANY script variable, so a future fourth site is caught the
+## same way without this test needing to change.
+func _test_dying_unit_leaves_no_reference_into_its_corpse() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var unit := UnitScene.instantiate() as Unit
+	world.add_child(unit)
+	await process_frame
+
+	var overlay := AnimationPlayer.new()
+	unit.add_child(overlay)
+	unit._weapon_fire_overlays[0] = overlay
+
+	var target := Node3D.new()
+	world.add_child(target)
+	unit._has_attack_order = true
+	unit._attack_is_ground = false
+	unit._attack_target_ref = weakref(target)
+	var fire_player := unit._animation_players[0]
+	unit._weapon_fire_sequences[0] = {
+		"turret": null,
+		"target": {"is_ground": false, "ref": weakref(target)},
+		"player": fire_player,
+		"animation": &"Fire",
+		"duration": 1.0,
+		"elapsed": 0.1,
+		"shot_times": [],
+		"next_shot": 0,
+		"shots_emitted": 0,
+		"blocking": true,
+	}
+	# Exercises the third site this audit found: nothing but the death
+	# handoff itself ever clears this field.
+	unit._deployment_animation_player = fire_player
+
+	unit.take_damage(unit.max_health + unit.max_shields + 10.0, &"Shot")
+
+	_expect(unit.is_queued_for_deletion(), "the killing blow must still free the unit")
+	var corpses := _corpses_in(world)
+	_expect(corpses.size() == 1, "exactly one corpse must be spawned, got %d" % corpses.size())
+	if corpses.is_empty():
+		world.queue_free()
+		await process_frame
+		return
+	var corpse := corpses[0] as Node3D
+
+	var bad_properties := _find_dangling_references(unit, corpse)
+	_expect(
+		bad_properties.is_empty(),
+		"a unit must retain no reference to a freed object or to a node under its own corpse after death, but found: %s" % [bad_properties]
+	)
+	_expect(not unit.is_processing(), "a unit must stop _process() the instant it hands off its model")
+	_expect(not unit.is_physics_processing(), "a unit must stop _physics_process() the instant it hands off its model")
+
+	var player := corpse.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	for i in range(5):
+		if not is_instance_valid(corpse):
+			break
+		await process_frame
+		if not is_instance_valid(corpse):
+			break
+		_expect(
+			player != null and String(player.current_animation).begins_with("Shot_") and player.is_playing(),
+			"the corpse must stay on its death clip across several frames, got %s (playing=%s)" % [
+				(player.current_animation if player != null else "<no player>"),
+				(player.is_playing() if player != null else false),
+			]
+		)
+
+	var freed := false
+	for i in range(300):
+		if not is_instance_valid(corpse):
+			freed = true
+			break
+		await process_frame
+	_expect(freed, "the corpse must eventually free itself")
+
+	world.queue_free()
+	await process_frame
+
+
+## True if `value` — or anything nested inside it, recursing into Arrays and
+## Dictionaries (covering fields like _weapon_fire_sequences/_weapon_fire_overlays)
+## — is either a reference to a freed Object (cdc79b6's class: a dangling
+## pointer left after something it named was destroyed out from under it) or
+## a live reference to a Node that is now `corpse` itself or one of its
+## descendants (2b745b2's class: a pointer into a subtree that has since
+## been handed to someone else).
+func _value_dangles(value: Variant, corpse: Node) -> bool:
+	if typeof(value) == TYPE_OBJECT:
+		if not is_instance_valid(value):
+			return true
+		if value is Node and (value == corpse or corpse.is_ancestor_of(value as Node)):
+			return true
+		return false
+	if value is Array:
+		for item in value:
+			if _value_dangles(item, corpse):
+				return true
+		return false
+	if value is Dictionary:
+		for key in value:
+			if _value_dangles(key, corpse) or _value_dangles(value[key], corpse):
+				return true
+		return false
+	return false
+
+
+## Walks every script-declared variable on `unit` (not editor/engine
+## properties) via reflection and returns the names of any that dangle per
+## _value_dangles(). Deliberately does not know about any specific field —
+## a future field that caches a reference into a handed-off subtree is
+## caught the same way a past one would have been.
+func _find_dangling_references(unit: Unit, corpse: Node) -> Array[String]:
+	var bad: Array[String] = []
+	for property_info: Dictionary in unit.get_property_list():
+		var usage := int(property_info.get("usage", 0))
+		if usage & PROPERTY_USAGE_SCRIPT_VARIABLE == 0:
+			continue
+		var property_name := String(property_info.get("name", ""))
+		if _value_dangles(unit.get(property_name), corpse):
+			bad.append(property_name)
+	return bad
 
 
 func _expect(condition: bool, message: String) -> void:
