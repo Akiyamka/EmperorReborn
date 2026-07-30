@@ -1127,6 +1127,21 @@ func _prepare_model_for_corpse() -> void:
 		if is_instance_valid(overlay_value):
 			(overlay_value as Node).free()
 	_weapon_fire_overlays.clear()
+	# The model subtree (and every AnimationPlayer/mesh inside it) now belongs
+	# to the corpse. queue_free() does not stop this frame's remaining
+	# _process()/_physics_process() calls, so without severing these
+	# references and halting processing here, a still-pending tick (e.g. a
+	# blocking fire sequence's was_blocking branch in
+	# _finish_fire_sequence_for calling _set_movement_animation) can reach
+	# straight into the corpse's players and play IDLE over the death clip
+	# that was already handed off — replacing a playing animation only ever
+	# emits animation_changed, never animation_finished, so the corpse would
+	# then wait forever for a signal that will never come.
+	_animation_players.clear()
+	_shield_meshes.clear()
+	_scroll_fx_meshes.clear()
+	set_process(false)
+	set_physics_process(false)
 
 
 ## Picks the first candidate id (per-house hook, then generic fallback —

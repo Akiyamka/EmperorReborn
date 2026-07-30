@@ -21,6 +21,7 @@ func _initialize() -> void:
 	await _run_case("an unmatched death cause frees the unit with no corpse at all", _test_no_matching_clip)
 	await _run_case("a vehicle with no Explode clip still spawns its death explosion", _test_vehicle_death_no_clip)
 	await _run_case("a unit mid-fire-sequence is freed without casting a freed overlay player", _test_death_mid_fire_sequence)
+	await _run_case("a unit killed mid-own-fire-animation keeps its corpse on the death clip, not a replayed idle", _test_death_mid_own_fire_animation)
 	if _failures > 0:
 		printerr("Death animation tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
@@ -223,6 +224,98 @@ func _test_death_mid_fire_sequence() -> void:
 	# ("Trying to cast a freed object", unit.gd _cancel_all_fire_sequences)
 	# used to happen.
 	await process_frame
+
+	world.queue_free()
+	await process_frame
+
+
+## Regression for the real user-reported bug: a unit killed WHILE its own
+## firing animation is playing left its corpse frozen on an IDLE pose,
+## never freed. Root cause (unit.gd _prepare_model_for_corpse /
+## _begin_death_sequence): handing the model subtree to the corpse does not
+## stop the dying Unit's own processing for the rest of this frame, and the
+## Unit never severed its own _animation_players reference to the model it
+## just gave away. A still-pending tick this same frame — here, the dying
+## unit's own attack order noticing its target is gone and calling
+## stop_at_current_position() -> _set_movement_animation(false), exactly the
+## kind of call a blocking fire sequence is normally mid-flight for — walks
+## straight into the corpse's AnimationPlayer and replays IDLE over the
+## Shot_ clip DeathCorpse is already playing. Replacing a playing animation
+## only ever emits animation_changed, never animation_finished, so
+## DeathCorpse._animation_done never flips and the corpse waits forever.
+## The blocking fire-sequence dict entry here isn't itself what
+## _set_movement_animation reads (that entry is cleared by
+## _prepare_model_for_corpse's own _cancel_all_fire_sequences(false) before
+## this tick even runs) — it reproduces the reported precondition ("own
+## firing animation playing") so this case fails exactly the way the bug
+## report described, not some easier-to-satisfy proxy for it.
+func _test_death_mid_own_fire_animation() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var unit := UnitScene.instantiate() as Unit
+	world.add_child(unit)
+	await process_frame
+
+	# The unit is still shooting at `target` when it dies, exactly like the
+	# reported ATInfantry repro: a live blocking fire sequence bound to one
+	# of the unit's own (real, model-owned) AnimationPlayers.
+	var target := Node3D.new()
+	world.add_child(target)
+	unit._has_attack_order = true
+	unit._attack_is_ground = false
+	unit._attack_target_ref = weakref(target)
+	var fire_player := unit._animation_players[0]
+	unit._weapon_fire_sequences[0] = {
+		"turret": null,
+		"target": {"is_ground": false, "ref": weakref(target)},
+		"player": fire_player,
+		"animation": &"Fire",
+		"duration": 1.0,
+		"elapsed": 0.1,
+		"shot_times": [],
+		"next_shot": 0,
+		"shots_emitted": 0,
+		"blocking": true,
+	}
+
+	unit.take_damage(unit.max_health + unit.max_shields + 10.0, &"Shot")
+
+	_expect(unit.is_queued_for_deletion(), "the killing blow must still free the unit")
+	var corpses := _corpses_in(world)
+	_expect(corpses.size() == 1, "exactly one corpse must be spawned, got %d" % corpses.size())
+	if corpses.is_empty():
+		world.queue_free()
+		await process_frame
+		return
+	var corpse := corpses[0] as Node3D
+	var player := corpse.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	_expect(
+		player != null and String(player.current_animation).begins_with("Shot_"),
+		"the corpse must start on a Shot_ death clip, got %s" % (player.current_animation if player != null else "<no player>")
+	)
+
+	# The unit's own attack target is gone (matches whatever ends a real
+	# attack order — target destroyed, retreated out of the match, etc.),
+	# so the still-in-tree-this-frame dying unit's own _process() notices on
+	# its next tick and cancels its order.
+	target.queue_free()
+	await process_frame
+
+	_expect(
+		player != null and String(player.current_animation).begins_with("Shot_") and player.is_playing(),
+		"a unit killed mid-own-fire-animation must keep its corpse playing the death clip after one more tick, not replay idle over it, got %s (playing=%s)" % [
+			(player.current_animation if player != null else "<no player>"),
+			(player.is_playing() if player != null else false),
+		]
+	)
+
+	var freed := false
+	for i in range(300):
+		if not is_instance_valid(corpse):
+			freed = true
+			break
+		await process_frame
+	_expect(freed, "the corpse must eventually free itself once its death clip finishes, instead of waiting forever for an animation_finished a replayed idle would never emit")
 
 	world.queue_free()
 	await process_frame
