@@ -159,6 +159,70 @@ duplicate of the real barrel sitting near the mount point in every clip.
 broken geometry. The node, its transform, and the `::1gun#`/`>>1gun#`
 attachment markers are kept so the `Fire_1` muzzle FX still anchors correctly.
 
+## Audio
+
+### ImportedSfx.txt shadows several death hooks with unconverted localized names
+
+**Observed data:** `tools/generate_voice_feedback.py`'s `parse_sources()` keys
+SFX sections by `section_name.casefold()` and lets the last source file (in
+casefold-sorted filename order) that defines a given name win.
+`ImportedSfx.txt` sorts after `AtreidesSFX.txt`, `GeneralSFX.txt`, and
+`HarkonnenSFX.txt`, but before `ORDOSSFX.TXT`. Six death hooks are genuinely
+shadowed by this: `AtreidesSFX.txt`/`HarkonnenSFX.txt` define real,
+multi-sample per-house hooks — `[atnormalmandying]`/`[hknormalmandying]`
+(22-sample `normal_dying_1..22`), `[atburningmandying]`/`[hkburningmandying]`
+(8-sample `burn_dying_1..8`), `[atchoking]`/`[hkchoking]`
+(`choke_dying_1..6`) — and `GeneralSFX.txt` defines a real `[YakDying]`
+(`yak_death_1`/`yak_death_2`). `ImportedSfx.txt` redefines the same
+casefolded names (`[ATNORMALMANDYING]`, `[ATBURNINGMANDYING]`,
+`[ATCHOKING]`, `[HKNORMALMANDYING]`, `[HKBURNINGMANDYING]`, `[HKCHOKING]`,
+`[YAKDYING]`), each pointing at a single localized sample name
+(`$ATKillguy1`, `$ATburningManDying`, `$ATChoking1`, `$HKKillguy1`,
+`$HKburningManDying`, `$HKChoking2`, `$YakDying`) that does not exist
+anywhere in the converted WAV archive (`assets/converted/audio/sfx/`).
+Ordos's equivalent hooks are unaffected: `ORDOSSFX.TXT` sorts after
+`ImportedSfx.txt` and re-wins with its own real samples. A further eight
+death-hook ids (`CONTAMDYING`, `ENDWORMDYING`, `FLESHVATDYING`,
+`LEECHDYING`, `TLWALKERDYING`, `AT`/`HK`/`ORDICEDMANDYING`) are *not*
+shadowing cases — `ImportedSfx.txt` is their only definition, and it always
+pointed at an unconverted localized name — but they resolve to zero samples
+for the same underlying reason.
+
+**Original-engine quirk:** Not verified whether the original engine actually
+played these hooks silently, or whether the `$`-prefixed localized names
+resolved through a per-language string/audio table the shipped `SFX/*.txt`
+files don't describe on their own.
+
+**Why this is a correctness bug, not just missing polish:** `Unit`'s death
+sound resolution (death-animation plan §6) walks an ordered candidate list —
+per-house hook, then generic fallback — and stops at the first id *present*
+in the generated `DEATH_EVENT_PATHS` manifest. Before this was fixed, the
+shadowed per-house ids were still emitted as valid-looking `SoundEvent`
+resources with empty `sample_paths`, so they counted as "present": the
+resolution picked `atnormalmandying`/`hknormalmandying` and never reached the
+real 22-sample generic `normalmandying` hook. Atreides and Harkonnen infantry
+— by far the most common death in the game — would have died in total
+silence, while Ordos worked only by accident of `ORDOSSFX.TXT` sorting last.
+
+**EmperorReborn compatibility decision:** Fixed at the convert stage, per
+this project's rule that wrong source data is corrected where it is
+converted rather than papered over with a runtime special case.
+`tools/generate_voice_feedback.py`'s `main()` now drops any death/explosion
+event whose referenced samples are *all* unresolved against the WAV archive
+entirely — it is not written to `resources/audio/events/`, not added to
+`expected_events` (so a stale file from a previous run would be removed, not
+kept), and not added to `DEATH_EVENT_PATHS`. With the shadowed ids simply
+absent from the manifest, `Unit`'s existing candidate-list resolution falls
+through to the generic hook on its own, with no runtime "present but empty"
+check needed. The generator prints a distinct warning
+("N death/explosion events dropped entirely") so this is visible in
+`voice-feedback`/`voice-feedback-check` output rather than silent. Voice
+(Selection/Move/Attack) events are deliberately left on the old
+always-write behavior in this pass — none currently resolve to zero
+samples, so there was nothing to change, and applying the same drop rule to
+voice events would need `tests/audio/voice_feedback_run.gd`'s expectations
+revisited first.
+
 ## Building models
 
 ### Atreides Refinery H0 contains two broken geometry components

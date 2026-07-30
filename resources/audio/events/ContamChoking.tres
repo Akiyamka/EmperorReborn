@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SoundEvent" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/audio/sound_event.gd" id="1_definition"]
+
+[resource]
+script = ExtResource("1_definition")
+event_id = &"ContamChoking"
+event_type = &""
+controls = [&"random"]
+sample_paths = ["res://assets/converted/audio/sfx/choke_dying_1.wav", "res://assets/converted/audio/sfx/choke_dying_2.wav", "res://assets/converted/audio/sfx/choke_dying_3.wav", "res://assets/converted/audio/sfx/choke_dying_4.wav", "res://assets/converted/audio/sfx/choke_dying_5.wav", "res://assets/converted/audio/sfx/choke_dying_6.wav"]
+localized_samples = [false, false, false, false, false, false]
+volume = 60
+priority = &""
+limit = 0
+attack_count = 0
+decay_count = 0

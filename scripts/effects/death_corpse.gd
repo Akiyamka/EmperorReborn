@@ -15,6 +15,8 @@ extends RigidBody3D
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const DeathCorpseScene := preload("res://scenes/effects/death_corpse.tscn")
+const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
+const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
 
 ## The corpse's own free layer/mask (docs/... see death-animation plan §5):
 ## terrain = 1, units/buildings = 2, so bit 3 (value 4) is unclaimed. A
@@ -43,10 +45,11 @@ var _fitted_local_aabb := AABB()
 var _death_animation_player: AnimationPlayer
 var _death_clip: StringName = &""
 var _animation_done := false
-## No SFX generator exists yet (that lands in a later pass), so every corpse
-## starts "sound already done" and frees purely on animation completion.
-## Once real playback is wired in, _configure_sound() will flip this to
-## false until DeathSoundPlayer reports back.
+## True whenever no sound is playing (no resolvable event, or none has been
+## started yet). _configure_sound() flips this to false the moment a
+## DeathSoundPlayer actually starts playing a sample, and _maybe_free() waits
+## for it to flip back before freeing the corpse — an explosion sample must
+## not be cut off by a short death clip finishing first.
 var _sound_done := true
 
 
@@ -223,11 +226,17 @@ func _on_settle_timeout() -> void:
 	freeze = true
 
 
-## No manifest resolves a sound-event id to a sample path yet — that lands
-## with the SFX-hook converter pass. Until then this always returns an empty
-## path, so playback is always skipped and _sound_done stays true.
-func _resolve_sound_path(_sound_event_id: StringName) -> String:
-	return ""
+## Looks up `sound_event_id` (already the single id `Unit` resolved from its
+## death strategy's ordered candidate list) in the generated
+## `DEATH_EVENT_PATHS` manifest. Keyed case-insensitively: the manifest keys
+## by the id casefolded (tools/generate_voice_feedback.py), since the
+## surviving section's own casing depends on which source SFX file last
+## defined it under parse_sources()'s casefold-keyed, last-file-wins merge.
+func _resolve_sound_path(sound_event_id: StringName) -> String:
+	if sound_event_id == &"":
+		return ""
+	var key := StringName(String(sound_event_id).to_lower())
+	return String(GeneratedVoiceManifest.DEATH_EVENT_PATHS.get(key, ""))
 
 
 func _configure_sound(sound_event_id: StringName) -> void:
@@ -235,9 +244,22 @@ func _configure_sound(sound_event_id: StringName) -> void:
 	if sample_path.is_empty():
 		_sound_done = true
 		return
+	var event := load(sample_path) as SoundEvent
+	if event == null or event.sample_paths.is_empty():
+		# A generated event with no samples (missing from the converted WAV
+		# archive) must degrade to silence, not to a corpse that never frees.
+		_sound_done = true
+		return
 	_sound_done = false
-	# Playback itself (a DeathSoundPlayer AudioStreamPlayer3D one-shot) is
-	# wired in once _resolve_sound_path can return something real.
+	var player := DeathSoundPlayerScript.new()
+	add_child(player)
+	player.sound_finished.connect(_on_sound_finished)
+	player.play_event(event)
+
+
+func _on_sound_finished() -> void:
+	_sound_done = true
+	_maybe_free()
 
 
 func _maybe_free() -> void:

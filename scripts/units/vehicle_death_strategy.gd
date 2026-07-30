@@ -13,8 +13,8 @@ func death_animation_candidates(_cause: StringName, _deployed: bool) -> Array[St
 	return CANDIDATES.duplicate()
 
 
-func death_sound_event_id(_cause: StringName, _faction: StringName) -> StringName:
-	return SOUND_ID
+func death_sound_event_id(_cause: StringName, _faction: StringName) -> Array[StringName]:
+	return [SOUND_ID]
 
 
 ## Always zero: the Explode clip is too short for added motion to read, and

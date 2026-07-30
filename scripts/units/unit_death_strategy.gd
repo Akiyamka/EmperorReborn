@@ -17,13 +17,17 @@ func death_animation_candidates(_cause: StringName, _deployed: bool) -> Array[St
 	return []
 
 
-## Composed sound-event id for the given cause/faction pair. Nothing resolves
-## this to a sample yet — that lands with the SFX-hook converter (a later
-## pass) — so today every id is handed to `DeathCorpse` and silently fails to
-## resolve. Kept here (rather than left out) so that pass is a drop-in
-## id -> path lookup with no signature change.
-func death_sound_event_id(_cause: StringName, _faction: StringName) -> StringName:
-	return &""
+## Ordered candidate sound-event ids for the given cause/faction pair, most-
+## preferred first (e.g. a per-house hook before the generic fallback). The
+## caller (Unit) resolves this against the generated
+## `GeneratedVoiceManifest.DEATH_EVENT_PATHS` and picks the first id actually
+## present, then hands that single resolved id to `DeathCorpse`. A list
+## rather than one composed id because the per-house hook's stem does not
+## always match the generic hook's stem (e.g. Burn's per-house
+## `atburningmandying` vs. the generic `BurningSmall`), so a single string
+## template cannot express the fallback.
+func death_sound_event_id(_cause: StringName, _faction: StringName) -> Array[StringName]:
+	return []
 
 
 ## Extra world-space velocity added on top of momentum the corpse already

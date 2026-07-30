@@ -85,3 +85,23 @@ const PROFILE_PATHS: Dictionary = {
 	&"TLScientist": "res://resources/audio/voices/TLScientist.tres",
 	&"worm": "res://resources/audio/voices/worm.tres",
 }
+
+const DEATH_EVENT_PATHS: Dictionary = {
+	&"burninglarge": "res://resources/audio/events/BurningLarge.tres",
+	&"burningsmall": "res://resources/audio/events/BurningSmall.tres",
+	&"choking": "res://resources/audio/events/Choking.tres",
+	&"contamchoking": "res://resources/audio/events/ContamChoking.tres",
+	&"contaminatordying": "res://resources/audio/events/ContaminatorDying.tres",
+	&"explode": "res://resources/audio/events/explode.tres",
+	&"femalecivdying": "res://resources/audio/events/FemaleCivDying.tres",
+	&"fremendying": "res://resources/audio/events/FremenDying.tres",
+	&"guildmdying": "res://resources/audio/events/GuildMDying.tres",
+	&"large": "res://resources/audio/events/Large.tres",
+	&"medium": "res://resources/audio/events/Medium.tres",
+	&"normalmandying": "res://resources/audio/events/NormalManDying.tres",
+	&"orburningmandying": "res://resources/audio/events/orburningmandying.tres",
+	&"orchoking": "res://resources/audio/events/orchoking.tres",
+	&"ornormalmandying": "res://resources/audio/events/ornormalmandying.tres",
+	&"sardaukardying": "res://resources/audio/events/SardaukarDying.tres",
+	&"small": "res://resources/audio/events/Small.tres",
+}

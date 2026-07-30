@@ -9,6 +9,7 @@ const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit
 const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
 const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
 const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
+const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
 static var _definition_catalog := UnitSceneCatalogScript.new()
 
 signal owner_changed(player_id: int)
@@ -1043,10 +1044,11 @@ func _begin_death_sequence(cause: StringName) -> void:
 		)
 		momentum = inherited_velocity + launch_impulse
 
-	var sound_event_id: StringName = (
+	var sound_candidates: Array[StringName] = (
 		_death_strategy.death_sound_event_id(cause, _owner_faction_id())
-		if _death_strategy != null else &""
+		if _death_strategy != null else []
 	)
+	var sound_event_id := _resolve_sound_event_id(sound_candidates)
 	DeathCorpseScript.spawn(
 		parent, model, world_transform, clip, sound_event_id, momentum, owner_player_id
 	)
@@ -1068,6 +1070,21 @@ func _prepare_model_for_corpse() -> void:
 		if is_instance_valid(overlay_value):
 			(overlay_value as Node).free()
 	_weapon_fire_overlays.clear()
+
+
+## Picks the first candidate id (per-house hook, then generic fallback —
+## see UnitDeathStrategy.death_sound_event_id) that the SFX-hook converter
+## actually generated a resource for. Resolution order: per-unit hook (not
+## produced by any strategy yet) -> faction hook -> generic hook -> nothing.
+func _resolve_sound_event_id(candidates: Array[StringName]) -> StringName:
+	for candidate in candidates:
+		if GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(_death_sound_key(candidate)):
+			return candidate
+	return &""
+
+
+func _death_sound_key(sound_event_id: StringName) -> StringName:
+	return StringName(String(sound_event_id).to_lower())
 
 
 func _owner_faction_id() -> StringName:
