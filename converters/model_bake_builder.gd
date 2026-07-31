@@ -28,9 +28,25 @@ var bake_embedded_muzzle_flash_visibility := true
 var bake_attachment_bank_effects := false
 var stationary_clip_loops := true
 
-# Frame rate of the baked animated-texture sequences (frames of the atlas
-# advanced per second by the fx_frame animation tracks).
-const TEXTURE_FX_FPS := 4.0
+# Source frames between two animated-texture steps when the XBF carries no
+# authored texture event for the object. Every FX record type 6 in the original
+# content names an object and the exact TGA it switches to on a given frame, so
+# the flipbook rate is normally read straight off that table (see
+# _prepare_texture_events). Across all original Explosion/Buildings/Units/
+# bullets XBFs those authored steps land 2 source frames apart in 1071 of 1494
+# cases (1 frame in 353, everything else is a long-tail hold), so 2 frames is
+# the authored default for the objects whose table entry is missing.
+const TEXTURE_FX_SOURCE_FRAME_STEP := 2.0
+# Record type in the FX event table meaning "this object now uses this texture".
+const TEXTURE_EVENT_TYPE := 6
+# Upper bound on a baked attachment emitter's particle budget. The authored
+# burst-times-lifetime product stays far below it for every original bank; the
+# clamp only guards against a mis-parsed record allocating an absurd buffer.
+const MAX_ATTACHMENT_FX_PARTICLES := 256
+# How far a fully-influenced particle wanders sideways over its lifetime, as a
+# fraction of how far it travels along the plume. Raise for a looser, more
+# dissipated plume.
+const ATTACHMENT_FX_DRIFT_FRACTION := 0.25
 const MIN_ANIMATION_AXIS_SCALE := 0.0001
 # Normalized signed-volume threshold below which a mesh counts as authored
 # inside-out (see _mesh_is_inside_out). Nearly flat or open meshes fall inside
@@ -100,8 +116,10 @@ var copied_textures: PackedStringArray = []
 var _material_cache := {}
 var _animated_texture_sequences := {}
 var _animated_material_frames := {}
+var _animated_material_frame_names := {}
 var _scrolling_materials := {}
 var _pending_frame_tracks: Array[Dictionary] = []
+var _texture_events_by_object := {}
 var _animated_frame_shader_add: Shader
 var _animated_frame_shader_mix: Shader
 var _model_texture_shaders := {}
@@ -125,8 +143,10 @@ func build(xbf_path: String) -> PackedScene:
 	_material_cache.clear()
 	_animated_texture_sequences.clear()
 	_animated_material_frames.clear()
+	_animated_material_frame_names.clear()
 	_scrolling_materials.clear()
 	_pending_frame_tracks.clear()
+	_texture_events_by_object.clear()
 	_model_texture_shaders.clear()
 	_scrolling_texture_shaders.clear()
 	_has_shield_fx_marker = false
@@ -140,6 +160,7 @@ func build(xbf_path: String) -> PackedScene:
 	var animation_entries := _repaired_animation_entries(xbf.animation_entries)
 	_prepare_animated_texture_sequences(xbf.fx_strings)
 	_prepare_attachment_fx_names(xbf)
+	_prepare_texture_events(xbf)
 
 	var root := Node3D.new()
 	root.name = _scene_name_from_path(xbf_path)
@@ -165,6 +186,12 @@ func build(xbf_path: String) -> PackedScene:
 	root.set_meta("xbf_fx_event_master", xbf.fx_event_master)
 	root.set_meta("xbf_fx_event_counts", xbf.fx_event_counts)
 	root.set_meta("xbf_fx_events", xbf.fx_events.duplicate(true))
+	# The authored FX table stops well before the transform clip does on
+	# one-shot effects: Explosion's last texture switch is source frame 18 of a
+	# 50-frame Stationary, and the sphere it leaves behind is an additive-black,
+	# invisible frame that merely keeps growing. Runtime effects use this to end
+	# at the authored end instead of holding an invisible husk on screen.
+	root.set_meta("xbf_fx_last_event_frame", _last_fx_event_frame(xbf))
 	root.set_meta("xbf_fx_events_complete", xbf.fx_events_complete)
 	# FX event frames are absolute in the source timeline. Store their clip
 	# ranges under the same final names used by the baked AnimationLibrary.
@@ -352,7 +379,12 @@ func _build_object_node(
 		_add_vertex_animation_track(anim, mesh_path, object, texture_names, flip_orientation)
 		var atlas_frames := _mesh_animated_frame_count(mesh)
 		if atlas_frames > 1:
-			_pending_frame_tracks.append({"path": mesh_path, "frames": atlas_frames})
+			_pending_frame_tracks.append({
+				"path": mesh_path,
+				"frames": atlas_frames,
+				"frame_names": _mesh_animated_frame_names(mesh),
+				"object": raw_name,
+			})
 		if _mesh_has_scrolling_texture(mesh):
 			# A scrolling UV phase has to keep advancing continuously while the
 			# model is on screen; a baked animation track would snap back to 0
@@ -685,6 +717,7 @@ func _model_material(texture_name: String) -> Material:
 			animated_material.set_shader_parameter("frame_count", float(animated_frames.size()))
 			animated_material.set_shader_parameter("use_team_color", team_colored)
 			_animated_material_frames[animated_material] = animated_frames.size()
+			_animated_material_frame_names[animated_material] = animated_frames
 			_material_cache[texture_name] = animated_material
 			return animated_material
 	if not texture_path.is_empty():
@@ -1249,9 +1282,13 @@ func _build_attachment_bank_effects(root: Node3D, xbf) -> Array[Dictionary]:
 		var meshes := _attachment_fx_mesh_frames(bank)
 		if meshes.is_empty():
 			continue
-		var visual := MeshInstance3D.new()
+		var emitter := _build_attachment_fx_emitter(bank) if _fx_bank_emits(bank) else null
+		var visual: GeometryInstance3D = emitter
+		if visual == null:
+			var billboard := MeshInstance3D.new()
+			billboard.mesh = meshes[0]
+			visual = billboard
 		visual.name = _unique_sibling_node_name("AttachmentFX", _existing_child_names(marker))
-		visual.mesh = meshes[0]
 		visual.visible = false
 		visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		visual.set_meta("xbf_fx_attachment", attachment)
@@ -1267,10 +1304,221 @@ func _build_attachment_bank_effects(root: Node3D, xbf) -> Array[Dictionary]:
 		_attachment_fx_paths.append(path)
 		result.append({
 			"path": path,
-			"meshes": meshes,
+			# An emitter drives its own flipbook through the particle material,
+			# so it must not also get a per-frame :mesh track.
+			"meshes": meshes if emitter == null else ([] as Array[QuadMesh]),
 			"events": grouped_events[key],
+			"lifetime": emitter.lifetime if emitter != null else 0.0,
 		})
 	return result
+
+
+## An FX bank is a particle emitter whenever it authors motion: an initial speed
+## or a gravity (a negative gravity is the buoyancy that makes fire and smoke
+## rise). The banks with neither - the landing lights and warning flashes, whose
+## particles would be pinned to the marker anyway - really are the single
+## billboard the marker holds, and stay one.
+func _fx_bank_emits(bank: Dictionary) -> bool:
+	var words := bank.get("parameter_words", PackedInt32Array()) as PackedInt32Array
+	if words.size() < 16:
+		return false
+	var speeds := bank.get("float_parameters_4_6", PackedFloat32Array()) as PackedFloat32Array
+	var speed := float(speeds[0]) if speeds.size() > 0 else 0.0
+	return not is_zero_approx(speed) \
+		or not is_zero_approx(float(bank.get("gravity", 0.0)))
+
+
+## Rebuilds a motion bank as the particle stream it is in the original data.
+## Baking it as one static billboard instead (the previous behaviour) left a
+## damaged building with a single motionless fire sprite where the source emits
+## a whole rising column, which is why building damage FX read as barely there.
+func _build_attachment_fx_emitter(bank: Dictionary) -> GPUParticles3D:
+	var frame_names := _attachment_fx_frame_names(bank)
+	var atlas := _load_animated_texture_atlas(frame_names) if frame_names.size() > 1 else null
+	if atlas == null:
+		var texture_path := _ensure_model_texture(frame_names[0]) if not frame_names.is_empty() else ""
+		if texture_path.is_empty():
+			return null
+		atlas = _load_png_texture(texture_path)
+		if atlas == null:
+			return null
+	var words := bank.get("parameter_words", PackedInt32Array()) as PackedInt32Array
+	var speeds := bank.get("float_parameters_4_6", PackedFloat32Array()) as PackedFloat32Array
+	var lifetime_frames := maxi(int(words[2]), 1)
+	var burst := maxi(int(words[1]), 1)
+	# Parameter 10 is the source update interval between bursts; parameter 03 is
+	# the emission cone half-angle in degrees.
+	var interval := maxi(int(words[10]), 1)
+	var spread := clampf(float(words[3]), 0.0, 180.0)
+	var source_speed := float(speeds[0]) if speeds.size() > 0 else 0.0
+	var world_size := maxf(
+		float(bank.get("particle_size", 0.0)) * world_scale, 0.01 * world_scale
+	)
+
+	var particles := GPUParticles3D.new()
+	particles.lifetime = lifetime_frames / fps
+	particles.amount = clampi(
+		int(ceil(float(burst) * float(lifetime_frames) / float(interval))),
+		1, MAX_ATTACHMENT_FX_PARTICLES
+	)
+	particles.local_coords = false
+	# Additive blending is order-independent, so the per-frame depth sort a
+	# view-depth order costs would buy nothing here.
+	particles.draw_order = GPUParticles3D.DRAW_ORDER_INDEX
+	# Simulate at the rate the effect was authored for. The default 30 Hz spends
+	# half again as much on a stream whose motion is defined per 20 Hz update.
+	particles.fixed_fps = int(fps)
+	# The authored start/stop events drive this; see _add_attachment_fx_tracks.
+	# Idle stacks in particular only puff for part of their loop, and a bank
+	# left emitting forever is both wrong and pure cost on every hidden state.
+	particles.emitting = false
+
+	var process := ParticleProcessMaterial.new()
+	# The speed's sign is a source-axis convention, not a world direction: AT
+	# Refinery's stacks author their smoke positive and OR Refinery's author the
+	# same rising plume negative, and every one of these markers rests on an
+	# identity basis. Emission is along the marker's own up axis either way.
+	process.direction = Vector3.UP
+	process.spread = spread
+	var world_speed := absf(source_speed) * world_scale * fps
+	process.initial_velocity_min = world_speed
+	process.initial_velocity_max = world_speed
+	# Source gravity is per squared update and positive-down, so a buoyant smoke
+	# bank authors it negative.
+	process.gravity = Vector3.DOWN * (
+		float(bank.get("gravity", 0.0)) * world_scale * fps * fps
+	)
+	process.color = _fx_bank_tint(bank)
+	process.alpha_curve = _fx_bank_alpha_curve()
+	particles.process_material = process
+	_apply_attachment_fx_drift(process, particles.lifetime, world_speed)
+
+	var alpha_keyed := _uses_alpha_channel(String(bank.get("texture", "")))
+	if alpha_keyed:
+		atlas = _luminance_keyed_texture(atlas)
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# `@` marks the banks the original renders as ordinary smoke rather than as
+	# light: `@!%Engine` and `!@sm` carry it, `!fire`, `!%Flash` and `!Dlight` do
+	# not. Blending those additively turns OR Refinery's dirty-green exhaust into
+	# a glow, so `@` selects alpha blending and `!` alone stays additive.
+	material.blend_mode = BaseMaterial3D.BLEND_MODE_MIX if alpha_keyed \
+		else BaseMaterial3D.BLEND_MODE_ADD
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	material.vertex_color_use_as_albedo = true
+	material.albedo_texture = atlas
+	if frame_names.size() > 1:
+		material.particles_anim_h_frames = 1
+		material.particles_anim_v_frames = frame_names.size()
+		material.particles_anim_loop = true
+		# anim_speed counts full sequence loops per particle lifetime, and the
+		# authored flipbook step is TEXTURE_FX_SOURCE_FRAME_STEP source frames.
+		var loops := (float(lifetime_frames) / TEXTURE_FX_SOURCE_FRAME_STEP) \
+			/ float(frame_names.size())
+		process.anim_speed_min = loops
+		process.anim_speed_max = loops
+
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE * world_size
+	quad.material = material
+	particles.draw_pass_1 = quad
+	# The marker sits inside the model root's 1/16 scale, but a billboarded
+	# particle quad is sized in world units. Undo the inherited scale so the
+	# authored source size lands at the same world size as the static banks.
+	particles.scale = Vector3.ONE / world_scale
+	# Default visibility bounds are a fixed 8-unit box, which for these streams
+	# is both too large to cull well and, for a long-lived plume, too small.
+	# Size it from the authored ballistic reach instead.
+	var reach := world_speed * particles.lifetime \
+		+ 0.5 * process.gravity.length() * particles.lifetime * particles.lifetime \
+		+ quad.size.x
+	particles.visibility_aabb = AABB(Vector3.ONE * -reach, Vector3.ONE * 2.0 * reach)
+	return particles
+
+
+## Lets a rising plume wander instead of climbing as a rigid column. Each
+## particle picks its own share of a noise field, so neighbours emitted a frame
+## apart drift different ways. The banks author no such term, so the strength is
+## chosen rather than decoded: a fully-influenced particle wanders sideways by
+## ATTACHMENT_FX_DRIFT_FRACTION of the distance it travels along the plume.
+##
+## Measuring against the travel rather than the particle's own size is what
+## keeps this proportional across banks. Damage fire is authored as 4-unit
+## sprites that barely move, so a size-relative drift would fling it across the
+## whole building, while a stack puff a sixteenth that size has to cross several
+## of its own widths before the column visibly loosens.
+func _apply_attachment_fx_drift(
+		process: ParticleProcessMaterial,
+		lifetime: float,
+		world_speed: float
+	) -> void:
+	var travel := world_speed * lifetime \
+		+ 0.5 * process.gravity.length() * lifetime * lifetime
+	if lifetime <= 0.0 or travel <= 0.0:
+		return
+	process.turbulence_enabled = true
+	# Turbulence reads as an acceleration, so the distance it accumulates over a
+	# lifetime goes with the square of the time.
+	process.turbulence_noise_strength = \
+		2.0 * ATTACHMENT_FX_DRIFT_FRACTION * travel / (lifetime * lifetime)
+	# Roughly one noise period across the plume, so a particle follows a single
+	# smooth arc instead of jittering along its path.
+	process.turbulence_noise_scale = clampf(1.0 / travel, 0.5, 9.0)
+	process.turbulence_noise_speed = Vector3.ONE * 0.2
+	# The per-particle share of the field. Spanning the full range is what makes
+	# some of the plume hold its line while the rest peels off.
+	process.turbulence_influence_min = 0.0
+	process.turbulence_influence_max = 1.0
+
+
+## The `@` FX sprites are 24-bit, drawn as light-on-black for additive output,
+## so alpha blending them straight would paste a black square over the scene.
+## Their brightness is the coverage mask: it becomes alpha, and the residual hue
+## is normalized back to full value so the bank's own tint decides the colour.
+func _luminance_keyed_texture(source: Texture2D) -> Texture2D:
+	var image := source.get_image()
+	if image == null or image.is_empty():
+		return source
+	image.convert(Image.FORMAT_RGBA8)
+	for y in image.get_height():
+		for x in image.get_width():
+			var pixel := image.get_pixel(x, y)
+			var coverage := maxf(pixel.r, maxf(pixel.g, pixel.b))
+			if coverage <= 0.0:
+				image.set_pixel(x, y, Color(0.0, 0.0, 0.0, 0.0))
+				continue
+			image.set_pixel(x, y, Color(
+				pixel.r / coverage, pixel.g / coverage, pixel.b / coverage, coverage
+			))
+	return ImageTexture.create_from_image(image)
+
+
+## A particle thins out towards the end of its life in the original: a stack's
+## plume is dense at the mouth and dissipated by the top. The banks themselves
+## author no alpha ramp (their per-update colour deltas are all zero), so this
+## is engine behaviour rather than decoded data - see docs/open_questions.md.
+func _fx_bank_alpha_curve() -> CurveTexture:
+	var curve := Curve.new()
+	curve.add_point(Vector2(0.0, 1.0))
+	curve.add_point(Vector2(1.0, 0.0))
+	var curve_texture := CurveTexture.new()
+	curve_texture.curve = curve
+	return curve_texture
+
+
+func _fx_bank_tint(bank: Dictionary) -> Color:
+	var colors := bank.get("int_parameters_7_11", PackedInt32Array()) as PackedInt32Array
+	if colors.size() < 3:
+		return Color.WHITE
+	return Color(
+		clampf(float(colors[0]) / 255.0, 0.0, 1.0),
+		clampf(float(colors[1]) / 255.0, 0.0, 1.0),
+		clampf(float(colors[2]) / 255.0, 0.0, 1.0),
+		_fx_bank_frame_opacity(bank, 0)
+	)
 
 
 func _attachment_fx_mesh_frames(bank: Dictionary) -> Array[QuadMesh]:
@@ -1357,20 +1605,44 @@ func _find_original_node(node: Node, original_name: String) -> Node3D:
 func _add_attachment_fx_tracks(anim: Animation, effects: Array[Dictionary]) -> void:
 	for effect: Dictionary in effects:
 		var path := String(effect["path"])
+		var lifetime := float(effect.get("lifetime", 0.0))
 		var visibility_track := anim.add_track(Animation.TYPE_VALUE)
 		anim.track_set_path(visibility_track, NodePath("%s:visible" % path))
 		anim.track_set_interpolation_type(visibility_track, Animation.INTERPOLATION_NEAREST)
 		anim.value_track_set_update_mode(visibility_track, Animation.UPDATE_DISCRETE)
 		anim.track_insert_key(visibility_track, 0.0, false)
-		for event: Dictionary in effect["events"]:
-			var action := String(event.get("action", ""))
-			if action != "start" and action != "stop":
-				continue
-			anim.track_insert_key(
-				visibility_track,
-				float(event.get("frame", 0)) / fps,
-				action == "start"
-			)
+		# An emitter's start/stop pair gates emission, not visibility: the source
+		# banks are intermittent (AT Refinery's #smoke02 runs source frames 5-70
+		# and 90-100 of a 201-frame loop), and cutting a stopped stream's
+		# existing particles instead of letting them live out their lifetime
+		# would pop the whole plume out of existence. The node itself stays
+		# visible until the last particle can have expired, so a hidden or
+		# stopped bank still costs nothing.
+		if lifetime <= 0.0:
+			for event: Dictionary in effect["events"]:
+				var action := String(event.get("action", ""))
+				if action != "start" and action != "stop":
+					continue
+				anim.track_insert_key(
+					visibility_track,
+					float(event.get("frame", 0)) / fps,
+					action == "start"
+				)
+		else:
+			var emission_track := anim.add_track(Animation.TYPE_VALUE)
+			anim.track_set_path(emission_track, NodePath("%s:emitting" % path))
+			anim.track_set_interpolation_type(emission_track, Animation.INTERPOLATION_NEAREST)
+			anim.value_track_set_update_mode(emission_track, Animation.UPDATE_DISCRETE)
+			anim.track_insert_key(emission_track, 0.0, false)
+			var switches := _sorted_bank_switches(effect["events"])
+			for switch: Dictionary in switches:
+				anim.track_insert_key(
+					emission_track, float(switch["time"]), bool(switch["started"])
+				)
+			for interval: Vector2 in _visible_intervals(switches, lifetime, anim.length):
+				anim.track_insert_key(visibility_track, interval.x, true)
+				if interval.y < anim.length:
+					anim.track_insert_key(visibility_track, interval.y, false)
 
 		var meshes := effect["meshes"] as Array[QuadMesh]
 		if meshes.size() <= 1:
@@ -1379,13 +1651,61 @@ func _add_attachment_fx_tracks(anim: Animation, effects: Array[Dictionary]) -> v
 		anim.track_set_path(mesh_track, NodePath("%s:mesh" % path))
 		anim.track_set_interpolation_type(mesh_track, Animation.INTERPOLATION_NEAREST)
 		anim.value_track_set_update_mode(mesh_track, Animation.UPDATE_DISCRETE)
-		var key_count := int(ceilf(anim.length * TEXTURE_FX_FPS))
+		var step := TEXTURE_FX_SOURCE_FRAME_STEP / fps
+		var key_count := int(ceilf(anim.length / step))
 		for frame_index in key_count + 1:
 			anim.track_insert_key(
 				mesh_track,
-				frame_index / TEXTURE_FX_FPS,
+				frame_index * step,
 				meshes[frame_index % meshes.size()]
 			)
+
+
+func _sorted_bank_switches(events: Array) -> Array[Dictionary]:
+	var switches: Array[Dictionary] = []
+	for event: Dictionary in events:
+		var action := String(event.get("action", ""))
+		if action != "start" and action != "stop":
+			continue
+		switches.append({
+			"time": float(event.get("frame", 0)) / fps,
+			"started": action == "start",
+		})
+	switches.sort_custom(
+		func(a: Dictionary, b: Dictionary) -> bool: return float(a["time"]) < float(b["time"])
+	)
+	return switches
+
+
+## Spans over which an emitter can still hold a live particle: every emitting
+## window extended by one particle lifetime, merged where a restart lands inside
+## the previous window's tail. Without the merge a re-start would be followed by
+## the earlier window's delayed hide and blank the plume mid-loop.
+func _visible_intervals(
+		switches: Array[Dictionary],
+		lifetime: float,
+		length: float
+	) -> Array[Vector2]:
+	var intervals: Array[Vector2] = []
+	var open := -1.0
+	for switch: Dictionary in switches:
+		var time := float(switch["time"])
+		if bool(switch["started"]):
+			if open < 0.0:
+				open = time
+		elif open >= 0.0:
+			intervals.append(Vector2(open, minf(time + lifetime, length)))
+			open = -1.0
+	if open >= 0.0:
+		intervals.append(Vector2(open, length))
+
+	var merged: Array[Vector2] = []
+	for interval: Vector2 in intervals:
+		if not merged.is_empty() and interval.x <= merged[-1].y:
+			merged[-1] = Vector2(merged[-1].x, maxf(merged[-1].y, interval.y))
+			continue
+		merged.append(interval)
+	return merged
 
 
 func _is_animated_shield_texture(texture_name: String) -> bool:
@@ -1588,6 +1908,17 @@ func _mesh_animated_frame_count(mesh: ArrayMesh) -> int:
 	return frames
 
 
+func _mesh_animated_frame_names(mesh: ArrayMesh) -> PackedStringArray:
+	var best := PackedStringArray()
+	for surface_index in mesh.get_surface_count():
+		var names: PackedStringArray = _animated_material_frame_names.get(
+			mesh.surface_get_material(surface_index), PackedStringArray()
+		)
+		if names.size() > best.size():
+			best = names
+	return best
+
+
 func _mesh_has_scrolling_texture(mesh: ArrayMesh) -> bool:
 	for surface_index in mesh.get_surface_count():
 		if _scrolling_materials.has(mesh.surface_get_material(surface_index)):
@@ -1595,16 +1926,99 @@ func _mesh_has_scrolling_texture(mesh: ArrayMesh) -> bool:
 	return false
 
 
+func _last_fx_event_frame(xbf) -> int:
+	var last := -1
+	for event: Dictionary in xbf.fx_events:
+		last = maxi(last, int(event.get("frame", 0)))
+	return last
+
+
+## Collects the authored "object N now uses texture T" records, keyed by the
+## source object name. They are the only ground truth for how fast an
+## animated-texture sequence advances: an explosion's ?firesphere steps through
+## !%Rbang0..9 on source frames 8..16 and then simply stops, because the tail of
+## its sequence is authored black and additive-invisible. A fixed guessed rate
+## instead keeps a fireball at full brightness for the whole (much longer)
+## transform clip, which reads as both slow motion and an oversized explosion.
+func _prepare_texture_events(xbf) -> void:
+	for event: Dictionary in xbf.fx_events:
+		if int(event.get("type", 0)) != TEXTURE_EVENT_TYPE:
+			continue
+		var strings: Array = event.get("strings", [])
+		if strings.size() < 2:
+			continue
+		var key := String(strings[0]).to_lower()
+		if not _texture_events_by_object.has(key):
+			_texture_events_by_object[key] = []
+		(_texture_events_by_object[key] as Array).append({
+			"frame": int(event.get("frame", 0)),
+			"texture": String(strings[1]),
+		})
+
+
 func _add_shader_fx_tracks(anim: Animation) -> void:
-	var key_count := int(ceilf(anim.length * TEXTURE_FX_FPS))
 	for entry: Dictionary in _pending_frame_tracks:
 		var frame_count := int(entry["frames"])
 		var track := anim.add_track(Animation.TYPE_VALUE)
 		anim.track_set_path(track, NodePath("%s:instance_shader_parameters/fx_frame" % String(entry["path"])))
 		anim.track_set_interpolation_type(track, Animation.INTERPOLATION_NEAREST)
 		anim.value_track_set_update_mode(track, Animation.UPDATE_DISCRETE)
+		var authored: Array = _authored_frame_keys(entry)
+		if authored.is_empty():
+			authored = _sibling_frame_keys(entry)
+		if not authored.is_empty():
+			for key: Dictionary in authored:
+				anim.track_insert_key(
+					track, minf(float(key["frame"]) / fps, anim.length), float(key["index"])
+				)
+			continue
+		var step := TEXTURE_FX_SOURCE_FRAME_STEP / fps
+		var key_count := int(ceilf(anim.length / step))
 		for i in key_count + 1:
-			anim.track_insert_key(track, i / TEXTURE_FX_FPS, float(i % frame_count))
+			anim.track_insert_key(track, i * step, float(i % frame_count))
+
+
+## Duplicated FX geometry (Explosion's ?firesphere01 next to ?firesphere) shares
+## one texture sequence but appears only once in the event table. Reusing the
+## timeline authored for the sibling that does own the sequence keeps the copy
+## in step; leaving it on its own would strand it on the opening, brightest
+## frame of an additive sequence whose whole fade-out lives in later frames.
+func _sibling_frame_keys(entry: Dictionary) -> Array:
+	var frame_names: PackedStringArray = entry.get("frame_names", PackedStringArray())
+	if frame_names.is_empty():
+		return []
+	for other: Dictionary in _pending_frame_tracks:
+		if other["path"] == entry["path"]:
+			continue
+		if other.get("frame_names", PackedStringArray()) != frame_names:
+			continue
+		var keys := _authored_frame_keys(other)
+		if not keys.is_empty():
+			return keys
+	return []
+
+
+## Resolves an object's authored texture events into atlas frame indices. Every
+## named TGA must be part of the atlas this mesh was baked with; a sequence the
+## events step outside of is not one this track can drive, so the caller falls
+## back to the authored default rate rather than baking wrong frames.
+func _authored_frame_keys(entry: Dictionary) -> Array:
+	var events: Array = _texture_events_by_object.get(
+		String(entry.get("object", "")).to_lower(), []
+	)
+	if events.is_empty():
+		return []
+	var frame_names: PackedStringArray = entry.get("frame_names", PackedStringArray())
+	var index_by_name := {}
+	for index in frame_names.size():
+		index_by_name[_texture_sequence_key(frame_names[index])] = index
+	var keys := []
+	for event: Dictionary in events:
+		var name_key := _texture_sequence_key(String(event["texture"]).get_file())
+		if not index_by_name.has(name_key):
+			return []
+		keys.append({"frame": int(event["frame"]), "index": int(index_by_name[name_key])})
+	return keys
 
 
 func _add_timeline_muzzle_flash_visibility(anim: Animation, animation_entries: Array[Dictionary]) -> void:

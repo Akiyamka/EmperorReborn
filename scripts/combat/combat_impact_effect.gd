@@ -123,8 +123,22 @@ func _play_authored_animation_once() -> float:
 	if animation != null:
 		animation.loop_mode = Animation.LOOP_NONE
 		lifetime = maxf(animation.length, 1.0 / RULE_UPDATES_PER_SECOND)
+		lifetime = minf(lifetime, _authored_fx_duration(lifetime))
 	player.play(animation_name)
 	return lifetime
+
+
+## An effect's transform clip routinely outlasts its authored FX table: after
+## the last texture-switch record its geometry is textured with an additive
+## black frame and only keeps expanding invisibly. Ending on the authored last
+## frame keeps the visual (and the node) from lingering for seconds.
+func _authored_fx_duration(fallback: float) -> float:
+	if _authored_visual == null:
+		return fallback
+	var last_frame := int(_authored_visual.get_meta("xbf_fx_last_event_frame", -1))
+	if last_frame < 0:
+		return fallback
+	return maxf(float(last_frame + 1) / RULE_UPDATES_PER_SECOND, 1.0 / RULE_UPDATES_PER_SECOND)
 
 
 func _hide_emitter_geometry(node: Node) -> void:
