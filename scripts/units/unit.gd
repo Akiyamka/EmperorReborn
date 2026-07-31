@@ -6,6 +6,12 @@ const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
+const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
+const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
+const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
+const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
+const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
 static var _definition_catalog := UnitSceneCatalogScript.new()
 
 signal owner_changed(player_id: int)
@@ -169,6 +175,16 @@ var _mech_motion_cycle_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
 var _mech_locomotion_state := MechLocomotionState.IDLE
 var _mech_start_remaining := 0.0
 var _flight_controller: UnitFlightController = null
+## Policy object picked once in _apply_unit_definition, alongside where it
+## already reads unit_definition.infantry today. See unit_death_strategy.gd.
+var _death_strategy: UnitDeathStrategy = null
+## Not `velocity`: navigation_step() zeroes its vertical component, and
+## UnitFlightController writes global_position directly, bypassing velocity
+## entirely during takeoff/landing. Updated at the top of every
+## _physics_process call (see the comment there) so it always holds the
+## unit's position at the start of the most recent physics step, regardless
+## of which movement path is active.
+var _previous_global_position := Vector3.ZERO
 var _deploy_state := DeployState.TRAVEL
 var _deployment_aligning := false
 var _deployment_alignment_direction := Vector3.ZERO
@@ -211,6 +227,7 @@ func _ready() -> void:
 		_visual_slope_target_basis = _visual_root_rest_basis
 	_apply_unit_definition()
 	target_position = global_position
+	_previous_global_position = global_position
 	# Terrain height is sampled explicitly below. Letting CharacterBody collide
 	# with the terrain mesh makes each triangle edge behave like a small wall,
 	# which prevents units from climbing otherwise traversable slopes. The
@@ -275,6 +292,12 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	# Captured before this frame's movement runs, so by the time anything
+	# reads it later (death momentum, see _begin_death_sequence) it holds
+	# "position at the start of the most recent physics step" — equivalent to
+	# updating it at the end of the previous call, but without duplicating
+	# the assignment above every early return below.
+	_previous_global_position = global_position
 	if _flight_controller != null and _flight_controller.flight_controls_transition():
 		_flight_controller.advance(delta)
 		return
@@ -949,7 +972,7 @@ func grant_temporary_invulnerability(duration: float) -> void:
 	get_tree().create_timer(duration).timeout.connect(_clear_invulnerability)
 
 
-func take_damage(amount: float) -> void:
+func take_damage(amount: float, death_cause: StringName = &"") -> void:
 	if invulnerable or amount <= 0.0 or health <= 0.0:
 		return
 
@@ -962,7 +985,7 @@ func take_damage(amount: float) -> void:
 		return
 	health -= remaining_damage
 	if health <= 0.0:
-		queue_free()
+		_begin_death_sequence(death_cause)
 
 
 func combat_armour_type() -> StringName:
@@ -971,6 +994,279 @@ func combat_armour_type() -> StringName:
 
 func combat_is_airborne() -> bool:
 	return unit_definition != null and unit_definition.can_fly
+
+
+## Called on the killing blow instead of queue_free() directly. The unit is
+## still freed the instant health crosses zero, exactly as before this
+## feature — see the death-animation plan's "Core design decision" for why a
+## `_dying` guard living through the animation was rejected (it would need
+## mirroring across is_deploying()-style checks scattered through this file,
+## plus an explicit deselect UnitCommandController does not otherwise need).
+## A corpse node is spawned in the unit's place only when an authored clip
+## actually matches; otherwise this degrades byte-for-byte to today's
+## behaviour so units without a death clip never regress.
+func _begin_death_sequence(cause: StringName) -> void:
+	var candidates: Array[StringName] = (
+		_death_strategy.death_animation_candidates(cause, is_deployed())
+		if _death_strategy != null else []
+	)
+	var found := _find_animation_player(candidates)
+	var player := found.get("player") as AnimationPlayer
+	var clip := StringName(found.get("name", &""))
+	var parent := get_parent()
+	var model := (
+		visual_root.get_child(0) as Node3D
+		if visual_root != null and visual_root.get_child_count() > 0 else null
+	)
+	if player == null or model == null or parent == null:
+		# No corpse at all (no clip matched, or nothing to detach), but a
+		# vehicle with a rules-authored explosion must still visually explode
+		# — the death clip and the explosion FX are independent per the
+		# original data (ExplosionType/ExplosionEffects vs Explode animation),
+		# so losing one must not silently drop the other.
+		var start_paths: Array[String] = (
+			_death_strategy.death_start_sound_paths(_owner_faction_id(), config_id)
+			if _death_strategy != null else []
+		)
+		DeathSoundPlayerScript.play_pool(parent, global_position, start_paths)
+		_spawn_death_explosion_effects(parent, global_position)
+		queue_free()
+		return
+
+	var world_transform := visual_root.global_transform
+	_prepare_model_for_corpse(model)
+	visual_root.remove_child(model)
+
+	var launch_impulse: Vector3 = (
+		_death_strategy.death_launch_impulse(cause) if _death_strategy != null else Vector3.ZERO
+	)
+	# Inherited momentum is a property of the death cause, not of body type
+	# (death-animation plan, "Momentum policy"): Shot/Burn/Gassed clips are
+	# authored in place and must drop whatever velocity the unit had, while a
+	# flying unit's corpse must always fall regardless of what killed it.
+	var carries_momentum: bool = (
+		(unit_definition != null and unit_definition.can_fly)
+		or not launch_impulse.is_zero_approx()
+	)
+	var momentum := Vector3.ZERO
+	if carries_momentum:
+		var physics_delta := get_physics_process_delta_time()
+		var inherited_velocity := (
+			(global_position - _previous_global_position) / physics_delta
+			if physics_delta > 0.0 else Vector3.ZERO
+		)
+		momentum = inherited_velocity + launch_impulse
+
+	var owner_faction := _owner_faction_id()
+	var sound_layers: Array = (
+		_death_strategy.death_sound_event_layers(cause, owner_faction, config_id)
+		if _death_strategy != null else []
+	)
+	var sound_event_ids := _resolve_sound_event_ids(sound_layers)
+	var start_paths: Array[String] = (
+		_death_strategy.death_start_sound_paths(owner_faction, config_id)
+		if _death_strategy != null else []
+	)
+	DeathCorpseScript.spawn(
+		parent, model, world_transform, clip, sound_event_ids, momentum, owner_player_id,
+		start_paths,
+	)
+	_spawn_death_explosion_effects(parent, world_transform.origin)
+	queue_free()
+
+
+## Spawns this unit's rules-authored death explosion (UnitDefinition's
+## explosion_effect_ids, falling back to its single explosion_type_id —
+## mirrors CombatBullet.explosion_effect_ids()) as a sibling of the dying
+## unit, exactly like CombatProjectile._spawn_explosion_visuals(). Must never
+## parent to `self`: the unit is freed the instant this call returns, which
+## would take a child effect down with it. Infantry naturally get no effect
+## here since their UnitDefinition carries no explosion ids at all — nothing
+## unit-type-specific needed.
+##
+## Also plays the death strategy's VFX-timed sound layer
+## (death_vfx_sound_paths(), vehicles' size-tier boom) right here rather than
+## from DeathCorpse or attached to the CombatImpactEffect node itself: this
+## is the one call site that already fires at "the explosion SFX is shown"
+## for both branches of _begin_death_sequence (with a corpse and the early
+## no-corpse return alike), so tying the sound to it directly is explicit
+## rather than coincidental. It is deliberately NOT a child of the spawned
+## CombatImpactEffect — that node's own Cleanup timer frees it after its
+## (short, ~0.5s) visual lifetime, which would cut an explosion sample short;
+## playing it as a parent-level fire-and-forget layer (DeathSoundPlayer.
+## play_pool) instead lets it run to completion independent of the visual.
+func _spawn_death_explosion_effects(parent: Node, world_position: Vector3) -> void:
+	if unit_definition == null or parent == null or not parent.is_inside_tree():
+		return
+	var vfx_sound_paths: Array[String] = (
+		_death_strategy.death_vfx_sound_paths(config_id) if _death_strategy != null else []
+	)
+	DeathSoundPlayerScript.play_pool(parent, world_position, vfx_sound_paths)
+	for effect_id in _death_explosion_effect_ids():
+		var scene_path := String(unit_definition.explosion_scene_paths.get(effect_id, ""))
+		if scene_path.is_empty():
+			continue
+		var scene := load(scene_path) as PackedScene
+		if scene == null:
+			continue
+		var effect = CombatImpactEffectScript.new()
+		parent.add_child(effect)
+		if not effect.configure(effect_id, scene, world_position):
+			effect.free()
+
+
+## Mirrors CombatBullet.explosion_effect_ids(): an explicit effect list wins,
+## falling back to the single ExplosionType id only when no effect list was
+## authored, so a unit's death visual resolves its two Rules.txt fields the
+## same way its own bullets already do.
+func _death_explosion_effect_ids() -> Array[StringName]:
+	var result: Array[StringName] = []
+	if unit_definition == null:
+		return result
+	for value in unit_definition.explosion_effect_ids:
+		var effect_id := StringName(value)
+		if effect_id != &"" and effect_id not in result:
+			result.append(effect_id)
+	var primary_id: StringName = unit_definition.explosion_type_id
+	if result.is_empty() and primary_id != &"":
+		result.append(primary_id)
+	return result
+
+
+## Scrubs the runtime state Unit bound onto the model subtree before handing
+## it to the corpse: an unbound combat turret, a lit shield/scroll-fx mesh or
+## a leftover fire-overlay AnimationPlayer would otherwise keep acting like a
+## live unit under the corpse's ownership.
+##
+## THIS IS THE HANDOFF NEUTRALIZATION STEP. queue_free() does not stop the
+## rest of this frame's ticks or signal emissions — cdc79b6 and 2b745b2 were
+## the same defect (a "dead" unit still running code that reaches into a
+## subtree it no longer owns) caught at two different symptom sites. Rather
+## than trust that every future caching site gets remembered by hand, this
+## function is the single place that must be extended whenever a new field
+## caches a reference into `model`'s subtree, or a new signal gets connected
+## onto one of its nodes: everything below is redundant with
+## tests/units/death_animation_run.gd's reflection-based invariant test,
+## which walks this instance's own script variables after a death and fails
+## if anything still points at a node under the corpse — so forgetting an
+## entry here fails loudly in that test rather than regressing silently.
+func _prepare_model_for_corpse(model: Node3D) -> void:
+	# Must run before any overlay player is freed below: a fire sequence's
+	# state dict can still hold that same player in state["player"], and
+	# freeing it out from under a live entry leaves a dangling reference that
+	# _exit_tree()'s teardown (_cancel_all_fire_sequences) would later cast.
+	# restore_idle=false because the unit is being discarded this frame, same
+	# as every other pre-teardown call site (setup(), replace_visual_scene()).
+	_cancel_all_fire_sequences(false)
+	for turret in combat_turrets:
+		turret.unbind_model()
+	for mesh_instance in _shield_meshes:
+		mesh_instance.visible = false
+	for mesh_instance in _scroll_fx_meshes:
+		mesh_instance.visible = false
+	for overlay_value: Variant in _weapon_fire_overlays.values():
+		if is_instance_valid(overlay_value):
+			(overlay_value as Node).free()
+	_weapon_fire_overlays.clear()
+	# Generic: disconnect every signal connection THIS unit made onto `model`
+	# or any of its descendants, regardless of which signal or when it was
+	# connected. This is what closes _prepare_idle_animations()'s
+	# `player.animation_finished.connect(_on_animation_finished.bind(player))`
+	# (the connection lives on the AnimationPlayer node handed to the corpse,
+	# not on this Unit, so clearing _animation_players below never touched
+	# it) without needing to know the exact signal/callable shape, and
+	# without needing to be revisited if a future change adds another
+	# connection onto a model node.
+	_sever_connections_into(model)
+	# The model subtree (and every AnimationPlayer/mesh inside it) now belongs
+	# to the corpse. Direct references into it must be dropped too — a signal
+	# disconnect alone does not help a plain field that some other code path
+	# reads without going through a signal.
+	_animation_players.clear()
+	_shield_meshes.clear()
+	_scroll_fx_meshes.clear()
+	# _deployment_animation_player is populated straight from
+	# _animation_players (_start_deployment_animation(), line ~2408) but,
+	# unlike _animation_players itself, is a scalar field that keeps pointing
+	# at that same model AnimationPlayer until explicitly cleared — nothing
+	# else resets it on death, so a unit killed while deploying kept a live
+	# direct pointer into the corpse's subtree here. This is the newly-found
+	# third site in the same class as cdc79b6/2b745b2.
+	# (_fire_sequence_player/_fire_sequence_turret are the same shape of
+	# field, but _cancel_all_fire_sequences() above already zeroes them via
+	# _sync_legacy_fire_sequence(); cleared again here anyway so this
+	# function stays the single, self-sufficient place to look.)
+	_deployment_animation_player = null
+	_deployment_animation_name = &""
+	_fire_sequence_player = null
+	_fire_sequence_turret = null
+	# Reachable only via _on_animation_finished (now unreachable, see above),
+	# but nulled anyway so nothing can call back into it and so it no longer
+	# holds this Unit and one of the corpse's players alive together.
+	_flight_controller = null
+	# queue_free() does not stop this frame's remaining _process()/
+	# _physics_process() calls, so without halting processing here, a still-
+	# pending tick (e.g. a blocking fire sequence's was_blocking branch in
+	# _finish_fire_sequence_for calling _set_movement_animation) can still
+	# run this frame and try to act on a unit that has already given
+	# everything away.
+	set_process(false)
+	set_physics_process(false)
+
+
+## Disconnects every signal connection this Unit made onto `subtree_root` or
+## any of its descendants. Generic on purpose: rather than track down each
+## individual `.connect()` call site that targets a model node (today just
+## _prepare_idle_animations()'s animation_finished hookup, but nothing stops
+## a future change from adding another), this walks every signal already
+## live on the subtree at handoff time and drops any connection whose
+## callable belongs to `self`. Connections other objects made onto these
+## nodes (e.g. DeathCorpse's own animation_finished hookup, added after this
+## runs) are left untouched.
+func _sever_connections_into(subtree_root: Node) -> void:
+	var stack: Array[Node] = [subtree_root]
+	while not stack.is_empty():
+		var node := stack.pop_back() as Node
+		for child in node.get_children():
+			stack.append(child)
+		for signal_info: Dictionary in node.get_signal_list():
+			var signal_name := StringName(signal_info.get("name", &""))
+			for connection: Dictionary in node.get_signal_connection_list(signal_name):
+				var callable := connection.get("callable") as Callable
+				if callable.get_object() == self:
+					node.disconnect(signal_name, callable)
+
+
+## Resolves every manifest-backed sound *layer* the strategy proposed,
+## collapsing each layer's candidate list to the single first id the SFX-hook
+## converter actually generated a resource for (per-house hook -> generic
+## hook -> nothing); a layer whose candidates all went ungenerated simply
+## drops out without taking the others with it. This is infantry-only now —
+## vehicle death explosions bypass GeneratedVoiceManifest entirely via
+## death_vfx_sound_paths()/death_start_sound_paths() (direct WAV pools, see
+## VehicleDeathStrategy/docs/quirks.md), so `layers` here is at most the one
+## per-cause layer InfantryDeathStrategy.death_sound_event_layers() returns.
+func _resolve_sound_event_ids(layers: Array) -> Array[StringName]:
+	var resolved: Array[StringName] = []
+	for layer: Array in layers:
+		for candidate: StringName in layer:
+			if not GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(_death_sound_key(candidate)):
+				continue
+			if not resolved.has(candidate):
+				resolved.append(candidate)
+			break
+	return resolved
+
+
+func _death_sound_key(sound_event_id: StringName) -> StringName:
+	return StringName(String(sound_event_id).to_lower())
+
+
+func _owner_faction_id() -> StringName:
+	var roster_player = owner_player()
+	if roster_player == null:
+		return &""
+	return roster_player.house_id
 
 
 func combat_aim_position() -> Vector3:
@@ -1565,13 +1861,17 @@ func _finish_fire_sequence_for(weapon_index: int) -> void:
 		return
 	var state: Dictionary = _weapon_fire_sequences[weapon_index]
 	_weapon_fire_sequences.erase(weapon_index)
-	var player := state.get("player") as AnimationPlayer
-	if player != null and is_instance_valid(player):
+	var player_value: Variant = state.get("player")
+	# is_instance_valid() must run before the `as` cast: casting an already
+	# freed object raises "Trying to cast a freed object" even though the
+	# guard right after would have caught it (see unit.gd's freed-overlay
+	# regression, tests/units/death_animation_run.gd).
+	if is_instance_valid(player_value) and player_value is AnimationPlayer:
 		# stop() without keep_state rewinds the just-finished Fire clip to its
 		# first frame immediately. Deployed Kindjal/Mortar clips begin with a
 		# large embedded bigflash, while Deploy_Gun_Hold is not evaluated until
 		# the next animation tick, producing a duplicate one-frame muzzle flash.
-		player.stop(true)
+		(player_value as AnimationPlayer).stop(true)
 	var turret = state.get("turret")
 	if turret != null:
 		turret.cancel_authored_fire_fx()
@@ -1589,9 +1889,10 @@ func _cancel_all_fire_sequences(restore_idle := true) -> void:
 	for weapon_index: Variant in _weapon_fire_sequences.keys():
 		var state: Dictionary = _weapon_fire_sequences[weapon_index]
 		had_blocking = had_blocking or bool(state.get("blocking", false))
-		var player := state.get("player") as AnimationPlayer
-		if player != null and is_instance_valid(player):
-			player.stop(true)
+		var player_value: Variant = state.get("player")
+		# Validity must be checked before the cast (see _finish_fire_sequence_for).
+		if is_instance_valid(player_value) and player_value is AnimationPlayer:
+			(player_value as AnimationPlayer).stop(true)
 		var turret = state.get("turret")
 		if turret != null:
 			turret.cancel_authored_fire_fx()
@@ -1616,9 +1917,10 @@ func _cancel_blocking_fire_sequences() -> void:
 		var state: Dictionary = _weapon_fire_sequences[weapon_index]
 		if not bool(state.get("blocking", false)):
 			continue
-		var player := state.get("player") as AnimationPlayer
-		if player != null and is_instance_valid(player):
-			player.stop(true)
+		var player_value: Variant = state.get("player")
+		# Validity must be checked before the cast (see _finish_fire_sequence_for).
+		if is_instance_valid(player_value) and player_value is AnimationPlayer:
+			(player_value as AnimationPlayer).stop(true)
 		var turret = state.get("turret")
 		if turret != null:
 			turret.cancel_authored_fire_fx()
@@ -2174,17 +2476,9 @@ func _start_undeployment_animation() -> void:
 
 
 func _start_transition_animation(candidates: Array[StringName]) -> void:
-	_deployment_animation_player = null
-	_deployment_animation_name = &""
-	for candidate in candidates:
-		for player in _animation_players:
-			if not player.has_animation(candidate):
-				continue
-			_deployment_animation_player = player
-			_deployment_animation_name = candidate
-			break
-		if _deployment_animation_player != null:
-			break
+	var found := _find_animation_player(candidates)
+	_deployment_animation_player = found.get("player") as AnimationPlayer
+	_deployment_animation_name = StringName(found.get("name", &""))
 
 	if _deployment_animation_player == null:
 		call_deferred("_emit_deployment_animation_finished")
@@ -2195,6 +2489,17 @@ func _start_transition_animation(candidates: Array[StringName]) -> void:
 		animation.loop_mode = Animation.LOOP_NONE
 	_deployment_animation_player.stop()
 	_deployment_animation_player.play(_deployment_animation_name)
+
+
+## Shared "first player owning one of these candidate clips" scan, in
+## candidate-preference order. Used by both deployment transitions and death
+## animation selection (_begin_death_sequence) so the two don't drift apart.
+func _find_animation_player(candidates: Array[StringName]) -> Dictionary:
+	for candidate in candidates:
+		for player in _animation_players:
+			if player.has_animation(candidate):
+				return {"player": player, "name": candidate}
+	return {"player": null, "name": &""}
 
 
 ## Both transition directions count as "deploying" for every gameplay lock: a
@@ -2353,6 +2658,10 @@ func _apply_unit_definition() -> void:
 	max_health = float(unit_definition.health)
 	max_shields = float(unit_definition.shield_health)
 	armour_type = unit_definition.armour_type
+	_death_strategy = (
+		InfantryDeathStrategyScript.new() if unit_definition.infantry
+		else VehicleDeathStrategyScript.new()
+	)
 	_configure_combat_turrets()
 	if unit_definition.can_fly:
 		if _flight_controller == null:

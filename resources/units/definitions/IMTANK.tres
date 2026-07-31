@@ -59,5 +59,6 @@ chaos_effect_id = &"MediumChaosFX"
 hawk_effect_id = &"MediumHawkFX"
 damage_effect_id = &"MediumDamageFX"
 explosion_type_id = &"Explosion"
+explosion_scene_paths = {&"Explosion": "res://assets/converted/impact_effects/explosion/explosion.scn"}
 veterancy_level_paths = ["res://resources/units/veterancy/IMTANK_1.tres", "res://resources/units/veterancy/IMTANK_2.tres", "res://resources/units/veterancy/IMTANK_3.tres"]
 turret_ids = [&"HKAssaultTankBase"]

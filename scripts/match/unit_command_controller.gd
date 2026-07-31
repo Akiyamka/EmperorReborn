@@ -818,7 +818,10 @@ func _screen_position_for_entity(entity):
 	return _camera.unproject_position(entity.global_position)
 
 
-func _raycast(screen_position: Vector2, collision_mask: int = 0xffffffff) -> Dictionary:
+## Default mask covers terrain (bit 1) and units/buildings (bit 2) only —
+## corpses sit on their own bit 3 (see DeathCorpse) and must never block a
+## click aimed at a unit standing behind one.
+func _raycast(screen_position: Vector2, collision_mask: int = 3) -> Dictionary:
 	if _camera == null:
 		return {}
 

@@ -99,7 +99,7 @@ func _resolve_target(
 	if not infection_was_applied:
 		damage = bullet.damage_against(armour_type) * total_multiplier
 		if damage > 0.0:
-			target.call("take_damage", damage)
+			target.call("take_damage", damage, bullet.death_category())
 
 	return {
 		"target": target,

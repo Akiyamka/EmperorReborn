@@ -155,7 +155,6 @@ const FK_TARGETS := {
 	"hawk_effect_id": "explosion_types",
 	"damage_effect_id": "explosion_types",
 	"explosion_type_id": "explosion_types",
-	"chained_explosion_type_id": "explosion_types",
 	"view_range_bonus_terrain_id": "terrain_types",
 	"special_ground_terrain_id": "terrain_types",
 	"turret_attach_id": "turrets",
@@ -228,6 +227,7 @@ const BOOL_COLUMNS := {
 	],
 	"bullets": [
 		"blow_up",
+		"shot",
 		"reduce_damage_with_distance",
 		"anti_aircraft",
 		"anti_ground",

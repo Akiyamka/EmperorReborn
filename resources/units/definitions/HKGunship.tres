@@ -59,5 +59,6 @@ chaos_effect_id = &"MediumChaosFX"
 hawk_effect_id = &"MediumHawkFX"
 damage_effect_id = &"MediumDamageFX"
 explosion_type_id = &"AerialExplosion"
+explosion_scene_paths = {&"AerialExplosion": "res://assets/converted/impact_effects/aerialexplosion/aerialexplosion.scn"}
 veterancy_level_paths = ["res://resources/units/veterancy/HKGunship_1.tres", "res://resources/units/veterancy/HKGunship_2.tres", "res://resources/units/veterancy/HKGunship_3.tres"]
 turret_ids = [&"HKGunshipGun"]

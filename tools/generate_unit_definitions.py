@@ -252,7 +252,7 @@ def definition_text(row: sqlite3.Row, scene_path: str, model_path: str,
                     direct_voice_profile_path: str, house_voice_profile_paths: dict[str, str],
                     primary: list[str], secondary: list[str], turrets: list[str],
                     terrain: list[str], resources: list[str], effects: list[str],
-                    veterancy_paths: list[str]) -> str:
+                    veterancy_paths: list[str], explosion_paths: dict[str, str]) -> str:
     properties = [
         f"config_id = {string_name(row['name'])}",
         f"legacy_name = {string_name(row['legacy_name'])}",
@@ -312,6 +312,9 @@ def definition_text(row: sqlite3.Row, scene_path: str, model_path: str,
         f"hawk_effect_id = {string_name(row['hawk_effect_name'])}",
         f"damage_effect_id = {string_name(row['damage_effect_name'])}",
         f"explosion_type_id = {string_name(row['explosion_type_name'])}",
+        "explosion_scene_paths = " + "{" + ", ".join(
+            f"{string_name(key)}: {godot_string(explosion_paths[key])}" for key in sorted(explosion_paths)
+        ) + "}",
         f"veterancy_level_paths = {string_array_text(veterancy_paths)}",
         f"turret_ids = {array_text(turrets)}",
     ]
@@ -421,7 +424,7 @@ def bullet_text(row: sqlite3.Row, effects: list[str], projectile_path: str,
         f"missile_trail_delta = {float(row['missile_trail_delta'] or 0.0):.6g}",
         *[f"{field} = {bool_text(row[field])}" for field in [
             "burnt", "ignites", "gassed", "leech", "infantry", "damage_column",
-            "deviate", "beserk", "retreat",
+            "deviate", "beserk", "retreat", "blow_up", "shot",
         ]],
         f"effect_health = {float(row['health'] or 0.0):.6g}",
         f"effect_damage_per_tick = {float(row['shield_health'] or 0.0):.6g}",
@@ -594,6 +597,17 @@ def main() -> int:
                 expected_veterancy.add(level_path)
                 veterancy_paths.append("res://" + level_path.relative_to(ROOT).as_posix())
                 ok = write_or_check(level_path, veterancy_text(level), args.check) and ok
+            explosion_effects = unit_list(connection, "SELECT e.name FROM entity_explosion_effects link JOIN explosion_types e ON e.id=link.explosion_type_id WHERE link.entity_type='unit' AND link.entity_id=? ORDER BY link.seq", int(row["id"]))
+            # Mirrors CombatBullet.explosion_effect_ids()'s runtime fallback: a
+            # unit with no explicit effect list still explodes using its single
+            # ExplosionType, so the scene-path dict must cover that id too.
+            explosion_lookup_effects = explosion_effects
+            if not explosion_lookup_effects and row["explosion_type_name"]:
+                explosion_lookup_effects = [str(row["explosion_type_name"])]
+            explosion_paths = {
+                effect: path for effect in explosion_lookup_effects
+                if (path := visual_path(art_xaf(connection, effect), "assets/converted/impact_effects"))
+            }
             content = definition_text(
                 row,
                 scene_paths.get(config_id, ""),
@@ -605,8 +619,9 @@ def main() -> int:
                 turret_names(connection, int(row["id"])),
                 unit_list(connection, "SELECT t.name FROM unit_terrain link JOIN terrain_types t ON t.id=link.terrain_type_id WHERE link.unit_id=? ORDER BY t.sort_order", int(row["id"])),
                 unit_list(connection, "SELECT target_name FROM entity_resource_links WHERE entity_type='unit' AND entity_id=? ORDER BY seq", int(row["id"])),
-                unit_list(connection, "SELECT e.name FROM entity_explosion_effects link JOIN explosion_types e ON e.id=link.explosion_type_id WHERE link.entity_type='unit' AND link.entity_id=? ORDER BY link.seq", int(row["id"])),
+                explosion_effects,
                 veterancy_paths,
+                explosion_paths,
             )
             ok = write_or_check(output, content, args.check) and ok
 

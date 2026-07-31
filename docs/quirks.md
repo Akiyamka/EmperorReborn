@@ -159,6 +159,202 @@ duplicate of the real barrel sitting near the mount point in every clip.
 broken geometry. The node, its transform, and the `::1gun#`/`>>1gun#`
 attachment markers are kept so the `Fire_1` muzzle FX still anchors correctly.
 
+## Explosions
+
+### `chained_explosion_type_id` was speculative schema, not lost data
+
+**Observed data:** `explosion_configs.chained_explosion_type_id` was NULL for
+all 11 rows in `assets/converted/rules.db`. `tools/rules_editor/parse_rules.py`
+never populated it (the file does not contain the string "chain" at all), and
+`assets/raw_original_content/MODEL/*.txt` (`Rules.txt`, `ArtIni.txt`, etc.)
+have no "chain" hits either, case-insensitively. Explosion sections in the
+source only ever carry `FaceCamera` and `DamageToTile`, matching the table's
+other two real columns (`face_camera`, `damage_to_tile`).
+
+**Original-engine quirk:** There is no distinction here to record — unlike
+the `Shot` bullet flag (fixed in `44fb405`), where the source data genuinely
+had the value and the parser dropped it, `chained_explosion_type_id` was
+never backed by anything in the source. It was added to the schema alongside
+a foreign-key mapping entry in `converters/import_rules.gd` in anticipation of
+a "chained/secondary explosion" concept that the original engine's data does
+not express. Do not read "chained explosions are unimplemented" out of this;
+the concept simply does not exist in the source to implement.
+
+**EmperorReborn compatibility decision:** The column, its schema declarations
+(`assets/converted/schema.sql`, `tools/rules_editor/schema.sql`), and its
+`FK_TARGETS` mapping entry were removed, with a comment left in the schema
+files so the column is not reintroduced. `assets/converted/rules.db` had the
+column dropped in place (not reparsed, to preserve unrelated manual
+convert-stage fixes such as the per-house MCV split).
+
+Contrast with `explosion_configs.face_camera`: also unread by any runtime
+code today, but it *is* real data — set for `DHBigExplosion`, `ATHawk`, and
+`VetLevelFX`, all super-weapon effects that are simply not implemented yet.
+That one stays; it is pending, not dead.
+
+## Audio
+
+### ImportedSfx.txt shadows several death hooks with unconverted localized names
+
+**Observed data:** `tools/generate_voice_feedback.py`'s `parse_sources()` keys
+SFX sections by `section_name.casefold()` and lets the last source file (in
+casefold-sorted filename order) that defines a given name win.
+`ImportedSfx.txt` sorts after `AtreidesSFX.txt`, `GeneralSFX.txt`, and
+`HarkonnenSFX.txt`, but before `ORDOSSFX.TXT`. Six death hooks are genuinely
+shadowed by this: `AtreidesSFX.txt`/`HarkonnenSFX.txt` define real,
+multi-sample per-house hooks — `[atnormalmandying]`/`[hknormalmandying]`
+(22-sample `normal_dying_1..22`), `[atburningmandying]`/`[hkburningmandying]`
+(8-sample `burn_dying_1..8`), `[atchoking]`/`[hkchoking]`
+(`choke_dying_1..6`) — and `GeneralSFX.txt` defines a real `[YakDying]`
+(`yak_death_1`/`yak_death_2`). `ImportedSfx.txt` redefines the same
+casefolded names (`[ATNORMALMANDYING]`, `[ATBURNINGMANDYING]`,
+`[ATCHOKING]`, `[HKNORMALMANDYING]`, `[HKBURNINGMANDYING]`, `[HKCHOKING]`,
+`[YAKDYING]`), each pointing at a single localized sample name
+(`$ATKillguy1`, `$ATburningManDying`, `$ATChoking1`, `$HKKillguy1`,
+`$HKburningManDying`, `$HKChoking2`, `$YakDying`) that does not exist
+anywhere in the converted WAV archive (`assets/converted/audio/sfx/`).
+Ordos's equivalent hooks are unaffected: `ORDOSSFX.TXT` sorts after
+`ImportedSfx.txt` and re-wins with its own real samples. A further eight
+death-hook ids (`CONTAMDYING`, `ENDWORMDYING`, `FLESHVATDYING`,
+`LEECHDYING`, `TLWALKERDYING`, `AT`/`HK`/`ORDICEDMANDYING`) are *not*
+shadowing cases — `ImportedSfx.txt` is their only definition, and it always
+pointed at an unconverted localized name — but they resolve to zero samples
+for the same underlying reason.
+
+**Original-engine quirk:** Not verified whether the original engine actually
+played these hooks silently, or whether the `$`-prefixed localized names
+resolved through a per-language string/audio table the shipped `SFX/*.txt`
+files don't describe on their own.
+
+**Why this is a correctness bug, not just missing polish:** `Unit`'s death
+sound resolution (death-animation plan §6) walks an ordered candidate list —
+per-house hook, then generic fallback — and stops at the first id *present*
+in the generated `DEATH_EVENT_PATHS` manifest. Before this was fixed, the
+shadowed per-house ids were still emitted as valid-looking `SoundEvent`
+resources with empty `sample_paths`, so they counted as "present": the
+resolution picked `atnormalmandying`/`hknormalmandying` and never reached the
+real 22-sample generic `normalmandying` hook. Atreides and Harkonnen infantry
+— by far the most common death in the game — would have died in total
+silence, while Ordos worked only by accident of `ORDOSSFX.TXT` sorting last.
+
+**EmperorReborn compatibility decision:** Fixed at the convert stage, per
+this project's rule that wrong source data is corrected where it is
+converted rather than papered over with a runtime special case.
+`tools/generate_voice_feedback.py`'s `main()` now drops any death/explosion
+event whose referenced samples are *all* unresolved against the WAV archive
+entirely — it is not written to `resources/audio/events/`, not added to
+`expected_events` (so a stale file from a previous run would be removed, not
+kept), and not added to `DEATH_EVENT_PATHS`. With the shadowed ids simply
+absent from the manifest, `Unit`'s existing candidate-list resolution falls
+through to the generic hook on its own, with no runtime "present but empty"
+check needed. The generator prints a distinct warning
+("N death/explosion events dropped entirely") so this is visible in
+`voice-feedback`/`voice-feedback-check` output rather than silent. Voice
+(Selection/Move/Attack) events are deliberately left on the old
+always-write behavior in this pass — none currently resolve to zero
+samples, so there was nothing to change, and applying the same drop rule to
+voice events would need `tests/audio/voice_feedback_run.gd`'s expectations
+revisited first.
+
+### Vehicle death explosions: the "personal hook" theory was falsified; size tiers are hand-picked instead
+
+**Observed data (the now-abandoned theory):** `HarkonnenSFX.txt` contains four
+death-sound sections whose names were renamed away from a per-unit label that
+survives only as a commented-out line directly above each one:
+
+| section | commented-out original label | unit |
+| --- | --- | --- |
+| `[hkmedium1]` | `;dko[HarkAssaultTankDie]` | `HKAssault` |
+| `[hkmedium2]` | `;dko[HarkInkvineDie]` | `HKInkVine` |
+| `[hksmall1]` | `;dko[HarkBuzzsawDie]` | `HKBuzzsaw` |
+| `[explode]` | `;dko[HarkDevastatorDie]` | `HKDevastator` |
+
+An earlier design (commit `105928f`) took this at face value: each of these
+four units plays its "personal hook" concurrently with a generic
+`GeneralSFX.txt` `[Small]`/`[Medium]`/`[Large]` size-tier boom.
+
+**This was falsified by testing against the reference build.** `HKAssault`
+empirically played `explosion_large_3.wav` + `explosion_medium_5.wav` —
+*neither* of which is in `[hkmedium1]`'s own sample list
+(`bigxplosion04`/`explosion_vehicle_1`/`explosion_vehicle_2`). `HKBuzzsaw`
+played `explosion_large_5.wav` + `explosion_vehicle_2.wav`, and
+`explosion_vehicle_2` is not even in `[hksmall1]`, its own supposed personal
+hook. Further investigation (grepping every `SFX/*.txt` file and every
+converted XBF model's embedded `sound_names` strings) found that essentially
+every unit's model references *some* personal-hook-shaped name, but almost
+all of them are dead, `$`-prefixed localized stubs in `ImportedSfx.txt` with
+zero real samples behind them — these four just happen to be the only ones
+that survived with real English samples, which is a fact about which stubs
+got localized, not evidence that these four units are audio-special.
+**Conclusion: the original engine's actual per-unit death-sample selection is
+hardcoded in the shipped binary and is not recoverable from any available
+source data.** `explode` is still specifically `HarkDevastatorDie`, not a
+generic id (so it must never be handed to an arbitrary vehicle or to
+infantry) — that grep fact stands — but "personal hook + generic tier, both
+concurrent" as a *selection mechanism* does not.
+
+**EmperorReborn compatibility decision:** abandon precision. `VehicleDeathStrategy`
+drops `PERSONAL_DEATH_HOOKS` and the whole `GeneratedVoiceManifest`
+indirection for this mechanism entirely, replaced by a hand-specified
+three-pool system (`ExplosionTierPools`: `small`/`medium`/`large`, each a
+pool of `explosion_{small,medium,large}_*.wav` referenced directly, bypassing
+`SoundEvent`/the generated manifest) confirmed by ear-testing several units
+against the reference build. `TIER_OVERRIDES` lists every unit the user
+specified by ear; everything else defaults to `medium` — an **approximation,
+not sourced data**, since the per-unit tier itself is still hardcoded in the
+binary and `explosion_type_id` (the visual VFX bank) does not correlate with
+it at all (`HKDevastator` and `ATMongoose` share the same generic `Explosion`
+bank). Current overrides: Harkonnen vehicles are all `medium` except
+`HKDevastator` (`large`); Atreides `ATTrike`/`ATAPC` are `small`,
+`ATMinotaurus` is `large`; Ordos `ORDustScout` is `small`, `ORKobra` is
+`large`; the shared `Harvester`/`FakeHarvester` and the Guild `GUNIABTank`
+are `large`.
+
+**Separately, an unconditional per-house layer:** every Harkonnen vehicle
+additionally plays one of `explosion_vehicle_1.wav`/`explosion_vehicle_2.wav`,
+and every Ordos vehicle plays one of `explosionordos01..06.wav`, both at the
+start of the death animation regardless of size tier (`VehicleDeathStrategy.
+death_start_sound_paths`, keyed off `house_id` rather than a per-unit list, so
+it covers every vehicle in those houses automatically). Atreides and every
+other faction get no such layer. This approximates the doubled-boom behavior
+the original falsified theory was trying to explain, without claiming it is
+the same mechanism.
+
+`explosion_medium_1.wav` is deliberately excluded from the `medium` pool: it
+was renamed to `explosion_fire.wav` at convert time
+(`converters/convert_audio_bag.gd`'s `RENAMED_ENTRIES`) because that sample is
+actually used in-game for the (not yet implemented) Inkvine special ability,
+not for generic medium explosions.
+
+### Infantry `Blow_Up` has no corpse sound of its own
+
+**Observed data:** `Blow_Up_1`/`Blow_Up_2` (present on every converted infantry
+model) is purely a "corpse gets launched by an explosion" animation. There is
+no per-house or generic `*ManDying`-family hook for a physical blow-up at all —
+the `[explode]` family it appears to want is `HarkDevastatorDie` (above), a
+vehicle's personal hook.
+
+**EmperorReborn compatibility decision:** `InfantryDeathStrategy` proposes no
+sound layer for `Blow_Up`. The boom the player hears in the original belongs to
+the *weapon's* detonation, a separate system (`combat_impact_resolver.gd` /
+`combat_projectile.gd`) that has no SFX wiring yet; giving the corpse its own
+boom would double it up once weapon-impact SFX lands. `Burn`/`Shot`/`Gassed`
+keep their unrelated per-house/generic hooks unchanged.
+
+**`HKFlamer` is the one exception:** user-confirmed, it emits a `small`-tier
+boom *regardless of what killed it*, because its own fuel tank ruptures as part
+of dying. Its converted model carries only the ordinary infantry clip set (no
+bespoke "tank explodes" clip), so this is modelled as an extra sound layer
+alongside whatever the cause resolved to — not a forced `Blow_Up` cause — and
+no visual effect (`HKFlamer.explosion_type_id` is already `None`). Scoped to
+this one unit: no equivalent hook or comment exists for any other infantry, so
+this is a recorded observation, not an extrapolated "special payload" rule.
+Same `ExplosionTierPools` direct-WAV pool the vehicle size tiers use
+(`InfantryDeathStrategy.death_start_sound_paths`), not the manifest, and it
+plays immediately alongside its per-cause scream — infantry has no separate
+VFX-spawn call site to time against the way vehicles do, and the user
+confirmed no artificial delay/sync attempt is wanted here.
+
 ## Building models
 
 ### Atreides Refinery H0 contains two broken geometry components

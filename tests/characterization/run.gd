@@ -49,6 +49,10 @@ func _initialize() -> void:
 	_run_case("XBF loop boundaries preserve authored snaps", _test_xbf_loop_boundaries)
 	_run_case("XBF FX banks retain parameters and event frames", _test_xbf_fx_banks)
 	_run_case("building markers bake authored attachment FX banks", _test_building_attachment_effects)
+	_run_case(
+		"animated FX textures follow their authored event frames",
+		_test_authored_texture_event_frames
+	)
 	_run_case("building transition clips retain authored action names", _test_building_transition_clips)
 	_run_case("XBF mirrored object animations use rotation-safe tracks", _test_mirrored_object_animation_handedness)
 	_run_case("XBF mirrored inside-out meshes are re-oriented", _test_mirrored_mesh_orientation)
@@ -1055,6 +1059,53 @@ func _fx_emissions_during(
 	return result
 
 
+## The FX event table names the exact TGA each object switches to on each source
+## frame. Explosion's ?firesphere runs !%Rbang0..9 across source frames 8..16 and
+## then stops on an additive-black frame; a guessed flipbook rate instead held a
+## bright fireball for the whole 50-frame transform clip, which is what made
+## explosions look both slow and oversized.
+func _test_authored_texture_event_frames() -> bool:
+	var source := "res://assets/raw_original_content/3DDATA/Explosion/explosion.XBF"
+	var builder = ModelBakeBuilderScript.new()
+	builder.stationary_clip_loops = false
+	var scene: PackedScene = builder.build(source)
+	_expect(scene != null, "Explosion must build")
+	if scene == null:
+		return true
+	var root := scene.instantiate()
+	_expect(
+		int(root.get_meta("xbf_fx_last_event_frame", -1)) == 18,
+		"the baked scene must record the last authored FX frame"
+	)
+	var player := root.get_node_or_null("AnimationPlayer") as AnimationPlayer
+	var timeline := player.get_animation(&"timeline") if player != null else null
+	var sphere := _find_original_node_exact(root, "?firesphere")
+	var mesh := _plain_mesh_descendant(sphere) if sphere != null else null
+	var track := timeline.find_track(
+		NodePath("%s:instance_shader_parameters/fx_frame" % String(root.get_path_to(mesh))),
+		Animation.TYPE_VALUE
+	) if timeline != null and mesh != null else -1
+	_expect(track >= 0, "?firesphere must carry an animated-texture frame track")
+	if track >= 0:
+		# Source frames 0, 8, 9, ... 16 of !%Rbang0..9 at the 20 Hz update rate.
+		var expected_times: Array[float] = [
+			0.0, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8
+		]
+		var matches := timeline.track_get_key_count(track) == expected_times.size()
+		for key_index in timeline.track_get_key_count(track):
+			if key_index >= expected_times.size():
+				break
+			matches = matches \
+				and is_equal_approx(
+					snappedf(timeline.track_get_key_time(track, key_index), 0.001),
+					expected_times[key_index]
+				) \
+				and int(timeline.track_get_key_value(track, key_index)) == key_index
+		_expect(matches, "the sequence must step on the authored source frames at 20 Hz")
+	root.free()
+	return true
+
+
 func _test_building_attachment_effects() -> bool:
 	var source_path := (
 		"res://assets/raw_original_content/3DDATA/Buildings/at_helipad_H0.XbF"
@@ -1147,11 +1198,18 @@ func _test_building_attachment_effects() -> bool:
 	if smoke_scene != null:
 		var smoke_root := smoke_scene.instantiate()
 		var smoke_marker := _find_original_node_exact(smoke_root, "#smoke01")
-		var smoke_fx := _attachment_fx_child(smoke_marker) if smoke_marker != null else null
+		var smoke_fx := _attachment_fx_emitter(smoke_marker) if smoke_marker != null else null
 		_expect(
 			smoke_fx != null
 			and not String(smoke_fx.get_meta("xbf_fx_texture", "")).is_empty(),
 			"#smoke01 must receive its authored smoke bank"
+		)
+		var smoke_process := smoke_fx.process_material as ParticleProcessMaterial \
+			if smoke_fx != null else null
+		_expect(
+			smoke_fx != null and smoke_fx.amount > 1 and smoke_fx.lifetime > 0.0
+			and smoke_process != null and smoke_process.gravity.y > 0.0,
+			"the smoke bank must emit a rising stream, not one motionless sprite"
 		)
 		var smoke_source := _plain_mesh_descendant(smoke_marker) \
 			if smoke_marker != null else null
@@ -1160,6 +1218,60 @@ func _test_building_attachment_effects() -> bool:
 			"the authored #smoke01 marker geometry must be hidden"
 		)
 		smoke_root.free()
+
+	# An idle stack is authored as intermittent puffs, so emission is gated by
+	# the start/stop pair while the node stays visible one particle lifetime
+	# longer - long enough for the last puff to drift away instead of popping.
+	var refinery_builder = ModelBakeBuilderScript.new()
+	refinery_builder.bake_attachment_bank_effects = true
+	var refinery_scene: PackedScene = refinery_builder.build(
+		"res://assets/raw_original_content/3DDATA/Buildings/AT_REFINERY_H1.XBF"
+	)
+	_expect(refinery_scene != null, "AT Refinery H1 must build its smoke banks")
+	if refinery_scene != null:
+		var refinery_root := refinery_scene.instantiate()
+		var stack := _find_original_node_exact(refinery_root, "#smoke02")
+		var stack_fx := _attachment_fx_emitter(stack) if stack != null else null
+		var refinery_player := refinery_root.get_node_or_null("AnimationPlayer") as AnimationPlayer
+		var refinery_timeline := refinery_player.get_animation(&"timeline") \
+			if refinery_player != null else null
+		var stack_path := String(refinery_root.get_path_to(stack_fx)) \
+			if stack_fx != null else ""
+		var emitting_track := refinery_timeline.find_track(
+			NodePath("%s:emitting" % stack_path), Animation.TYPE_VALUE
+		) if refinery_timeline != null and stack_fx != null else -1
+		var visible_track := refinery_timeline.find_track(
+			NodePath("%s:visible" % stack_path), Animation.TYPE_VALUE
+		) if refinery_timeline != null and stack_fx != null else -1
+		_expect(
+			emitting_track >= 0 and visible_track >= 0,
+			"#smoke02 must gate emission and visibility separately"
+		)
+		if emitting_track >= 0 and visible_track >= 0:
+			var emitting_values: Array[bool] = []
+			for key_index in refinery_timeline.track_get_key_count(emitting_track):
+				emitting_values.append(
+					bool(refinery_timeline.track_get_key_value(emitting_track, key_index))
+				)
+			_expect(
+				emitting_values == [false, true, false, true, false],
+				"#smoke02 must puff on its authored start/stop frames"
+			)
+			var last_stop := 0.0
+			for key_index in refinery_timeline.track_get_key_count(emitting_track):
+				if not bool(refinery_timeline.track_get_key_value(emitting_track, key_index)):
+					last_stop = refinery_timeline.track_get_key_time(emitting_track, key_index)
+			var hidden_at := 0.0
+			for key_index in refinery_timeline.track_get_key_count(visible_track):
+				if not bool(refinery_timeline.track_get_key_value(visible_track, key_index)):
+					hidden_at = refinery_timeline.track_get_key_time(visible_track, key_index)
+			_expect(
+				is_equal_approx(
+					snappedf(hidden_at - last_stop, 0.01), snappedf(stack_fx.lifetime, 0.01)
+				),
+				"the stack must stay drawn for one particle lifetime past its last puff"
+			)
+		refinery_root.free()
 
 	var starport_source := (
 		"res://assets/raw_original_content/3DDATA/Buildings/AT_StarPort_H0.XbF"
@@ -1250,6 +1362,15 @@ func _attachment_fx_child(marker: Node) -> MeshInstance3D:
 	for child in marker.get_children():
 		if child is MeshInstance3D and child.has_meta("xbf_fx_bank_id"):
 			return child as MeshInstance3D
+	return null
+
+
+## Motion banks (smoke, fire, exhaust) bake as the particle stream they are in
+## the source data instead of a single billboard, so they are not MeshInstance3D.
+func _attachment_fx_emitter(marker: Node) -> GPUParticles3D:
+	for child in marker.get_children():
+		if child is GPUParticles3D and child.has_meta("xbf_fx_bank_id"):
+			return child as GPUParticles3D
 	return null
 
 

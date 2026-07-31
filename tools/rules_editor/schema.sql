@@ -217,8 +217,11 @@ CREATE TABLE explosion_configs (
     -- Геометрия ландшафта статична; положительный DamageToTile задаёт
     -- остающийся на тайле кратер/декаль.
     damage_to_tile           REAL,
-    face_camera               INTEGER,  -- bool
-    chained_explosion_type_id INTEGER REFERENCES explosion_types(id)
+    face_camera               INTEGER  -- bool
+    -- В исходных данных нет понятия связанного/вторичного взрыва (секции
+    -- взрывов в Rules.txt/ArtIni.txt содержат только FaceCamera и
+    -- DamageToTile). Спекулятивная колонка chained_explosion_type_id была
+    -- всегда NULL и удалена; не добавлять её снова.
 );
 
 -- ExplosionType = в исходнике иногда встречается НЕСКОЛЬКО раз в одной

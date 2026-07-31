@@ -50,3 +50,63 @@ When checking the original game, record whether each marker is visible at
 idle, only during an animation/damage state, camera-facing, particle-emitting,
 or controlled by gameplay. Those distinctions determine whether it belongs
 in model baking, animation tracks, or runtime simulation.
+
+## FX bank emitter parameters partially inferred
+
+Attachment banks whose parameter block authors motion (initial speed or
+gravity) bake as `GPUParticles3D` streams; the rest stay single billboards.
+The parameter words used for that are decoded with differing confidence:
+
+| Word | Reading | Confidence |
+| --- | --- | --- |
+| 02 | Particle lifetime in 20 Hz updates | High — matches every fire/smoke bank against its texture sequence length |
+| 04 | Speed in source units per update, along the marker's up axis | High for the magnitude; the **sign is not a direction** — AT Refinery authors its stacks positive and OR Refinery authors the same rising plume negative, on identity-basis markers, so only the magnitude is used |
+| 07-09 | Particle tint RGB | High — OR Refinery's `@!%Engine` banks author (200, 255, 64), the dirty green its exhaust has in the original |
+| 05 | Gravity per squared update, positive down | High — already corroborated; smoke and fire author it negative |
+| 06 | Particle size in source units | High — corroborated by ShellHit |
+| 01 | Particles per burst | Medium — always 1 for the damage banks, larger only for construction sparks and sand |
+| 03 | Emission cone half-angle in degrees | Medium — 0 for straight columns, 10–50 for spraying banks |
+| 10 | Source updates between bursts | Low — only the resulting particle density depends on it |
+
+Compare a damaged building and a Construction Yard against the original game
+to confirm the burst density; the plume shape does not depend on words 01/10.
+
+The bank `start`/`stop` events gate emission, not the node's visibility: idle
+stacks are authored as intermittent puffs (`AT_REFINERY_H1`'s `#smoke02` runs
+source frames 5-70 and 90-100 of a 201-frame loop), while damage fire is a bare
+`start@0`. The emitter stays drawn for one particle lifetime past its last stop
+so the tail drifts away instead of popping, and is baked not emitting, so the
+damage-state banks of every packed state cost nothing until their state runs.
+
+Two further emitter behaviours were taken from the original game rather than
+decoded, and are worth re-checking against it:
+
+- **Alpha ramp.** Particles thin out towards the end of their life (a stack's
+  plume is dense at the mouth and dissipated by the top). No bank authors this:
+  every building smoke bank has zero per-update colour deltas, so the converter
+  bakes a linear ramp on the assumption that the fade is engine behaviour.
+- **Lateral drift.** A rising plume wanders instead of climbing as a rigid
+  column, each particle taking its own share of a noise field. Also not
+  authored: the strength is set so a fully-influenced particle drifts sideways
+  by a fraction of the distance it travels along the plume
+  (`ATTACHMENT_FX_DRIFT_FRACTION`). Measuring against the travel and not the
+  particle's own size is deliberate — damage fire is authored as 4-unit sprites
+  that barely move, so a size-relative drift would fling it across the building.
+- **Blend mode.** The `@` texture marker selects alpha blending; `!` alone stays
+  additive. `@!%Engine` and `!@sm` carry it, `!fire`, `!%Flash` and `!Dlight` do
+  not, which matches which effects glow in the original. Those sprites are
+  24-bit light-on-black, so their brightness is re-keyed into alpha and their
+  hue normalized, leaving the bank tint to decide the colour.
+
+Parameters 12 and 13 remain undecoded. They are not the acceleration a bank
+uses in place of gravity: across the original content they appear both with and
+without a gravity, so nothing about their meaning is established.
+
+## Animated FX texture rate
+
+FX event record type 6 (`object`, `texture.tga`) is the authored flipbook: the
+converter drives each animated-texture mesh from those frames directly. Objects
+with no record of their own borrow the timeline of a sibling sharing the same
+sequence; only models with no type-6 records at all fall back to a fixed step,
+which is 2 source frames — the interval used by 1071 of the 1494 authored steps
+in the original content.

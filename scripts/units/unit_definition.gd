@@ -72,6 +72,7 @@ extends Resource
 @export var hawk_effect_id: StringName
 @export var damage_effect_id: StringName
 @export var explosion_type_id: StringName
+@export var explosion_scene_paths: Dictionary = {}
 @export_file("*.tres") var veterancy_level_paths: Array[String] = []
 
 @export_group("Combat references")

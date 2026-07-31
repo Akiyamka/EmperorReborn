@@ -1252,7 +1252,11 @@ func _building_tooltip(building_id: StringName) -> String:
 	]
 
 
-func _raycast(screen_position: Vector2, collision_mask: int = 0xffffffff) -> Dictionary:
+## Default mask covers terrain (bit 1) and units/buildings (bit 2) only —
+## corpses sit on their own bit 3 (see DeathCorpse) and must never block a
+## click aimed at a unit/building standing behind one. Every current caller
+## already passes an explicit mask; this default only guards future ones.
+func _raycast(screen_position: Vector2, collision_mask: int = 3) -> Dictionary:
 	if camera == null:
 		return {}
 

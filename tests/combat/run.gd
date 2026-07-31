@@ -118,7 +118,7 @@ class CombatTarget extends RefCounted:
 	func is_enemy_of(player_id: int) -> bool:
 		return owner_player_id != player_id
 
-	func take_damage(amount: float) -> void:
+	func take_damage(amount: float, _death_cause: StringName = &"") -> void:
 		damage_taken += amount
 
 	func combat_owner_player_id() -> int:
@@ -169,7 +169,7 @@ class PhysicsCombatTarget extends StaticBody3D:
 	func combat_owner_player_id() -> int:
 		return owner_player_id
 
-	func take_damage(amount: float) -> void:
+	func take_damage(amount: float, _death_cause: StringName = &"") -> void:
 		damage_taken += amount
 
 

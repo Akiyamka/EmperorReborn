@@ -408,7 +408,7 @@ BULLET_SCALAR = {
     'speed': ('speed', 'float'),
     'blowup': ('blow_up', 'bool'),
     'blastradius': ('blast_radius', 'float'),
-    'shot': ('shot', 'int'),
+    'shot': ('shot', 'bool'),
     'reducedamagewithdistance': ('reduce_damage_with_distance', 'bool'),
     'missiletrail': ('missile_trail', 'int'),
     'missiletrailsize': ('missile_trail_size', 'int'),
