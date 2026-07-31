@@ -13,6 +13,35 @@ would violate the original game's license. Instead, the project provides tools
 for converting resources from a legally owned copy of the original game into
 Godot-native formats that can be loaded by the game.
 
+## Roadmap
+V 0.1
+- [x] All skirmish maps fully implemented (including van maps, spice spawning etc)
+- [x] All units and buildings parsed with sounds animations and special effects
+- [x] All basic game mechanics (economics (macro), and combat (micro), tech tree) implemented
+- [x] Navigation logic
+
+v 0.2
+- [ ] All sounds added (unit voices, shots, blows)
+- [ ] Combat special effects (die animations, blows)
+- [ ] Basic menu and game ui added (units roaster, radar, new game, save / load)
+- [ ] Advanced mechanics (carryall, units deployment)
+- [ ] Pre-builded binary and hosted web demo created
+
+v 0.3
+- [ ] Special abilities (leeches, repair bots, Ix projections, etc.)
+
+v 0.4
+- [ ] Network stack (multiplayer up to 4 ppl)
+
+v 0.5
+- [ ] BOTs AI
+
+v 1.0
+- [ ] Single player campaign 
+
+v 1.1
+- [ ] Modding support
+
 ## Development prerequisites
 
 The authoritative engine version is **Godot 4.7**.
