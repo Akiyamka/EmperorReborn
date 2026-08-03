@@ -10,6 +10,13 @@ const PlacementBuildingScene := preload("res://assets/converted/placement/build_
 const PlacementWallScene := preload("res://assets/converted/placement/build_wall.scn")
 const PlacementContextScript := preload("res://scripts/buildings/placement_context.gd")
 
+## Status line each mode emits on its way out, keyed the same as _enter_mode().
+const MODE_CANCEL_STATUS := {
+	&"sell": "Sell mode canceled",
+	&"repair": "Repair mode canceled",
+	&"wall_line": "Wall mode canceled",
+}
+
 var _assertions := 0
 var _failures := 0
 var _current_case := ""
@@ -121,6 +128,10 @@ func _initialize() -> void:
 	_run_case(
 		"every ordered pair of sell/repair/wall-line modes deactivates the outgoing mode exactly once",
 		_test_mode_transitions_deactivate_exiting_mode_once
+	)
+	_run_case(
+		"leaving wall mode cancels its own placement preview",
+		_test_leaving_wall_mode_cancels_its_own_preview
 	)
 	_run_case(
 		"leaving and re-entering the tree does not double-connect availability signals",
@@ -517,10 +528,13 @@ func _test_mode_transitions_deactivate_exiting_mode_once(token: int) -> int:
 		controller.sell_mode_changed.connect(func(active: bool) -> void: events[&"sell"].append(active))
 		controller.repair_mode_changed.connect(func(active: bool) -> void: events[&"repair"].append(active))
 		controller.wall_mode_changed.connect(func(active: bool) -> void: events[&"wall_line"].append(active))
+		var statuses: Array[String] = []
+		controller.status_changed.connect(func(text: String) -> void: statuses.append(text))
 
 		_enter_mode(controller, from_mode)
 		for key in events.keys():
 			(events[key] as Array).clear()
+		statuses.clear()
 
 		_enter_mode(controller, to_mode)
 
@@ -530,6 +544,56 @@ func _test_mode_transitions_deactivate_exiting_mode_once(token: int) -> int:
 			"%s -> %s must emit %s_mode_changed(false) exactly once for the outgoing mode (got %s)" % [
 				from_mode, to_mode, from_mode, from_events
 			]
+		)
+		# The signal is what listeners bind to, but the status line is what the
+		# player actually reads, and it is emitted from a different branch of the
+		# same deactivation body -- so a half-applied fix could restore one
+		# without the other.
+		var cancel_line: String = MODE_CANCEL_STATUS[from_mode]
+		_expect(
+			statuses.count(cancel_line) == 1,
+			"%s -> %s must report \"%s\" exactly once (got %s)" % [
+				from_mode, to_mode, cancel_line, statuses
+			]
+		)
+		controller.free()
+	return token
+
+
+## The third thing a deactivation does, after the signal and the status line:
+## wall mode owns a live BuildingPlacement preview, and _deactivate_wall_line_
+## mode() is what tears it down. Skipping that step is not visible as a
+## surviving preview -- the generic _cancel_building_placement() further down
+## the same setter catches it either way. What gives it away is that the
+## generic path announces "<id> placement canceled", a line the wall path never
+## produces, so that stray status is the assertion.
+func _test_leaving_wall_mode_cancels_its_own_preview(token: int) -> int:
+	for to_mode in [&"repair", &"sell"]:
+		var controller := _new_controller()
+		_setup_without_assets(controller)
+		_setup_controller_placement(controller,
+			null, FakeGrid.new(), null, null, PlacementBuildingScene, null, null, Callable()
+		)
+		_enter_mode(controller, &"wall_line")
+		_expect(
+			controller._building_placement.is_active(),
+			"wall mode must own a live placement preview before it is left"
+		)
+
+		var statuses: Array[String] = []
+		controller.status_changed.connect(func(text: String) -> void: statuses.append(text))
+		_enter_mode(controller, to_mode)
+
+		_expect(
+			not controller._building_placement.is_active(),
+			"leaving wall mode for %s must leave no live placement preview" % to_mode
+		)
+		var stray: Array = statuses.filter(func(text: String) -> bool:
+			return text.ends_with("placement canceled")
+		)
+		_expect(
+			stray.is_empty(),
+			"wall mode must cancel its own preview rather than leave it to the generic placement cancel (got %s)" % [stray]
 		)
 		controller.free()
 	return token
