@@ -1,6 +1,10 @@
 class_name BuildingController
 extends Node3D
 
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
+
 signal status_changed(status: String)
 signal building_option_state_changed(option_state: BuildingOptionState)
 signal resources_changed(credits: int, energy: int)
@@ -40,7 +44,7 @@ var max_tech_level: int = TechnologyTreeScript.UNLIMITED_TECH_LEVEL
 var _building_configs: Dictionary = {}
 var _building_ids: Array[StringName] = []
 var _technology_tree: TechnologyTree = TechnologyTreeScript.new()
-var _definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _definition_catalog := BuildingDefinitionCatalogScript.shared()
 var _game_settings_catalog := GameSettingsCatalogScript.new()
 var _building_availability: Dictionary = {}
 var _building_queue: BuildingQueue = BuildingQueueScript.new()
@@ -477,14 +481,11 @@ func _try_sell_building(screen_position: Vector2) -> void:
 		building.call("begin_construction")
 	_refresh_building_option_states()
 	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(&"sell"):
-		var sell_animation := player.get_animation(&"sell")
-		if sell_animation != null:
-			sell_animation.loop_mode = Animation.LOOP_NONE
-		player.animation_finished.connect(
-			_on_sold_building_animation_finished.bind(building, &"sell"), CONNECT_ONE_SHOT
-		)
-		_play_building_state(building, &"sell")
+	if AuthoredModelScript.play_one_shot(
+		building,
+		&"sell",
+		_on_sold_building_animation_finished.bind(building, &"sell")
+	):
 		return
 	if player != null and player.has_animation(&"construct"):
 		var construct_animation := player.get_animation(&"construct")
@@ -562,9 +563,7 @@ func _can_repair_building(building: Node3D) -> bool:
 
 
 func _cursor_manager() -> Variant:
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Cursors")
+	return AutoloadLookupScript.cursors(self)
 
 
 func _on_sold_building_animation_finished(
@@ -1089,13 +1088,7 @@ func _cancel_building_placement() -> void:
 
 
 func _play_building_state(building: Node3D, state: StringName) -> void:
-	if building.has_method("play_state"):
-		building.call("play_state", state)
-		return
-
-	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(state):
-		player.play(state)
+	AuthoredModelScript.play_state(building, state)
 
 
 func _building_occupy_rows(config: Resource) -> Array[String]:
@@ -1260,18 +1253,11 @@ func _raycast(screen_position: Vector2, collision_mask: int = 3) -> Dictionary:
 	if camera == null:
 		return {}
 
-	var ray_origin := camera.project_ray_origin(screen_position)
-	var ray_end := ray_origin + camera.project_ray_normal(screen_position) * 1000.0
-	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-	query.collision_mask = collision_mask
-	query.collide_with_areas = false
-	return get_world_3d().direct_space_state.intersect_ray(query)
+	return TerrainProbeScript.screen_pick(camera, get_world_3d(), screen_position, collision_mask)
 
 
 func _players():
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Players")
+	return AutoloadLookupScript.roster(self)
 
 
 func _local_player() -> PlayerData:

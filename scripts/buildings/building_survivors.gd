@@ -8,8 +8,8 @@ extends RefCounted
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
-static var _unit_scene_catalog := UnitSceneCatalogScript.new()
-static var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _unit_scene_catalog := UnitSceneCatalogScript.shared()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 
 ## Verified against assets/raw_original_content/MODEL/Rules.txt: each House's
 ## barracks-produced, lowest-tier infantry (PrimaryBuilding=<House>Barracks,

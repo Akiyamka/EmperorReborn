@@ -71,20 +71,6 @@ for path in files:
 
 owner_pattern = re.compile(r"\b(?:_facade|_owner|_unit|_source)\._\w+")
 autoload_pattern = re.compile(r"\bget_node_or_null\s*\(\s*[\"']/root/(?:Players|Cursors)[\"']")
-autoload_stage_1_exceptions = {
-    # TODO(stage 1): replace this complete inventory with autoload_lookup.gd,
-    # then delete the set so every direct /root lookup is rejected.
-    "scripts/buildings/building.gd",
-    "scripts/buildings/building_controller.gd",
-    "scripts/buildings/building_upgrade_controller.gd",
-    "scripts/match/match.gd",
-    "scripts/match/unit_command_controller.gd",
-    "scripts/units/unit.gd",
-    "scripts/units/unit_deployment_controller.gd",
-    "scripts/units/unit_roster_controller.gd",
-    "scripts/world/camera/rts_camera.gd",
-}
-
 for path in files:
     relative = path.relative_to(root).as_posix()
     lines = list(code_lines(path))
@@ -99,8 +85,7 @@ for path in files:
             if not relative.startswith("scripts/units/navigation/"):
                 report(path, number, "private owner access", line)
         if autoload_pattern.search(lines_with_strings[number - 1]):
-            if relative != "scripts/players/autoload_lookup.gd" \
-                    and relative not in autoload_stage_1_exceptions:
+            if relative != "scripts/players/autoload_lookup.gd":
                 report(path, number, "direct autoload path lookup", lines_with_strings[number - 1])
         for name, declaration_path in class_paths.items():
             if declaration_path == path or not re.search(rf"\b{re.escape(name)}\s*\.", line):

@@ -1,5 +1,7 @@
 class_name MapSpiceLayer
 extends RefCounted
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
+
 ## Mutable runtime state for the map's resource fields. Values are byte-density
 ## units from the XBF map, not player credits or harvester cargo units.
 
@@ -604,10 +606,12 @@ func _terrain_height_at(world_xz: Vector2) -> float:
 		return world_bounds.position.y
 	var top := world_bounds.end.y + 200.0
 	var bottom := world_bounds.position.y - 200.0
-	var query := PhysicsRayQueryParameters3D.create(
-		Vector3(world_xz.x, top, world_xz.y), Vector3(world_xz.x, bottom, world_xz.y), 1
+	var hit := TerrainProbeScript.cast(
+		_terrain_mesh.get_world_3d(),
+		Vector3(world_xz.x, top, world_xz.y),
+		Vector3(world_xz.x, bottom, world_xz.y),
+		1
 	)
-	var hit := _terrain_mesh.get_world_3d().direct_space_state.intersect_ray(query)
 	return (hit.get("position", Vector3(0.0, world_bounds.position.y, 0.0)) as Vector3).y
 
 

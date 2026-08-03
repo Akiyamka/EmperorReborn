@@ -1,6 +1,8 @@
 class_name MatchSnapshot
 extends RefCounted
 
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+
 ## Exported Godot games cannot usually modify res:// resources. A compact
 ## snapshot in user:// gives the same "start from here" behaviour everywhere.
 const DEFAULT_PATH := "user://main_snapshot.json"
@@ -82,7 +84,7 @@ func _capture_entity(entity: Node3D) -> Dictionary:
 		"scene_path": entity.scene_file_path,
 		"transform": _encode_transform(entity.global_transform),
 		"config_id": String(entity.get("config_id")),
-		"owner_player_id": int(entity.get("owner_player_id")),
+		"owner_player_id": EntityQueryScript.owner_id_of(entity),
 	}
 	if entity is Building:
 		record["refinery_upgrade_state"] = int(entity.get("refinery_upgrade_state"))

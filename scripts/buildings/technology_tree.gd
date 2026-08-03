@@ -1,5 +1,7 @@
 class_name TechnologyTree
 extends RefCounted
+
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
@@ -16,7 +18,7 @@ const UNIT_SECONDARY_REQUIREMENTS := &"secondary_buildings"
 ## one skirmish map and no campaign/mission data. UNLIMITED_TECH_LEVEL keeps
 ## is_available() a no-op filter until that data source shows up.
 const UNLIMITED_TECH_LEVEL := -1
-var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 var _houses_by_building_group: Dictionary = {}
 var _great_house_ids: Array[StringName] = []
 var _building_house_metadata_loaded := false
@@ -119,8 +121,8 @@ func _owned_buildings(buildings: Array[Node], player_id: int) -> Array[Node]:
 	var result: Array[Node] = []
 	for building in buildings:
 		if is_instance_valid(building) \
-		and int(building.get("owner_player_id")) == player_id \
-		and _is_construction_complete(building):
+		and EntityQueryScript.is_owned_by(building, player_id) \
+		and EntityQueryScript.is_operational(building):
 			result.append(building)
 	return result
 
@@ -129,11 +131,6 @@ func _owned_buildings(buildings: Array[Node], player_id: int) -> Array[Node]:
 ## has completed.  It must not satisfy tech prerequisites until that lifecycle
 ## signal has fired.  Lightweight test doubles and legacy nodes without the
 ## contract remain treated as complete.
-func _is_construction_complete(building: Node) -> bool:
-	return not building.has_method("is_construction_complete") \
-		or bool(building.call("is_construction_complete"))
-
-
 func _has_any_building(requirements: Array, buildings: Array[Node]) -> bool:
 	if requirements.is_empty():
 		return true

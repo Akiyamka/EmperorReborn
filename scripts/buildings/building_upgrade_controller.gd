@@ -1,6 +1,9 @@
 class_name BuildingUpgradeController
 extends Node3D
 
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+
 ## docs/mechanics/production.md section 4 "Upgrades". Deliberately a sibling
 ## of BuildingController rather than more code stuffed into it: it owns a
 ## second, independent RefCounted queue (UpgradeQueue, "one per player" just
@@ -42,8 +45,8 @@ var _building_configs: Dictionary = {}
 var _upgrade_option_ids: Array[StringName] = []
 var _upgrade_queue: UpgradeQueue = UpgradeQueueScript.new()
 var _upgrade_availability: Dictionary = {}
-var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
-var _unit_definition_catalog := UnitSceneCatalogScript.new()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
+static var _unit_definition_catalog := UnitSceneCatalogScript.shared()
 
 
 func setup(building_ids: Array[StringName]) -> void:
@@ -332,7 +335,7 @@ func _refinery_for_dock_upgrade(dock_building_id: StringName) -> Node3D:
 		var building := node as Node3D
 		if building == null:
 			continue
-		if int(building.get("owner_player_id")) != player.player_id:
+		if not EntityQueryScript.is_owned_by(building, player.player_id):
 			continue
 		if not _is_refinery(building):
 			continue
@@ -385,7 +388,7 @@ func _player_owns_building_type(player_id: int, building_id: StringName) -> bool
 		var building := node as Node3D
 		if building == null:
 			continue
-		if int(building.get("owner_player_id")) == player_id and StringName(String(building.get("config_id"))) == building_id:
+		if EntityQueryScript.is_owned_by(building, player_id) and StringName(String(building.get("config_id"))) == building_id:
 			return true
 	return false
 
@@ -503,9 +506,7 @@ func _building_config(building_id: StringName) -> Resource:
 
 
 func _players():
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Players")
+	return AutoloadLookupScript.roster(self)
 
 
 func _local_player() -> PlayerData:

@@ -1,5 +1,7 @@
 class_name NavAgentRegistry
 extends RefCounted
+
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 ## Owns navigation agent creation/removal, movement-profile derivation, and the
 ## per-tick pruning/ordering of the agent set. `_agents` itself remains a
 ## Dictionary owned by the facade (`UnitNavigationSystem._agents`); GDScript
@@ -193,7 +195,7 @@ func movement_probe_for(agents: Dictionary, unit: Node3D) -> Dictionary:
 func prune_agents(agents: Dictionary) -> void:
 	for key in agents.keys():
 		var unit = agents[key]["unit"]
-		if not is_instance_valid(unit) or unit.is_queued_for_deletion():
+		if not EntityQueryScript.is_live(unit):
 			agents.erase(key)
 
 

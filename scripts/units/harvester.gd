@@ -590,13 +590,11 @@ func _return_to_primary_main_base() -> bool:
 
 
 func _is_valid_owned_main_base(main_base: Node) -> bool:
-	if main_base == null or not is_instance_valid(main_base) \
-	or main_base.is_queued_for_deletion() or not main_base is Node3D:
+	if not EntityQueryScript.is_live(main_base) or not main_base is Node3D:
 		return false
 	if main_base.has_method("is_owned_by"):
 		return bool(main_base.call("is_owned_by", owner_player_id))
-	var base_owner = main_base.get("owner_player_id")
-	return base_owner != null and int(base_owner) == owner_player_id
+	return EntityQueryScript.is_owned_by(main_base, owner_player_id)
 
 
 func _move_to_harvest_cell(cell: Vector2i) -> void:
@@ -710,14 +708,13 @@ func _is_close_to_world(target: Vector3) -> bool:
 
 
 func _is_valid_owned_refinery(refinery: Node) -> bool:
-	if refinery == null or not is_instance_valid(refinery) or refinery.is_queued_for_deletion():
+	if not EntityQueryScript.is_live(refinery):
 		return false
 	if not refinery.has_method("is_refinery") or not bool(refinery.call("is_refinery")):
 		return false
 	if refinery.has_method("is_owned_by"):
 		return bool(refinery.call("is_owned_by", owner_player_id))
-	var refinery_owner = refinery.get("owner_player_id")
-	return refinery_owner != null and int(refinery_owner) == owner_player_id
+	return EntityQueryScript.is_owned_by(refinery, owner_player_id)
 
 
 func _interrupt_invalid_refinery() -> void:

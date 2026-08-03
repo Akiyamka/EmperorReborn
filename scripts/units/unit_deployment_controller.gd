@@ -1,6 +1,10 @@
 class_name UnitDeploymentController
 extends Node
 
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
+
 ## Dispatches "deploy" to one of two strategies over the same {handled,
 ## started, message} façade. The MCV strategy (this file's original body,
 ## unchanged) owns both sides of the MCV/Construction Yard transformation.
@@ -36,8 +40,8 @@ var _navigation
 var _deployments: Dictionary = {}
 var _undeployments: Dictionary = {}
 var _building_scene_cache: Dictionary = {}
-var _unit_scene_catalog := UnitSceneCatalogScript.new()
-var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _unit_scene_catalog := UnitSceneCatalogScript.shared()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 var _combat_deploy_strategy := CombatDeployStrategyScript.new()
 
 
@@ -76,7 +80,7 @@ func try_deploy(unit: Node3D) -> Dictionary:
 		"hover_cell": hover_cell,
 		"building_id": building_id,
 		"building_scene": building_scene,
-		"owner_player_id": int(unit.get("owner_player_id")),
+		"owner_player_id": EntityQueryScript.owner_id_of(unit),
 	}
 	placement.building_placed.connect(_on_building_placed.bind(deployment_id))
 	unit.deployment_animation_finished.connect(
@@ -219,8 +223,7 @@ func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dic
 		return {"handled": false, "started": false, "message": ""}
 	if _undeployments.has(building.get_instance_id()):
 		return _result(false, "Construction Yard is already packing")
-	if building.has_method("is_construction_complete") \
-	and not bool(building.call("is_construction_complete")):
+	if not EntityQueryScript.is_operational(building):
 		return _result(false, "Construction Yard cannot pack while under construction")
 
 	var mcv := _mcv_for(building, building_config)
@@ -244,7 +247,7 @@ func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dic
 		"unit_definition": mcv.get("config"),
 		"unit_scene": unit_scene,
 		"units_parent": units_parent,
-		"owner_player_id": int(building.get("owner_player_id")),
+		"owner_player_id": EntityQueryScript.owner_id_of(building),
 		"spawn_position": _building_spawn_position(building),
 		"exit_position": _building_exit_position(building),
 		"facing": _building_exit_direction(building),
@@ -255,19 +258,12 @@ func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dic
 		_on_undeploying_building_exiting.bind(undeployment_id), CONNECT_ONE_SHOT
 	)
 
-	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(&"deconstruct"):
-		var animation := player.get_animation(&"deconstruct")
-		if animation != null:
-			animation.loop_mode = Animation.LOOP_NONE
-			if building.has_method("play_state"):
-				building.call("play_state", &"deconstruct")
-			else:
-				player.play(&"deconstruct")
-			player.animation_finished.connect(
-				_on_undeployment_animation_finished.bind(undeployment_id), CONNECT_ONE_SHOT
-			)
-			return _result(true, "%s packing into %s" % [String(building.get("config_id")), String(unit_id)])
+	if AuthoredModelScript.play_one_shot(
+		building,
+		&"deconstruct",
+		_on_undeployment_animation_finished.bind(undeployment_id)
+	):
+		return _result(true, "%s packing into %s" % [String(building.get("config_id")), String(unit_id)])
 
 	# Lightweight/test buildings without an authored deconstruct clip still obey
 	# the same transformation contract; their handoff is simply immediate.
@@ -366,9 +362,9 @@ func _on_building_placed(building: Node3D, deployment_id: int) -> void:
 func _on_construction_yard_completed(building: Node3D) -> void:
 	if building == null or not is_instance_valid(building):
 		return
-	var players := get_node_or_null("/root/Players")
+	var players := AutoloadLookupScript.roster(self)
 	if players != null:
-		players.set_main_base(int(building.get("owner_player_id")), building)
+		players.set_main_base(EntityQueryScript.owner_id_of(building), building)
 	construction_yard_deployed.emit(building)
 
 
@@ -499,15 +495,10 @@ func _building_config_for(building: Node3D) -> Resource:
 func _units_parent(building: Node3D) -> Node:
 	if _units_root != null and is_instance_valid(_units_root):
 		return _units_root
-	if is_inside_tree():
-		var existing_unit := get_tree().get_first_node_in_group("units")
-		if existing_unit != null and existing_unit.get_parent() != null:
-			return existing_unit.get_parent()
-		var scene_root := get_tree().current_scene
-		var units := scene_root.get_node_or_null("Units") if scene_root != null else null
-		if units != null:
-			return units
-	return building.get_parent() if building != null else null
+	return EntityQueryScript.units_parent(
+		get_tree() if is_inside_tree() else null,
+		building.get_parent() if building != null else null
+	)
 
 
 func _building_spawn_position(building: Node3D) -> Vector3:
@@ -528,9 +519,7 @@ func _building_exit_position(building: Node3D) -> Vector3:
 
 
 func _building_exit_direction(building: Node3D) -> Vector3:
-	if building.has_method("exit_direction"):
-		return building.call("exit_direction") as Vector3
-	return SpatialOrientationScript.world_horizontal_axis(building, Vector3.BACK)
+	return EntityQueryScript.exit_direction(building)
 
 
 func _occupy_rows_for_existing_building(building: Node3D) -> Array[String]:

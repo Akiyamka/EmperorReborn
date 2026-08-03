@@ -1,5 +1,7 @@
 class_name SteeringStabilizer
 extends RefCounted
+
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 ## Hard/soft geometry shared by every ground avoidance backend: terrain swept-
 ## disc checks and pressure field, friendly elastic separation, enemy swept-disc
 ## checks, and the non-holonomic chassis rate limiter (`stabilize_velocity`).
@@ -399,8 +401,8 @@ func _agent_cell_passable(
 
 static func _are_enemies(a: Node3D, b: Node3D) -> bool:
 	if a.has_method("is_enemy_of"):
-		var owner_id = b.get("owner_player_id")
-		return owner_id != null and bool(a.call("is_enemy_of", int(owner_id)))
+		var owner_id := EntityQueryScript.owner_id_of(b)
+		return owner_id >= 0 and bool(a.call("is_enemy_of", owner_id))
 	return false
 
 

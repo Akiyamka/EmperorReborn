@@ -28,8 +28,9 @@ enum State {
 const RULE_UPDATES_PER_SECOND := 20.0
 const SOURCE_MODEL_WORLD_SCALE := 0.0625
 const MAX_SIMULATION_STEP := 1.0 / RULE_UPDATES_PER_SECOND
-const COMBAT_COLLISION_MASK := 3
-const DEFAULT_TARGET_HIT_RADIUS := 0.25
+const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const COMBAT_COLLISION_MASK := CombatRulesScript.COLLISION_MASK
 const MAX_PIERCING_COLLISIONS_PER_STEP := 64
 const DIRECT_PROJECTILE_SIZE := 0.12
 const HOMING_PROJECTILE_SIZE := 0.16
@@ -137,7 +138,7 @@ func launch(
 			return false
 	if source != null and is_instance_valid(source):
 		_source_ref = weakref(source)
-		_collect_collision_rids(source, _excluded_rids)
+		_excluded_rids.append_array(CombatTargetScript.collision_rids(source))
 
 	var authored_direction := Vector3(emission.get("direction", Vector3.ZERO))
 	var attack_ground_direction := _launch_position.direction_to(_aim_position) \
@@ -681,7 +682,7 @@ func _fallback_target_collision(from: Vector3, to: Vector3) -> bool:
 func _handle_collisions(collisions: Array[Dictionary]) -> bool:
 	for collision in collisions:
 		var collider: Object = collision.get("collider") as Object
-		var entity := _combat_entity(collider)
+		var entity := CombatTargetScript.entity_of(collider)
 		if entity != null and entity == _source():
 			continue
 		if entity != null:
@@ -953,23 +954,6 @@ func _collisions_between(from: Vector3, to: Vector3) -> Array[Dictionary]:
 	return result
 
 
-func _combat_entity(collider: Object) -> Object:
-	var current := collider as Node
-	while current != null:
-		if current.has_method("combat_armour_type"):
-			return current
-		current = current.get_parent()
-	return null
-
-
-func _collect_collision_rids(object: Object, result: Array[RID]) -> void:
-	if object is CollisionObject3D:
-		result.append((object as CollisionObject3D).get_rid())
-	if object is Node:
-		for child in (object as Node).get_children():
-			_collect_collision_rids(child, result)
-
-
 func _resolve_target_position(
 		target_or_position: Variant,
 		world_origin := Vector3.INF
@@ -983,19 +967,7 @@ func _resolve_target_position(
 
 
 func _object_position(object: Object, world_origin := Vector3.INF) -> Vector3:
-	if object == null or not is_instance_valid(object):
-		return Vector3.INF
-	if world_origin.is_finite() and object.has_method("combat_aim_position_from"):
-		var value: Variant = object.call("combat_aim_position_from", world_origin)
-		if value is Vector3:
-			return value
-	if object.has_method("combat_aim_position"):
-		var value: Variant = object.call("combat_aim_position")
-		if value is Vector3:
-			return value
-	if object is Node3D:
-		return (object as Node3D).global_position
-	return Vector3.INF
+	return CombatTargetScript.position_of(object, world_origin)
 
 
 func _current_target_position() -> Vector3:
@@ -1005,20 +977,13 @@ func _current_target_position() -> Vector3:
 
 
 func _target_is_alive() -> bool:
-	var intended_target := target()
-	if intended_target == null or not is_instance_valid(intended_target):
-		return false
-	if intended_target is Node and (intended_target as Node).is_queued_for_deletion():
-		return false
-	if intended_target.has_method("combat_is_alive"):
-		return bool(intended_target.call("combat_is_alive"))
-	return true
+	return CombatTargetScript.is_alive(target())
 
 
 func _target_hit_radius(intended_target: Object) -> float:
-	if intended_target != null and intended_target.has_method("combat_hit_radius"):
-		return maxf(float(intended_target.call("combat_hit_radius")), DEFAULT_TARGET_HIT_RADIUS)
-	return DEFAULT_TARGET_HIT_RADIUS
+	return CombatTargetScript.hit_radius(
+		intended_target, CombatRulesScript.DEFAULT_TARGET_HIT_RADIUS
+	)
 
 
 func _source() -> Object:

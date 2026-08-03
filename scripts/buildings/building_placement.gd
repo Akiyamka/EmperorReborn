@@ -1,6 +1,10 @@
 class_name BuildingPlacement
 extends Node3D
 
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+
 signal building_placed(building: Node3D)
 
 enum PlaceResult {
@@ -459,7 +463,7 @@ func _existing_building_footprints() -> Array:
 			continue
 		if not _placement_owner_player_id_provider.is_null():
 			var player_id := int(_placement_owner_player_id_provider.call())
-			if int(building.get("owner_player_id")) != player_id:
+			if not EntityQueryScript.is_owned_by(building, player_id):
 				continue
 		var occupy_rows: Array[String] = []
 		if not _existing_building_occupy_rows.is_null():
@@ -867,36 +871,23 @@ func _has_occupy_cells(occupy_rows: Array[String]) -> bool:
 func _raycast(screen_position: Vector2, collision_mask: int) -> Dictionary:
 	if _camera == null or not is_inside_tree():
 		return {}
-	var ray_origin := _camera.project_ray_origin(screen_position)
-	var ray_end := ray_origin + _camera.project_ray_normal(screen_position) * 1000.0
-	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-	query.collision_mask = collision_mask
-	query.collide_with_areas = false
-	return get_world_3d().direct_space_state.intersect_ray(query)
+	return TerrainProbeScript.screen_pick(_camera, get_world_3d(), screen_position, collision_mask)
 
 
 func _snap_to_ground(point: Vector3) -> Vector3:
 	if not is_inside_tree():
 		return Vector3(point.x, 0.0, point.z)
-	var query := PhysicsRayQueryParameters3D.create(
-		Vector3(point.x, 200.0, point.z), Vector3(point.x, -200.0, point.z), 1
-	)
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		return Vector3(point.x, 0.0, point.z)
-	return hit["position"]
+	return TerrainProbeScript.snap_to_ground(get_world_3d(), point)
 
 
 func _play_placed_building_animation(building: Node3D) -> void:
 	_begin_building_construction(building)
 	_set_building_invulnerable(building, true)
-	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(&"construct"):
-		var construct_animation := player.get_animation(&"construct")
-		if construct_animation != null:
-			construct_animation.loop_mode = Animation.LOOP_NONE
-		player.animation_finished.connect(_on_placed_building_animation_finished.bind(building), CONNECT_ONE_SHOT)
-		_play_building_state(building, &"construct")
+	if AuthoredModelScript.play_one_shot(
+		building,
+		&"construct",
+		_on_placed_building_animation_finished.bind(building)
+	):
 		return
 	# No construct clip means the building pops in instantly - there is no
 	# vulnerable transition window to protect, so invulnerability is skipped.
@@ -930,9 +921,4 @@ func _set_building_invulnerable(building: Node3D, value: bool) -> void:
 
 
 func _play_building_state(building: Node3D, state: StringName) -> void:
-	if building.has_method("play_state"):
-		building.call("play_state", state)
-		return
-	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(state):
-		player.play(state)
+	AuthoredModelScript.play_state(building, state)

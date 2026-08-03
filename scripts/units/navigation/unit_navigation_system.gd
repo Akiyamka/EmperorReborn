@@ -19,7 +19,7 @@ const AirNavigationScript := preload("res://scripts/units/navigation/air/air_nav
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 @warning_ignore("unused_private_class_variable") # TODO(stage 2): move to nav_blocker_tracker.
-static var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 
 signal destination_slots_assigned(command_id: int, assignments: Array[Dictionary])
 @warning_ignore("unused_signal") # Public integration hook; intentionally not emitted here yet.

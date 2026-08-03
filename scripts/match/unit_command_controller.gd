@@ -8,6 +8,8 @@ const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit
 const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
 const SoundEventPlayerScript := preload("res://scripts/audio/sound_event_player.gd")
 const UnitVoiceCatalogScript := preload("res://scripts/audio/unit_voice_catalog.gd")
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
 
 var _camera: Camera3D
 var _terrain: MapLoader
@@ -825,12 +827,9 @@ func _raycast(screen_position: Vector2, collision_mask: int = 3) -> Dictionary:
 	if _camera == null:
 		return {}
 
-	var ray_origin := _camera.project_ray_origin(screen_position)
-	var ray_end := ray_origin + _camera.project_ray_normal(screen_position) * 1000.0
-	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-	query.collision_mask = collision_mask
-	query.collide_with_areas = false
-	return get_viewport().get_world_3d().direct_space_state.intersect_ray(query)
+	return TerrainProbeScript.screen_pick(
+		_camera, get_viewport().get_world_3d(), screen_position, collision_mask
+	)
 
 
 func _can_control(unit) -> bool:
@@ -866,12 +865,8 @@ func _owner_status(unit) -> String:
 
 
 func _players():
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Players")
+	return AutoloadLookupScript.roster(self)
 
 
 func _cursor_manager() -> Variant:
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Cursors")
+	return AutoloadLookupScript.cursors(self)

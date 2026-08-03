@@ -5,6 +5,7 @@ const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_definition_catalog.gd")
 const CombatLineOfFireScript := preload("res://scripts/combat/combat_line_of_fire.gd")
+const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
 
 ## Converted XBF models preserve the original Emperor attachment markers:
 ##   ::N...  pivot of weapon/turret N
@@ -985,11 +986,7 @@ func _bullet_target_position(target_or_position: Variant) -> Vector3:
 
 
 func _bullet_target_is_alive(target: Object) -> bool:
-	if target == null or not is_instance_valid(target):
-		return false
-	if target is Node and (target as Node).is_queued_for_deletion():
-		return false
-	return not target.has_method("combat_is_alive") or bool(target.call("combat_is_alive"))
+	return CombatTargetScript.is_alive(target)
 
 
 func _default_projectile_parent() -> Node:

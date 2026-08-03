@@ -11,6 +11,9 @@ const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/buildi
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const NavigationGridDebugScript := preload("res://scripts/units/navigation/navigation_grid_debug.gd")
 const MatchSnapshotScript := preload("res://scripts/match/match_snapshot.gd")
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
 const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
@@ -49,8 +52,8 @@ var _upgrade_option_ids: Array[StringName] = []
 var _unit_option_ids: Array[StringName] = []
 var _unit_roster_controller: UnitRosterController
 var _sidebar_house_pages: Array[StringName] = []
-var _unit_definition_catalog := UnitSceneCatalogScript.new()
-var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _unit_definition_catalog := UnitSceneCatalogScript.shared()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 var _match_snapshot
 
 
@@ -222,13 +225,7 @@ func _place_on_map() -> void:
 
 
 func _snap_to_ground(point: Vector3) -> Vector3:
-	var query := PhysicsRayQueryParameters3D.create(
-		Vector3(point.x, 200.0, point.z), Vector3(point.x, -200.0, point.z), 1
-	)
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		return Vector3(point.x, 0.0, point.z)
-	return hit["position"]
+	return TerrainProbeScript.snap_to_ground(get_world_3d(), point)
 
 
 func _process(delta: float) -> void:
@@ -388,10 +385,9 @@ func _refresh_sidebar_house_pages() -> void:
 		return
 	var changed := false
 	for building in buildings_root.get_children():
-		if int(building.get("owner_player_id")) != LOCAL_PLAYER_ID:
+		if not EntityQueryScript.is_owned_by(building, LOCAL_PLAYER_ID):
 			continue
-		if building.has_method("is_construction_complete") \
-		and not bool(building.call("is_construction_complete")):
+		if not EntityQueryScript.is_operational(building):
 			continue
 		var definition := _building_definition_catalog.definition(
 			StringName(String(building.get("config_id")))
@@ -448,4 +444,4 @@ func _local_player_upgrade_option_ids() -> Array[StringName]:
 
 
 func _players():
-	return get_node_or_null("/root/Players")
+	return AutoloadLookupScript.roster(self)

@@ -1,6 +1,14 @@
 extends CharacterBody3D
 class_name Unit
 
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+const TeamColorScript := preload("res://scripts/world/team_color.gd")
+const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const SelectionHaloBindingScript := preload("res://scripts/ui/selection_halo_binding.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
@@ -12,7 +20,7 @@ const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
 const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
 const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
 const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
-static var _definition_catalog := UnitSceneCatalogScript.new()
+static var _definition_catalog := UnitSceneCatalogScript.shared()
 
 signal owner_changed(player_id: int)
 signal navigation_enemy_encountered(enemies: Array[Node3D])
@@ -42,7 +50,7 @@ const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
 ## cadence measured from ReloadCount and Fire clip frame counts is 25 Hz.
 ## Fire clips therefore traverse the baked timeline at 25/20 speed.
 const BAKED_MODEL_FRAMES_PER_SECOND := 20.0
-const RULE_COMBAT_TICKS_PER_SECOND := 25.0
+const RULE_COMBAT_TICKS_PER_SECOND := CombatRulesScript.TICKS_PER_SECOND
 const FIRE_ANIMATION_SPEED_SCALE := (
 	RULE_COMBAT_TICKS_PER_SECOND / BAKED_MODEL_FRAMES_PER_SECOND
 )
@@ -911,13 +919,9 @@ func face_direction(direction: Vector3) -> void:
 
 
 func _terrain_hit_at(position: Vector3) -> Dictionary:
-	var query := PhysicsRayQueryParameters3D.create(
-		position + Vector3.UP * TERRAIN_RAY_HEIGHT,
-		position - Vector3.UP * TERRAIN_RAY_HEIGHT,
-		TERRAIN_COLLISION_MASK
+	return TerrainProbeScript.height_hit(
+		get_world_3d(), position, TERRAIN_COLLISION_MASK, [get_rid()], TERRAIN_RAY_HEIGHT
 	)
-	query.exclude = [get_rid()]
-	return get_world_3d().direct_space_state.intersect_ray(query)
 
 
 func setup(unit_id: StringName) -> void:
@@ -2406,32 +2410,11 @@ func _advance_attack_pursuit(
 
 
 func _combat_target_position(attack_target: Variant) -> Vector3:
-	if attack_target is Vector3:
-		return attack_target
-	if not attack_target is Object or not is_instance_valid(attack_target):
-		return Vector3.INF
-	var target_object := attack_target as Object
-	if target_object.has_method("combat_aim_position_from"):
-		var value: Variant = target_object.call(
-			"combat_aim_position_from", global_position
-		)
-		if value is Vector3:
-			return value
-	if target_object.has_method("combat_aim_position"):
-		var value: Variant = target_object.call("combat_aim_position")
-		if value is Vector3:
-			return value
-	return (target_object as Node3D).global_position if target_object is Node3D else Vector3.INF
+	return CombatTargetScript.position_of(attack_target, global_position)
 
 
 func _combat_target_is_alive(attack_target: Variant) -> bool:
-	if not attack_target is Object or not is_instance_valid(attack_target):
-		return false
-	var target_object := attack_target as Object
-	if target_object is Node and (target_object as Node).is_queued_for_deletion():
-		return false
-	return not target_object.has_method("combat_is_alive") \
-		or bool(target_object.call("combat_is_alive"))
+	return CombatTargetScript.is_alive(attack_target)
 
 
 func stop_at_current_position() -> void:
@@ -2538,11 +2521,7 @@ func _start_transition_animation(candidates: Array[StringName]) -> void:
 ## candidate-preference order. Used by both deployment transitions and death
 ## animation selection (_begin_death_sequence) so the two don't drift apart.
 func _find_animation_player(candidates: Array[StringName]) -> Dictionary:
-	for candidate in candidates:
-		for player in _animation_players:
-			if player.has_animation(candidate):
-				return {"player": player, "name": candidate}
-	return {"player": null, "name": &""}
+	return AuthoredModelScript.find_clip(_animation_players, candidates)
 
 
 ## Both transition directions count as "deploying" for every gameplay lock: a
@@ -2652,10 +2631,7 @@ func set_owner_player_id(player_id: int) -> void:
 
 
 func owner_player():
-	var players = _players()
-	if players == null:
-		return null
-	return players.player(owner_player_id)
+	return EntityQueryScript.owner_player(self, _players())
 
 
 func is_neutral_owner() -> bool:
@@ -2663,17 +2639,15 @@ func is_neutral_owner() -> bool:
 
 
 func is_owned_by(player_id: int) -> bool:
-	return owner_player_id == player_id
+	return EntityQueryScript.is_owned_by(self, player_id)
 
 
 func is_allied_with(player_id: int) -> bool:
-	var players = _players()
-	return players != null and players.are_allied(owner_player_id, player_id)
+	return EntityQueryScript.is_allied_with(self, player_id, _players())
 
 
 func is_enemy_of(player_id: int) -> bool:
-	var players = _players()
-	return players != null and players.are_enemies(owner_player_id, player_id)
+	return EntityQueryScript.is_enemy_of(self, player_id, _players())
 
 
 func _refresh_shield_visibility() -> void:
@@ -2747,12 +2721,7 @@ func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:
 
 
 func _collect_animation_players() -> Array[AnimationPlayer]:
-	var result: Array[AnimationPlayer] = []
-	if visual_root == null:
-		return result
-	for node in visual_root.find_children("*", "AnimationPlayer", true, false):
-		result.append(node as AnimationPlayer)
-	return result
+	return AuthoredModelScript.animation_players(visual_root)
 
 
 func weapon_can_fire_while_moving(weapon_index: int) -> bool:
@@ -3247,44 +3216,15 @@ func _movement_animation_speed_scale() -> float:
 
 
 func _refresh_owner_visuals() -> void:
-	var color := _owner_team_color()
-	for mesh_instance in _mesh_instances():
-		if _mesh_declares_team_color(mesh_instance):
-			mesh_instance.set_instance_shader_parameter("team_color", color)
-
-
-func _mesh_declares_team_color(mesh_instance: MeshInstance3D) -> bool:
-	var materials: Array[Material] = []
-	if mesh_instance.material_override != null:
-		materials.append(mesh_instance.material_override)
-	if mesh_instance.material_overlay != null:
-		materials.append(mesh_instance.material_overlay)
-	if mesh_instance.mesh != null:
-		for surface_index in mesh_instance.mesh.get_surface_count():
-			var material := mesh_instance.get_surface_override_material(surface_index)
-			if material == null:
-				material = mesh_instance.mesh.surface_get_material(surface_index)
-			if material != null:
-				materials.append(material)
-	for material in materials:
-		if material is ShaderMaterial:
-			var shader := (material as ShaderMaterial).shader
-			if shader != null and "instance uniform vec4 team_color" in shader.code:
-				return true
-	return false
+	TeamColorScript.apply(visual_root, _owner_team_color())
 
 
 func _owner_team_color() -> Color:
-	var roster_player = owner_player()
-	if roster_player == null or roster_player.is_neutral:
-		return Color(0.2, 0.85, 1.0)
-	return roster_player.team_color
+	return TeamColorScript.color_for(owner_player(), Color(0.2, 0.85, 1.0))
 
 
 func _players():
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Players")
+	return AutoloadLookupScript.roster(self)
 
 
 func _clear_invulnerability() -> void:
@@ -3308,27 +3248,10 @@ func _add_authored_collision() -> void:
 
 
 func _collision_sources() -> Array[Node3D]:
-	var result: Array[Node3D] = []
-	_collect_collision_sources(visual_root, COLLISION_OBJECT_NAME, result)
-	if result.is_empty():
-		_collect_collision_sources(visual_root, "slct", result, true)
-	return result
-
-
-func _collect_collision_sources(node: Node, original_name: String, result: Array[Node3D], prefix_match := false) -> void:
-	if node is Node3D and _is_collision_source(node, original_name, prefix_match):
-		_hide_collision_meshes(node)
-		result.append(node)
-		return
-	for child in node.get_children():
-		_collect_collision_sources(child, original_name, result, prefix_match)
-
-
-func _is_collision_source(node: Node3D, original_name: String, prefix_match: bool) -> bool:
-	var source_name := String(node.get_meta("original_name", ""))
-	var matches := source_name.to_lower().begins_with(original_name) if prefix_match else source_name == original_name
-	var points: PackedVector3Array = node.get_meta("collision_points", PackedVector3Array())
-	return matches and points.size() >= 4
+	return AuthoredModelScript.collision_sources(visual_root, [
+		{"name": COLLISION_OBJECT_NAME, "prefix": false},
+		{"name": "slct", "prefix": true},
+	])
 
 
 func _collision_shape(source: Node3D) -> Shape3D:
@@ -3353,7 +3276,7 @@ func _add_selection_halo() -> void:
 	_selection_halo = SelectionHaloScript.new()
 	_selection_halo.name = "SelectionHalo"
 	add_child(_selection_halo)
-	var anchor := _halo_anchor_node(visual_root)
+	var anchor := SelectionHaloBindingScript.anchor(visual_root)
 	_selection_halo.configure(
 		self, _selection_radius(), _selection_position(), anchor
 	)
@@ -3372,91 +3295,19 @@ func _rebuild_selection_halo() -> void:
 
 
 func _selection_radius() -> float:
-	var anchor_bounds := _halo_anchor_bounds()
-	if anchor_bounds.size.x > 0.0 or anchor_bounds.size.z > 0.0:
-		return maxf(anchor_bounds.size.x, anchor_bounds.size.z) * 0.5
-
-	var bounds := _selection_bounds()
-	# A halo is circular: its diameter follows the authored selection volume's
-	# narrow horizontal axis, not its length.  This keeps long vehicles and
-	# buildings from receiving an oversized circle.
-	return minf(bounds.size.x, bounds.size.z) * 0.5
+	return SelectionHaloBindingScript.radius(visual_root, self)
 
 
 func _selection_position() -> Vector3:
-	var anchor: Node3D = _halo_anchor_node(visual_root)
-	if anchor != null:
-		return to_local(anchor.to_global(Vector3.ZERO))
-
-	return Vector3(0.0, _selection_bounds().end.y + 0.05, 0.0)
-
-
-func _halo_anchor_bounds() -> AABB:
-	var anchor: Node3D = _halo_anchor_node(visual_root)
-	if anchor == null or not anchor.has_meta("halo_anchor_bounds"):
-		return AABB()
-	var source_bounds: AABB = anchor.get_meta("halo_anchor_bounds")
-	var source_to_global := anchor.global_transform
-	var reference_basis: Variant = (
-		anchor.get_meta("halo_anchor_reference_basis")
-		if anchor.has_meta("halo_anchor_reference_basis")
-		else null
-	)
-	var anchor_parent := anchor.get_parent() as Node3D
-	if reference_basis is Basis and anchor_parent != null:
-		source_to_global.basis = (
-			anchor_parent.global_transform.basis * (reference_basis as Basis)
-		)
-	var bounds := AABB()
-	var has_bounds := false
-	for corner in _aabb_corners(source_bounds):
-		var point := to_local(source_to_global * corner)
-		if has_bounds:
-			bounds = bounds.expand(point)
-		else:
-			bounds = AABB(point, Vector3.ZERO)
-			has_bounds = true
-	return bounds
+	return SelectionHaloBindingScript.position(visual_root, self)
 
 
 func _selection_bounds() -> AABB:
-	var bounds := AABB()
-	var has_bounds := false
-	for marker in _selection_marker_nodes(visual_root):
-		var marker_bounds: AABB = marker.get_meta("selection_bounds")
-		for corner in _aabb_corners(marker_bounds):
-			var point := to_local(marker.to_global(corner))
-			if has_bounds:
-				bounds = bounds.expand(point)
-			else:
-				bounds = AABB(point, Vector3.ZERO)
-				has_bounds = true
-	if has_bounds:
-		return bounds
-	return AABB(Vector3.ZERO, Vector3(1.0, 1.0, 1.0))
-
-
-func _selection_marker_nodes(node: Node) -> Array[Node3D]:
-	var result: Array[Node3D] = []
-	_collect_selection_marker_nodes(node, result)
-	return result
-
-
-func _collect_selection_marker_nodes(node: Node, result: Array[Node3D]) -> void:
-	if node is Node3D and node.has_meta("selection_bounds"):
-		result.append(node)
-	for child in node.get_children():
-		_collect_selection_marker_nodes(child, result)
+	return AuthoredModelScript.selection_bounds(visual_root, self)
 
 
 func _halo_anchor_node(node: Node) -> Node3D:
-	if node is Node3D and node.has_meta("halo_anchor"):
-		return node
-	for child in node.get_children():
-		var anchor: Node3D = _halo_anchor_node(child)
-		if anchor != null:
-			return anchor
-	return null
+	return SelectionHaloBindingScript.anchor(node)
 
 
 func _aabb_corners(bounds: AABB) -> Array[Vector3]:

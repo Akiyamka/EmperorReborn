@@ -1,6 +1,9 @@
 class_name UnitRosterController
 extends Node
 
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+
 ## docs/mechanics/production.md section 3 "unit production": the roster half
 ## only. The Infantry/Vehicles panel tabs list the units the technology tree
 ## currently unlocks -- primary production building owned, its upgrade
@@ -39,8 +42,8 @@ var _production_queues: Dictionary = {}
 ## the gradual-payment implementation shared with building construction while
 ## allowing the documented 100-unit production queue.
 var _pending_unit_ids: Dictionary = {}
-var _unit_scene_catalog := UnitSceneCatalogScript.new()
-var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _unit_scene_catalog := UnitSceneCatalogScript.shared()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 
 
 func setup(unit_ids: Array[StringName]) -> void:
@@ -213,7 +216,7 @@ func _production_building_id(config: Resource) -> StringName:
 func _production_building_for(building_id: StringName, player_id: int) -> Node3D:
 	if building_id == &"" or not is_inside_tree():
 		return null
-	var players = get_node_or_null("/root/Players")
+	var players = AutoloadLookupScript.roster(self)
 	if players != null:
 		var primary = players.primary_building(player_id, String(building_id)) as Node3D
 		if _is_owned_production_building(primary, building_id, player_id):
@@ -231,11 +234,9 @@ func _production_building_for(building_id: StringName, player_id: int) -> Node3D
 
 func _is_owned_production_building(building: Node3D, building_id: StringName, player_id: int) -> bool:
 	return (
-		building != null
-		and is_instance_valid(building)
-		and not building.is_queued_for_deletion()
+		EntityQueryScript.is_live(building)
 		and StringName(String(building.get("config_id"))) == building_id
-		and int(building.get("owner_player_id")) == player_id
+		and EntityQueryScript.is_owned_by(building, player_id)
 		and _is_building_construction_complete(building)
 	)
 
@@ -322,18 +323,13 @@ func _start_next_unit_order(production_building_id: StringName) -> void:
 
 
 func _units_parent(building: Node3D) -> Node:
-	var existing_unit = get_tree().get_first_node_in_group("units")
-	if existing_unit != null and existing_unit.get_parent() != null:
-		return existing_unit.get_parent()
-	var scene_root := get_tree().current_scene
-	var units_root := scene_root.get_node_or_null("Units") if scene_root != null else null
-	return units_root if units_root != null else building.get_parent()
+	return EntityQueryScript.units_parent(get_tree(), building.get_parent())
 
 
 func _owned_unit_count(player_id: int) -> int:
 	var count := 0
 	for node in get_tree().get_nodes_in_group("units"):
-		if int(node.get("owner_player_id")) == player_id:
+		if EntityQueryScript.is_owned_by(node, player_id):
 			count += 1
 	return count
 
@@ -343,11 +339,7 @@ func _default_rally_point(building: Node3D) -> Vector3:
 
 
 func _production_exit_direction(building: Node3D) -> Vector3:
-	if building != null and building.has_method("exit_direction"):
-		return building.call("exit_direction") as Vector3
-	# Production buildings are converted Emperor assets whose authored exit is
-	# local +Z. The fallback keeps that legacy scene contract explicit.
-	return SpatialOrientationScript.world_horizontal_axis(building, Vector3.BACK)
+	return EntityQueryScript.exit_direction(building)
 
 
 func _load_unit_definitions() -> void:
@@ -376,12 +368,7 @@ func _is_unit_available(unit_id: StringName) -> bool:
 
 
 func _is_building_construction_complete(building: Node) -> bool:
-	if building == null or not is_instance_valid(building) or building.is_queued_for_deletion():
-		return false
-	# Compatibility for test doubles and legacy scene nodes that predate the
-	# explicit construction lifecycle: only Building nodes exposing the new
-	# contract can be in an incomplete state.
-	return not building.has_method("is_construction_complete") or bool(building.call("is_construction_complete"))
+	return EntityQueryScript.is_operational(building)
 
 
 func _refresh_unit_option_states() -> void:
@@ -425,7 +412,7 @@ func _unit_tooltip(unit_id: StringName) -> String:
 func _local_player() -> PlayerData:
 	if not is_inside_tree():
 		return null
-	var players = get_node_or_null("/root/Players")
+	var players = AutoloadLookupScript.roster(self)
 	if players == null:
 		return null
 	return players.local_player() as PlayerData

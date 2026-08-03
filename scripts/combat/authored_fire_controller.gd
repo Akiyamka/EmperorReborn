@@ -1,10 +1,12 @@
 class_name AuthoredFireController
 extends RefCounted
 
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+
 signal weapon_fired(projectiles: Array, target: Variant, weapon_index: int)
 
 const BAKED_MODEL_FRAMES_PER_SECOND := 20.0
-const RULE_COMBAT_TICKS_PER_SECOND := 25.0
+const RULE_COMBAT_TICKS_PER_SECOND := CombatRulesScript.TICKS_PER_SECOND
 const FIRE_ANIMATION_SPEED_SCALE := (
 	RULE_COMBAT_TICKS_PER_SECOND / BAKED_MODEL_FRAMES_PER_SECOND
 )

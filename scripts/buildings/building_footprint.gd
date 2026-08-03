@@ -2,6 +2,7 @@ class_name BuildingFootprint
 extends RefCounted
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 const AXIS_ALIGNMENT_DOT := 0.9999
 const EDGE_EPSILON := 0.00001
 
@@ -97,9 +98,7 @@ static func _fill_axis_aligned(
 
 
 static func _building_exit_direction(building: Node3D) -> Vector3:
-	if building.has_method("exit_direction"):
-		return building.call("exit_direction") as Vector3
-	return SpatialOrientationScript.world_horizontal_axis(building, Vector3.BACK)
+	return EntityQueryScript.exit_direction(building)
 
 
 static func _uses_grid_axes(right: Vector3, exit_direction: Vector3) -> bool:

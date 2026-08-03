@@ -1,6 +1,7 @@
 class_name CombatGroundDecal
 extends Node3D
 
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
 const GameSettingsCatalogScript := preload(
 	"res://scripts/rules/game_settings_catalog.gd"
 )
@@ -100,14 +101,12 @@ func _terrain_placement(impact_position: Vector3) -> Dictionary:
 	}
 	if get_world_3d() == null:
 		return fallback
-	var query := PhysicsRayQueryParameters3D.create(
+	var hit := TerrainProbeScript.cast(
+		get_world_3d(),
 		impact_position + Vector3.UP * RAY_HEIGHT,
 		impact_position + Vector3.DOWN * RAY_DEPTH,
 		TERRAIN_COLLISION_MASK
 	)
-	query.collide_with_areas = false
-	query.collide_with_bodies = true
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
 		return fallback
 	var normal := Vector3(hit.get("normal", Vector3.UP)).normalized()

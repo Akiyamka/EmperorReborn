@@ -1,6 +1,13 @@
 class_name Building
 extends Node3D
 
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+const TeamColorScript := preload("res://scripts/world/team_color.gd")
+const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
+const SelectionHaloBindingScript := preload("res://scripts/ui/selection_halo_binding.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
@@ -10,7 +17,7 @@ const AuthoredFireControllerScript := preload(
 	"res://scripts/combat/authored_fire_controller.gd"
 )
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
-static var _native_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _native_definition_catalog := BuildingDefinitionCatalogScript.shared()
 ## Converted Emperor buildings expose their apron/door on authored local +Z.
 const LOCAL_EXIT_DIRECTION := Vector3.BACK
 
@@ -37,7 +44,7 @@ const REFINERY_ROLE := "Refinery"
 const WALL_BUILDING_GROUP := "Wall"
 const REFINERY_DOCK_RELEASE_DELAY_SECONDS := 3.0
 const INVALID_REFINERY_DOCK := -1
-const RULE_COMBAT_TICKS_PER_SECOND := 25.0
+const RULE_COMBAT_TICKS_PER_SECOND := CombatRulesScript.TICKS_PER_SECOND
 const AUTO_TARGET_REFRESH_SECONDS := 0.25
 const POPUP_TURRET_ROLE := &"PopupTurret"
 const POPUP_DEPLOY_ANIMATION := &"Deploy_Gun"
@@ -549,28 +556,10 @@ func _collision_sources() -> Array[Node3D]:
 ## an explicit selection volume. This API is shared by runtime collision and
 ## building-scene baking so their footprint decisions cannot diverge.
 static func collision_sources_for(source_root: Node, hide_source_meshes := false) -> Array[Node3D]:
-	var result: Array[Node3D] = []
-	_collect_collision_sources(source_root, "slct", result, true, hide_source_meshes)
-	if result.is_empty():
-		_collect_collision_sources(source_root, COLLISION_OBJECT_NAME, result, false, hide_source_meshes)
-	return result
-
-
-static func _collect_collision_sources(node: Node, original_name: String, result: Array[Node3D], prefix_match := false, hide_source_meshes := false) -> void:
-	if node is Node3D and _is_collision_source(node, original_name, prefix_match):
-		if hide_source_meshes:
-			_hide_collision_meshes(node)
-		result.append(node)
-		return
-	for child in node.get_children():
-		_collect_collision_sources(child, original_name, result, prefix_match, hide_source_meshes)
-
-
-static func _is_collision_source(node: Node3D, original_name: String, prefix_match: bool) -> bool:
-	var source_name := String(node.get_meta("original_name", ""))
-	var matches := source_name.to_lower().begins_with(original_name) if prefix_match else source_name == original_name
-	var points: PackedVector3Array = node.get_meta("collision_points", PackedVector3Array())
-	return matches and points.size() >= 4
+	return AuthoredModelScript.collision_sources(source_root, [
+		{"name": "slct", "prefix": true},
+		{"name": COLLISION_OBJECT_NAME, "prefix": false},
+	], hide_source_meshes)
 
 
 func _collision_shape(source: Node3D) -> Shape3D:
@@ -1490,37 +1479,11 @@ func _automatic_target_is_usable(turret, target: Variant) -> bool:
 
 
 func _combat_target_position(target: Variant) -> Vector3:
-	if target is Vector3:
-		return target
-	if not target is Object or not is_instance_valid(target):
-		return Vector3.INF
-	var target_object := target as Object
-	if target_object.has_method("combat_aim_position_from"):
-		var value: Variant = target_object.call(
-			"combat_aim_position_from", global_position
-		)
-		if value is Vector3:
-			return value
-	if target_object.has_method("combat_aim_position"):
-		var value: Variant = target_object.call("combat_aim_position")
-		if value is Vector3:
-			return value
-	return (
-		(target_object as Node3D).global_position
-		if target_object is Node3D
-		else Vector3.INF
-	)
+	return CombatTargetScript.position_of(target, global_position)
 
 
 func _combat_target_is_alive(target: Variant) -> bool:
-	if not target is Object or not is_instance_valid(target):
-		return false
-	var target_object := target as Object
-	if target_object is Node \
-	and (target_object as Node).is_queued_for_deletion():
-		return false
-	return not target_object.has_method("combat_is_alive") \
-		or bool(target_object.call("combat_is_alive"))
+	return CombatTargetScript.is_alive(target)
 
 
 func _combat_is_operational() -> bool:
@@ -1541,10 +1504,7 @@ func _combat_turret_for_weapon(weapon_index: int):
 
 
 func owner_player():
-	var players = _players()
-	if players == null:
-		return null
-	return players.player(owner_player_id)
+	return EntityQueryScript.owner_player(self, _players())
 
 
 func is_neutral_owner() -> bool:
@@ -1552,17 +1512,15 @@ func is_neutral_owner() -> bool:
 
 
 func is_owned_by(player_id: int) -> bool:
-	return owner_player_id == player_id
+	return EntityQueryScript.is_owned_by(self, player_id)
 
 
 func is_allied_with(player_id: int) -> bool:
-	var players = _players()
-	return players != null and players.are_allied(owner_player_id, player_id)
+	return EntityQueryScript.is_allied_with(self, player_id, _players())
 
 
 func is_enemy_of(player_id: int) -> bool:
-	var players = _players()
-	return players != null and players.are_enemies(owner_player_id, player_id)
+	return EntityQueryScript.is_enemy_of(self, player_id, _players())
 
 
 func _refresh_owner_visuals() -> void:
@@ -1780,38 +1738,11 @@ func _set_generated_energy(value: int) -> void:
 
 
 func _owner_team_color() -> Color:
-	var roster_player = owner_player()
-	if roster_player == null or roster_player.is_neutral:
-		return Color(0.58, 0.58, 0.58)
-	return roster_player.team_color
+	return TeamColorScript.color_for(owner_player(), Color(0.58, 0.58, 0.58))
 
 
 func _apply_team_color(node: Node, color: Color) -> void:
-	if node is MeshInstance3D and _mesh_declares_team_color(node as MeshInstance3D):
-		node.set_instance_shader_parameter("team_color", color)
-	for child in node.get_children():
-		_apply_team_color(child, color)
-
-
-func _mesh_declares_team_color(mesh_instance: MeshInstance3D) -> bool:
-	var materials: Array[Material] = []
-	if mesh_instance.material_override != null:
-		materials.append(mesh_instance.material_override)
-	if mesh_instance.material_overlay != null:
-		materials.append(mesh_instance.material_overlay)
-	if mesh_instance.mesh != null:
-		for surface_index in mesh_instance.mesh.get_surface_count():
-			var material := mesh_instance.get_surface_override_material(surface_index)
-			if material == null:
-				material = mesh_instance.mesh.surface_get_material(surface_index)
-			if material != null:
-				materials.append(material)
-	for material in materials:
-		if material is ShaderMaterial:
-			var shader := (material as ShaderMaterial).shader
-			if shader != null and "instance uniform vec4 team_color" in shader.code:
-				return true
-	return false
+	TeamColorScript.apply(node, color)
 
 
 func _add_selection_halo() -> void:
@@ -1848,85 +1779,23 @@ func _refresh_repair_effect() -> void:
 
 
 func _selection_radius() -> float:
-	var anchor_bounds := _halo_anchor_bounds()
-	if anchor_bounds.size.x > 0.0 or anchor_bounds.size.z > 0.0:
-		return maxf(anchor_bounds.size.x, anchor_bounds.size.z) * 0.5
-
-	var bounds := _selection_bounds()
-	# A halo is circular: its diameter follows the authored selection volume's
-	# narrow horizontal axis, not its length.  This keeps long vehicles and
-	# buildings from receiving an oversized circle.
-	return minf(bounds.size.x, bounds.size.z) * 0.5
+	return SelectionHaloBindingScript.radius(self, self)
 
 
 func _selection_position() -> Vector3:
-	var anchor: Node3D = _halo_anchor_node(self)
-	if anchor != null:
-		return to_local(anchor.to_global(Vector3.ZERO))
-
-	return Vector3(0.0, _selection_bounds().end.y + 0.05, 0.0)
-
-
-func _halo_anchor_bounds() -> AABB:
-	var anchor: Node3D = _halo_anchor_node(self)
-	if anchor == null or not anchor.has_meta("halo_anchor_bounds"):
-		return AABB()
-	var source_bounds: AABB = anchor.get_meta("halo_anchor_bounds")
-	var bounds := AABB()
-	var has_bounds := false
-	for corner in _aabb_corners(source_bounds):
-		var point := to_local(anchor.to_global(corner))
-		if has_bounds:
-			bounds = bounds.expand(point)
-		else:
-			bounds = AABB(point, Vector3.ZERO)
-			has_bounds = true
-	return bounds
+	return SelectionHaloBindingScript.position(self, self)
 
 
 func _selection_bounds() -> AABB:
-	var bounds := AABB()
-	var has_bounds := false
-	for marker in _selection_marker_nodes(self):
-		var marker_bounds: AABB = marker.get_meta("selection_bounds")
-		for corner in _aabb_corners(marker_bounds):
-			var point := to_local(marker.to_global(corner))
-			if has_bounds:
-				bounds = bounds.expand(point)
-			else:
-				bounds = AABB(point, Vector3.ZERO)
-				has_bounds = true
-	if has_bounds:
-		return bounds
-	return AABB(Vector3.ZERO, Vector3(1.0, 1.0, 1.0))
-
-func _selection_marker_nodes(node: Node) -> Array[Node3D]:
-	var result: Array[Node3D] = []
-	_collect_selection_marker_nodes(node, result)
-	return result
-
-
-func _collect_selection_marker_nodes(node: Node, result: Array[Node3D]) -> void:
-	if node is Node3D and node.has_meta("selection_bounds"):
-		result.append(node)
-	for child in node.get_children():
-		_collect_selection_marker_nodes(child, result)
+	return AuthoredModelScript.selection_bounds(self, self)
 
 
 func _halo_anchor_node(node: Node) -> Node3D:
-	if node is Node3D and node.has_meta("halo_anchor"):
-		return node
-	for child in node.get_children():
-		var anchor: Node3D = _halo_anchor_node(child)
-		if anchor != null:
-			return anchor
-	return null
+	return SelectionHaloBindingScript.anchor(node)
 
 
 func _players():
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Players")
+	return AutoloadLookupScript.roster(self)
 
 
 ## docs/mechanics/production.md section 4/5: a purchased global per-type

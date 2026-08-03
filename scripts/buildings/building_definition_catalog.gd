@@ -2,10 +2,17 @@ class_name BuildingDefinitionCatalog
 extends RefCounted
 
 const Manifest := preload("res://resources/buildings/generated_building_manifest.gd")
-var _cache: Dictionary = {}
-var _scene_cache: Dictionary = {}
-var _construction_yard_house_ids: Array[StringName] = []
-var _construction_yard_houses_loaded := false
+static var _cache: Dictionary = {}
+static var _scene_cache: Dictionary = {}
+static var _construction_yard_house_ids: Array[StringName] = []
+static var _construction_yard_houses_loaded := false
+static var _shared_instance: BuildingDefinitionCatalog
+
+
+static func shared() -> BuildingDefinitionCatalog:
+	if _shared_instance == null:
+		_shared_instance = BuildingDefinitionCatalog.new()
+	return _shared_instance
 
 
 func has_scene(config_id: StringName) -> bool:

@@ -1382,32 +1382,40 @@ func _test_continuous_stream_damage_split() -> void:
 
 
 func _test_projectile_damage_scale_isolation() -> void:
-	var rules = root.get_node("Rules")
-	var first_payload = _runtime_bullet(rules, &"Mortar_B")
-	var second_payload = _runtime_bullet(rules, &"Mortar_B")
-	first_payload.damage_scale = 0.25
-	second_payload.damage_scale = 1.75
-	var first = CombatProjectileScript.new()
-	var second = CombatProjectileScript.new()
-	root.add_child(first)
-	root.add_child(second)
-	var target_position := Vector3(0.0, 0.0, -8.0)
+	var turret = CombatTurretScript.new()
 	_expect(
-		first.launch(first_payload, _emission(Vector3.ZERO, Vector3.FORWARD), target_position),
-		"the first scaled projectile launches"
+		turret.configure(&"ATInfGun"),
+		"the isolation fixture must configure one real turret"
 	)
+	var first_shot: Array = turret.try_fire(false, false, 0.25)
+	var second_shot: Array = turret.try_fire(false, false, 1.75)
 	_expect(
-		second.launch(second_payload, _emission(Vector3.RIGHT, Vector3.FORWARD), target_position),
-		"the second scaled projectile launches"
+		first_shot.size() == 1 and second_shot.size() == 1,
+		"one configured turret must emit both scaled shots"
 	)
+	var first_payload = first_shot[0]
+	var second_payload = second_shot[0]
 	_expect(
-		first.bullet != second.bullet
-		and is_equal_approx(first.bullet.damage_scale, 0.25)
-		and is_equal_approx(second.bullet.damage_scale, 1.75),
-		"each in-flight projectile must retain its own mutable shot payload"
+		first_payload != second_payload
+		and is_equal_approx(first_payload.damage_scale, 0.25)
+		and is_equal_approx(second_payload.damage_scale, 1.75),
+		"each turret shot must receive its own mutable payload"
 	)
-	first.free()
-	second.free()
+	var first_target := PhysicsCombatTarget.new(Vector3.ZERO)
+	var second_target := PhysicsCombatTarget.new(Vector3.ZERO)
+	root.add_child(first_target)
+	root.add_child(second_target)
+	var resolver = CombatImpactResolverScript.new()
+	resolver.resolve(first_payload, first_target, Vector3.ZERO, first_target)
+	resolver.resolve(second_payload, second_target, Vector3.ZERO, second_target)
+	_expect(
+		is_equal_approx(first_target.damage_taken, first_payload.damage_against(&"None"))
+		and is_equal_approx(second_target.damage_taken, second_payload.damage_against(&"None"))
+		and second_target.damage_taken > first_target.damage_taken,
+		"each payload scale must survive through actual impact damage"
+	)
+	first_target.free()
+	second_target.free()
 
 
 func _test_impact_resolution() -> void:

@@ -1,6 +1,8 @@
 class_name DeathCorpse
 extends RigidBody3D
 
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
+
 ## Throwaway node spawned by `Unit._begin_death_sequence()` the instant a unit
 ## dies (and, per the death-animation plan's §8, later reused for building
 ## destruction). Deliberately not under scripts/units/: it is not a unit and
@@ -184,12 +186,7 @@ func _play_death_clip(clip: StringName) -> void:
 
 
 func _collect_animation_players() -> Array[AnimationPlayer]:
-	var result: Array[AnimationPlayer] = []
-	if _model == null:
-		return result
-	for node in _model.find_children("*", "AnimationPlayer", true, false):
-		result.append(node as AnimationPlayer)
-	return result
+	return AuthoredModelScript.animation_players(_model)
 
 
 func _on_death_animation_finished(animation_name: StringName) -> void:

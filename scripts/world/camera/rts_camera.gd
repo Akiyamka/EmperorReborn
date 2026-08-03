@@ -3,6 +3,7 @@ extends Node3D
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
 
 const RTSCameraConfigScript := preload("res://scripts/world/camera/rts_camera_config.gd")
 
@@ -162,9 +163,7 @@ func _can_scroll(direction: Vector2) -> bool:
 
 
 func _cursor_manager() -> Variant:
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Cursors")
+	return AutoloadLookupScript.cursors(self)
 
 
 ## Clamps the point the camera actually looks at (center ray projected onto
