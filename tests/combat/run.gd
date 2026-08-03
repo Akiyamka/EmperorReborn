@@ -85,7 +85,7 @@ var _current_case := ""
 var _combat_catalog := CombatDefinitionCatalogScript.new()
 
 
-class CombatTarget extends RefCounted:
+class FakeCombatTarget extends RefCounted:
 	var armour_type: StringName
 	var airborne := false
 	var damage_taken := 0.0
@@ -592,7 +592,7 @@ func _test_armour_matrix() -> void:
 		"the zero matrix pair must deal no damage"
 	)
 
-	var heavy_target := CombatTarget.new(&"Heavy")
+	var heavy_target := FakeCombatTarget.new(&"Heavy")
 	var resolver = CombatImpactResolverScript.new()
 	var results: Array[Dictionary] = resolver.resolve(
 		bullet, null, Vector3.ZERO, heavy_target
@@ -615,7 +615,7 @@ func _test_armour_matrix() -> void:
 
 func _test_target_domains() -> void:
 	var lmg = CombatBulletScript.new(_combat_catalog.bullet(&"LMG_B"), _combat_catalog.warhead(&"LMG_W"))
-	var aircraft := CombatTarget.new(&"Aircraft", true)
+	var aircraft := FakeCombatTarget.new(&"Aircraft", true)
 	_expect(not lmg.can_hit(aircraft), "a bullet without AntiAircraft must reject aircraft")
 	_expect(lmg.can_hit_ground(), "an ordinary ground weapon must accept attack-ground")
 	_expect(
@@ -630,7 +630,7 @@ func _test_target_domains() -> void:
 	)
 	_expect(adp.can_hit(aircraft), "ATHEATADP_B must accept aircraft")
 	_expect(
-		not adp.can_hit(CombatTarget.new(&"Heavy")),
+		not adp.can_hit(FakeCombatTarget.new(&"Heavy")),
 		"ATHEATADP_B's explicit AntiGround=false must reject ground targets"
 	)
 	_expect(not adp.can_hit_ground(), "an air-only weapon must reject attack-ground coordinates")
@@ -702,7 +702,7 @@ func _test_impact_effect_contract() -> void:
 	var rules = root.get_node("Rules")
 	var leech = _runtime_bullet(rules, &"Leech_B")
 	var resolver = CombatImpactResolverScript.new()
-	var vehicle := CombatTarget.new(&"Heavy")
+	var vehicle := FakeCombatTarget.new(&"Heavy")
 	vehicle.accepted_effects.append(&"leech")
 	var accepted: Array[Dictionary] = resolver.resolve(
 		leech, null, Vector3.ZERO, vehicle, CombatSource.new()
@@ -720,7 +720,7 @@ func _test_impact_effect_contract() -> void:
 		"the resolver must pass infection parameters to the typed effect receiver"
 	)
 
-	var rejected := CombatTarget.new(&"Heavy")
+	var rejected := FakeCombatTarget.new(&"Heavy")
 	var fallback: Array[Dictionary] = resolver.resolve(
 		leech, null, Vector3.ZERO, rejected, CombatSource.new()
 	)
@@ -734,7 +734,7 @@ func _test_impact_effect_contract() -> void:
 func _test_lingering_gas_damage() -> void:
 	var rules = root.get_node("Rules")
 	var gas = _runtime_bullet(rules, &"GasInf_B")
-	var impact_target := CombatTarget.new(&"BPV")
+	var impact_target := FakeCombatTarget.new(&"BPV")
 	var projectile = CombatProjectileScript.new()
 	root.add_child(projectile)
 	projectile.bullet = gas
@@ -753,7 +753,7 @@ func _test_lingering_gas_damage() -> void:
 		spawned_linger.free()
 	projectile.free()
 
-	var target := CombatTarget.new(&"BPV")
+	var target := FakeCombatTarget.new(&"BPV")
 	var effect = CombatLingerEffectScript.new()
 	root.add_child(effect)
 	_expect(
@@ -784,7 +784,7 @@ func _test_lingering_gas_damage() -> void:
 
 func _test_hitscan_projectile() -> void:
 	var rules = root.get_node("Rules")
-	var target := CombatTarget.new(&"None")
+	var target := FakeCombatTarget.new(&"None")
 	target.position = Vector3(0.0, 0.0, -5.0)
 	var projectile = CombatProjectileScript.new()
 	root.add_child(projectile)
@@ -957,7 +957,7 @@ func _test_laser_hitscan_visual() -> void:
 
 func _test_linear_projectile_no_lead() -> void:
 	var rules = root.get_node("Rules")
-	var target := CombatTarget.new(&"Heavy")
+	var target := FakeCombatTarget.new(&"Heavy")
 	target.position = Vector3(0.0, 0.0, -12.0)
 	var projectile = CombatProjectileScript.new()
 	root.add_child(projectile)
@@ -1019,7 +1019,7 @@ func _test_attack_ground_missile() -> void:
 
 func _test_homing_projectile() -> void:
 	var rules = root.get_node("Rules")
-	var target := CombatTarget.new(&"Aircraft", true)
+	var target := FakeCombatTarget.new(&"Aircraft", true)
 	target.position = Vector3(0.0, 0.0, -20.0)
 	var projectile = CombatProjectileScript.new()
 	root.add_child(projectile)
@@ -1062,7 +1062,7 @@ func _test_homing_flight_budget() -> void:
 		"a straight shot must keep firing range and flight budget identical"
 	)
 
-	var target := CombatTarget.new(&"Vehicle")
+	var target := FakeCombatTarget.new(&"Vehicle")
 	target.position = Vector3(0.0, 0.0, -18.0)
 	var projectile = CombatProjectileScript.new()
 	root.add_child(projectile)
@@ -1236,7 +1236,7 @@ func _test_trajectory_moving_target_miss() -> void:
 	var rules = root.get_node("Rules")
 	var ground := PhysicsGround.new()
 	root.add_child(ground)
-	var target := CombatTarget.new(&"Heavy")
+	var target := FakeCombatTarget.new(&"Heavy")
 	target.position = Vector3(0.0, 3.0, -20.0)
 	var projectile = CombatProjectileScript.new()
 	root.add_child(projectile)
@@ -2552,7 +2552,7 @@ func _test_limited_turret_hull_turn() -> void:
 	var emission: Dictionary = turret.peek_emission()
 	var initial_hull_yaw: float = unit.global_rotation.y
 	var initial_forward: Vector3 = unit.facing_direction()
-	var target := CombatTarget.new(&"None")
+	var target := FakeCombatTarget.new(&"None")
 	target.position = unit.global_position - initial_forward * 10.0
 	target.position.y = Vector3(emission["position"]).y
 	_expect(
@@ -2948,7 +2948,7 @@ func _test_turret_recenter_after_move() -> void:
 	var rest_direction: Vector3 = rest_emission["direction"]
 	rest_direction.y = 0.0
 	rest_direction = rest_direction.normalized()
-	var target := CombatTarget.new(&"None")
+	var target := FakeCombatTarget.new(&"None")
 	target.position = Vector3(rest_emission["position"]) \
 		+ rest_direction.rotated(Vector3.UP, deg_to_rad(30.0)) * 10.0
 
@@ -3033,9 +3033,9 @@ func _test_unit_attack_order() -> void:
 	unit.replace_visual_scene(ATAPCModelScene)
 	var emission: Dictionary = unit.turret_emission_points()[0]
 	var direction: Vector3 = emission["direction"]
-	var target := CombatTarget.new(&"None")
+	var target := FakeCombatTarget.new(&"None")
 	target.position = Vector3(emission["position"]) + direction * 5.0
-	var aircraft := CombatTarget.new(&"Aircraft", true)
+	var aircraft := FakeCombatTarget.new(&"Aircraft", true)
 	aircraft.position = target.position
 	_expect(unit.can_attack(target), "an armed APC must accept a compatible ground target")
 	_expect(not unit.can_attack(aircraft), "the APC must reject a target its bullet cannot hit")
@@ -4356,7 +4356,7 @@ func _test_kindjal_deployed_fire() -> void:
 	var emission: Dictionary = active_turrets[0].peek_emission()
 	var forward: Vector3 = Vector3(emission["direction"])
 	forward.y = 0.0
-	var target := CombatTarget.new(&"Heavy")
+	var target := FakeCombatTarget.new(&"Heavy")
 	target.position = kindjal.global_position + forward.normalized() * 20.0
 
 	var fired_bullets: Array[StringName] = []
@@ -4500,7 +4500,7 @@ func _test_kobra_deployed_range_acquisition() -> void:
 	var forward := Vector3(emission["direction"])
 	forward.y = 0.0
 	forward = forward.normalized()
-	var target := CombatTarget.new(&"Heavy")
+	var target := FakeCombatTarget.new(&"Heavy")
 	var failed_distances: Array[float] = []
 	for distance_tenths in range(10, 321):
 		var distance := float(distance_tenths) * 0.1

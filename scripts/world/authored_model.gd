@@ -81,6 +81,41 @@ static func collision_sources(
 	return []
 
 
+static func add_selection_collision(owner: Node3D, sources: Array[Node3D]) -> StaticBody3D:
+	var bounds := AABB()
+	var has_bounds := false
+	var body := StaticBody3D.new()
+	body.name = "SelectionCollision"
+	body.collision_layer = 2
+	body.collision_mask = 0
+	if owner.get_node_or_null("CombatCollision") != null:
+		body.set_meta("combat_ignore", true)
+	for source in sources:
+		var shape := _collision_shape(source)
+		if shape == null:
+			push_warning("AuthoredModel: collision source %s has no usable convex shape" % source.get_path())
+			continue
+		var collision := CollisionShape3D.new()
+		collision.name = "AuthoredCollision"
+		collision.shape = shape
+		collision.transform = owner.global_transform.affine_inverse() * source.global_transform
+		body.add_child(collision)
+		for source_point in _collision_bounds_points(source):
+			var point := owner.to_local(source.to_global(source_point))
+			if has_bounds:
+				bounds = bounds.expand(point)
+			else:
+				bounds = AABB(point, Vector3.ZERO)
+				has_bounds = true
+	if body.get_child_count() == 0:
+		body.free()
+		return null
+	if has_bounds:
+		body.set_meta("collision_bounds", bounds)
+	owner.add_child(body)
+	return body
+
+
 static func selection_bounds(root: Node, coordinate_root: Node3D) -> AABB:
 	var markers: Array[Node3D] = []
 	_collect_meta_nodes(root, &"selection_bounds", markers)
@@ -120,6 +155,30 @@ static func _collect_collision_sources(
 			return
 	for child in node.get_children():
 		_collect_collision_sources(child, name, prefix, hide_source_meshes, result)
+
+
+static func _collision_shape(source: Node3D) -> Shape3D:
+	var points: PackedVector3Array = source.get_meta("collision_points", PackedVector3Array())
+	if points.size() >= 4:
+		var shape := ConvexPolygonShape3D.new()
+		shape.points = points
+		return shape
+	for child in source.get_children():
+		if child is MeshInstance3D and child.mesh != null:
+			return child.mesh.create_convex_shape(true, false)
+	return null
+
+
+static func _collision_bounds_points(source: Node3D) -> PackedVector3Array:
+	var points: PackedVector3Array = source.get_meta("collision_points", PackedVector3Array())
+	if not points.is_empty():
+		return points
+	var bounds := PackedVector3Array()
+	for child in source.get_children():
+		if child is MeshInstance3D and child.mesh != null:
+			for corner in _aabb_corners(child.get_aabb()):
+				bounds.append(child.position + corner)
+	return bounds
 
 
 static func _collect_meta_nodes(node: Node, meta_name: StringName, result: Array[Node3D]) -> void:

@@ -21,6 +21,7 @@ signal construction_yard_deployed(building: Node3D)
 signal mcv_undeployed(unit: Node3D)
 
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
+const PlacementContextScript := preload("res://scripts/buildings/placement_context.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
@@ -163,16 +164,13 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 
 	var placement: BuildingPlacement = BuildingPlacementScript.new()
 	add_child(placement)
-	placement.setup(
-		null,
-		_navigation_grid,
-		_buildings_root,
-		null,
-		null,
-		null,
-		null,
-		Callable(self, "_occupy_rows_for_existing_building")
+	var placement_context := PlacementContextScript.new()
+	placement_context.navigation_grid = _navigation_grid
+	placement_context.buildings_root = _buildings_root
+	placement_context.existing_building_occupy_rows = Callable(
+		self, "_occupy_rows_for_existing_building"
 	)
+	placement.setup(placement_context)
 	var occupy_rows: Array[String] = []
 	occupy_rows.assign(config.occupy_rows)
 	if not placement.begin(building_id, String(building_id), occupy_rows, false, true):

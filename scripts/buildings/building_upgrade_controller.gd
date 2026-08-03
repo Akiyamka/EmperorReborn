@@ -82,14 +82,10 @@ func handle_unhandled_input(_event: InputEvent) -> bool:
 func handle_upgrade_intent(building_id: StringName, button_index: int) -> bool:
 	if not _upgrade_option_ids.has(building_id):
 		return false
-	match button_index:
-		MOUSE_BUTTON_LEFT:
-			_on_upgrade_slot_left_pressed(building_id)
-			return true
-		MOUSE_BUTTON_RIGHT:
-			_on_upgrade_slot_right_pressed(building_id)
-			return true
-	return false
+	var kind := UpgradeOrderScript.Kind.REFINERY_DOCK \
+		if _is_refinery_dock_id(building_id) \
+		else UpgradeOrderScript.Kind.GLOBAL_TYPE
+	return _on_slot_pressed(building_id, button_index, kind)
 
 
 func _try_start_dock_upgrade(refinery: Node3D, dock_building_id: StringName = &"") -> void:
@@ -122,81 +118,42 @@ func _try_start_dock_upgrade(refinery: Node3D, dock_building_id: StringName = &"
 	_refresh_upgrade_option_states()
 
 
-func _on_upgrade_slot_left_pressed(building_id: StringName) -> void:
-	if _is_refinery_dock_id(building_id):
-		_on_dock_slot_left_pressed(building_id)
-		return
-
+func _on_slot_pressed(building_id: StringName, button_index: int, kind: int) -> bool:
+	if button_index not in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		return false
 	var order := _upgrade_queue.current_order()
+	var matches := order != null and order.kind == kind and order.upgrade_id == building_id
+	if button_index == MOUSE_BUTTON_RIGHT:
+		if not matches:
+			return true
+		if order.manually_paused:
+			_cancel_upgrade_order()
+		else:
+			_upgrade_queue.pause()
+			status_changed.emit("%s upgrade paused" % order.display_name)
+			_refresh_upgrade_option_states()
+		return true
+
 	if order == null:
-		_start_global_upgrade_order(building_id)
-	elif order.kind != UpgradeOrderScript.Kind.GLOBAL_TYPE or order.upgrade_id != building_id:
+		if kind == UpgradeOrderScript.Kind.REFINERY_DOCK:
+			var refinery := _refinery_for_dock_upgrade(building_id)
+			if refinery == null:
+				status_changed.emit("No refinery can receive this upgrade")
+			else:
+				_try_start_dock_upgrade(refinery, building_id)
+		else:
+			_start_global_upgrade_order(building_id)
+	elif not matches:
 		status_changed.emit("Upgrade queue is busy")
 	elif order.manually_paused:
 		_upgrade_queue.resume()
 		status_changed.emit("%s upgrade resumed" % order.display_name)
 	else:
-		var status := "%s upgrade is waiting for credits" if _upgrade_queue.lacks_funds() else "%s upgrade is already running"
+		var status := "%s upgrade is waiting for credits" \
+			if _upgrade_queue.lacks_funds() else "%s upgrade is already running"
 		status_changed.emit(status % order.display_name)
-
 	_refresh_upgrade_option_states()
-
-
-## Dock's own entry point (docs section 4 "instance-bound"): a fresh click
-## chooses the first compatible owned refinery with a free dock state. Once an
-## order is in flight, clicks retain the normal pause/resume behavior.
-func _on_dock_slot_left_pressed(building_id: StringName) -> void:
-	var order := _upgrade_queue.current_order()
-	var dock_order_active := order != null and order.kind == UpgradeOrderScript.Kind.REFINERY_DOCK and order.upgrade_id == building_id
-
-	if order == null:
-		var refinery := _refinery_for_dock_upgrade(building_id)
-		if refinery == null:
-			status_changed.emit("No refinery can receive this upgrade")
-		else:
-			_try_start_dock_upgrade(refinery, building_id)
-	elif dock_order_active:
-		if order.manually_paused:
-			_upgrade_queue.resume()
-			status_changed.emit("%s upgrade resumed" % order.display_name)
-		else:
-			var status := "%s upgrade is waiting for credits" if _upgrade_queue.lacks_funds() else "%s upgrade is already running"
-			status_changed.emit(status % order.display_name)
-	else:
-		status_changed.emit("Upgrade queue is busy")
-
-	_refresh_upgrade_option_states()
-
-
-func _on_upgrade_slot_right_pressed(building_id: StringName) -> void:
-	if _is_refinery_dock_id(building_id):
-		_on_dock_slot_right_pressed(building_id)
-		return
-
-	var order := _upgrade_queue.current_order()
-	if order == null or order.kind != UpgradeOrderScript.Kind.GLOBAL_TYPE or order.upgrade_id != building_id:
-		return
-
-	if order.manually_paused:
-		_cancel_upgrade_order()
-	else:
-		_upgrade_queue.pause()
-		status_changed.emit("%s upgrade paused" % order.display_name)
-		_refresh_upgrade_option_states()
-
-
-func _on_dock_slot_right_pressed(building_id: StringName) -> void:
-	var order := _upgrade_queue.current_order()
-	if order == null or order.kind != UpgradeOrderScript.Kind.REFINERY_DOCK or order.upgrade_id != building_id:
-		return
-
-	if order.manually_paused:
-		_cancel_upgrade_order()
-	else:
-		_upgrade_queue.pause()
-		status_changed.emit("%s upgrade paused" % order.display_name)
-		_refresh_upgrade_option_states()
-
+	return true
 
 func _start_global_upgrade_order(building_id: StringName) -> void:
 	var config: Resource = _building_configs.get(building_id)
@@ -433,9 +390,7 @@ func _refresh_upgrade_option_states() -> void:
 
 		if order == null or order.kind != UpgradeOrderScript.Kind.GLOBAL_TYPE or order.upgrade_id != building_id:
 			var available := _is_upgrade_available(building_id)
-			var state := BuildingOptionStateScript.State.DISABLED
-			if available:
-				state = BuildingOptionStateScript.State.BLOCKED if order != null else BuildingOptionStateScript.State.AVAILABLE
+			var state := BuildingOptionStateScript.availability_state(available, order != null)
 			upgrade_option_state_changed.emit(BuildingOptionStateScript.new(building_id, state, 0.0, "", tooltip))
 			continue
 
@@ -457,9 +412,7 @@ func _emit_dock_option_state(building_id: StringName, order: UpgradeOrder, toolt
 		return
 
 	var available := _any_refinery_can_add_dock(building_id)
-	var state := BuildingOptionStateScript.State.DISABLED
-	if available:
-		state = BuildingOptionStateScript.State.BLOCKED if order != null else BuildingOptionStateScript.State.AVAILABLE
+	var state := BuildingOptionStateScript.availability_state(available, order != null)
 	upgrade_option_state_changed.emit(BuildingOptionStateScript.new(building_id, state, 0.0, "", tooltip))
 
 

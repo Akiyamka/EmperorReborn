@@ -1,5 +1,7 @@
 class_name NavBlockerTracker
 extends RefCounted
+
+const OccupyGridScript := preload("res://scripts/buildings/occupy_grid.gd")
 ## Building-blocker bookkeeping: scans placed buildings into the navigation
 ## grid's blocked/no-stop cell sets, diffs the resulting cell changes against
 ## each commanded agent's stored route, and drains the resulting dirty-agent
@@ -190,4 +192,4 @@ func process_reroute_queue() -> void:
 
 
 func empty_occupy_marker(marker: String) -> bool:
-	return marker.is_empty() or marker == " " or marker == "." or marker == "_" or marker.to_lower() == "n"
+	return OccupyGridScript.is_empty_marker(marker)

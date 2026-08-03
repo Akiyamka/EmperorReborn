@@ -16,48 +16,41 @@ const CORNER := &"corner"
 const TJOIN := &"tjoin"
 const CROSS := &"cross"
 
-const _CANONICAL_MASKS := {
-	END: EAST,
-	MIDDLE: EAST | WEST,
-	# XBF conversion reflects source +Z to Godot -Z, so the baked corner's
-	# canonical arms point east and north.
-	CORNER: EAST | NORTH,
-	# The two authored meshes form a horizontal bar plus its north half-arm.
-	TJOIN: NORTH | EAST | WEST,
-}
+## Indexed by the four-bit neighbour mask. This is the single source of truth
+## for topology family, baked-model rotation and scene variant name.
+const _SELECTIONS := [
+	[SINGLE, 0, &""],
+	[END, 1, &"End"],
+	[END, 0, &"End"],
+	[CORNER, 0, &"Corner"],
+	[END, 3, &"End"],
+	[MIDDLE, 1, &"Middle"],
+	[CORNER, 3, &"Corner"],
+	[TJOIN, 3, &"TJoin"],
+	[END, 2, &"End"],
+	[CORNER, 1, &"Corner"],
+	[MIDDLE, 0, &"Middle"],
+	[TJOIN, 0, &"TJoin"],
+	[CORNER, 2, &"Corner"],
+	[TJOIN, 1, &"TJoin"],
+	[TJOIN, 2, &"TJoin"],
+	[CROSS, 0, &"Cross"],
+]
 
 
 ## Returns the canonical model family and its positive-Y quarter-turn count.
 ## A single source model per family covers every directional permutation.
 static func selection_for_mask(raw_mask: int) -> Dictionary:
 	var mask := raw_mask & ALL
-	var topology := topology_for_mask(mask)
-	if topology == SINGLE or topology == CROSS:
-		return {"topology": topology, "rotation_quarters": 0}
-
-	var canonical := int(_CANONICAL_MASKS[topology])
-	for quarters in 4:
-		if rotated_mask(canonical, quarters) == mask:
-			return {"topology": topology, "rotation_quarters": quarters}
-	return {"topology": topology, "rotation_quarters": 0}
+	var selection: Array = _SELECTIONS[mask]
+	return {
+		"topology": selection[0],
+		"rotation_quarters": selection[1],
+	}
 
 
 static func topology_for_mask(raw_mask: int) -> StringName:
-	var mask := raw_mask & ALL
-	var count := _connection_count(mask)
-	match count:
-		0:
-			return SINGLE
-		1:
-			return END
-		2:
-			if mask == (NORTH | SOUTH) or mask == (EAST | WEST):
-				return MIDDLE
-			return CORNER
-		3:
-			return TJOIN
-		_:
-			return CROSS
+	return _SELECTIONS[raw_mask & ALL][0]
 
 
 ## Positive rotation around Godot's Y axis maps east → north.
@@ -78,24 +71,7 @@ static func rotated_mask(raw_mask: int, quarter_turns: int) -> int:
 
 
 static func variant_node_name(topology: StringName) -> StringName:
-	match topology:
-		END:
-			return &"End"
-		MIDDLE:
-			return &"Middle"
-		CORNER:
-			return &"Corner"
-		TJOIN:
-			return &"TJoin"
-		CROSS:
-			return &"Cross"
-		_:
-			return &""
-
-
-static func _connection_count(mask: int) -> int:
-	var count := 0
-	for bit in [NORTH, EAST, SOUTH, WEST]:
-		if mask & bit:
-			count += 1
-	return count
+	for selection in _SELECTIONS:
+		if selection[0] == topology:
+			return selection[2]
+	return &""

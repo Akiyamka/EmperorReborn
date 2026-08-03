@@ -14,25 +14,25 @@ signal repair_mode_changed(active: bool)
 
 const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd")
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
+const PlacementContextScript := preload("res://scripts/buildings/placement_context.gd")
 const TechnologyTreeScript := preload("res://scripts/buildings/technology_tree.gd")
 const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 const WallChainScript := preload("res://scripts/buildings/wall_chain.gd")
-const WallLineScript := preload("res://scripts/buildings/wall_line.gd")
 const DoubleClickTrackerScript := preload("res://scripts/buildings/double_click_tracker.gd")
 const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
-const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
 const GameSettingsCatalogScript := preload("res://scripts/rules/game_settings_catalog.gd")
+const BuildingRepairServiceScript := preload("res://scripts/buildings/building_repair_service.gd")
+const PlacementPointerGestureScript := preload("res://scripts/buildings/placement_pointer_gesture.gd")
+const BuildingSaleServiceScript := preload("res://scripts/buildings/building_sale_service.gd")
+const BuildingCatalogViewScript := preload("res://scripts/buildings/building_catalog_view.gd")
+const WallLineSessionScript := preload("res://scripts/buildings/wall_line_session.gd")
 
 const DEFAULT_BUILD_RADIUS_TILES := 6
-## Building repair runs on the original game's 25 Hz rules clock.  Rules.txt
-## defines RepairRate as health per ten of these ticks.
-const RULE_TICKS_PER_SECOND := 25.0
-const REPAIR_TICK_INTERVAL_SECONDS := 10.0 / RULE_TICKS_PER_SECOND
-const REPAIR_COST_FRACTION := 1.0 / 3.0
 const WALL_BUILDING_GROUP := "Wall"
 const DOUBLE_CLICK_THRESHOLD_MS := 350
-const PLACEMENT_ROTATION_DRAG_THRESHOLD := 8.0
 const BUILDING_MODE_CURSOR_OVERRIDE := &"building_mode"
+
+enum Mode { NONE, SELL, REPAIR, WALL_LINE }
 
 var camera: Camera3D
 ## docs/mechanics/production.md section 5 "map tech level": extension point
@@ -41,34 +41,88 @@ var camera: Camera3D
 ## yet to set this from).
 var max_tech_level: int = TechnologyTreeScript.UNLIMITED_TECH_LEVEL
 
-var _building_configs: Dictionary = {}
-var _building_ids: Array[StringName] = []
+var _catalog_view = BuildingCatalogViewScript.new()
 var _technology_tree: TechnologyTree = TechnologyTreeScript.new()
-static var _definition_catalog := BuildingDefinitionCatalogScript.shared()
 var _game_settings_catalog := GameSettingsCatalogScript.new()
-var _building_availability: Dictionary = {}
+var _availability_dirty := true
+var _refreshing_building_option_states := false
+var _tracked_availability_buildings: Dictionary = {}
 var _building_queue: BuildingQueue = BuildingQueueScript.new()
 var _building_placement: BuildingPlacement = BuildingPlacementScript.new()
 var _local_player_resource: PlayerData
-var _sell_mode := false
-var _repair_mode := false
+var _mode := Mode.NONE
+var _sell_mode: bool:
+	get:
+		return _mode == Mode.SELL
+	set(value):
+		if value:
+			_mode = Mode.SELL
+		elif _mode == Mode.SELL:
+			_mode = Mode.NONE
+var _repair_mode: bool:
+	get:
+		return _mode == Mode.REPAIR
+	set(value):
+		if value:
+			_mode = Mode.REPAIR
+		elif _mode == Mode.REPAIR:
+			_mode = Mode.NONE
 ## Per-building fractional-credit carry.  Credits are integral, but repair
 ## prices are proportional to health restored, so retaining this remainder
 ## makes a sequence of repair ticks cost exactly the intended amount (rounded
 ## down only if the player cancels before the next whole credit is due).
-var _repair_credit_carry: Dictionary = {}
-var _repair_tick_elapsed := 0.0
-var _selling_building: Node3D
-var _wall_line_mode := false
-var _wall_line_start_cell = null
-var _wall_line_building_id: StringName = &""
-var _wall_chain: WallChain
+var _repair_service = BuildingRepairServiceScript.new()
+var _sale_service = BuildingSaleServiceScript.new()
+var _wall_line_mode: bool:
+	get:
+		return _mode == Mode.WALL_LINE
+	set(value):
+		if value:
+			_mode = Mode.WALL_LINE
+		elif _mode == Mode.WALL_LINE:
+			_mode = Mode.NONE
+var _wall_session = WallLineSessionScript.new()
+var _wall_line_start_cell:
+	get:
+		return _wall_session.start_cell()
+	set(value):
+		_wall_session.set_start_cell(value)
+var _wall_line_building_id: StringName:
+	get:
+		return _wall_session.current_building_id()
+	set(value):
+		_wall_session.set_building_id(value)
+var _wall_chain: WallChain:
+	get:
+		return _wall_session.chain() as WallChain
+	set(value):
+		_wall_session.set_chain(value)
 var _building_double_click := DoubleClickTrackerScript.new()
-var _placement_pointer_down := false
-var _placement_press_position := Vector2.ZERO
-var _placement_rotated_during_press := false
-var _wall_marker_scene: PackedScene
-var _wall_markers: Dictionary = {}
+var _pointer_gesture = PlacementPointerGestureScript.new()
+var _placement_pointer_down: bool:
+	get:
+		return _pointer_gesture.pointer_down()
+	set(value):
+		_pointer_gesture.set_pointer_down(value)
+var _placement_press_position: Vector2:
+	get:
+		return _pointer_gesture.press_position()
+	set(value):
+		_pointer_gesture.set_press_position(value)
+@warning_ignore("unused_private_class_variable")
+var _placement_rotated_during_press: bool:
+	get:
+		return _pointer_gesture.rotated_during_press()
+	set(value):
+		_pointer_gesture.set_rotated_during_press(value)
+@warning_ignore("unused_private_class_variable")
+var _wall_marker_scene: PackedScene:
+	set(value):
+		_wall_session.set_marker_scene(value)
+@warning_ignore("unused_private_class_variable")
+var _wall_markers: Dictionary:
+	get:
+		return _wall_session.markers()
 
 
 func setup(
@@ -83,30 +137,41 @@ func setup(
 		wall_marker_scene: PackedScene = null
 ) -> void:
 	camera = placement_camera
-	_building_ids = building_ids.duplicate()
-	_wall_marker_scene = wall_marker_scene
+	_catalog_view.configure(building_ids)
+	_mark_availability_dirty()
+	_wall_session.configure(
+		self, _building_placement, _building_queue, wall_marker_scene,
+		Callable(self, "_building_config"), Callable(self, "_building_occupy_rows"),
+		Callable(self, "_building_display_name"), Callable(self, "_building_scene_path"),
+		Callable(self, "_local_player"), Callable(self, "_emit_status"),
+		Callable(self, "_refresh_building_option_states")
+	)
 	if _building_placement.get_parent() != self:
 		add_child(_building_placement)
+	_pointer_gesture.configure(_building_placement)
 	var navigation_grid = map_loader.navigation_grid if map_loader != null else null
-	_building_placement.setup(
-		placement_camera,
-		navigation_grid,
-		building_parent,
-		arrow_scene,
-		building_preview_scene,
-		cant_build_preview_scene,
-		skirt_preview_scene,
-		Callable(self, "_occupy_rows_for_existing_building"),
-		Callable(self, "_is_wall_building"),
-		Callable(self, "_build_radius_tiles"),
-		Callable(self, "_local_player_id")
-	)
+	var placement_context := PlacementContextScript.new()
+	placement_context.camera = placement_camera
+	placement_context.navigation_grid = navigation_grid
+	placement_context.buildings_root = building_parent
+	placement_context.arrow_scene = arrow_scene
+	placement_context.building_preview_scene = building_preview_scene
+	placement_context.cant_build_preview_scene = cant_build_preview_scene
+	placement_context.skirt_preview_scene = skirt_preview_scene
+	placement_context.existing_building_occupy_rows = Callable(self, "_occupy_rows_for_existing_building")
+	placement_context.existing_building_is_wall = Callable(self, "_is_wall_building")
+	placement_context.build_radius_provider = Callable(self, "_build_radius_tiles")
+	placement_context.owner_player_id_provider = Callable(self, "_local_player_id")
+	_building_placement.setup(placement_context)
 	if not _building_queue.order_ready.is_connected(_on_building_queue_ready):
 		_building_queue.order_ready.connect(_on_building_queue_ready)
+	if not _sale_service.completed.is_connected(_on_building_sale_completed):
+		_sale_service.completed.connect(_on_building_sale_completed)
 
 	_bind_local_player_roster()
-	_load_building_configs()
+	_bind_availability_sources()
 	_refresh_player_resources()
+	_refresh_availability_if_dirty()
 	_refresh_building_option_states()
 	sell_mode_changed.emit(_sell_mode)
 	wall_mode_changed.emit(_wall_line_mode)
@@ -115,11 +180,7 @@ func setup(
 
 func process(delta: float) -> void:
 	_update_mode_cursor()
-	for building_id in _building_ids:
-		var building_available := _is_building_available(building_id)
-		if building_available != _building_availability.get(building_id, false):
-			_building_availability[building_id] = building_available
-			_refresh_building_option_states()
+	_refresh_availability_if_dirty()
 	_process_building_order(delta)
 	_process_repairs(delta)
 	if _wall_line_mode:
@@ -131,6 +192,148 @@ func process(delta: float) -> void:
 			else get_viewport().get_mouse_position()
 		)
 		_building_placement.process(pointer_position)
+
+
+func _exit_tree() -> void:
+	var tree := get_tree()
+	if tree != null:
+		if tree.node_added.is_connected(_on_availability_node_added):
+			tree.node_added.disconnect(_on_availability_node_added)
+		if tree.node_removed.is_connected(_on_availability_node_removed):
+			tree.node_removed.disconnect(_on_availability_node_removed)
+	# Disconnect every still-tracked building's subscriptions too, not just
+	# forget them -- otherwise a controller that re-enters the tree and calls
+	# setup() again reconnects on top of connections _bind_availability_
+	# sources() never tore down, and Godot errors with "Signal is already
+	# connected" on the next signal this building fires.
+	for instance_id in _tracked_availability_buildings.keys():
+		var building_ref: WeakRef = _tracked_availability_buildings[instance_id]
+		var node: Node = building_ref.get_ref() if building_ref != null else null
+		if node != null and is_instance_valid(node):
+			_untrack_availability_building(node)
+	_tracked_availability_buildings.clear()
+	var cursors: Variant = _cursor_manager()
+	if cursors != null:
+		cursors.clear_override(BUILDING_MODE_CURSOR_OVERRIDE)
+
+
+func _bind_availability_sources() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	if not tree.node_added.is_connected(_on_availability_node_added):
+		tree.node_added.connect(_on_availability_node_added)
+	if not tree.node_removed.is_connected(_on_availability_node_removed):
+		tree.node_removed.connect(_on_availability_node_removed)
+	for building in tree.get_nodes_in_group("buildings"):
+		_track_availability_building(building)
+	_mark_availability_dirty()
+
+
+func _on_availability_node_added(node: Node) -> void:
+	# node_added precedes Building._ready(), where the group is assigned.
+	if node.is_in_group("buildings"):
+		_track_availability_building(node)
+		return
+	# node_added fires for every node entering the tree -- projectiles,
+	# decals, particles, corpses -- so cheaply rule out anything that can
+	# never end up a tracked building before paying for a deferred call.
+	# Building (and the BuildingStub test double, which is a plain Node, not
+	# Node3D) always declares construction_completed; incidental scenery
+	# never does, so that alone is the filter -- do not additionally require
+	# `is Node3D` here, or the test double stops matching.
+	if node.has_signal("construction_completed"):
+		call_deferred("_track_availability_building", node)
+
+
+func _on_availability_node_removed(node: Node) -> void:
+	_untrack_availability_building(node)
+	_mark_availability_dirty()
+
+
+func _track_availability_building(candidate: Variant) -> void:
+	# A node can leave the tree before this deferred post-ready check runs.
+	if not is_instance_valid(candidate) or not candidate is Node:
+		return
+	var node := candidate as Node
+	if not node.is_in_group("buildings"):
+		return
+	var instance_id := node.get_instance_id()
+	if _tracked_availability_buildings.has(instance_id):
+		return
+	_tracked_availability_buildings[instance_id] = weakref(node)
+	if node.has_signal("owner_changed") \
+			and not node.is_connected("owner_changed", _on_availability_owner_changed):
+		node.connect("owner_changed", _on_availability_owner_changed)
+	if node.has_signal("construction_completed") \
+			and not node.is_connected("construction_completed", _mark_availability_dirty):
+		node.connect("construction_completed", _mark_availability_dirty)
+	if node.has_signal("upgrade_level_changed") \
+			and not node.is_connected("upgrade_level_changed", _on_availability_upgrade_changed):
+		node.connect("upgrade_level_changed", _on_availability_upgrade_changed)
+	if not node.tree_exiting.is_connected(_mark_availability_dirty):
+		node.tree_exiting.connect(_mark_availability_dirty)
+	_mark_availability_dirty()
+
+
+## Symmetric counterpart of _track_availability_building()'s four connects,
+## called both when a building leaves the tree and when this controller
+## itself does (_exit_tree()) -- so re-entering the tree and calling setup()
+## again never reconnects on top of a still-live subscription.
+func _untrack_availability_building(node: Node) -> void:
+	_tracked_availability_buildings.erase(node.get_instance_id())
+	if not is_instance_valid(node):
+		return
+	if node.has_signal("owner_changed") \
+			and node.is_connected("owner_changed", _on_availability_owner_changed):
+		node.disconnect("owner_changed", _on_availability_owner_changed)
+	if node.has_signal("construction_completed") \
+			and node.is_connected("construction_completed", _mark_availability_dirty):
+		node.disconnect("construction_completed", _mark_availability_dirty)
+	if node.has_signal("upgrade_level_changed") \
+			and node.is_connected("upgrade_level_changed", _on_availability_upgrade_changed):
+		node.disconnect("upgrade_level_changed", _on_availability_upgrade_changed)
+	if node.tree_exiting.is_connected(_mark_availability_dirty):
+		node.tree_exiting.disconnect(_mark_availability_dirty)
+
+
+func _on_availability_owner_changed(_player_id: int) -> void:
+	_mark_availability_dirty()
+
+
+func _on_availability_upgrade_changed(_level: int) -> void:
+	_mark_availability_dirty()
+
+
+func _mark_availability_dirty() -> void:
+	_availability_dirty = true
+
+
+## HEAD's _is_building_available() started with `if not is_inside_tree():
+## return false` -- once outside the tree (mid-teardown, or before the first
+## add_child()), nothing is available, full stop. _catalog_view.is_available()
+## has no notion of "in tree" (it is a plain RefCounted), and the normal dirty
+## check below only recomputes when _mark_availability_dirty() has actually
+## fired, so a controller that leaves the tree without one more dirtying
+## event would otherwise keep serving its last, possibly-true, cached
+## availability forever. Recompute unconditionally (bypassing the dirty
+## flag) with a null player whenever outside the tree instead: every
+## TechnologyTree.is_available() check starts with `if player == null:
+## return false`, so this forces every id false through the same path HEAD
+## used, without teaching the catalog view about the scene tree.
+func _refresh_availability_if_dirty() -> void:
+	if not is_inside_tree():
+		var no_buildings: Array[Node] = []
+		if _catalog_view.refresh_availability(_technology_tree, null, no_buildings, max_tech_level):
+			_refresh_building_option_states()
+		return
+	if not _availability_dirty:
+		return
+	_availability_dirty = false
+	var buildings: Array[Node] = []
+	buildings.assign(get_tree().get_nodes_in_group("buildings"))
+	if _catalog_view.refresh_availability(_technology_tree, _local_player(), buildings, max_tech_level):
+		_refresh_building_option_states()
 
 
 func handle_unhandled_input(event: InputEvent) -> bool:
@@ -196,39 +399,27 @@ func handle_unhandled_input(event: InputEvent) -> bool:
 
 
 func _begin_placement_pointer_action(screen_position: Vector2) -> void:
-	_placement_pointer_down = true
-	_placement_press_position = screen_position
-	_placement_rotated_during_press = false
-	_building_placement.process(screen_position)
+	_pointer_gesture.begin(screen_position)
 
 
 func _update_placement_rotation(screen_position: Vector2) -> void:
-	if not _placement_pointer_down:
-		return
-	if _placement_press_position.distance_to(screen_position) < PLACEMENT_ROTATION_DRAG_THRESHOLD:
-		return
-	if _building_placement.face_toward_pointer(_placement_press_position, screen_position):
-		_placement_rotated_during_press = true
-	_building_placement.process(_placement_press_position)
+	_pointer_gesture.update_rotation(screen_position)
 
 
 func _finish_placement_pointer_action(screen_position: Vector2) -> void:
-	if not _placement_pointer_down:
-		return
-	_update_placement_rotation(screen_position)
-	var placement_position := _placement_press_position
-	var rotated := _placement_rotated_during_press
-	_reset_placement_pointer_action()
-	if rotated:
-		status_changed.emit("%s rotated; click to place" % _building_placement.display_name())
-		return
-	_try_place_ready_building(placement_position)
+	_pointer_gesture.finish(
+		screen_position,
+		Callable(self, "_emit_status"),
+		Callable(self, "_try_place_ready_building")
+	)
 
 
 func _reset_placement_pointer_action() -> void:
-	_placement_pointer_down = false
-	_placement_press_position = Vector2.ZERO
-	_placement_rotated_during_press = false
+	_pointer_gesture.reset()
+
+
+func _emit_status(message: String) -> void:
+	status_changed.emit(message)
 
 
 func handle_command(command: StringName) -> bool:
@@ -243,7 +434,7 @@ func handle_command(command: StringName) -> bool:
 
 
 func handle_building_intent(building_id: StringName, button_index: int) -> bool:
-	if not _building_ids.has(building_id):
+	if not _catalog_view.has(building_id):
 		return false
 	match button_index:
 		MOUSE_BUTTON_LEFT:
@@ -255,13 +446,24 @@ func handle_building_intent(building_id: StringName, button_index: int) -> bool:
 	return false
 
 
+## _sell_mode/_repair_mode/_wall_line_mode are property shims over the single
+## _mode enum (see its declaration above), so once one of them is written the
+## other two immediately read as inactive regardless of their true prior
+## state. Every _set_*_mode() below therefore captures the sibling modes'
+## state into was_* locals BEFORE writing its own field, and hands that
+## captured state to the _deactivate_*_mode() helpers instead of letting
+## those helpers re-read the (by-then-corrupted) live properties. Mirrors
+## git show HEAD -- back when these were three independent bool fields, a
+## plain live re-read was accurate; it no longer is.
 func _set_sell_mode(active: bool) -> void:
+	var was_repair := _repair_mode
+	var was_wall := _wall_line_mode
 	_sell_mode = active
 	_update_mode_cursor()
 	sell_mode_changed.emit(active)
 	if active:
-		_set_repair_mode(false)
-		_set_wall_line_mode(false)
+		_deactivate_repair_mode(was_repair)
+		_deactivate_wall_line_mode(was_wall)
 		_cancel_building_placement()
 		status_changed.emit("Sell mode: select one of your buildings")
 	else:
@@ -269,19 +471,20 @@ func _set_sell_mode(active: bool) -> void:
 
 
 func _set_wall_line_mode(active: bool, building_id: StringName = &"") -> void:
-	var was_active := _wall_line_mode
+	var was_repair := _repair_mode
+	var was_wall := _wall_line_mode
 	_wall_line_mode = active
 	_wall_line_start_cell = null
 	_wall_line_building_id = building_id if active else &""
 	wall_mode_changed.emit(active)
 	if active:
-		_set_repair_mode(false)
-		_set_sell_mode(false)
+		_deactivate_repair_mode(was_repair)
+		_deactivate_sell_mode()
 		_cancel_building_placement()
 		_begin_wall_line_preview(building_id)
 		status_changed.emit("Wall mode: click the line start, then the line end")
 	else:
-		if was_active:
+		if was_wall:
 			_building_placement.cancel()
 		status_changed.emit("Wall mode canceled")
 	_refresh_building_option_states()
@@ -290,18 +493,56 @@ func _set_wall_line_mode(active: bool, building_id: StringName = &"") -> void:
 func _set_repair_mode(active: bool) -> void:
 	if _repair_mode == active:
 		return
+	var was_sell := _sell_mode
+	var was_wall := _wall_line_mode
 	_repair_mode = active
 	_update_mode_cursor()
 	repair_mode_changed.emit(active)
 	if active:
-		if _sell_mode:
-			_set_sell_mode(false)
-		if _wall_line_mode:
-			_set_wall_line_mode(false)
+		if was_sell:
+			_deactivate_sell_mode()
+		if was_wall:
+			_deactivate_wall_line_mode(was_wall)
 		_cancel_building_placement()
 		status_changed.emit("Repair mode: right-click a damaged building; left-click to exit")
 	else:
 		status_changed.emit("Repair mode canceled")
+
+
+## Deactivation body of _set_sell_mode(false); sell mode has no guard, so
+## this always runs -- see the header comment above _set_sell_mode().
+func _deactivate_sell_mode() -> void:
+	_sell_mode = false
+	_update_mode_cursor()
+	sell_mode_changed.emit(false)
+	status_changed.emit("Sell mode canceled")
+
+
+## Deactivation body of _set_repair_mode(false); repair mode only ever acted
+## when it was truly active (see the `if _repair_mode == active: return`
+## guard in _set_repair_mode()), which `was_active` reproduces here now that
+## a live re-read of _repair_mode can no longer be trusted mid-transition.
+func _deactivate_repair_mode(was_active: bool) -> void:
+	if not was_active:
+		return
+	_repair_mode = false
+	_update_mode_cursor()
+	repair_mode_changed.emit(false)
+	status_changed.emit("Repair mode canceled")
+
+
+## Deactivation body of _set_wall_line_mode(false); wall mode has no top-level
+## guard, so the field reset/emit/status always run -- only the placement
+## cancel is conditional on the mode having truly been active, per HEAD.
+func _deactivate_wall_line_mode(was_active: bool) -> void:
+	_wall_line_mode = false
+	_wall_line_start_cell = null
+	_wall_line_building_id = &""
+	wall_mode_changed.emit(false)
+	if was_active:
+		_building_placement.cancel()
+	status_changed.emit("Wall mode canceled")
+	_refresh_building_option_states()
 
 
 func _try_toggle_building_repair(screen_position: Vector2) -> void:
@@ -310,8 +551,7 @@ func _try_toggle_building_repair(screen_position: Vector2) -> void:
 	if building == null:
 		status_changed.emit("Select one of your damaged buildings to repair")
 		return
-	var players = _players()
-	if players == null or not building.has_method("is_owned_by") or not building.call("is_owned_by", players.local_player_id):
+	if not _can_sell_building(building):
 		status_changed.emit("You can only repair your own buildings")
 		return
 	if not &"health" in building or not &"max_health" in building or float(building.get("health")) >= float(building.get("max_health")):
@@ -327,53 +567,17 @@ func _try_toggle_building_repair(screen_position: Vector2) -> void:
 
 
 func _process_repairs(delta: float) -> void:
-	_repair_tick_elapsed += delta
-	if _repair_tick_elapsed < REPAIR_TICK_INTERVAL_SECONDS:
-		return
-	var ticks := floori(_repair_tick_elapsed / REPAIR_TICK_INTERVAL_SECONDS)
-	_repair_tick_elapsed -= float(ticks) * REPAIR_TICK_INTERVAL_SECONDS
-	for _tick in ticks:
-		_process_repair_tick()
-
-
-func _process_repair_tick() -> void:
 	var settings := _game_settings_catalog.settings()
 	var repair_health := float(settings.building_repair_rate) if settings != null else 12.0
-	for node in get_tree().get_nodes_in_group("buildings"):
-		var building := node as Node3D
-		if building == null or not (&"is_repairing" in building and bool(building.get("is_repairing"))):
-			continue
-		var max_health := float(building.get("max_health")) if &"max_health" in building else 0.0
-		var missing_health := maxf(max_health - float(building.get("health")), 0.0) if &"health" in building else 0.0
-		if max_health <= 0.0 or missing_health <= 0.0:
-			_set_building_repairing(building, false)
-			continue
-		var restored := minf(repair_health, missing_health)
-		var repair_cost := _repair_cost_for_health(building, restored, max_health)
-		var carry := float(_repair_credit_carry.get(building.get_instance_id(), 0.0)) + repair_cost
-		var charge := floori(carry)
-		var player := _local_player()
-		if charge > 0 and (player == null or not player.spend_money(charge)):
-			continue
-		_repair_credit_carry[building.get_instance_id()] = carry - float(charge)
-		building.set("health", float(building.get("health")) + restored)
-		if float(building.get("health")) >= max_health:
-			_set_building_repairing(building, false)
-
-
-func _repair_cost_for_health(building: Node3D, restored_health: float, max_health: float) -> float:
-	var config = building.get("building_config")
-	if config == null:
-		config = _building_config(StringName(String(building.get("config_id"))))
-	var building_cost := float(config.cost) if config != null else 0.0
-	return restored_health / max_health * building_cost * REPAIR_COST_FRACTION
+	var buildings: Array[Node] = []
+	buildings.assign(get_tree().get_nodes_in_group("buildings"))
+	_repair_service.process(
+		delta, buildings, repair_health, _local_player(), Callable(self, "_config_of")
+	)
 
 
 func _set_building_repairing(building: Node3D, active: bool) -> void:
-	if &"is_repairing" in building:
-		building.set("is_repairing", active)
-	if not active:
-		_repair_credit_carry.erase(building.get_instance_id())
+	_repair_service.set_repairing(building, active)
 
 
 func _building_name(building: Node3D) -> String:
@@ -382,83 +586,52 @@ func _building_name(building: Node3D) -> String:
 
 
 func _on_wall_line_click(screen_position: Vector2) -> void:
-	var cell = _building_placement.hover_cell_from_pointer(screen_position)
-	if cell == null:
-		status_changed.emit("Wall placement needs terrain")
-		return
-	if _wall_line_start_cell == null:
-		_wall_line_start_cell = cell
-		status_changed.emit("Wall start set; click the line end")
-		_refresh_building_option_states()
-		return
+	_wall_session.click(
+		screen_position, Callable(self, "_emit_status"), Callable(self, "_finish_wall_selection")
+	)
+	_refresh_building_option_states()
 
-	var start_cell: Vector2i = _wall_line_start_cell
-	var building_id := _wall_line_building_id
-	_preview_wall_line_to_hover_cell(cell)
-	var buildable_cells := _building_placement.available_preview_anchor_cells()
+
+func _finish_wall_selection(
+		start_cell: Vector2i,
+		end_cell: Vector2i,
+		building_id: StringName,
+		buildable_cells: Array[Vector2i]
+) -> void:
 	_set_wall_line_mode(false)
-	_lock_wall_markers(buildable_cells)
-	_start_wall_chain(start_cell, cell, building_id, buildable_cells)
+	_start_wall_chain(start_cell, end_cell, building_id, buildable_cells)
 
 
 func _begin_wall_line_preview(building_id: StringName) -> void:
-	var config := _building_config(building_id)
-	var occupy_rows := _building_occupy_rows(config)
-	if not _building_placement.begin(
-		building_id, _building_display_name(building_id), occupy_rows, true
+	var occupy_rows := _building_occupy_rows(_building_config(building_id))
+	if _wall_session.begin(
+		building_id, _building_display_name(building_id), occupy_rows
 	):
-		return
-	_process_wall_line_preview(get_viewport().get_mouse_position())
+		_wall_session.process_preview(get_viewport().get_mouse_position())
 
 
 func _process_wall_line_preview(screen_position: Vector2) -> void:
-	if not _wall_line_mode or not _building_placement.is_active():
-		return
-	var hover_cell = _building_placement.hover_cell_from_pointer(screen_position)
-	if hover_cell == null:
-		_building_placement.preview_at_hover_cells([])
-		return
-	_preview_wall_line_to_hover_cell(hover_cell)
+	if _wall_line_mode:
+		_wall_session.process_preview(screen_position)
 
 
 func _preview_wall_line_to_hover_cell(hover_cell: Vector2i) -> void:
-	var preview_cells: Array[Vector2i] = [hover_cell]
-	if _wall_line_start_cell != null:
-		preview_cells = _wall_nav_cells_between(_wall_line_start_cell, hover_cell)
-	_building_placement.preview_at_hover_cells(preview_cells)
+	_wall_session.preview_to(hover_cell)
 
 
 func _lock_wall_markers(anchor_cells: Array[Vector2i]) -> void:
-	_clear_wall_markers()
-	if _wall_marker_scene == null:
-		return
-	for anchor_cell in anchor_cells:
-		var marker := _wall_marker_scene.instantiate() as Node3D
-		if marker == null:
-			continue
-		marker.name = "WallMarker_%d_%d" % [anchor_cell.x, anchor_cell.y]
-		add_child(marker)
-		marker.global_position = _building_placement.wall_marker_world_position(anchor_cell)
-		_wall_markers[anchor_cell] = marker
+	_wall_session.lock_markers(anchor_cells)
 
 
 func _remove_wall_marker(anchor_cell: Vector2i) -> void:
-	var marker := _wall_markers.get(anchor_cell) as Node3D
-	_wall_markers.erase(anchor_cell)
-	if marker == null:
-		return
-	if marker.get_parent() == self:
-		remove_child(marker)
-	marker.queue_free()
+	_wall_session.remove_marker(anchor_cell)
 
 
 func _clear_wall_markers() -> void:
-	for anchor_cell in _wall_markers.keys():
-		_remove_wall_marker(anchor_cell)
-
+	_wall_session.clear_markers()
 
 func _try_sell_building(screen_position: Vector2) -> void:
-	if _selling_building != null:
+	if _sale_service.is_active():
 		return
 
 	var hit := _raycast(screen_position, 2)
@@ -467,12 +640,10 @@ func _try_sell_building(screen_position: Vector2) -> void:
 		status_changed.emit("Select one of your buildings to sell")
 		return
 
-	var players = _players()
-	if players == null or not building.has_method("is_owned_by") or not building.call("is_owned_by", players.local_player_id):
+	if not _can_sell_building(building):
 		status_changed.emit("You can only sell your own buildings")
 		return
 
-	_selling_building = building
 	_set_sell_mode(false)
 	# Technology and production only count completed buildings. A selling
 	# building remains visible until its transition finishes, but must stop
@@ -480,37 +651,7 @@ func _try_sell_building(screen_position: Vector2) -> void:
 	if building.has_method("begin_construction"):
 		building.call("begin_construction")
 	_refresh_building_option_states()
-	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if AuthoredModelScript.play_one_shot(
-		building,
-		&"sell",
-		_on_sold_building_animation_finished.bind(building, &"sell")
-	):
-		return
-	if player != null and player.has_animation(&"construct"):
-		var construct_animation := player.get_animation(&"construct")
-		if construct_animation != null:
-			construct_animation.loop_mode = Animation.LOOP_NONE
-		player.animation_finished.connect(
-			_on_sold_building_animation_finished.bind(building, &"construct"), CONNECT_ONE_SHOT
-		)
-		# Most converted buildings have no authored sell transition. Reversing
-		# construct preserves the original build-up/disassembly visual instead.
-		# Go through Building.play_state first: it exposes the Build state node,
-		# which is otherwise still hidden while the backwards player is at its end.
-		_play_building_state(building, &"construct")
-		player.seek(construct_animation.length if construct_animation != null else 0.0, true)
-		player.play_backwards(&"construct")
-		player.advance(0.0)
-		return
-
-	_finish_selling_building(building)
-
-
-func _exit_tree() -> void:
-	var cursors: Variant = _cursor_manager()
-	if cursors != null:
-		cursors.clear_override(BUILDING_MODE_CURSOR_OVERRIDE)
+	_sale_service.start(building, _local_player(), _config_of(building))
 
 
 func _update_mode_cursor() -> void:
@@ -566,36 +707,8 @@ func _cursor_manager() -> Variant:
 	return AutoloadLookupScript.cursors(self)
 
 
-func _on_sold_building_animation_finished(
-		animation_name: StringName, building: Node3D, sale_animation: StringName
-	) -> void:
-	if animation_name != sale_animation:
-		return
-	_finish_selling_building(building)
-
-
-func _finish_selling_building(building: Node3D) -> void:
-	if building != _selling_building:
-		return
-
-	var refund := _building_sale_refund(building)
-	var player = _local_player()
-	if player != null and refund > 0:
-		player.add_money(refund)
-	var display_name := String(building.get("config_id"))
-	if display_name.is_empty():
-		display_name = building.name
-	_selling_building = null
-	building.queue_free()
+func _on_building_sale_completed(display_name: String, refund: int) -> void:
 	status_changed.emit("%s sold; refunded %d" % [display_name, refund])
-
-
-func _building_sale_refund(building: Node3D) -> int:
-	var config = building.get("building_config")
-	if config == null:
-		config = _building_config(StringName(String(building.get("config_id"))))
-	var cost := int(config.cost) if config != null else 0
-	return maxi(cost / 2, 0)
 
 
 func _try_handle_building_double_click(screen_position: Vector2) -> bool:
@@ -604,21 +717,18 @@ func _try_handle_building_double_click(screen_position: Vector2) -> bool:
 	if building == null:
 		return false
 
-	var players = _players()
-	if players == null or not building.has_method("is_owned_by") or not building.call("is_owned_by", players.local_player_id):
+	if not _can_sell_building(building):
 		return false
 
 	var now := Time.get_ticks_msec()
 	if not _building_double_click.register_click(building, now, DOUBLE_CLICK_THRESHOLD_MS):
 		return false
 
-	return _designate_primary_building(building, players.local_player_id)
+	return _designate_primary_building(building, _local_player_id())
 
 
 func _designate_primary_building(building: Node3D, player_id: int) -> bool:
-	var config = building.get("building_config") as Resource
-	if config == null:
-		config = _building_config(StringName(String(building.get("config_id"))))
+	var config := _config_of(building)
 	if config == null or not config.can_be_primary:
 		return false
 
@@ -692,15 +802,6 @@ func _refresh_player_resources() -> void:
 	resources_changed.emit(player.money if player != null else 0, player.energy if player != null else 0)
 
 
-func _load_building_configs() -> void:
-	for building_id in _building_ids:
-		var config: Resource = _definition_catalog.definition(building_id)
-		if config == null:
-			push_warning("Building definition not found: %s" % String(building_id))
-			continue
-		_building_configs[building_id] = config
-
-
 func _on_building_slot_left_pressed(building_id: StringName) -> void:
 	if _is_wall_building_id(building_id):
 		_on_wall_slot_left_pressed(building_id)
@@ -771,7 +872,7 @@ func _on_building_slot_right_pressed(building_id: StringName) -> void:
 
 
 func _start_building_order(building_id: StringName) -> void:
-	var config: Resource = _building_configs.get(building_id)
+	var config := _catalog_view.config(building_id)
 	if config == null:
 		status_changed.emit("Building rules are not loaded")
 		return
@@ -833,8 +934,7 @@ func _cancel_building_order() -> void:
 	# The wall chain only auto-orders a later buildable cell after the current
 	# one finishes (blocked cells in between are skipped), so cancelling the
 	# in-flight order is enough to stop the whole chain.
-	_wall_chain = null
-	_clear_wall_markers()
+	_wall_session.cancel_chain()
 	status_changed.emit("%s canceled; refunded %d" % [display_name, refunded])
 	_refresh_building_option_states()
 
@@ -860,188 +960,28 @@ func _start_wall_chain(
 		to_nav_cell: Vector2i,
 		building_id: StringName,
 		selected_buildable_cells: Array[Vector2i]
-	) -> void:
-	if String(building_id).is_empty():
-		building_id = &"ATWall"
-	if _building_queue.has_order() or _wall_chain != null:
-		status_changed.emit("Building queue is busy")
-		_clear_wall_markers()
-		return
-
-	var config := _building_config(building_id)
-	if config == null:
-		status_changed.emit("Wall rules are not loaded")
-		_clear_wall_markers()
-		return
-
-	var nav_cells: Array[Vector2i] = []
-	for cell in _wall_nav_cells_between(from_nav_cell, to_nav_cell):
-		if selected_buildable_cells.has(cell):
-			nav_cells.append(cell)
-	if nav_cells.is_empty():
-		status_changed.emit("Wall line has no buildable segments")
-		_clear_wall_markers()
-		_refresh_building_option_states()
-		return
-
-	var players = _players()
-	var owner_player_id = players.local_player_id if players != null else null
-	_wall_chain = WallChainScript.new(
-		building_id,
-		_building_display_name(building_id),
-		maxi(config.cost, 0),
-		maxf(config.build_time_ticks, 1.0),
-		nav_cells,
-		owner_player_id
+) -> void:
+	_wall_session.start_chain(
+		from_nav_cell, to_nav_cell, building_id, selected_buildable_cells
 	)
-	_advance_wall_chain()
 
 
-func _wall_nav_cells_between(from_nav_cell: Vector2i, to_nav_cell: Vector2i) -> Array[Vector2i]:
-	var cell_span := BuildingPlacementScript.NAV_CELLS_PER_OCCUPY_CELL
-	var from_occupy_cell := Vector2i(
-		int(floor(float(from_nav_cell.x) / float(cell_span))),
-		int(floor(float(from_nav_cell.y) / float(cell_span)))
-	)
-	var to_occupy_cell := Vector2i(
-		int(floor(float(to_nav_cell.x) / float(cell_span))),
-		int(floor(float(to_nav_cell.y) / float(cell_span)))
-	)
-	var occupy_cells := WallLineScript.occupy_cells_between(from_occupy_cell, to_occupy_cell)
-	var nav_cells: Array[Vector2i] = []
-	for occupy_cell in occupy_cells:
-		nav_cells.append(occupy_cell * cell_span)
-	return nav_cells
+func _wall_nav_cells_between(
+		from_nav_cell: Vector2i, to_nav_cell: Vector2i
+) -> Array[Vector2i]:
+	return _wall_session.nav_cells_between(from_nav_cell, to_nav_cell)
 
 
 func _advance_wall_chain() -> void:
-	if _wall_chain == null:
-		return
-	while _wall_chain != null:
-		var availability := _wall_segment_availability(_wall_chain)
-		if availability == BuildingPlacementScript.PlaceResult.AVAILABLE:
-			break
-		if availability != BuildingPlacementScript.PlaceResult.CANNOT_BUILD:
-			status_changed.emit("%s segment could not be evaluated" % _wall_chain.display_name)
-			_wall_chain = null
-			_clear_wall_markers()
-			_refresh_building_option_states()
-			return
-		var skipped_index := _wall_chain.segment_index()
-		_remove_wall_marker(_wall_chain.current_cell())
-		if not _wall_chain.advance():
-			status_changed.emit(
-				"%s wall complete; segment %d/%d skipped" % [
-					_wall_chain.display_name,
-					skipped_index,
-					_wall_chain.segment_count(),
-				]
-			)
-			_wall_chain = null
-			_clear_wall_markers()
-			_refresh_building_option_states()
-			return
-		status_changed.emit(
-			"%s segment %d/%d skipped" % [
-				_wall_chain.display_name,
-				skipped_index,
-				_wall_chain.segment_count(),
-			]
-		)
-	if not _building_queue.start(_wall_chain.building_id, _wall_chain.display_name, _wall_chain.cost, _wall_chain.build_time_ticks):
-		status_changed.emit("%s segment could not be queued" % _wall_chain.display_name)
-		_wall_chain = null
-		_clear_wall_markers()
-		return
-	status_changed.emit(
-		"%s segment %d/%d ordered" % [_wall_chain.display_name, _wall_chain.segment_index(), _wall_chain.segment_count()]
-	)
-	_refresh_building_option_states()
-
-
-func _wall_segment_availability(chain: WallChain) -> BuildingPlacementScript.PlaceResult:
-	var config := _building_config(chain.building_id)
-	var occupy_rows := _building_occupy_rows(config)
-	if not _building_placement.begin(chain.building_id, chain.display_name, occupy_rows, true):
-		return BuildingPlacementScript.PlaceResult.INACTIVE
-	var result := _building_placement.evaluate_at_hover_cell(chain.current_cell())
-	_building_placement.cancel()
-	return result
+	_wall_session.advance_chain()
 
 
 func _place_wall_chain_segment() -> void:
-	var chain := _wall_chain
-	var completed_order := _building_queue.take_ready()
-
-	var config := _building_config(chain.building_id)
-	var occupy_rows := _building_occupy_rows(config)
-	if not _building_placement.begin(chain.building_id, chain.display_name, occupy_rows, true):
-		_refund_completed_wall_segment(completed_order)
-		status_changed.emit("%s has no occupy_rows" % chain.display_name)
-		_wall_chain = null
-		_clear_wall_markers()
-		_refresh_building_option_states()
-		return
-
-	var scene_path := _building_scene_path(chain.building_id)
-	if not ResourceLoader.exists(scene_path):
-		_refund_completed_wall_segment(completed_order)
-		status_changed.emit("%s placement valid; missing scene %s" % [chain.display_name, scene_path])
-		_building_placement.cancel()
-		_wall_chain = null
-		_clear_wall_markers()
-		_refresh_building_option_states()
-		return
-
-	var scene := load(scene_path) as PackedScene
-	var placed := _building_placement.try_place_at_hover_cell(chain.current_cell(), scene, chain.owner_player_id)
-	if placed == BuildingPlacementScript.PlaceResult.CANNOT_BUILD:
-		_refund_completed_wall_segment(completed_order)
-		_building_placement.cancel()
-		var skipped_index := chain.segment_index()
-		_remove_wall_marker(chain.current_cell())
-		if chain.advance():
-			status_changed.emit(
-				"%s segment %d/%d skipped" % [
-					chain.display_name, skipped_index, chain.segment_count()
-				]
-			)
-			_advance_wall_chain()
-		else:
-			status_changed.emit("%s wall complete; final segment skipped" % chain.display_name)
-			_wall_chain = null
-			_clear_wall_markers()
-			_refresh_building_option_states()
-		return
-	if placed != BuildingPlacementScript.PlaceResult.PLACED:
-		_refund_completed_wall_segment(completed_order)
-		status_changed.emit("%s segment could not be placed; wall chain stopped" % chain.display_name)
-		_building_placement.cancel()
-		_wall_chain = null
-		_clear_wall_markers()
-		_refresh_building_option_states()
-		return
-
-	_remove_wall_marker(chain.current_cell())
-	if chain.advance():
-		status_changed.emit(
-			"%s segment %d/%d placed" % [chain.display_name, chain.segment_index() - 1, chain.segment_count()]
-		)
-		_advance_wall_chain()
-	else:
-		status_changed.emit("%s wall complete" % chain.display_name)
-		_wall_chain = null
-		_clear_wall_markers()
-		_refresh_building_option_states()
+	_wall_session.place_ready_segment()
 
 
 func _refund_completed_wall_segment(order: BuildingOrder) -> void:
-	if order == null or order.paid_cost <= 0:
-		return
-	var player = _local_player()
-	if player != null:
-		player.add_money(order.paid_cost)
-
+	_wall_session.refund_order(order)
 
 func _try_place_ready_building(screen_position: Vector2) -> void:
 	var order := _building_queue.current_order()
@@ -1104,17 +1044,11 @@ func _building_occupy_rows(config: Resource) -> Array[String]:
 
 
 func _occupy_rows_for_existing_building(building: Node3D) -> Array[String]:
-	var config = building.get("building_config") as Resource
-	if config == null:
-		config = _building_config(StringName(String(building.get("config_id"))))
-	return _building_occupy_rows(config)
+	return _building_occupy_rows(_config_of(building))
 
 
 func _is_wall_building(building: Node3D) -> bool:
-	var config = building.get("building_config") as Resource
-	if config == null:
-		config = _building_config(StringName(String(building.get("config_id"))))
-	return _is_wall_config(config)
+	return _is_wall_config(_config_of(building))
 
 
 func _is_wall_building_id(building_id: StringName) -> bool:
@@ -1131,58 +1065,41 @@ func _build_radius_tiles() -> int:
 
 
 func _building_config(building_id: StringName) -> Resource:
-	# Guards against teardown-order signal cascades: a freed building's
-	# _exit_tree() can still trigger _refresh_building_option_states() (via
-	# the energy/resources signal chain) after this controller has left the
-	# tree, at which point absolute-path autoload lookups are invalid.
-	return _definition_catalog.definition(building_id)
+	return _catalog_view.config(building_id)
+
+
+func _config_of(building: Node) -> Resource:
+	return _catalog_view.config_of(building)
 
 
 func _building_scene_path(building_id: StringName) -> String:
-	var prepared_path := _definition_catalog.scene_path(building_id)
-	if not prepared_path.is_empty() and ResourceLoader.exists(prepared_path):
-		return prepared_path
-
-	var id_text := String(building_id)
-	var id_path := _building_scene_path_for_name(id_text)
-	if ResourceLoader.exists(id_path):
-		return id_path
-
-	var model_name := _building_model_name(building_id)
-	if not model_name.is_empty() and model_name != id_text:
-		var model_path := _building_scene_path_for_name(model_name)
-		if ResourceLoader.exists(model_path):
-			return model_path
-
-	return id_path
-
-
-func _building_scene_path_for_name(scene_name: String) -> String:
-	return "res://assets/converted/buildings/%s/%s.scn" % [scene_name, scene_name]
+	return _catalog_view.scene_path(building_id)
 
 
 func _building_model_name(building_id: StringName) -> String:
-	var definition := _definition_catalog.definition(building_id)
-	return definition.model_name if definition != null else ""
+	return _catalog_view.model_name(building_id)
 
 
 func _is_building_available(building_id: StringName) -> bool:
-	if not is_inside_tree():
-		return false
-	var config := _building_config(building_id)
-	if config == null:
-		return false
-	var player = _local_player()
-	if player == null:
-		return false
-	var buildings: Array[Node] = []
-	buildings.assign(get_tree().get_nodes_in_group("buildings"))
-	return _technology_tree.is_available(config, player, buildings, max_tech_level)
+	return _catalog_view.is_available(building_id)
 
 
+## _is_building_available() reads _catalog_view's cache, which is only ever
+## as fresh as the last _refresh_availability_if_dirty() call -- but this
+## function is invoked from about a dozen call sites (selling, canceling an
+## order, the wall session's _refresh callback, slot handlers...), not just
+## setup()/process(), so without this it could read a stale cache on any of
+## those paths. Re-entrancy guard: _refresh_availability_if_dirty() itself
+## calls back into this function when the cache actually changed, and
+## without the guard that nested call would run the full emit loop below on
+## already-fresh data, then fall through to run it again unnecessarily here.
 func _refresh_building_option_states() -> void:
+	if _refreshing_building_option_states:
+		return
+	_refreshing_building_option_states = true
+	_refresh_availability_if_dirty()
 	var order := _building_queue.current_order()
-	for building_id in _building_ids:
+	for building_id in _catalog_view.ids():
 		var tooltip := _building_tooltip(building_id)
 
 		if _is_wall_building_id(building_id) and _wall_line_mode and _wall_line_building_id == building_id:
@@ -1193,12 +1110,16 @@ func _refresh_building_option_states() -> void:
 			continue
 
 		if order == null:
-			var state := BuildingOptionStateScript.State.AVAILABLE if _is_building_available(building_id) else BuildingOptionStateScript.State.DISABLED
+			var state := BuildingOptionStateScript.availability_state(
+				_is_building_available(building_id), false
+			)
 			building_option_state_changed.emit(BuildingOptionStateScript.new(building_id, state, 0.0, "", tooltip))
 			continue
 
 		if order.building_id != building_id:
-			var state := BuildingOptionStateScript.State.BLOCKED if _is_building_available(building_id) else BuildingOptionStateScript.State.DISABLED
+			var state := BuildingOptionStateScript.availability_state(
+				_is_building_available(building_id), true
+			)
 			building_option_state_changed.emit(BuildingOptionStateScript.new(building_id, state, 0.0, "", tooltip))
 			continue
 
@@ -1219,30 +1140,15 @@ func _refresh_building_option_states() -> void:
 			status_text,
 			tooltip
 		))
+	_refreshing_building_option_states = false
 
 
 func _building_display_name(building_id: StringName) -> String:
-	match building_id:
-		&"ATSmWindtrap":
-			return "Windtrap"
-		&"ATBarracks":
-			return "Barracks"
-	return String(building_id)
+	return _catalog_view.display_name(building_id)
 
 
 func _building_tooltip(building_id: StringName) -> String:
-	var config: Resource = _building_configs.get(building_id)
-	if config == null:
-		return _building_display_name(building_id)
-
-	var cost: int = int(config.cost)
-	var build_time_ticks: float = float(config.build_time_ticks)
-	var build_seconds: float = build_time_ticks / BuildingQueueScript.BUILD_TICKS_PER_SECOND
-	return "%s\nCost: %d\nBuild: %.1fs" % [
-		_building_display_name(building_id),
-		cost,
-		build_seconds,
-	]
+	return _catalog_view.tooltip(building_id)
 
 
 ## Default mask covers terrain (bit 1) and units/buildings (bit 2) only —

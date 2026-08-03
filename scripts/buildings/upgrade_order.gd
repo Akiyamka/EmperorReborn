@@ -1,6 +1,8 @@
 class_name UpgradeOrder
 extends RefCounted
 
+const ProductionProgressScript := preload("res://scripts/buildings/production_progress.gd")
+
 ## Mirrors BuildingOrder (see building_order.gd) but for the player's single
 ## upgrade queue (docs/mechanics/production.md section 4). "upgrade_id" is
 ## the building type this upgrade affects -- for a GLOBAL_TYPE order that is
@@ -25,10 +27,4 @@ var target_refinery: Node3D = null
 
 
 func progress_percent() -> float:
-	if ready:
-		return 100.0
-	if cost > 0:
-		return clampf(float(paid_cost) * 100.0 / float(cost), 0.0, 100.0)
-	if build_time_ticks > 0.0:
-		return clampf(elapsed_ticks * 100.0 / build_time_ticks, 0.0, 100.0)
-	return 100.0
+	return ProductionProgressScript.percent(ready, cost, paid_cost, build_time_ticks, elapsed_ticks)

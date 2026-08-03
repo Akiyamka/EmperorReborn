@@ -4,14 +4,15 @@ extends Node3D
 const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
 const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 const TeamColorScript := preload("res://scripts/world/team_color.gd")
-const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
 const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const CombatHullScript := preload("res://scripts/combat/combat_hull.gd")
 const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
 const SelectionHaloBindingScript := preload("res://scripts/ui/selection_halo_binding.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
-const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
-const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
-const WallConnectivityScript := preload("res://scripts/buildings/wall_connectivity.gd")
+const BuildingWallVisualScript := preload("res://scripts/buildings/building_wall_visual.gd")
+const BuildingRefineryDocksScript := preload("res://scripts/buildings/building_refinery_docks.gd")
+const BuildingRallyPointScript := preload("res://scripts/buildings/building_rally_point.gd")
+const BuildingCombatScript := preload("res://scripts/buildings/building_combat.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const AuthoredFireControllerScript := preload(
 	"res://scripts/combat/authored_fire_controller.gd"
@@ -26,6 +27,7 @@ signal health_changed(health: float, max_health: float)
 signal primary_changed(is_primary: bool)
 signal rally_point_changed(position: Vector3)
 signal construction_completed
+signal upgrade_level_changed(level: int)
 signal attack_order_changed(active: bool, target: Variant)
 signal weapon_fired(projectiles: Array, target: Variant, weapon_index: int)
 
@@ -33,52 +35,17 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const BuildingSurvivorsScript := preload("res://scripts/buildings/building_survivors.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 const REPAIR_EFFECT_SCENE := preload("res://assets/converted/ui/cursor_models/repair.scn")
-const RALLY_POINT_MARKER_SCENE := preload(
-	"res://assets/converted/ui/cursor_models/place_flag.scn"
-)
-
 const COLLISION_OBJECT_NAME := "#~~0"
-const RALLY_POINT_CLEARANCE := 1.5
-const OCCUPY_CELL_WORLD_SPAN := 2.0
-const REFINERY_ROLE := "Refinery"
 const WALL_BUILDING_GROUP := "Wall"
 const REFINERY_DOCK_RELEASE_DELAY_SECONDS := 3.0
-const INVALID_REFINERY_DOCK := -1
 const RULE_COMBAT_TICKS_PER_SECOND := CombatRulesScript.TICKS_PER_SECOND
-const AUTO_TARGET_REFRESH_SECONDS := 0.25
-const POPUP_TURRET_ROLE := &"PopupTurret"
-const POPUP_DEPLOY_ANIMATION := &"Deploy_Gun"
-const POPUP_HOLD_ANIMATION := &"Deploy_Gun_Hold"
-const POPUP_UNDEPLOY_ANIMATION := &"Undeploy_Gun"
-const DEFENSIVE_TURRET_IDS: Array[StringName] = [
-	&"HKFlameTurret",
-	&"TLTurret",
-	&"HKGunTurret",
-	&"ORGasTurret",
-	&"ORPopUpTurret",
-	&"ATPillbox",
-	&"ATRocketTurret",
-]
-const WALL_ANCHOR_CELL_SPAN := 2
-const WALL_WORLD_NEIGHBOR_TOLERANCE := 0.35
-const MAX_COMBAT_HULL_VERTICES := 8
-const RALLY_POINT_LINE_COLOR := Color(0.12, 1.0, 0.28, 0.9)
-const RALLY_POINT_LINE_WIDTH := 0.10
-const RALLY_POINT_LINE_HEIGHT := 0.08
+const MAX_COMBAT_HULL_VERTICES := CombatHullScript.MAX_VERTICES
+const RALLY_POINT_LINE_HEIGHT := BuildingRallyPointScript.LINE_HEIGHT
 
 ## Refinery dock upgrades are visual states of the refinery itself, not
 ## separate Building nodes. The first/left upgrade unfolds ~~3SmallPad01 and
 ## the second/right unfolds ~~4SmallPad02; both retain their final pose.
 enum RefineryUpgradeState { NONE, LEFT_DOCK, BOTH_DOCKS }
-enum PopupTurretState { RETRACTED, DEPLOYING, DEPLOYED, UNDEPLOYING }
-
-const MAX_REFINERY_DOCKS := 2
-const REFINERY_DOCK_ANIMATIONS: Array[StringName] = [&"Refinery_Pad_1", &"Refinery_Pad_2"]
-## Rules.txt lists the pads as centre, right, left. Upgrade animation 1 opens
-## the left pad, so runtime dock ids follow the order in which pads become
-## available: centre, left, right.
-const REFINERY_DOCK_POINT_ORDER := [0, 2, 1]
-
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
 	set(value):
@@ -149,36 +116,32 @@ var _scroll_fx_time := 0.0
 var _generated_energy := 0
 var _selection_halo
 var _repair_effect: Node3D
-var _has_rally_point := false
-var _rally_point_is_default := true
-var _rally_point_line: MeshInstance3D
-var _rally_point_line_mesh: ImmediateMesh
-var _rally_point_line_material: StandardMaterial3D
-var _rally_point_marker: Node3D
-var _refinery_dock_users: Dictionary = {}
-var _refinery_dock_cooldowns: Dictionary = {}
-var _wall_connection_mask := 0
-var _wall_topology: StringName = WallConnectivityScript.SINGLE
-var _wall_rotation_quarters := 0
-var _combat_hull := PackedVector2Array()
-var _combat_hull_minimum_y := 0.0
-var _combat_hull_maximum_y := 0.0
-var _has_attack_order := false
-var _attack_is_ground := false
-var _attack_ground_position := Vector3.INF
-var _attack_target_ref: WeakRef
-var _automatic_target_ref: WeakRef
-var _automatic_target_cooldown := 0.0
+var _rally = BuildingRallyPointScript.new()
+var _refinery_docks = BuildingRefineryDocksScript.new()
+var _wall_visual = BuildingWallVisualScript.new()
+var _combat_hull = CombatHullScript.new()
+var _building_combat = BuildingCombatScript.new()
 var _authored_fire_controller = AuthoredFireControllerScript.new()
-var _popup_turret_state := PopupTurretState.RETRACTED
-var _popup_transition_player: AnimationPlayer
-var _popup_transition_animation: StringName = &""
-var _popup_transition_elapsed := 0.0
-var _popup_transition_duration := 0.0
+@warning_ignore("unused_private_class_variable")
+var _popup_turret_state: int:
+	get:
+		return _building_combat.popup_state()
+
+
+func _init() -> void:
+	# Placement may apply construct state before this node reaches _ready().
+	# Model-facing modules therefore need their owner as soon as the facade is
+	# constructed; visual child creation remains in _ready via rally.configure.
+	_wall_visual.configure(self)
+	_refinery_docks.configure(self)
+	_building_combat.configure(self, _authored_fire_controller)
 
 
 func _ready() -> void:
 	add_to_group("buildings")
+	_wall_visual.configure(self)
+	_refinery_docks.configure(self)
+	_building_combat.configure(self, _authored_fire_controller)
 	var state_player := get_node_or_null("StatePlayer") as AnimationPlayer
 	if state_player != null:
 		# The outer state clip contains a full copy of Stationary transforms.
@@ -200,13 +163,10 @@ func _ready() -> void:
 	_sync_purchased_upgrade()
 	play_state(default_state)
 	_apply_refinery_upgrade_pose()
-	_combat_hull = get_meta("combat_hull", PackedVector2Array())
-	_combat_hull_minimum_y = float(get_meta("combat_hull_minimum_y", 0.0))
-	_combat_hull_maximum_y = float(get_meta("combat_hull_maximum_y", 0.0))
+	_combat_hull.configure(self)
 	_add_selection_collision()
 	_add_selection_halo()
-	_add_rally_point_line()
-	_add_rally_point_marker()
+	_rally.configure(self)
 	# Placement assigns a newly-built node's final position immediately after it
 	# enters the tree. Deferring this lets both pre-placed and newly-built
 	# production buildings receive a point in front of their final transform.
@@ -220,22 +180,17 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	_authored_fire_controller.cancel()
 	if is_in_group("wall_buildings"):
-		_defer_adjacent_wall_refresh()
+		_wall_visual.defer_adjacent_refresh()
 	_set_generated_energy(0)
 
 
 func _process(delta: float) -> void:
-	_automatic_target_cooldown = maxf(
-		_automatic_target_cooldown - maxf(delta, 0.0), 0.0
-	)
 	for turret in combat_turrets:
 		turret.advance_ticks(delta * RULE_COMBAT_TICKS_PER_SECOND)
-	_advance_popup_transition(delta)
-	_restore_popup_hold_pose()
-	_advance_building_combat(delta)
+	_building_combat.advance(delta)
 	_authored_fire_controller.advance(delta)
-	_restore_popup_hold_pose()
-	_advance_refinery_dock_cooldowns(delta)
+	_building_combat.after_authored_advance()
+	_refinery_docks.advance(delta)
 	if _scroll_fx_meshes.is_empty():
 		return
 	# Scrolling textures (e.g. the windtrap's spinning blades/spotlights) need
@@ -248,242 +203,39 @@ func _process(delta: float) -> void:
 
 
 func can_set_rally_point() -> bool:
-	if building_definition == null:
-		return false
-	# Refineries use their rally point to direct harvesters, not to route
-	# freshly produced units, so it stays available regardless of AiManufacturing.
-	return building_definition.ai_manufacturing or is_refinery()
+	return _rally.can_set()
 
 
 func set_rally_point(position: Vector3) -> bool:
-	if not can_set_rally_point():
-		return false
-	_assign_rally_point(position, false)
-	return true
-
-
-func _assign_rally_point(position: Vector3, is_default: bool) -> void:
-	rally_point = position
-	_has_rally_point = true
-	_rally_point_is_default = is_default
-	_rebuild_rally_point_line()
-	rally_point_changed.emit(rally_point)
+	return _rally.set_point(position)
 
 
 func rally_point_position() -> Vector3:
-	_set_default_rally_point_if_unset()
-	return rally_point
+	return _rally.point()
 
 
 func production_spawn_position() -> Vector3:
-	# Source models pivot their SLCT selection volume at the building's unit
-	# exit (factory apron, hangar pad, barracks door), so when the authored
-	# node is present its origin is the exact spawn point.
-	var authored_exit := _authored_exit_node()
-	if authored_exit != null:
-		return authored_exit.global_position
-
-	# Fallback: a skirt (`S`) is the footprint's front apron. Spawn in its
-	# nearest-to-centre cell rather than at the outer edge, so units are born
-	# inside the correct footprint cell but already facing a clear exit to the
-	# rally point.
-	if building_definition == null:
-		return global_position + exit_direction()
-	var rows: Array[String] = []
-	rows.assign(building_definition.occupy_rows)
-	var spawn_cell := _nearest_skirt_cell(rows)
-	if spawn_cell.x < 0:
-		return global_position + exit_direction()
-	var width := 0
-	for row in rows:
-		width = maxi(width, row.length())
-	var local_offset := Vector3(
-		(float(spawn_cell.x) + 0.5 - float(width) * 0.5) * OCCUPY_CELL_WORLD_SPAN,
-		0.0,
-		(float(spawn_cell.y) + 0.5 - float(rows.size()) * 0.5) * OCCUPY_CELL_WORLD_SPAN
-	)
-	return global_position + SpatialOrientationScript.world_right(self) * local_offset.x + exit_direction() * local_offset.z
+	return _rally.spawn_position()
 
 
-## Where a produced unit should first walk to: the spawn point pushed past the
-## footprint's front edge. The apron always faces local +Z (converter
-## convention), so "out" is the building's forward direction; keeping the
-## spawn's lateral offset makes the unit leave straight through the door.
 func production_exit_position() -> Vector3:
-	var spawn := production_spawn_position()
-	var forward := exit_direction()
-	var front_edge := _front_footprint_extent()
-	var spawn_depth := (global_transform.affine_inverse() * spawn).z
-	return spawn + forward * maxf(front_edge - spawn_depth + RALLY_POINT_CLEARANCE, RALLY_POINT_CLEARANCE)
-
-
-func _front_footprint_extent() -> float:
-	if building_definition != null:
-		var rows: Array = building_definition.occupy_rows
-		if not rows.is_empty():
-			return float(rows.size()) * OCCUPY_CELL_WORLD_SPAN * 0.5
-	return _front_collision_extent()
-
-
-func _authored_exit_node() -> Node3D:
-	# The Idle (H0) state carries the canonical SLCT volume; damage states
-	# duplicate it and the build/destroy states may reposition or drop it.
-	var idle_state := get_node_or_null("States/Idle")
-	if idle_state == null:
-		return null
-	return _find_slct_node(idle_state)
-
-
-func _find_slct_node(node: Node) -> Node3D:
-	if node is Node3D and String(node.get_meta("original_name", "")).to_lower().begins_with("slct"):
-		return node
-	for child in node.get_children():
-		var found := _find_slct_node(child)
-		if found != null:
-			return found
-	return null
-
-
-func _nearest_skirt_cell(rows: Array[String]) -> Vector2i:
-	if rows.is_empty():
-		return Vector2i(-1, -1)
-	var width := 0
-	for row in rows:
-		width = maxi(width, row.length())
-	var centre := Vector2(float(width) * 0.5 - 0.5, float(rows.size()) * 0.5 - 0.5)
-	var closest := Vector2i(-1, -1)
-	var closest_distance := INF
-	for row_index in rows.size():
-		var row := rows[row_index]
-		for column_index in row.length():
-			if row.substr(column_index, 1).to_lower() != "s":
-				continue
-			var distance := Vector2(column_index, row_index).distance_squared_to(centre)
-			if distance < closest_distance:
-				closest = Vector2i(column_index, row_index)
-				closest_distance = distance
-	return closest
+	return _rally.exit_position()
 
 
 func _set_default_rally_point_if_unset() -> void:
-	if _has_rally_point:
-		return
-	var clearance := RALLY_POINT_CLEARANCE + _front_collision_extent()
-	_assign_rally_point(global_position + exit_direction() * clearance, true)
-
-
-func _add_rally_point_line() -> void:
-	_rally_point_line = MeshInstance3D.new()
-	_rally_point_line.name = "RallyPointLine"
-	_rally_point_line.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_rally_point_line.extra_cull_margin = 1000.0
-	add_child(_rally_point_line)
-
-	_rally_point_line_mesh = ImmediateMesh.new()
-	_rally_point_line_material = StandardMaterial3D.new()
-	_rally_point_line_material.albedo_color = RALLY_POINT_LINE_COLOR
-	_rally_point_line_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_rally_point_line_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_rally_point_line_material.no_depth_test = true
-	_rally_point_line_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_rally_point_line_material.render_priority = 19
-	_rebuild_rally_point_line()
-
-
-func _add_rally_point_marker() -> void:
-	_rally_point_marker = RALLY_POINT_MARKER_SCENE.instantiate() as Node3D
-	if _rally_point_marker == null:
-		return
-	_rally_point_marker.name = "RallyPointMarker"
-	# Cursor conversion separates screen/additive surfaces onto render layer 2.
-	# In the world marker both passes must be visible through the gameplay
-	# camera, whose ordinary geometry is on layer 1.
-	for node in _rally_point_marker.find_children("*", "MeshInstance3D", true, false):
-		(node as MeshInstance3D).layers = 1
-	add_child(_rally_point_marker)
-	_refresh_rally_point_marker()
-
-
-func _rebuild_rally_point_line() -> void:
-	if _rally_point_line == null:
-		return
-	_rally_point_line_mesh.clear_surfaces()
-	if not _has_rally_point or _rally_point_is_default:
-		_rally_point_line.mesh = null
-		_refresh_rally_point_line_visibility()
-		_refresh_rally_point_marker()
-		return
-
-	var spawn := to_local(production_spawn_position())
-	var exit := to_local(production_exit_position())
-	var finish := to_local(rally_point)
-	var spawn_to_exit := exit - spawn
-	spawn_to_exit.y = 0.0
-	var exit_to_finish := finish - exit
-	exit_to_finish.y = 0.0
-	if spawn_to_exit.length_squared() <= 0.000001 \
-	and exit_to_finish.length_squared() <= 0.000001:
-		_rally_point_line.mesh = null
-		_refresh_rally_point_line_visibility()
-		_refresh_rally_point_marker()
-		return
-
-	spawn.y += RALLY_POINT_LINE_HEIGHT
-	exit.y += RALLY_POINT_LINE_HEIGHT
-	finish.y += RALLY_POINT_LINE_HEIGHT
-	_rally_point_line_mesh.surface_begin(
-		Mesh.PRIMITIVE_TRIANGLES, _rally_point_line_material
-	)
-	_add_rally_point_line_segment(spawn, exit)
-	_add_rally_point_line_segment(exit, finish)
-	_rally_point_line_mesh.surface_end()
-	_rally_point_line.mesh = _rally_point_line_mesh
-	_refresh_rally_point_line_visibility()
-	_refresh_rally_point_marker()
-
-
-func _add_rally_point_line_segment(start: Vector3, finish: Vector3) -> void:
-	var direction := finish - start
-	direction.y = 0.0
-	if direction.length_squared() <= 0.000001:
-		return
-	var lateral := Vector3(-direction.z, 0.0, direction.x).normalized() \
-		* RALLY_POINT_LINE_WIDTH * 0.5
-	_add_rally_point_line_triangle(start - lateral, finish - lateral, finish + lateral)
-	_add_rally_point_line_triangle(start - lateral, finish + lateral, start + lateral)
-
-
-func _add_rally_point_line_triangle(a: Vector3, b: Vector3, c: Vector3) -> void:
-	_rally_point_line_mesh.surface_add_vertex(a)
-	_rally_point_line_mesh.surface_add_vertex(b)
-	_rally_point_line_mesh.surface_add_vertex(c)
+	_rally.set_default_if_unset()
 
 
 func _refresh_rally_point_line_visibility() -> void:
-	if _rally_point_line != null:
-		_rally_point_line.visible = is_selected \
-			and _has_rally_point and not _rally_point_is_default \
-			and _rally_point_line.mesh != null
+	_rally.refresh_visibility()
 
 
 func _refresh_rally_point_marker() -> void:
-	if _rally_point_marker == null:
-		return
-	if _has_rally_point:
-		_rally_point_marker.position = to_local(rally_point)
-	_rally_point_marker.visible = is_selected \
-		and _has_rally_point and not _rally_point_is_default
+	_rally.refresh_visibility()
 
 
-func _front_collision_extent() -> float:
-	var collision_body := get_node_or_null("SelectionCollision") as StaticBody3D
-	if collision_body != null and collision_body.has_meta("collision_bounds"):
-		var bounds: AABB = collision_body.get_meta("collision_bounds")
-		# Converted Emperor models are Z-mirrored, placing their exit/apron on
-		# local +Z. The positive-Z extent is therefore the front-edge distance.
-		return maxf(absf(bounds.position.z), absf(bounds.end.z))
-	return 0.0
-
+func _emit_rally_point_changed(position: Vector3) -> void:
+	rally_point_changed.emit(position)
 
 func exit_direction() -> Vector3:
 	var direction := SpatialOrientationScript.world_horizontal_axis(self, LOCAL_EXIT_DIRECTION)
@@ -504,43 +256,7 @@ func _collect_scroll_fx_meshes_from(node: Node, result: Array[MeshInstance3D]) -
 
 
 func _add_selection_collision() -> void:
-	var bounds := AABB()
-	var has_bounds := false
-	var body := StaticBody3D.new()
-	body.name = "SelectionCollision"
-	body.collision_layer = 2
-	body.collision_mask = 0
-	if get_node_or_null("CombatCollision") != null:
-		body.set_meta("combat_ignore", true)
-	for source in _collision_sources():
-		var shape := _collision_shape(source)
-		if shape == null:
-			push_warning("Building: collision mesh %s has no usable convex shape" % source.get_path())
-			continue
-
-		var collision := CollisionShape3D.new()
-		collision.name = "AuthoredCollision"
-		collision.shape = shape
-		# SelectionCollision is at the Building origin. Convert the source's
-		# world transform back into that local space before parenting it,
-		# so this works while the body itself is not in the scene tree yet.
-		collision.transform = global_transform.affine_inverse() * source.global_transform
-		body.add_child(collision)
-
-		for point in _collision_bounds_points(source):
-			point = to_local(source.to_global(point))
-			if has_bounds:
-				bounds = bounds.expand(point)
-			else:
-				bounds = AABB(point, Vector3.ZERO)
-				has_bounds = true
-
-	if body.get_child_count() == 0:
-		body.free()
-		return
-	if has_bounds:
-		body.set_meta("collision_bounds", bounds)
-	add_child(body)
+	AuthoredModelScript.add_selection_collision(self, _collision_sources())
 
 
 func _collision_sources() -> Array[Node3D]:
@@ -562,54 +278,6 @@ static func collision_sources_for(source_root: Node, hide_source_meshes := false
 	], hide_source_meshes)
 
 
-func _collision_shape(source: Node3D) -> Shape3D:
-	var points: PackedVector3Array = source.get_meta("collision_points", PackedVector3Array())
-	if points.size() >= 4:
-		var shape := ConvexPolygonShape3D.new()
-		shape.points = points
-		return shape
-	for child in source.get_children():
-		if child is MeshInstance3D and child.mesh != null:
-			return child.mesh.create_convex_shape(true, false)
-	return null
-
-
-func _collision_bounds_points(source: Node3D) -> PackedVector3Array:
-	var points: PackedVector3Array = source.get_meta("collision_points", PackedVector3Array())
-	if not points.is_empty():
-		return points
-	var bounds := PackedVector3Array()
-	for child in source.get_children():
-		if child is MeshInstance3D and child.mesh != null:
-			for corner in _aabb_corners(child.get_aabb()):
-				bounds.append(child.position + corner)
-	return bounds
-
-
-static func _hide_collision_meshes(node: Node) -> void:
-	for child in node.get_children():
-		if child is MeshInstance3D and child.has_meta("collision_mesh"):
-			child.visible = false
-
-
-func _mesh_instances(node: Node) -> Array[MeshInstance3D]:
-	var result: Array[MeshInstance3D] = []
-	if node is MeshInstance3D:
-		result.append(node)
-	for child in node.get_children():
-		result.append_array(_mesh_instances(child))
-	return result
-
-
-func _aabb_corners(bounds: AABB) -> Array[Vector3]:
-	var corners: Array[Vector3] = []
-	for x in [bounds.position.x, bounds.end.x]:
-		for y in [bounds.position.y, bounds.end.y]:
-			for z in [bounds.position.z, bounds.end.z]:
-				corners.append(Vector3(x, y, z))
-	return corners
-
-
 func play_state(state: StringName) -> void:
 	current_state = state
 	var player := get_node_or_null("StatePlayer") as AnimationPlayer
@@ -629,8 +297,7 @@ func play_state(state: StringName) -> void:
 		return
 
 	for child in states.get_children():
-		var child_state := StringName(String(child.get_meta("state", child.name.to_lower())))
-		child.visible = child_state == state
+		child.visible = _child_state_name(child) == state
 	_refresh_wall_variant_visual()
 	_apply_refinery_upgrade_pose()
 	_bind_combat_turrets(_state_root(state))
@@ -640,172 +307,35 @@ func play_state(state: StringName) -> void:
 ## change because of it. Placement calls this deferred from _ready; removal
 ## schedules the same refresh for surviving neighbours from _exit_tree.
 func refresh_wall_connections() -> void:
-	if not is_inside_tree() or not _has_wall_role():
-		return
-	_refresh_wall_topology()
-	for candidate in get_tree().get_nodes_in_group("wall_buildings"):
-		if candidate == self or not is_instance_valid(candidate) \
-		or candidate.is_queued_for_deletion():
-			continue
-		if _wall_direction_to(candidate as Node3D) != 0:
-			candidate.call("_refresh_wall_topology")
+	_wall_visual.refresh_connections()
 
 
 func wall_connection_mask() -> int:
-	return _wall_connection_mask
+	return _wall_visual.connection_mask()
 
 
 func wall_topology() -> StringName:
-	return _wall_topology
+	return _wall_visual.topology()
 
 
 func wall_rotation_quarters() -> int:
-	return _wall_rotation_quarters
+	return _wall_visual.rotation_quarters()
 
 
 func active_wall_variant_path() -> NodePath:
-	var variants := get_node_or_null("WallVariants")
-	if variants == null:
-		return NodePath()
-	for variant in variants.get_children():
-		for state_node in variant.get_children():
-			if state_node is Node3D and state_node.visible:
-				return state_node.get_path()
-	return NodePath()
+	return _wall_visual.active_variant_path()
 
 
 func _refresh_wall_topology() -> void:
-	if not is_inside_tree() or not _has_wall_role():
-		return
-	_wall_connection_mask = _wall_neighbor_mask()
-	var selection: Dictionary = WallConnectivityScript.selection_for_mask(
-		_wall_connection_mask
-	)
-	_wall_topology = selection["topology"]
-	_wall_rotation_quarters = int(selection["rotation_quarters"])
-	_refresh_wall_variant_visual()
-
-
-func _wall_neighbor_mask() -> int:
-	var mask := 0
-	for candidate in get_tree().get_nodes_in_group("wall_buildings"):
-		if candidate == self or not is_instance_valid(candidate) \
-		or candidate.is_queued_for_deletion():
-			continue
-		mask |= _wall_direction_to(candidate as Node3D)
-	return mask
+	_wall_visual.refresh_topology()
 
 
 func _wall_direction_to(other: Node3D) -> int:
-	if other == null:
-		return 0
-	if has_meta(&"placement_anchor_cell") and other.has_meta(&"placement_anchor_cell"):
-		var delta: Vector2i = (
-			other.get_meta(&"placement_anchor_cell") as Vector2i
-			- get_meta(&"placement_anchor_cell") as Vector2i
-		)
-		match delta:
-			Vector2i(0, -WALL_ANCHOR_CELL_SPAN):
-				return WallConnectivityScript.NORTH
-			Vector2i(WALL_ANCHOR_CELL_SPAN, 0):
-				return WallConnectivityScript.EAST
-			Vector2i(0, WALL_ANCHOR_CELL_SPAN):
-				return WallConnectivityScript.SOUTH
-			Vector2i(-WALL_ANCHOR_CELL_SPAN, 0):
-				return WallConnectivityScript.WEST
-			_:
-				return 0
-
-	# Legacy/pre-placed walls have no placement metadata. Their relative world
-	# positions still share the authored two-unit occupy-cell pitch.
-	var delta_world := other.global_position - global_position
-	var span := OCCUPY_CELL_WORLD_SPAN
-	var tolerance := WALL_WORLD_NEIGHBOR_TOLERANCE
-	if absf(delta_world.x) <= tolerance:
-		if absf(delta_world.z + span) <= tolerance:
-			return WallConnectivityScript.NORTH
-		if absf(delta_world.z - span) <= tolerance:
-			return WallConnectivityScript.SOUTH
-	if absf(delta_world.z) <= tolerance:
-		if absf(delta_world.x - span) <= tolerance:
-			return WallConnectivityScript.EAST
-		if absf(delta_world.x + span) <= tolerance:
-			return WallConnectivityScript.WEST
-	return 0
+	return _wall_visual.direction_to(other)
 
 
 func _refresh_wall_variant_visual() -> void:
-	if not _has_wall_role():
-		return
-	var variants := get_node_or_null("WallVariants") as Node3D
-	if variants == null:
-		return
-	for variant in variants.get_children():
-		if variant is Node3D:
-			variant.visible = false
-		for state_node in variant.get_children():
-			if state_node is Node3D:
-				state_node.visible = false
-
-	var visual_state := String(current_state)
-	if visual_state != "idle" and not visual_state.begins_with("damage"):
-		return
-
-	# Wall Stationary clips carry no gameplay animation. Pause the outer state
-	# player after applying time zero so its looping visibility key cannot
-	# reveal the base Single model over an active joined variant.
-	var state_player := get_node_or_null("StatePlayer") as AnimationPlayer
-	if state_player != null:
-		state_player.pause()
-
-	var states := get_node_or_null("States")
-	var base_state := _state_root(current_state)
-	if states != null:
-		for child in states.get_children():
-			var child_state := String(child.get_meta("state", child.name.to_lower()))
-			if child_state == "idle" or child_state.begins_with("damage"):
-				child.visible = false
-
-	if _wall_topology == WallConnectivityScript.SINGLE:
-		if base_state != null:
-			base_state.visible = true
-		return
-
-	var variant_name := WallConnectivityScript.variant_node_name(_wall_topology)
-	var variant_root := variants.get_node_or_null(NodePath(String(variant_name))) as Node3D
-	if variant_root == null:
-		if base_state != null:
-			base_state.visible = true
-		return
-	variant_root.visible = true
-	# The mask is expressed in world/grid directions. Compensate any authored
-	# or pre-placed parent yaw so the selected arms still face those neighbours.
-	variant_root.rotation.y = (
-		float(_wall_rotation_quarters) * PI * 0.5 - variants.global_rotation.y
-	)
-
-	var state_node_name := "Damage2" if visual_state.begins_with("damage") else "Idle"
-	var active_state := variant_root.get_node_or_null(NodePath(state_node_name)) as Node3D
-	# Some original families (notably IX Middle/Cross) omit H2. Preserve the
-	# correct join topology and fall back to that family's intact H0 art.
-	if active_state == null:
-		active_state = variant_root.get_node_or_null("Idle") as Node3D
-	if active_state != null:
-		active_state.visible = true
-	elif base_state != null:
-		base_state.visible = true
-
-
-func _defer_adjacent_wall_refresh() -> void:
-	var tree := get_tree()
-	if tree == null:
-		return
-	for candidate in tree.get_nodes_in_group("wall_buildings"):
-		if candidate == self or not is_instance_valid(candidate) \
-		or candidate.is_queued_for_deletion():
-			continue
-		if _wall_direction_to(candidate as Node3D) != 0:
-			candidate.call_deferred("_refresh_wall_topology")
+	_wall_visual.refresh_variant_visual()
 
 
 ## Idle is the single undamaged health band. Every available DamageN state is
@@ -849,15 +379,29 @@ func _damage_visual_states() -> Array[StringName]:
 	return result
 
 
-func _state_root(state: StringName) -> Node3D:
+## Public accessor: extracted "*/*/_state_root" modules (BuildingWallVisual,
+## BuildingRefineryDocks, BuildingCombat) reach the owning Building only
+## through an untyped/base-typed `_owner` reference, and tools/check_
+## architecture.sh forbids `_owner._private_method` access -- so this is the
+## one entry point they call (via `_owner.call("state_root", state)`) instead
+## of each keeping its own copy of the States-child search below.
+func state_root(state: StringName) -> Node3D:
 	var states := get_node_or_null("States")
 	if states == null:
 		return null
 	for child in states.get_children():
-		var child_state := StringName(String(child.get_meta("state", child.name.to_lower())))
-		if child_state == state and child is Node3D:
+		if _child_state_name(child) == state and child is Node3D:
 			return child as Node3D
 	return null
+
+
+## Thin wrapper kept for building.gd's own internal call sites (play_state()).
+func _state_root(state: StringName) -> Node3D:
+	return state_root(state)
+
+
+func _child_state_name(child: Node) -> StringName:
+	return StringName(String(child.get_meta("state", child.name.to_lower())))
 
 
 func set_owner_player_id(player_id: int) -> void:
@@ -865,55 +409,42 @@ func set_owner_player_id(player_id: int) -> void:
 
 
 func set_upgrade_level(level: int) -> void:
-	upgrade_level = maxi(level, 0)
+	var normalized := maxi(level, 0)
+	if upgrade_level == normalized:
+		return
+	upgrade_level = normalized
+	upgrade_level_changed.emit(upgrade_level)
 
 
 func dock_count() -> int:
-	return refinery_upgrade_state
+	return _refinery_docks.dock_count()
 
 
 ## The base refinery starts with its central pad; refinery_upgrade_state counts
 ## only the one or two additional pads unfolded by upgrades.
 func refinery_dock_capacity() -> int:
-	if not is_refinery():
-		return 0
-	return mini(1 + refinery_upgrade_state, _refinery_dock_points().size())
+	return _refinery_docks.capacity()
 
 
 func is_refinery() -> bool:
-	return building_definition != null and building_definition.roles.has(REFINERY_ROLE)
+	return _refinery_docks.is_refinery()
 
 
 ## Reserves one currently active pad immediately. A reservation remains owned
 ## by this harvester through docking and Unload_End, then enters a three-second
 ## cooldown so the departing vehicle can clear the lane.
 func try_reserve_refinery_dock(harvester: Node) -> int:
-	if harvester == null or not is_instance_valid(harvester):
-		return INVALID_REFINERY_DOCK
-	_prune_refinery_dock_users()
-	for dock_index in refinery_dock_capacity():
-		if float(_refinery_dock_cooldowns.get(dock_index, 0.0)) > 0.0:
-			continue
-		if _refinery_dock_users.has(dock_index):
-			continue
-		_refinery_dock_users[dock_index] = harvester
-		return dock_index
-	return INVALID_REFINERY_DOCK
+	return _refinery_docks.try_reserve(harvester)
 
 
 func refinery_dock_reserved_by(dock_index: int, harvester: Node) -> bool:
-	_prune_refinery_dock_users()
-	return _refinery_dock_users.get(dock_index) == harvester
+	return _refinery_docks.reserved_by(dock_index, harvester)
 
 
 func release_refinery_dock(
 		harvester: Node, cooldown_seconds := REFINERY_DOCK_RELEASE_DELAY_SECONDS
 	) -> void:
-	for dock_index in _refinery_dock_users.keys():
-		if _refinery_dock_users[dock_index] != harvester:
-			continue
-		_refinery_dock_users.erase(dock_index)
-		_refinery_dock_cooldowns[dock_index] = maxf(cooldown_seconds, 0.0)
+	_refinery_docks.release(harvester, cooldown_seconds)
 
 
 ## Before a vehicle enters the pad lane there is nothing that needs a departure
@@ -924,9 +455,7 @@ func abandon_refinery_dock(harvester: Node) -> void:
 
 
 func refinery_front_position() -> Vector3:
-	return global_position + exit_direction() * (
-		_front_footprint_extent() + RALLY_POINT_CLEARANCE
-	)
+	return _refinery_docks.front_position()
 
 
 ## Converts the authoritative Rules.txt DeployTile into world space. Exported
@@ -934,135 +463,34 @@ func refinery_front_position() -> Vector3:
 ## intentionally retain their source orientation (import_rules.gd); mirror Y
 ## here against the occupy height before applying the building transform.
 func refinery_dock_world_position(dock_index: int) -> Vector3:
-	var points := _refinery_dock_points()
-	var rows := _refinery_occupy_rows()
-	if dock_index < 0 or dock_index >= refinery_dock_capacity() or rows.is_empty():
-		return Vector3.INF
-	var point: Dictionary = points[dock_index]
-	var width := 0
-	for row in rows:
-		width = maxi(width, String(row).length())
-	if width <= 0:
-		return Vector3.INF
-	var source_y := int(point.get("tile_y", 0))
-	var mirrored_y := rows.size() - 1 - source_y
-	var local_x := (float(point.get("tile_x", 0)) + 0.5 - float(width) * 0.5) * OCCUPY_CELL_WORLD_SPAN
-	var local_z := (float(mirrored_y) + 0.5 - float(rows.size()) * 0.5) * OCCUPY_CELL_WORLD_SPAN
-	return global_position \
-		+ SpatialOrientationScript.world_right(self) * local_x \
-		+ exit_direction() * local_z
+	return _refinery_docks.world_position(dock_index)
 
 
 func refinery_dock_facing_direction(dock_index: int) -> Vector3:
-	var points := _refinery_dock_points()
-	if dock_index < 0 or dock_index >= refinery_dock_capacity():
-		return exit_direction()
-	var degrees := float((points[dock_index] as Dictionary).get("angle", 0.0))
-	# Rules angles use the source model's opposite yaw convention.
-	return exit_direction().rotated(Vector3.UP, deg_to_rad(-degrees)).normalized()
+	return _refinery_docks.facing_direction(dock_index)
 
 
 func refinery_dock_navigation_cells(navigation_grid) -> Dictionary:
-	if navigation_grid == null:
-		return {}
-	var footprint := BuildingFootprintScript.nav_cells_by_marker(
-		self,
-		_refinery_occupy_rows(),
-		navigation_grid,
-		BuildingPlacementScript.NAV_CELLS_PER_OCCUPY_CELL
-	)
-	var dock_cells := {}
-	for cell in footprint:
-		var marker := String(footprint[cell]).to_lower()
-		if marker == "d" or marker == "p":
-			dock_cells[cell] = marker
-	return dock_cells
-
-
-func _refinery_dock_points() -> Array:
-	var source_points: Array = building_definition.deploy_points if building_definition != null else []
-	var ordered_points: Array = []
-	for source_index in REFINERY_DOCK_POINT_ORDER:
-		if source_index < source_points.size():
-			ordered_points.append(source_points[source_index])
-	return ordered_points
-
-
-func _refinery_occupy_rows() -> Array:
-	return building_definition.occupy_rows if building_definition != null else []
-
-
-func _advance_refinery_dock_cooldowns(delta: float) -> void:
-	_prune_refinery_dock_users()
-	for dock_index in _refinery_dock_cooldowns.keys():
-		var remaining := maxf(float(_refinery_dock_cooldowns[dock_index]) - maxf(delta, 0.0), 0.0)
-		if remaining <= 0.0001:
-			_refinery_dock_cooldowns.erase(dock_index)
-		else:
-			_refinery_dock_cooldowns[dock_index] = remaining
-
-
-func _prune_refinery_dock_users() -> void:
-	for dock_index in _refinery_dock_users.keys():
-		var harvester = _refinery_dock_users[dock_index]
-		if not is_instance_valid(harvester) or harvester.is_queued_for_deletion():
-			_refinery_dock_users.erase(dock_index)
+	return _refinery_docks.navigation_cells(navigation_grid)
 
 
 func can_add_dock() -> bool:
-	return refinery_upgrade_state < MAX_REFINERY_DOCKS
+	return _refinery_docks.can_add_upgrade()
 
 
 func add_refinery_dock_upgrade() -> bool:
-	if not can_add_dock():
-		return false
-	refinery_upgrade_state += 1
-	_play_refinery_dock_animation(refinery_upgrade_state - 1)
-	return true
+	return _refinery_docks.add_upgrade()
 
 
 func set_refinery_upgrade_state(state: int) -> void:
-	refinery_upgrade_state = clampi(state, 0, MAX_REFINERY_DOCKS)
-	if is_inside_tree():
-		_apply_refinery_upgrade_pose()
-
-
-func _play_refinery_dock_animation(animation_index: int) -> void:
-	var player := _refinery_animation_player()
-	if player == null or animation_index < 0 or animation_index >= REFINERY_DOCK_ANIMATIONS.size():
-		return
-	var animation_name := REFINERY_DOCK_ANIMATIONS[animation_index]
-	if player.has_animation(animation_name):
-		player.play(animation_name)
+	_refinery_docks.set_upgrade_state(state)
 
 
 ## Restored/preconfigured refineries do not replay their opening sequence.
 ## Seeking each completed clip applies the same final transforms immediately;
 ## later clips target a different pad, so the earlier pose stays untouched.
 func _apply_refinery_upgrade_pose() -> void:
-	var player := _refinery_animation_player()
-	if player == null:
-		return
-	for animation_index in refinery_upgrade_state:
-		var animation_name := REFINERY_DOCK_ANIMATIONS[animation_index]
-		if not player.has_animation(animation_name):
-			continue
-		var animation := player.get_animation(animation_name)
-		player.play(animation_name)
-		player.seek(animation.length, true)
-		player.pause()
-
-
-## Idle, Damage1 and Damage2 each carry their own copy of the dock pad nodes
-## and their own AnimationPlayer, so the pose has to be reapplied against
-## whichever state is currently active, not always against Idle.
-func _refinery_animation_player() -> AnimationPlayer:
-	var state_root := _state_root(current_state)
-	if state_root == null:
-		state_root = get_node_or_null("States/Idle")
-	if state_root == null:
-		return null
-	return state_root.get_node_or_null("AnimationPlayer") as AnimationPlayer
+	_refinery_docks.apply_upgrade_pose()
 
 
 func setup(building_id: StringName) -> void:
@@ -1156,51 +584,11 @@ func combat_aim_position() -> Vector3:
 ## Spreads incoming fire across the footprint-facing edge instead of making
 ## every attacker converge on the building root.
 func combat_aim_position_from(world_origin: Vector3) -> Vector3:
-	if _combat_hull.size() >= 3:
-		var local_origin := to_local(world_origin)
-		var nearest := _nearest_combat_hull_point(
-			Vector2(local_origin.x, local_origin.z)
-		)
-		var local_aim := to_local(combat_aim_position())
-		local_aim.x = nearest.x
-		local_aim.y = clampf(
-			local_origin.y,
-			_combat_hull_minimum_y,
-			_combat_hull_maximum_y
-		)
-		local_aim.z = nearest.y
-		return to_global(local_aim)
-	var collision_body := get_node_or_null("SelectionCollision") as StaticBody3D
-	if collision_body == null or not collision_body.has_meta("collision_bounds"):
-		return combat_aim_position()
-	var bounds: AABB = collision_body.get_meta("collision_bounds")
-	var local_origin := to_local(world_origin)
-	var local_aim := to_local(combat_aim_position())
-	local_aim.x = clampf(local_origin.x, bounds.position.x, bounds.end.x)
-	local_aim.z = clampf(local_origin.z, bounds.position.z, bounds.end.z)
-	return to_global(local_aim)
-
-
-func _nearest_combat_hull_point(point: Vector2) -> Vector2:
-	if Geometry2D.is_point_in_polygon(point, _combat_hull):
-		return point
-	var nearest := _combat_hull[0]
-	var nearest_distance := INF
-	for index in _combat_hull.size():
-		var candidate := Geometry2D.get_closest_point_to_segment(
-			point,
-			_combat_hull[index],
-			_combat_hull[(index + 1) % _combat_hull.size()]
-		)
-		var distance := point.distance_squared_to(candidate)
-		if distance < nearest_distance:
-			nearest = candidate
-			nearest_distance = distance
-	return nearest
+	return _combat_hull.aim_position_from(world_origin, combat_aim_position())
 
 
 func combat_hull() -> PackedVector2Array:
-	return _combat_hull.duplicate()
+	return _combat_hull.points()
 
 
 func combat_has_precise_collision() -> bool:
@@ -1208,14 +596,7 @@ func combat_has_precise_collision() -> bool:
 
 
 func combat_contains_impact_position(world_position: Vector3) -> bool:
-	if _combat_hull.size() < 3:
-		return false
-	var local_position := to_local(world_position)
-	var footprint_position := Vector2(local_position.x, local_position.z)
-	return Geometry2D.is_point_in_polygon(footprint_position, _combat_hull) \
-		or footprint_position.distance_to(
-			_nearest_combat_hull_point(footprint_position)
-		) <= 0.001
+	return _combat_hull.contains_impact_position(world_position)
 
 
 func combat_is_alive() -> bool:
@@ -1281,218 +662,43 @@ func fire_weapon_at(
 
 
 func can_attack(target_or_position: Variant) -> bool:
-	if not _combat_is_operational():
-		return false
-	for turret in combat_turrets:
-		if turret.can_target(target_or_position):
-			return true
-	return false
+	return _building_combat.can_attack(target_or_position)
 
 
-## Buildings accept the same explicit attack contract as units. They retain an
-## out-of-range target rather than pursuing it and begin firing if it later
-## enters range. Relation checks remain in UnitCommandController so Ctrl can
-## deliberately force fire against allied or neutral targets.
 func command_attack(target_or_position: Variant) -> bool:
-	if not can_attack(target_or_position):
-		return false
-	_authored_fire_controller.cancel()
-	_has_attack_order = true
-	_attack_is_ground = target_or_position is Vector3
-	_attack_ground_position = (
-		target_or_position if _attack_is_ground else Vector3.INF
-	)
-	_attack_target_ref = (
-		null if _attack_is_ground else weakref(target_or_position as Object)
-	)
-	_automatic_target_ref = null
-	_automatic_target_cooldown = 0.0
-	attack_order_changed.emit(true, target_or_position)
-	return true
+	return _building_combat.command_attack(target_or_position)
 
 
 func cancel_attack_order() -> void:
-	_authored_fire_controller.cancel()
-	_automatic_target_ref = null
-	_automatic_target_cooldown = 0.0
-	if not _has_attack_order:
-		return
-	_has_attack_order = false
-	_attack_is_ground = false
-	_attack_ground_position = Vector3.INF
-	_attack_target_ref = null
-	attack_order_changed.emit(false, null)
+	_building_combat.cancel_order()
 
 
-## Shared Stop-command contract. Stationary buildings can only have an explicit
-## attack order, so Stop deliberately leaves rally points and production state
-## unchanged.
 func cancel_all_orders() -> bool:
-	var had_order := _has_attack_order
-	if not had_order:
-		return false
-	cancel_attack_order()
-	return true
+	return _building_combat.cancel_all_orders()
 
 
 func has_attack_order() -> bool:
-	return _has_attack_order
+	return _building_combat.has_order()
 
 
 func has_active_order() -> bool:
-	return _has_attack_order
+	return _building_combat.has_order()
 
 
 func attack_order_target() -> Variant:
-	if not _has_attack_order:
-		return null
-	if _attack_is_ground:
-		return _attack_ground_position
-	return (
-		_attack_target_ref.get_ref()
-		if _attack_target_ref != null
-		else null
-	)
+	return _building_combat.order_target()
 
 
-func _advance_building_combat(delta: float) -> void:
-	if not _combat_is_operational() or combat_turrets.is_empty():
-		return
-	var turret = combat_turrets.front()
-	var target: Variant = attack_order_target()
-	if _has_attack_order and (
-		(not _attack_is_ground and not _combat_target_is_alive(target))
-		or not _combat_target_position(target).is_finite()
-	):
-		cancel_attack_order()
-		target = null
-	# A stationary turret cannot solve a blocked line of fire by moving, and
-	# shelling the building or cliff in the way is never what the shot was for.
-	# The ordered target stays attached -- the obstacle may fall, or a mobile
-	# target may leave cover -- while the weapon serves reachable enemies.
-	if target == null or not turret.has_line_of_fire(target, self):
-		target = _automatic_target_for(turret)
-
-	var target_in_range: bool = target != null \
-		and turret.target_range(target) \
-			== CombatTurretScript.TargetRange.IN_RANGE
-	var target_position := (
-		_combat_target_position(target) if target_in_range else Vector3.INF
-	)
-	if target_in_range and turret.requires_hull_turn_for(target_position):
-		target_in_range = false
-
-	if _uses_popup_turret():
-		if _popup_turret_state in [
-			PopupTurretState.DEPLOYING,
-			PopupTurretState.UNDEPLOYING,
-		]:
-			return
-		if target_in_range \
-		and _popup_turret_state == PopupTurretState.RETRACTED:
-			_begin_popup_transition(true)
-			return
-		if not target_in_range \
-		and _popup_turret_state == PopupTurretState.DEPLOYED \
-		and not _authored_fire_controller.is_active():
-			if turret.recenter(delta):
-				_begin_popup_transition(false)
-			return
-		if _popup_turret_state != PopupTurretState.DEPLOYED:
-			return
-
-	if not target_in_range:
-		if not _authored_fire_controller.is_active():
-			turret.recenter(delta)
-		return
-	var aimed := bool(turret.aim_at(target_position, delta))
-	if config_id == &"ATRocketTurret":
-		aimed = bool(turret.is_group_yaw_aimed_at(target_position))
-	if not aimed or _authored_fire_controller.is_active():
-		return
-	if _authored_fire_controller.try_start(target):
-		return
-	if _authored_fire_controller.has_fire_animation():
-		return
-	var projectiles: Array = turret.try_fire_at(target, self)
-	if not projectiles.is_empty():
-		weapon_fired.emit(projectiles, target, turret.weapon_index())
+func _emit_attack_order_changed(active: bool, target: Variant) -> void:
+	attack_order_changed.emit(active, target)
 
 
-func _automatic_target_for(turret) -> Variant:
-	var cached: Variant = (
-		_automatic_target_ref.get_ref()
-		if _automatic_target_ref != null
-		else null
-	)
-	if _automatic_target_is_usable(turret, cached):
-		return cached
-	if _automatic_target_cooldown > 0.0:
-		return null
-	_automatic_target_cooldown = AUTO_TARGET_REFRESH_SECONDS
-	var tree := get_tree()
-	if tree == null:
-		return null
-	var best_target: Node3D
-	var best_distance := INF
-	var candidates: Array[Node] = []
-	candidates.append_array(tree.get_nodes_in_group(&"units"))
-	candidates.append_array(tree.get_nodes_in_group(&"buildings"))
-	for candidate_node in candidates:
-		if not candidate_node is Node3D or candidate_node == self:
-			continue
-		var candidate := candidate_node as Node3D
-		if not _automatic_target_is_usable(turret, candidate):
-			continue
-		var distance := global_position.distance_squared_to(
-			candidate.global_position
-		)
-		if distance < best_distance \
-		or (
-			is_equal_approx(distance, best_distance)
-			and best_target != null
-			and candidate.get_instance_id() < best_target.get_instance_id()
-		):
-			best_distance = distance
-			best_target = candidate
-	_automatic_target_ref = (
-		weakref(best_target) if best_target != null else null
-	)
-	return best_target
+func _emit_weapon_fired(projectiles: Array, target: Variant, weapon_index: int) -> void:
+	weapon_fired.emit(projectiles, target, weapon_index)
 
 
-func _automatic_target_is_usable(turret, target: Variant) -> bool:
-	if not target is Node3D or not is_instance_valid(target):
-		return false
-	var candidate := target as Node3D
-	if not _combat_target_is_alive(candidate) \
-	or not candidate.has_method("is_enemy_of") \
-	or not bool(candidate.call("is_enemy_of", owner_player_id)):
-		return false
-	if turret.target_range(candidate) \
-		!= CombatTurretScript.TargetRange.IN_RANGE:
-		return false
-	var target_position := _combat_target_position(candidate)
-	return target_position.is_finite() \
-		and not turret.requires_hull_turn_for(target_position) \
-		and turret.has_line_of_fire(candidate, self)
-
-
-func _combat_target_position(target: Variant) -> Vector3:
-	return CombatTargetScript.position_of(target, global_position)
-
-
-func _combat_target_is_alive(target: Variant) -> bool:
-	return CombatTargetScript.is_alive(target)
-
-
-func _combat_is_operational() -> bool:
-	return config_id in DEFENSIVE_TURRET_IDS \
-		and _construction_complete \
-		and health > 0.0 \
-		and not is_queued_for_deletion() \
-		and not combat_turrets.is_empty()
-
+func _active_model_animation_player(animation_name: StringName) -> AnimationPlayer:
+	return _building_combat.active_animation_player(animation_name)
 
 func _combat_turret_for_weapon(weapon_index: int):
 	if weapon_index < 0:
@@ -1569,147 +775,7 @@ func _configure_combat_turret() -> void:
 
 
 func _bind_combat_turrets(model_root: Node3D) -> void:
-	_authored_fire_controller.cancel()
-	_reset_popup_transition()
-	for turret in combat_turrets:
-		turret.bind_model(model_root, turret.weapon_index())
-		if model_root != null:
-			for node in model_root.find_children(
-				"*", "AnimationPlayer", true, false
-			):
-				var player := node as AnimationPlayer
-				player.process_priority = mini(
-					player.process_priority, process_priority - 1
-				)
-	if not combat_turrets.is_empty():
-		_authored_fire_controller.configure(
-			self, combat_turrets.front(), model_root
-		)
-
-
-func _uses_popup_turret() -> bool:
-	return building_definition != null \
-		and POPUP_TURRET_ROLE in building_definition.roles
-
-
-func _begin_popup_transition(deploying: bool) -> void:
-	var animation_name := (
-		POPUP_DEPLOY_ANIMATION
-		if deploying
-		else POPUP_UNDEPLOY_ANIMATION
-	)
-	var player := _active_model_animation_player(animation_name)
-	if player == null:
-		_popup_turret_state = (
-			PopupTurretState.DEPLOYED
-			if deploying
-			else PopupTurretState.RETRACTED
-		)
-		return
-	var animation := player.get_animation(animation_name)
-	if animation == null:
-		return
-	_authored_fire_controller.cancel()
-	_popup_turret_state = (
-		PopupTurretState.DEPLOYING
-		if deploying
-		else PopupTurretState.UNDEPLOYING
-	)
-	_popup_transition_player = player
-	_popup_transition_animation = animation_name
-	_popup_transition_elapsed = 0.0
-	_popup_transition_duration = animation.length
-	player.speed_scale = 1.0
-	player.stop(true)
-	player.play(animation_name)
-
-
-func _advance_popup_transition(delta: float) -> void:
-	if _popup_turret_state not in [
-		PopupTurretState.DEPLOYING,
-		PopupTurretState.UNDEPLOYING,
-	]:
-		return
-	if _popup_transition_player == null \
-	or not is_instance_valid(_popup_transition_player):
-		_finish_popup_transition()
-		return
-	_popup_transition_elapsed = minf(
-		_popup_transition_elapsed + maxf(delta, 0.0),
-		_popup_transition_duration
-	)
-	if _popup_transition_elapsed + 0.0001 < _popup_transition_duration:
-		return
-	var animation := _popup_transition_player.get_animation(
-		_popup_transition_animation
-	)
-	if animation != null:
-		_popup_transition_player.seek(animation.length, true)
-	_popup_transition_player.pause()
-	_finish_popup_transition()
-
-
-func _finish_popup_transition() -> void:
-	var was_deploying := (
-		_popup_turret_state == PopupTurretState.DEPLOYING
-	)
-	var player := _popup_transition_player
-	_popup_turret_state = (
-		PopupTurretState.DEPLOYED
-		if was_deploying
-		else PopupTurretState.RETRACTED
-	)
-	_popup_transition_player = null
-	_popup_transition_animation = &""
-	_popup_transition_elapsed = 0.0
-	_popup_transition_duration = 0.0
-	if was_deploying and player != null \
-	and player.has_animation(POPUP_HOLD_ANIMATION):
-		player.stop(true)
-		player.play(POPUP_HOLD_ANIMATION)
-		player.advance(0.0)
-		player.pause()
-	for turret in combat_turrets:
-		turret.capture_current_rest_pose()
-
-
-func _restore_popup_hold_pose() -> void:
-	if not _uses_popup_turret() \
-	or _popup_turret_state != PopupTurretState.DEPLOYED \
-	or _authored_fire_controller.is_active():
-		return
-	var player := _active_model_animation_player(POPUP_HOLD_ANIMATION)
-	if player == null:
-		return
-	player.stop(true)
-	player.play(POPUP_HOLD_ANIMATION)
-	player.advance(0.0)
-	player.pause()
-	for turret in combat_turrets:
-		turret.restore_aim_pose()
-
-
-func _reset_popup_transition() -> void:
-	_popup_turret_state = PopupTurretState.RETRACTED
-	_popup_transition_player = null
-	_popup_transition_animation = &""
-	_popup_transition_elapsed = 0.0
-	_popup_transition_duration = 0.0
-
-
-func _active_model_animation_player(
-	animation_name: StringName
-	) -> AnimationPlayer:
-	var state_root := _state_root(current_state)
-	if state_root == null:
-		return null
-	for node in state_root.find_children(
-		"*", "AnimationPlayer", true, false
-	):
-		var player := node as AnimationPlayer
-		if player.has_animation(animation_name):
-			return player
-	return null
+	_building_combat.bind_model(model_root)
 
 
 func _on_authored_weapon_fired(

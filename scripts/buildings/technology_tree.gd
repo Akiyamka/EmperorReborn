@@ -110,9 +110,7 @@ func _load_building_house_metadata() -> void:
 
 
 func _requirements(config: Resource, primary: bool) -> Array:
-	if config is UnitDefinitionScript:
-		return config.primary_building_ids if primary else config.secondary_building_ids
-	if config is BuildingDefinitionScript:
+	if config is UnitDefinitionScript or config is BuildingDefinitionScript:
 		return config.primary_building_ids if primary else config.secondary_building_ids
 	return []
 
