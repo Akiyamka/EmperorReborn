@@ -109,28 +109,6 @@ var _placement_press_position: Vector2:
 		return _pointer_gesture.press_position()
 	set(value):
 		_pointer_gesture.set_press_position(value)
-@warning_ignore("unused_private_class_variable")
-var _placement_rotated_during_press: bool:
-	get:
-		return _pointer_gesture.rotated_during_press()
-	set(value):
-		_pointer_gesture.set_rotated_during_press(value)
-## Both of these are shims over WallLineSession, kept because tests address
-## them as fields. Each needs BOTH directions: a setter-only property still
-## has a backing field that reads would silently return (always null), and a
-## getter-only one silently swallows writes into it.
-@warning_ignore("unused_private_class_variable")
-var _wall_marker_scene: PackedScene:
-	get:
-		return _wall_session.marker_scene()
-	set(value):
-		_wall_session.set_marker_scene(value)
-@warning_ignore("unused_private_class_variable")
-var _wall_markers: Dictionary:
-	get:
-		return _wall_session.markers()
-	set(value):
-		_wall_session.set_markers(value)
 
 
 func setup(

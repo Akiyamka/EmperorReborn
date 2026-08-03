@@ -330,13 +330,5 @@ func markers() -> Dictionary:
 	return _markers
 
 
-func set_markers(value: Dictionary) -> void:
-	_markers = value
-
-
-func marker_scene() -> PackedScene:
-	return _marker_scene
-
-
 func set_marker_scene(value: PackedScene) -> void:
 	_marker_scene = value

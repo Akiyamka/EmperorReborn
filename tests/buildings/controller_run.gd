@@ -192,7 +192,7 @@ func _test_rotation_release_requires_confirmation(token: int) -> int:
 	controller._building_placement.begin(&"Gesture", "Gesture", ["X"])
 	controller._placement_pointer_down = true
 	controller._placement_press_position = Vector2(10.0, 10.0)
-	controller._placement_rotated_during_press = true
+	controller._pointer_gesture.set_rotated_during_press(true)
 	controller._finish_placement_pointer_action(Vector2(10.0, 10.0))
 	_expect(
 		controller._building_placement.is_active(),
@@ -399,13 +399,13 @@ func _test_fixed_wall_marker_lifecycle(token: int) -> int:
 	_setup_controller_placement(controller,
 		null, FakeGrid.new(), buildings_root, null, null, null, null, Callable()
 	)
-	controller._wall_marker_scene = PlacementWallScene
+	controller._wall_session.set_marker_scene(PlacementWallScene)
 	controller._lock_wall_markers([Vector2i(2, 4), Vector2i(4, 4)])
 	_expect(
-		controller._wall_markers.size() == 2,
+		controller._wall_session.markers().size() == 2,
 		"fixing a wall line must retain one build_wall marker per green segment"
 	)
-	var marker := controller._wall_markers[Vector2i(2, 4)] as Node3D
+	var marker := controller._wall_session.markers()[Vector2i(2, 4)] as Node3D
 	var marker_meshes := marker.find_children("*", "MeshInstance3D", true, false)
 	var marker_uses_source_materials := not marker_meshes.is_empty()
 	for node in marker_meshes:
@@ -429,14 +429,14 @@ func _test_fixed_wall_marker_lifecycle(token: int) -> int:
 	controller._advance_wall_chain()
 	controller._building_queue.tick(1.0, 0)
 	_expect(
-		not controller._wall_markers.has(Vector2i(2, 4))
-		and controller._wall_markers.has(Vector2i(4, 4)),
+		not controller._wall_session.markers().has(Vector2i(2, 4))
+		and controller._wall_session.markers().has(Vector2i(4, 4)),
 		"a completed segment must remove only its own fixed marker"
 	)
 
 	controller._cancel_building_order()
 	_expect(
-		controller._wall_markers.is_empty(),
+		controller._wall_session.markers().is_empty(),
 		"canceling wall construction must remove all remaining fixed markers"
 	)
 	controller.free()
