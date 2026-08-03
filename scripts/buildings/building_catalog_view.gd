@@ -39,7 +39,12 @@ func has(building_id: StringName) -> bool:
 ## itself left the tree, and absolute-path autoload lookups are invalid by
 ## then. Definition data is static, so it never needs one.
 func config(building_id: StringName) -> Resource:
-	return _configs.get(building_id, _catalog.definition(building_id))
+	# An explicit branch, not Dictionary.get(key, default): GDScript evaluates
+	# the default eagerly, so the catalog fallback would run on every hit too --
+	# and this is called once per configured id per option-state refresh.
+	if _configs.has(building_id):
+		return _configs[building_id] as Resource
+	return _catalog.definition(building_id)
 
 
 func config_of(building: Node) -> Resource:

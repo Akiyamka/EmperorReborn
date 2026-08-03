@@ -32,29 +32,45 @@ const CROSS := &"cross"
 ## SINGLE and CROSS are rotation-invariant, hence quarter turn 0.
 ##
 ## _SELECTIONS is that derivation precomputed: indexed by the four-bit
-## neighbour mask, it is the single source of truth for topology family,
-## baked-model rotation and scene variant name. tests/buildings/
+## neighbour mask, it answers the grid question -- which family this wall
+## belongs to and how far its model turns. tests/buildings/
 ## wall_connectivity_run.gd keeps its own copy of the canonical masks above and
 ## re-derives all sixteen rows through rotated_mask(), so a wrong row here
 ## fails there rather than shipping silently.
 const _SELECTIONS := [
-	[SINGLE, 0, &""],
-	[END, 1, &"End"],
-	[END, 0, &"End"],
-	[CORNER, 0, &"Corner"],
-	[END, 3, &"End"],
-	[MIDDLE, 1, &"Middle"],
-	[CORNER, 3, &"Corner"],
-	[TJOIN, 3, &"TJoin"],
-	[END, 2, &"End"],
-	[CORNER, 1, &"Corner"],
-	[MIDDLE, 0, &"Middle"],
-	[TJOIN, 0, &"TJoin"],
-	[CORNER, 2, &"Corner"],
-	[TJOIN, 1, &"TJoin"],
-	[TJOIN, 2, &"TJoin"],
-	[CROSS, 0, &"Cross"],
+	[SINGLE, 0],
+	[END, 1],
+	[END, 0],
+	[CORNER, 0],
+	[END, 3],
+	[MIDDLE, 1],
+	[CORNER, 3],
+	[TJOIN, 3],
+	[END, 2],
+	[CORNER, 1],
+	[MIDDLE, 0],
+	[TJOIN, 0],
+	[CORNER, 2],
+	[TJOIN, 1],
+	[TJOIN, 2],
+	[CROSS, 0],
 ]
+
+## Topology -> the WallVariants child holding that family's baked model. A
+## separate table from _SELECTIONS on purpose: this is the scene-naming layer,
+## not grid math, and the two change for unrelated reasons (a renamed variant
+## node is an asset change; a different mask-to-family rule is a gameplay one).
+## Keying by topology also makes the lookup a hash hit rather than a scan over
+## sixteen rows, and states each name once instead of once per mask that
+## resolves to it.
+const _VARIANT_NODE_NAMES := {
+	SINGLE: &"",
+	END: &"End",
+	MIDDLE: &"Middle",
+	CORNER: &"Corner",
+	TJOIN: &"TJoin",
+	CROSS: &"Cross",
+}
 
 
 ## Returns the canonical model family and its positive-Y quarter-turn count.
@@ -95,7 +111,4 @@ static func rotated_mask(raw_mask: int, quarter_turns: int) -> int:
 
 
 static func variant_node_name(topology: StringName) -> StringName:
-	for selection in _SELECTIONS:
-		if selection[0] == topology:
-			return selection[2]
-	return &""
+	return _VARIANT_NODE_NAMES.get(topology, &"")
