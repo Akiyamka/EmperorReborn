@@ -184,17 +184,17 @@ func configure(turret_id: StringName) -> bool:
 	return true
 
 
-func bind_model(model_root: Node3D, weapon_index: int) -> bool:
+func bind_model(model_root: Node3D, model_weapon_index: int) -> bool:
 	unbind_model()
-	_weapon_index = weapon_index
-	if model_root == null or weapon_index < 0:
+	_weapon_index = model_weapon_index
+	if model_root == null or model_weapon_index < 0:
 		return false
 	_model_root = model_root
 	_fx_model_root = _find_fx_model_root(model_root)
 	_uses_embedded_muzzle_flash = _has_embedded_muzzle_flash(model_root)
 
 	var pivot_candidates: Array[Node3D] = []
-	_collect_markers(model_root, TURRET_MARKER, weapon_index, pivot_candidates)
+	_collect_markers(model_root, TURRET_MARKER, model_weapon_index, pivot_candidates)
 	_root_pivot = _pivot_with_muzzles(pivot_candidates)
 	if _root_pivot == null and not pivot_candidates.is_empty():
 		_root_pivot = pivot_candidates.front()
@@ -202,7 +202,7 @@ func bind_model(model_root: Node3D, weapon_index: int) -> bool:
 	if _root_pivot != null:
 		_collect_markers(_root_pivot, MUZZLE_MARKER, -1, _muzzles)
 	if _muzzles.is_empty():
-		_collect_markers(model_root, MUZZLE_MARKER, weapon_index, _muzzles)
+		_collect_markers(model_root, MUZZLE_MARKER, model_weapon_index, _muzzles)
 	if _muzzles.is_empty():
 		_collect_visual_muzzle_fallbacks(_root_pivot if _root_pivot != null else model_root, _muzzles)
 	_muzzles.sort_custom(_muzzle_less)

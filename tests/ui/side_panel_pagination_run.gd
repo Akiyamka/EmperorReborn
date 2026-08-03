@@ -2,6 +2,7 @@ extends SceneTree
 
 const SidePanelScene := preload("res://scenes/ui/side_panel.tscn")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+const BuildingOptionStateScript := preload("res://scripts/buildings/building_option_state.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -48,6 +49,28 @@ func _initialize() -> void:
 		== [&"", &"HKBarracks", &""],
 		"a captured House keeps authored cells while grouped duplicates stay hidden"
 	)
+
+	var upgrade_ids: Array[StringName] = []
+	for index in SidePanel.QUEUE_PAGE_SIZE + 1:
+		upgrade_ids.append(&"ATBarracks" if index == SidePanel.QUEUE_PAGE_SIZE else StringName("Upgrade%d" % index))
+	panel.configure_upgrade_options(upgrade_ids)
+	panel._set_active_tab(SidePanel.Tab.UPGRADES)
+	_expect(panel._page_previous.visible and panel._page_next.visible, "upgrade options paginate independently")
+	panel._pages_by_tab[SidePanel.Tab.UPGRADES] = 1
+	panel._rebuild_queue_grid()
+	var upgrade_slot = panel._upgrade_slot(&"ATBarracks")
+	_expect(upgrade_slot != null, "an upgrade on the second page is reachable")
+	var disabled_state = BuildingOptionStateScript.new(
+		&"ATBarracks", BuildingOptionStateScript.State.DISABLED, 0.0, "", "Unavailable"
+	)
+	panel.set_upgrade_option_state(disabled_state)
+	_expect(not upgrade_slot.visible, "a disabled upgrade slot is hidden")
+	var emitted_upgrades: Array[StringName] = []
+	panel.upgrade_intent_pressed.connect(
+		func(upgrade_id: StringName, _button_index: int): emitted_upgrades.append(upgrade_id)
+	)
+	panel._on_slot_pressed(MOUSE_BUTTON_LEFT, 1, 0)
+	_expect(emitted_upgrades == [&"ATBarracks"], "an upgrade click emits the paged upgrade id")
 
 	panel.free()
 	if _failures > 0:

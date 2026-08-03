@@ -484,25 +484,25 @@ func _configure_trajectory() -> void:
 ## solved ballistically; no horizontal correction converges parallel barrels.
 static func parallel_trajectory_impact_position(
 		launch_position: Vector3,
-		aim_position: Vector3,
+		target_aim_position: Vector3,
 		forward_direction: Vector3
 	) -> Vector3:
 	var horizontal_forward := Vector3(
 		forward_direction.x, 0.0, forward_direction.z
 	)
 	var horizontal_offset := Vector3(
-		aim_position.x - launch_position.x,
+		target_aim_position.x - launch_position.x,
 		0.0,
-		aim_position.z - launch_position.z
+		target_aim_position.z - launch_position.z
 	)
 	if horizontal_forward.is_zero_approx() or horizontal_offset.is_zero_approx():
-		return aim_position
+		return target_aim_position
 	horizontal_forward = horizontal_forward.normalized()
 	var forward_distance := horizontal_offset.dot(horizontal_forward)
 	if forward_distance <= 0.000001:
-		return aim_position
+		return target_aim_position
 	var result := launch_position + horizontal_forward * forward_distance
-	result.y = aim_position.y
+	result.y = target_aim_position.y
 	return result
 
 
@@ -514,7 +514,7 @@ static func parallel_trajectory_impact_position(
 static func trajectory_launch_velocities(
 		bullet_payload,
 		launch_position: Vector3,
-		aim_position: Vector3,
+		target_aim_position: Vector3,
 		gravity_world: float,
 		maximum_range_override := -1.0
 	) -> Array[Vector3]:
@@ -526,7 +526,7 @@ static func trajectory_launch_velocities(
 		or gravity_world <= 0.0
 	):
 		return result
-	var offset := aim_position - launch_position
+	var offset := target_aim_position - launch_position
 	var horizontal := Vector3(offset.x, 0.0, offset.z)
 	var horizontal_distance := horizontal.length()
 	var maximum_range: float = maximum_range_override \
@@ -564,11 +564,11 @@ static func trajectory_gravity_world(rule_gravity: float) -> float:
 		* SOURCE_MODEL_WORLD_SCALE * RULE_UPDATES_PER_SECOND * RULE_UPDATES_PER_SECOND
 
 
-static func _closest_velocity(candidates: Array[Vector3], direction: Vector3) -> Vector3:
+static func _closest_velocity(candidates: Array[Vector3], preferred_direction: Vector3) -> Vector3:
 	var result: Vector3 = candidates.front()
-	if direction.is_zero_approx():
+	if preferred_direction.is_zero_approx():
 		return result
-	var normalized_direction := direction.normalized()
+	var normalized_direction := preferred_direction.normalized()
 	var best_dot: float = -INF
 	for candidate in candidates:
 		var score := normalized_direction.dot(candidate.normalized())
@@ -852,7 +852,7 @@ func _create_laser_visual(start_position: Vector3, end_position: Vector3) -> boo
 	if length <= 0.000001:
 		return false
 
-	var direction := segment / length
+	var beam_direction := segment / length
 	var beam := Node3D.new()
 	beam.name = "LaserBeam"
 	beam.set_meta("start_position", start_position)
@@ -863,7 +863,7 @@ func _create_laser_visual(start_position: Vector3, end_position: Vector3) -> boo
 	# away from the muzzle on the same frame.
 	beam.top_level = true
 	beam.global_transform = Transform3D(
-		Basis(Quaternion(Vector3.UP, direction)),
+		Basis(Quaternion(Vector3.UP, beam_direction)),
 		start_position.lerp(end_position, 0.5)
 	)
 

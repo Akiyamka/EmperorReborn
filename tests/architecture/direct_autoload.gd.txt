@@ -1,0 +1,4 @@
+extends Node
+
+func players() -> Node:
+	return get_node_or_null("/root/Players")

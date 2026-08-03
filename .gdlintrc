@@ -1,0 +1,16 @@
+disable:
+- class-definitions-order
+- comparison-with-itself
+- duplicated-load
+- function-variable-name
+- unused-argument
+max-line-length: 360
+max-file-lines: 5000
+max-public-methods: 200
+function-arguments-number: 16
+max-returns: 20
+
+# Ratchet targets (lower immediately after the named extraction stages):
+# - stage 4: function-arguments-number: 8
+# - stage 7: max-file-lines: 800 and max-public-methods: 80
+# - ongoing touched-file cleanup: max-line-length: 120

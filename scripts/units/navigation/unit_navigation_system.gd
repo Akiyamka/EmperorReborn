@@ -18,9 +18,11 @@ const PathFunnelScript := preload("res://scripts/units/navigation/ground/path_fu
 const AirNavigationScript := preload("res://scripts/units/navigation/air/air_navigation.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+@warning_ignore("unused_private_class_variable") # TODO(stage 2): move to nav_blocker_tracker.
 static var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
 
 signal destination_slots_assigned(command_id: int, assignments: Array[Dictionary])
+@warning_ignore("unused_signal") # Public integration hook; intentionally not emitted here yet.
 signal enemy_blocked(unit: Node3D, blockers: Array[Node3D])
 
 enum MoveMode { FREE, FORMATION }
@@ -78,6 +80,7 @@ var _command_log: Array[Dictionary] = []
 var _debug_enabled := false
 ## Agent keys (unit instance ids) queued for a budgeted reroute after a
 ## building-blocker change; see `_replan_after_map_change`/`_process_reroute_queue`.
+@warning_ignore("unused_private_class_variable") # TODO(stage 2): move to nav_blocker_tracker.
 var _reroute_queue: Array = []
 
 

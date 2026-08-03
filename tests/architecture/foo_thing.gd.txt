@@ -1,0 +1,4 @@
+class_name FooThing
+extends RefCounted
+
+const SOME_CONST := 1

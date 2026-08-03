@@ -384,6 +384,11 @@ func _test_dying_unit_leaves_no_reference_into_its_corpse() -> void:
 		bad_properties.is_empty(),
 		"a unit must retain no reference to a freed object or to a node under its own corpse after death, but found: %s" % [bad_properties]
 	)
+	var bad_connections := _find_connections_to_unit_or_modules(unit, corpse)
+	_expect(
+		bad_connections.is_empty(),
+		"a corpse must retain no signal connection into its former Unit or modules, but found: %s" % [bad_connections]
+	)
 	_expect(not unit.is_processing(), "a unit must stop _process() the instant it hands off its model")
 	_expect(not unit.is_physics_processing(), "a unit must stop _physics_process() the instant it hands off its model")
 
@@ -421,21 +426,35 @@ func _test_dying_unit_leaves_no_reference_into_its_corpse() -> void:
 ## a live reference to a Node that is now `corpse` itself or one of its
 ## descendants (2b745b2's class: a pointer into a subtree that has since
 ## been handed to someone else).
-func _value_dangles(value: Variant, corpse: Node) -> bool:
+func _value_dangles(value: Variant, corpse: Node, visited: Dictionary = {}) -> bool:
 	if typeof(value) == TYPE_OBJECT:
 		if not is_instance_valid(value):
 			return true
 		if value is Node and (value == corpse or corpse.is_ancestor_of(value as Node)):
 			return true
+		# RefCounted subsystem modules hide their fields from Unit's property list.
+		# Follow script variables explicitly, while avoiding owner/module cycles.
+		if not value is Node and value.get_script() != null:
+			var instance_id: int = value.get_instance_id()
+			if visited.has(instance_id):
+				return false
+			visited[instance_id] = true
+			for property_info: Dictionary in value.get_property_list():
+				var usage := int(property_info.get("usage", 0))
+				if usage & PROPERTY_USAGE_SCRIPT_VARIABLE == 0:
+					continue
+				var property_name := String(property_info.get("name", ""))
+				if _value_dangles(value.get(property_name), corpse, visited):
+					return true
 		return false
 	if value is Array:
 		for item in value:
-			if _value_dangles(item, corpse):
+			if _value_dangles(item, corpse, visited):
 				return true
 		return false
 	if value is Dictionary:
 		for key in value:
-			if _value_dangles(key, corpse) or _value_dangles(value[key], corpse):
+			if _value_dangles(key, corpse, visited) or _value_dangles(value[key], corpse, visited):
 				return true
 		return false
 	return false
@@ -456,6 +475,51 @@ func _find_dangling_references(unit: Unit, corpse: Node) -> Array[String]:
 		if _value_dangles(unit.get(property_name), corpse):
 			bad.append(property_name)
 	return bad
+
+
+func _find_connections_to_unit_or_modules(unit: Unit, corpse: Node) -> Array[String]:
+	var receiver_ids: Dictionary = {}
+	_collect_script_object_ids(unit, receiver_ids)
+	var bad: Array[String] = []
+	var nodes: Array[Node] = [corpse]
+	while not nodes.is_empty():
+		var node: Node = nodes.pop_back()
+		nodes.append_array(node.get_children())
+		for signal_info: Dictionary in node.get_signal_list():
+			var signal_name := StringName(signal_info.get("name", &""))
+			for connection: Dictionary in node.get_signal_connection_list(signal_name):
+				var callback: Callable = connection.get("callable", Callable())
+				var receiver: Object = callback.get_object()
+				if receiver != null and receiver_ids.has(receiver.get_instance_id()):
+					bad.append("%s.%s -> %s" % [node.get_path(), signal_name, callback])
+	return bad
+
+
+func _collect_script_object_ids(value: Variant, visited: Dictionary) -> void:
+	if value is Array:
+		for item in value:
+			_collect_script_object_ids(item, visited)
+		return
+	if value is Dictionary:
+		for key in value:
+			_collect_script_object_ids(key, visited)
+			_collect_script_object_ids(value[key], visited)
+		return
+	if typeof(value) != TYPE_OBJECT or not is_instance_valid(value):
+		return
+	if value is Node and not value is Unit:
+		return
+	if value.get_script() == null:
+		return
+	var instance_id: int = value.get_instance_id()
+	if visited.has(instance_id):
+		return
+	visited[instance_id] = true
+	for property_info: Dictionary in value.get_property_list():
+		var usage := int(property_info.get("usage", 0))
+		if usage & PROPERTY_USAGE_SCRIPT_VARIABLE == 0:
+			continue
+		_collect_script_object_ids(value.get(String(property_info.get("name", ""))), visited)
 
 
 func _expect(condition: bool, message: String) -> void:

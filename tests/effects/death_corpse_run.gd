@@ -84,7 +84,7 @@ func _test_plays_clip() -> void:
 	var world := Node3D.new()
 	root.add_child(world)
 	var fixture := _make_model(&"Shot_1")
-	var corpse := DeathCorpseScript.spawn(
+	var _corpse := DeathCorpseScript.spawn(
 		world, fixture["model"], Transform3D.IDENTITY, &"Shot_1", _no_sounds(), Vector3.ZERO, 1
 	)
 	var player: AnimationPlayer = fixture["player"]

@@ -74,15 +74,15 @@ func create_player(
 	return new_player
 
 
-func add_player(player) -> void:
-	if player == null:
+func add_player(roster_player) -> void:
+	if roster_player == null:
 		push_warning("Cannot add a null player to the roster")
 		return
 
-	_disconnect_existing_player(player.player_id)
-	_players[player.player_id] = player
-	player.resources_changed.connect(_on_player_resources_changed)
-	player_changed.emit(player.player_id)
+	_disconnect_existing_player(roster_player.player_id)
+	_players[roster_player.player_id] = roster_player
+	roster_player.resources_changed.connect(_on_player_resources_changed)
+	player_changed.emit(roster_player.player_id)
 	roster_changed.emit()
 
 

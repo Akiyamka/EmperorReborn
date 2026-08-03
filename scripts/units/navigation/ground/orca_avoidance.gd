@@ -54,7 +54,6 @@ func resolve_velocity(
 	var soft_lines: Array[Dictionary] = []
 	var enemies: Array[Node3D] = []
 	var friends: Array[Node3D] = []
-	var has_overlap := false
 
 	var own_velocity: Vector2 = _flat(agent.get("orca_velocity", Vector3.ZERO))
 
@@ -83,8 +82,6 @@ func resolve_velocity(
 		obstacle_candidates.sort_custom(func(a, b): return float(a["dist_sq"]) < float(b["dist_sq"]))
 		for index in mini(MAX_OBST_LINES, obstacle_candidates.size()):
 			var relative: Vector2 = obstacle_candidates[index]["position"]
-			if relative.length_squared() < combined * combined:
-				has_overlap = true
 			var line := _velocity_obstacle_line(
 				relative, own_velocity, Vector2.ZERO, combined, TAU_OBST, delta,
 				RESPONSIBILITY_HARD, max_speed, true
@@ -130,8 +127,6 @@ func resolve_velocity(
 		var responsibility := RESPONSIBILITY_HARD if hard \
 			else (RESPONSIBILITY_MUTUAL if other_moving else RESPONSIBILITY_AGAINST_IDLE)
 		var other_velocity: Vector2 = _flat(other.get("orca_velocity", Vector3.ZERO))
-		if relative.length_squared() < combined_radius * combined_radius:
-			has_overlap = true
 		var line := _velocity_obstacle_line(
 			relative, own_velocity, other_velocity, combined_radius, TAU, delta,
 			responsibility, max_speed
@@ -430,12 +425,14 @@ static func _linear_program_2(
 ## constraint (their intersections with the failing/later soft lines become
 ## new projected lines) — the hard/terrain lines stay enforced; only mutual
 ## soft/friendly conflicts are relaxed.
+## `_opt_velocity` is intentionally unused here and retained for signature
+## parity with RVO2's linearProgram3.
 static func _linear_program_3(
 		lines: Array[Dictionary],
 		num_hard: int,
 		begin_line: int,
 		radius: float,
-		opt_velocity: Vector2
+		_opt_velocity: Vector2
 	) -> Vector2:
 	var result := Vector2.ZERO
 	var distance := 0.0

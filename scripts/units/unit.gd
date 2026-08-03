@@ -404,8 +404,8 @@ func flight_is_landed() -> bool:
 ## only ever takes off once, at spawn. No AI calls this yet in this pass —
 ## `allowed_cells` mirrors the command_dock exception shape for the follow-up
 ## pass that issues real land orders.
-func flight_request_land(target_position: Vector3, allowed_cells: Dictionary = {}) -> bool:
-	return _flight_controller != null and _flight_controller.flight_request_land(target_position, allowed_cells)
+func flight_request_land(landing_position: Vector3, allowed_cells: Dictionary = {}) -> bool:
+	return _flight_controller != null and _flight_controller.flight_request_land(landing_position, allowed_cells)
 
 
 ## Called by UnitLocalAvoidance when two air agents' lateral paths converge —
@@ -1572,11 +1572,11 @@ func _advance_retained_weapon_targets(delta: float) -> void:
 			retained_target = null
 		var turret_target: Variant = null
 		if retained_target != null:
-			var target_position := _combat_target_position(retained_target)
+			var target_world_position := _combat_target_position(retained_target)
 			if (
 				turret.target_range(retained_target)
 					== CombatTurretScript.TargetRange.IN_RANGE
-				and not turret.requires_hull_turn_for(target_position)
+				and not turret.requires_hull_turn_for(target_world_position)
 				and turret.has_line_of_fire(retained_target, self)
 			):
 				turret_target = retained_target
@@ -1591,12 +1591,12 @@ func _advance_turret_engagement(
 	) -> bool:
 	if turret == null or target == null:
 		return false
-	var target_position := _combat_target_position(target)
-	if not target_position.is_finite() \
+	var target_world_position := _combat_target_position(target)
+	if not target_world_position.is_finite() \
 	or turret.target_range(target) != CombatTurretScript.TargetRange.IN_RANGE:
 		return false
 	var aimed := bool(aimed_override) if aimed_override is bool \
-		else bool(turret.aim_at(target_position, delta))
+		else bool(turret.aim_at(target_world_position, delta))
 	if not aimed or _weapon_fire_sequences.has(turret.weapon_index()):
 		return true
 	# A stream weapon's authored Fire clip is one short burst meant to replay
@@ -1700,9 +1700,9 @@ func _automatic_target_is_usable(turret, target: Variant) -> bool:
 		return false
 	if turret.target_range(candidate) != CombatTurretScript.TargetRange.IN_RANGE:
 		return false
-	var target_position := _combat_target_position(candidate)
-	return target_position.is_finite() \
-		and not turret.requires_hull_turn_for(target_position) \
+	var target_world_position := _combat_target_position(candidate)
+	return target_world_position.is_finite() \
+		and not turret.requires_hull_turn_for(target_world_position) \
 		and turret.has_line_of_fire(candidate, self)
 
 
@@ -2464,7 +2464,7 @@ func cancel_all_orders() -> bool:
 ## Shared unit deployment interface. Eligibility and the per-unit strategy
 ## live in UnitDeploymentController; Unit owns the common locked alignment and
 ## animation phases so future deployable units can reuse the same contract.
-func deploy(facing_direction: Vector3 = Vector3.ZERO) -> bool:
+func deploy(desired_facing: Vector3 = Vector3.ZERO) -> bool:
 	if _deploy_state != DeployState.TRAVEL:
 		return false
 	_deploy_state = DeployState.DEPLOYING
@@ -2474,7 +2474,7 @@ func deploy(facing_direction: Vector3 = Vector3.ZERO) -> bool:
 		_navigation_system.call("set_hold_position", self, true)
 
 	_deployment_alignment_direction = Vector3(
-		facing_direction.x, 0.0, facing_direction.z
+		desired_facing.x, 0.0, desired_facing.z
 	)
 	_deployment_aligning = (
 		_deployment_alignment_direction.length_squared()
@@ -3420,7 +3420,6 @@ func _halo_anchor_bounds() -> AABB:
 
 
 func _selection_bounds() -> AABB:
-	var highest := 0.0
 	var bounds := AABB()
 	var has_bounds := false
 	for marker in _selection_marker_nodes(visual_root):

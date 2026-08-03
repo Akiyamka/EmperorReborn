@@ -302,7 +302,7 @@ func _test_house_construction_yards() -> void:
 func _test_house_construction_yard_undeployment() -> void:
 	var players = root.get_node("Players")
 	players.reset_for_match()
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	var cases := [
 		[1, &"Atreides", &"ATConYard", &"ATMCV", ATConYardScene, Vector3(20.0, 0.0, 120.0), 0.0],
 		[2, &"Harkonnen", &"HKConYard", &"HKMCV", HKConYardScene, Vector3(100.0, 0.0, 120.0), PI * 0.5],

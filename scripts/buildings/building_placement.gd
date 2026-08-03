@@ -95,7 +95,7 @@ func setup(
 ## at the default and is subject to the check.
 func begin(
 		building_id: StringName,
-		display_name: String,
+		building_display_name: String,
 		occupy_rows: Array[String],
 		is_wall: bool = false,
 		skip_build_radius_check: bool = false
@@ -105,7 +105,7 @@ func begin(
 
 	_clear()
 	_building_id = building_id
-	_display_name = display_name
+	_display_name = building_display_name
 	_source_occupy_rows = occupy_rows.duplicate()
 	_occupy_rows = _source_occupy_rows.duplicate()
 	_rotation_quarter_turns = 0

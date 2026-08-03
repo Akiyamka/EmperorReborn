@@ -28,11 +28,11 @@ func setup(source_grid: MapNavigationGrid) -> bool:
 
 ## `no_stop_cells` are traversable building aprons that may be crossed by any
 ## route, but may never be selected as an ordinary stopping destination.
-func replace_blocked_cells(cells: Dictionary, no_stop_cells: Dictionary = {}) -> bool:
+func replace_blocked_cells(cells: Dictionary, new_no_stop_cells: Dictionary = {}) -> bool:
 	if grid == null:
 		return false
 	var next := _bytes_from_cells(cells)
-	var next_no_stop := _bytes_from_cells(no_stop_cells)
+	var next_no_stop := _bytes_from_cells(new_no_stop_cells)
 	if next == _blocked and next_no_stop == _no_stop:
 		_changed_cells = PackedInt32Array()
 		return false

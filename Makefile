@@ -2,7 +2,7 @@ GODOT_CONTAINER := ./tools/godot-container
 RULES_EDITOR_DIR := ./tools/rules_editor
 RULES_DB ?= $(CURDIR)/assets/converted/rules.db
 
-.PHONY: rules-editor rules-export voice-feedback voice-feedback-check unit-definitions unit-definitions-check godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-projectiles godot-convert-placement godot-convert-cursors godot-convert-spice-mound godot-convert-audio godot-export-web godot-watch-export godot-shell godot-version
+.PHONY: rules-editor rules-export voice-feedback voice-feedback-check unit-definitions unit-definitions-check lint godot-image godot-check godot-test godot-convert-map godot-convert-building godot-convert-all-buildings godot-convert-all-units godot-convert-projectiles godot-convert-placement godot-convert-cursors godot-convert-spice-mound godot-convert-audio godot-export-web godot-watch-export godot-shell godot-version
 
 rules-editor:
 	cd $(RULES_EDITOR_DIR) && RULES_DB="$(RULES_DB)" npm start
@@ -28,36 +28,15 @@ godot-image:
 godot-check:
 	$(GODOT_CONTAINER) check
 
+lint:
+	./tools/test_check_architecture.sh
+	./tools/check_architecture.sh
+	$(GODOT_CONTAINER) lint
+
 godot-test:
 	$(MAKE) unit-definitions-check
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/characterization/run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/camera/run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/ui/cursor_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/ui/side_panel_pagination_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/audio/voice_feedback_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/building_scene_catalog_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/placement_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/wall_connectivity_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/controller_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/techtree_multiple_conyards_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/primary_building_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/buildings/upgrade_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/rules/run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/combat/run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/combat/death_category_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/unit_command_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/deployment_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/unit_scene_catalog_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/harvester_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/flight_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/death_strategy_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/units/death_animation_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/effects/death_corpse_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/demo_boot_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/match/snapshot_run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/maps/run.gd
-	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://tests/navigation/run.gd
+	$(MAKE) lint
+	./tools/run_godot_tests.sh
 
 godot-convert-map:
 	$(GODOT_CONTAINER) godot --headless --path /workspace --script res://converters/convert_map.gd -- --source "$(MAP)"

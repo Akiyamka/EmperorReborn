@@ -583,7 +583,7 @@ func _normalized_model_name(value: String) -> String:
 	return value.to_lower().replace("_", "").replace(" ", "")
 
 
-func _add_state_player(root: Node3D, states_root: Node3D, state_nodes: Array[Node3D]) -> void:
+func _add_state_player(root: Node3D, _states_root: Node3D, state_nodes: Array[Node3D]) -> void:
 	var player := AnimationPlayer.new()
 	player.name = "StatePlayer"
 

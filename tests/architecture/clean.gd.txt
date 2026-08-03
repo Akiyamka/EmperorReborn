@@ -1,0 +1,6 @@
+extends RefCounted
+
+var _owner
+
+func value() -> Variant:
+	return _owner.public_value

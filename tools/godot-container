@@ -18,6 +18,7 @@ Commands:
   build          Build the Podman image with Godot and Web templates.
   version        Print Godot version from the container.
   check          Import/validate the mounted project in headless mode.
+  lint           Run the pinned gdtoolkit linter over project GDScript.
   export-web     Export the Web preset to exports/web/index.html.
   watch-export   Re-export Web when project files change.
   shell          Open a shell inside the mounted project container.
@@ -109,6 +110,9 @@ case "${command}" in
 		;;
 	check)
 		check_project
+		;;
+	lint)
+		run_shell -lc "/opt/gdtoolkit/bin/gdlint scripts tests converters"
 		;;
 	export-web)
 		export_web

@@ -432,9 +432,7 @@ func _local_player_unit_option_ids() -> Array[StringName]:
 	if local_player == null:
 		return []
 
-	return _unit_definition_catalog.producible_unit_ids(
-		local_player.house_id, local_player.subhouse_ids
-	)
+	return _unit_definition_catalog.producible_unit_ids()
 
 
 func _local_player_upgrade_option_ids() -> Array[StringName]:

@@ -82,7 +82,7 @@ func clear_cache() -> void:
 	_model_cache.clear()
 
 
-func producible_unit_ids(house_id: StringName, subhouse_ids: Array[StringName]) -> Array[StringName]:
+func producible_unit_ids() -> Array[StringName]:
 	var result: Array[StringName] = []
 	for value in GeneratedManifest.DEFINITION_PATHS.keys():
 		var config_id := StringName(String(value))

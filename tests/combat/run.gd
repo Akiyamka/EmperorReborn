@@ -281,6 +281,7 @@ func _initialize() -> void:
 		"a continuous stream's pulses split one clip's total damage evenly",
 		_test_continuous_stream_damage_split
 	)
+	_run_case("simultaneous projectiles retain independent damage scales", _test_projectile_damage_scale_isolation)
 	await _run_async_case("impact resolution applies splash falloff and friendly fire", _test_impact_resolution)
 	_run_case("turret emits bursts and reloads in rule ticks", _test_turret_reload)
 	_run_case(
@@ -1380,6 +1381,35 @@ func _test_continuous_stream_damage_split() -> void:
 	)
 
 
+func _test_projectile_damage_scale_isolation() -> void:
+	var rules = root.get_node("Rules")
+	var first_payload = _runtime_bullet(rules, &"Mortar_B")
+	var second_payload = _runtime_bullet(rules, &"Mortar_B")
+	first_payload.damage_scale = 0.25
+	second_payload.damage_scale = 1.75
+	var first = CombatProjectileScript.new()
+	var second = CombatProjectileScript.new()
+	root.add_child(first)
+	root.add_child(second)
+	var target_position := Vector3(0.0, 0.0, -8.0)
+	_expect(
+		first.launch(first_payload, _emission(Vector3.ZERO, Vector3.FORWARD), target_position),
+		"the first scaled projectile launches"
+	)
+	_expect(
+		second.launch(second_payload, _emission(Vector3.RIGHT, Vector3.FORWARD), target_position),
+		"the second scaled projectile launches"
+	)
+	_expect(
+		first.bullet != second.bullet
+		and is_equal_approx(first.bullet.damage_scale, 0.25)
+		and is_equal_approx(second.bullet.damage_scale, 1.75),
+		"each in-flight projectile must retain its own mutable shot payload"
+	)
+	first.free()
+	second.free()
+
+
 func _test_impact_resolution() -> void:
 	var rules = root.get_node("Rules")
 	var source := CombatSource.new()
@@ -1465,7 +1495,7 @@ func _test_impact_resolution() -> void:
 
 
 func _test_turret_reload() -> void:
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	var turret = CombatTurretScript.new()
 	_expect(
 		turret.configure(&"ATInfGun"),
@@ -1542,7 +1572,7 @@ func _test_continuous_turret_burst_reload() -> void:
 
 
 func _test_muzzle_fx_bank_smoke() -> void:
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	var cases := [
 		[&"ATTrikeGun", &"Muzzle1", 0.5, 7.5],
 		[&"ATAPCBase", &"Muzzle1", 0.5, 7.5],
@@ -1831,7 +1861,7 @@ func _test_model_fx_bank_streams() -> void:
 
 
 func _test_turret_projectile_launch() -> void:
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	_free_ground_decals()
 	var model := ATMinotaurusModelScene.instantiate() as Node3D
 	root.add_child(model)
@@ -2074,7 +2104,7 @@ func _test_turret_projectile_launch() -> void:
 
 
 func _test_mongoose_launch_and_impact_fx() -> void:
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	_free_ground_decals()
 	var model := ATMongooseModelScene.instantiate() as Node3D
 	root.add_child(model)
@@ -2248,7 +2278,7 @@ func _test_mongoose_launch_and_impact_fx() -> void:
 
 
 func _test_compound_turret() -> void:
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	var model := ATAPCModelScene.instantiate() as Node3D
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
@@ -2289,7 +2319,7 @@ func _test_compound_turret() -> void:
 
 
 func _test_fixed_turret() -> void:
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	var model := ATInfantryModelScene.instantiate() as Node3D
 	root.add_child(model)
 	_free_muzzle_effects()
@@ -2340,7 +2370,7 @@ func _test_fixed_turret() -> void:
 
 
 func _test_single_axis_turret() -> void:
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	var model := ORLaserTankModelScene.instantiate() as Node3D
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
@@ -2387,7 +2417,7 @@ func _test_single_axis_turret() -> void:
 
 
 func _test_multi_barrel_turret() -> void:
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	var model := ATMinotaurusModelScene.instantiate() as Node3D
 	root.add_child(model)
 	var turret = CombatTurretScript.new()
@@ -2414,7 +2444,7 @@ func _test_multi_barrel_turret() -> void:
 
 
 func _test_parallel_trajectory_salvo() -> void:
-	var rules = root.get_node("Rules")
+	var _rules = root.get_node("Rules")
 	var model := ATMinotaurusModelScene.instantiate() as Node3D
 	root.add_child(model)
 	var turret = CombatTurretScript.new()

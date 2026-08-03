@@ -16,6 +16,8 @@ RUN apt-get update \
         ca-certificates \
         curl \
         inotify-tools \
+        python3 \
+        python3-venv \
         sqlite3 \
         unzip \
         libasound2 \
@@ -30,6 +32,11 @@ RUN apt-get update \
         libxrandr2 \
         libxrender1 \
     && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/gdtoolkit \
+    && /opt/gdtoolkit/bin/pip install --no-cache-dir "gdtoolkit==4.3.4"
+
+ENV PATH="/opt/gdtoolkit/bin:${PATH}"
 
 RUN set -eux; \
     godot_base="Godot_v${GODOT_VERSION}-${GODOT_RELEASE}"; \

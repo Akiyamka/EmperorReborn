@@ -68,7 +68,7 @@ func process(delta: float) -> void:
 	_process_upgrade_order(delta)
 
 
-func handle_command(command: StringName) -> bool:
+func handle_command(_command: StringName) -> bool:
 	return false
 
 

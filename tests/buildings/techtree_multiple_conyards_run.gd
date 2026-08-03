@@ -67,9 +67,7 @@ func _initialize() -> void:
 		tree.is_available(harkonnen_unit, player, [hk_barracks]),
 		"Great-House units use production prerequisites without checking the player's starting House"
 	)
-	var ix_unit_ids := UnitSceneCatalogScript.new().producible_unit_ids(
-		player.house_id, player.subhouse_ids
-	)
+	var ix_unit_ids := UnitSceneCatalogScript.new().producible_unit_ids()
 	_expect(
 		ix_unit_ids.has(&"IXInfiltrator") and ix_unit_ids.has(&"IXProjector"),
 		"unselected sub-house units remain in the candidate roster for captured production buildings"

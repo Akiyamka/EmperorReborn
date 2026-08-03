@@ -68,11 +68,11 @@ static func spawn(
 		clip: StringName,
 		sound_event_ids: Array[StringName],
 		momentum: Vector3,
-		owner_player_id: int,
+		corpse_owner_player_id: int,
 		start_sound_paths: Array[String] = [],
 	) -> DeathCorpse:
 	var corpse := DeathCorpseScene.instantiate() as DeathCorpse
-	corpse.owner_player_id = owner_player_id
+	corpse.owner_player_id = corpse_owner_player_id
 	# Parent first, then stamp the global transform: assigning `.transform`
 	# before the node is inside the tree would only equal the intended world
 	# transform if `world` itself sits at the scene origin.

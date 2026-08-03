@@ -3,6 +3,7 @@ extends Node3D
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
+const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
 const WallConnectivityScript := preload("res://scripts/buildings/wall_connectivity.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const AuthoredFireControllerScript := preload(
@@ -979,7 +980,7 @@ func refinery_dock_navigation_cells(navigation_grid) -> Dictionary:
 		self,
 		_refinery_occupy_rows(),
 		navigation_grid,
-		BuildingPlacement.NAV_CELLS_PER_OCCUPY_CELL
+		BuildingPlacementScript.NAV_CELLS_PER_OCCUPY_CELL
 	)
 	var dock_cells := {}
 	for cell in footprint:

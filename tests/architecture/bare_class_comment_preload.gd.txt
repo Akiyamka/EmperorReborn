@@ -1,0 +1,6 @@
+extends RefCounted
+
+# A commented preload must not satisfy the architecture rule:
+# preload("res://scripts/foo_thing.gd")
+func value() -> int:
+	return FooThing.SOME_CONST

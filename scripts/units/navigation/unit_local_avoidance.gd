@@ -18,7 +18,7 @@ var orca := OrcaAvoidanceScript.new()
 ## Temporary comparison switch. The authored chassis TurnRate is still
 ## enforced by Unit.navigation_step(); false only removes the navigation-side
 ## pre-rotation that bends successive steering targets into a driven arc.
-var turn_rate_stabilization_enabled := true
+var turn_rate_stabilization_enabled := false
 
 
 func setup(source_runtime_map) -> void:

@@ -157,7 +157,7 @@ func _run_runtime_case() -> void:
 		"returning from construct to idle must leave the selected wall variant visible"
 	)
 
-	var north := _spawn_wall(&"ATWall", Vector2i(0, -2), root)
+	var _north := _spawn_wall(&"ATWall", Vector2i(0, -2), root)
 	await process_frame
 	_expect(
 		center.wall_connection_mask()
@@ -167,8 +167,8 @@ func _run_runtime_case() -> void:
 	_expect(center.wall_topology() == WallConnectivityScript.CORNER, "adjacent pair must show Corner")
 	_expect(center.wall_rotation_quarters() == 0, "north-east Corner must use canonical baked orientation")
 
-	var west := _spawn_wall(&"ATWall", Vector2i(-2, 0), root)
-	var south := _spawn_wall(&"ATWall", Vector2i(0, 2), root)
+	var _west := _spawn_wall(&"ATWall", Vector2i(-2, 0), root)
+	var _south := _spawn_wall(&"ATWall", Vector2i(0, 2), root)
 	await process_frame
 	_expect(center.wall_topology() == WallConnectivityScript.CROSS, "four neighbours must show Cross")
 	center.health = center.max_health * 0.25
