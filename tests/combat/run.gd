@@ -229,6 +229,10 @@ func _initialize() -> void:
 	_run_case("non-homing bullets keep the sampled aim point", _test_linear_projectile_no_lead)
 	_run_case("attack-ground missiles descend to the sampled point", _test_attack_ground_missile)
 	_run_case("homing respects delay, turn rate and target lifetime", _test_homing_projectile)
+	_run_case(
+		"homing missiles may outfly their firing range while chasing",
+		_test_homing_flight_budget
+	)
 	_run_case("trajectory bullets follow a gravity arc", _test_trajectory_projectile)
 	_run_case(
 		"elevated-only trajectory mounts prefer the high ballistic arc",
@@ -998,6 +1002,49 @@ func _test_homing_projectile() -> void:
 	projectile.advance(0.05)
 	_expect(projectile.finish_reason == &"target_lost", "a homing missile must self-destruct when its target dies")
 	_expect(is_zero_approx(target.damage_taken), "target loss must not apply an impact payload")
+	projectile.free()
+
+
+## Rules.txt has no missile lifetime, so MaxRange doubles as the flight budget.
+## A missile chasing a retreating target flies further than the straight line
+## that was range-checked at launch; the extra budget keeps it alive to hit.
+func _test_homing_flight_budget() -> void:
+	var rules = root.get_node("Rules")
+	var heat = _runtime_bullet(rules, &"HEAT_B")
+	_expect(
+		heat.flight_range_world() > heat.maximum_range_world(),
+		"a homing bullet must fly further than the range it is fired at"
+	)
+	var lmg = _runtime_bullet(rules, &"LMG_B")
+	_expect(
+		is_equal_approx(lmg.flight_range_world(), lmg.maximum_range_world()),
+		"a straight shot must keep firing range and flight budget identical"
+	)
+
+	var target := CombatTarget.new(&"Vehicle")
+	target.position = Vector3(0.0, 0.0, -18.0)
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	_expect(
+		projectile.launch(
+			heat, _emission(Vector3.ZERO, Vector3.FORWARD), target
+		),
+		"the target must start inside HEAT_B's ten-tile firing range"
+	)
+	# Retreats at 8 world units per second against the missile's 28.
+	for _step in 30:
+		if projectile.state != CombatProjectileScript.State.FLYING:
+			break
+		target.position.z -= 8.0 * 0.05
+		projectile.advance(0.05)
+	_expect(
+		projectile.finish_reason == &"impact_target",
+		"a missile must not burn out chasing a target it is still gaining on"
+	)
+	_expect(
+		projectile.traveled_distance > heat.maximum_range_world(),
+		"the chase must have cost more distance than the launch range check"
+	)
 	projectile.free()
 
 

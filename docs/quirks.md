@@ -159,6 +159,33 @@ duplicate of the real barrel sitting near the mount point in every clip.
 broken geometry. The node, its transform, and the `::1gun#`/`>>1gun#`
 attachment markers are kept so the `Fire_1` muzzle FX still anchors correctly.
 
+### Bullets have no lifetime field — MaxRange serves as both range and budget
+
+**Observed data:** The `Bullets` section of `Rules.txt` carries `MaxRange`,
+`MinRange` and `Speed`, but nothing describing how long a shot stays alive.
+72 bullets, 11 of them `Homing` (`HEAT_B`, `Rocket_B`, `TrailMissile_B`,
+`HomingMissile`, `DevRocket_B`, `GuildRocket_B`, `Gunship_B`, the HEAT
+variants), together with `HomingDelay` and `TurnRate`, which describe steering
+but not endurance.
+
+**Original-engine quirk:** `MaxRange` does double duty — it is the distance at
+which a turret may open fire *and* the distance the emitted projectile may
+travel. For straight shots the two coincide. For a homing missile they do not:
+steering toward a moving (especially retreating) target makes the flown path
+longer than the straight line that was range-checked at launch, so the missile
+runs out of budget in mid-air against a target that was comfortably in range
+when it fired.
+
+**EmperorReborn compatibility decision:** flight budget is separated from
+firing range. `BulletDefinition.flight_range_scale` multiplies `MaxRange` for
+the projectile's travel allowance only; turret range checks
+(`CombatBullet.maximum_range_world`) are untouched. The generator
+(`tools/generate_unit_definitions.py`) assigns `HOMING_FLIGHT_RANGE_SCALE`
+(1.5) to every `Homing` bullet and 1.0 to the rest, with
+`FLIGHT_RANGE_SCALE_OVERRIDES` for per-bullet exceptions. `CombatProjectile`
+spends that budget in `_maximum_flight_distance` and still expires with
+`range_exhausted` once it is gone.
+
 ## Explosions
 
 ### `chained_explosion_type_id` was speculative schema, not lost data

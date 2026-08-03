@@ -55,6 +55,16 @@ BURST_CONFIGS = {
     "HKDevastatorGun": (2, 0.0),
     "HKDevastatorMissile": (3, 7.5),
 }
+# Rules.txt gives a bullet only MaxRange, which the original engine uses both as
+# the turret's firing range and as the projectile's flight budget. That works
+# for straight shots but starves homing missiles: steering after a moving (and
+# especially a retreating) target makes the flown path longer than the straight
+# line that was range-checked at launch, so the missile burns out mid-air
+# against a target that was comfortably in range. Homing bullets therefore get a
+# flight budget larger than their firing range. See docs/quirks.md.
+HOMING_FLIGHT_RANGE_SCALE = 1.5
+# Per-bullet exceptions to HOMING_FLIGHT_RANGE_SCALE, keyed by bullet name.
+FLIGHT_RANGE_SCALE_OVERRIDES: dict[str, float] = {}
 # IMADVSardaukar has no deploy ability; its knife is range-selected melee, not a
 # deployed-mode weapon. See docs/quirks.md "Advanced Sardaukar knife is flagged
 # as a deployed-only weapon".
@@ -395,14 +405,26 @@ def turret_text(row: sqlite3.Row, muzzle_scene_path: str) -> str:
     return resource_text("TurretDefinition", "res://scripts/combat/turret_definition.gd", properties)
 
 
+def flight_range_scale_for(row: sqlite3.Row) -> float:
+    name = str(row["name"])
+    if name in FLIGHT_RANGE_SCALE_OVERRIDES:
+        return FLIGHT_RANGE_SCALE_OVERRIDES[name]
+    return HOMING_FLIGHT_RANGE_SCALE if row["homing"] else 1.0
+
+
 def bullet_text(row: sqlite3.Row, effects: list[str], projectile_path: str,
                 impact_paths: dict[str, str]) -> str:
+    flight_range_scale = flight_range_scale_for(row)
     properties = [
         f"config_id = {string_name(row['name'])}",
         f"warhead_id = {string_name(row['warhead_name'])}",
         f"damage = {float(row['damage'] or 0.0):.6g}",
         f"maximum_range = {float(row['max_range'] or 0.0):.6g}",
         f"minimum_range = {float(row['min_range'] or 0.0):.6g}",
+        *(
+            [f"flight_range_scale = {flight_range_scale:.6g}"]
+            if flight_range_scale != 1.0 else []
+        ),
         f"speed = {float(row['speed'] or 0.0):.6g}",
         f"blast_radius = {float(row['blast_radius'] or 0.0):.6g}",
         f"friendly_damage_amount = {float(row['friendly_damage_amount'] or 0.0):.6g}",

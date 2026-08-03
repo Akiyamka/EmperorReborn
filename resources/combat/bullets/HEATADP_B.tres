@@ -9,6 +9,7 @@ warhead_id = &"HEATAIR_W"
 damage = 480
 maximum_range = 15
 minimum_range = 10
+flight_range_scale = 1.5
 speed = 28
 blast_radius = 0
 friendly_damage_amount = 0

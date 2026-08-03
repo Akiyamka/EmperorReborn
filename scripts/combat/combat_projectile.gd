@@ -123,7 +123,9 @@ func launch(
 			target_or_position as Object
 		)
 		_target_range_allowance = maxf(center_distance - surface_distance, 0.0)
-	_maximum_flight_distance = bullet.maximum_range_world() \
+	# Flight budget, not firing range: a homing shot spends extra distance
+	# steering, so its allowance exceeds the straight line the turret checked.
+	_maximum_flight_distance = bullet.flight_range_world() \
 		+ gameplay_range_origin.distance_to(_launch_position) \
 		+ _target_range_allowance
 	if target_or_position is Object:

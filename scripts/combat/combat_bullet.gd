@@ -49,6 +49,16 @@ func maximum_range_world() -> float:
 	return maximum_range() * RULE_TILE_WORLD_SPAN
 
 
+## How far an emitted shot may travel before it burns out, as opposed to
+## maximum_range_world(), which is the distance at which a turret is allowed to
+## open fire. The two differ for homing bullets, whose steering makes the flown
+## path longer than the straight line that was range-checked at launch.
+func flight_range_world() -> float:
+	var scale: float = float(config.flight_range_scale) \
+		if config != null and "flight_range_scale" in config else 1.0
+	return maximum_range_world() * maxf(scale, 1.0)
+
+
 func minimum_range_world() -> float:
 	return minimum_range() * RULE_TILE_WORLD_SPAN
 

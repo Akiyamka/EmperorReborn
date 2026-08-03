@@ -6,6 +6,12 @@ extends Resource
 @export var damage: float
 @export var maximum_range: float
 @export var minimum_range: float
+## Multiplies maximum_range to get how far the shot may actually travel before
+## it burns out. Firing range is unaffected. Rules.txt has no separate missile
+## lifetime field, so a homing shot that spends part of its flight steering
+## after a moving target would otherwise die short of a target that was well
+## inside range at launch. See docs/quirks.md.
+@export var flight_range_scale: float = 1.0
 @export var speed: float
 @export var blast_radius: float
 @export var friendly_damage_amount: float

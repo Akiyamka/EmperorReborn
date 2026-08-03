@@ -9,6 +9,7 @@ warhead_id = &"HEATINF_W"
 damage = 375
 maximum_range = 8
 minimum_range = 0
+flight_range_scale = 1.5
 speed = 20
 blast_radius = 0
 friendly_damage_amount = 0
