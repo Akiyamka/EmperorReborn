@@ -4,7 +4,7 @@ extends Node
 signal status_changed(status: String)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
-const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
 const SoundEventPlayerScript := preload("res://scripts/audio/sound_event_player.gd")
 const UnitVoiceCatalogScript := preload("res://scripts/audio/unit_voice_catalog.gd")
@@ -366,9 +366,9 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 		status_changed.emit("Cannot move to %.1f, %.1f" % [target.x, target.z])
 		return
 	var move_mode := (
-		UnitNavigationSystemScript.MoveMode.FORMATION
+		NavConstantsScript.MoveMode.FORMATION
 		if _formation_modifier_down
-		else UnitNavigationSystemScript.MoveMode.FREE
+		else NavConstantsScript.MoveMode.FREE
 	)
 	var ordinary_rally_buildings: Array[Node] = []
 	var undeployment_messages: Array[String] = []
@@ -461,7 +461,7 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 		if moving_entities.size() > 1:
 			movement_label = "Moving %d units to %.1f, %.1f" % [moving_entities.size(), target.x, target.z]
 	var formation_status := " | formation" \
-		if not moving_entities.is_empty() and move_mode == UnitNavigationSystemScript.MoveMode.FORMATION else ""
+		if not moving_entities.is_empty() and move_mode == NavConstantsScript.MoveMode.FORMATION else ""
 	var deployment_status := " | %d unit(s) cannot move while deployed" % deploying_entities \
 		if deploying_entities > 0 else ""
 	var undeployment_status := " | %s" % " | ".join(undeployment_messages) \

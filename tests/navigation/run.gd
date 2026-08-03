@@ -3,6 +3,7 @@ extends SceneTree
 const NavigationMapScript := preload("res://scripts/units/navigation/unit_navigation_map.gd")
 const NavigationPlannerScript := preload("res://scripts/units/navigation/unit_navigation_planner.gd")
 const NavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 const BuildingDefinitionScript := preload("res://scripts/buildings/building_definition.gd")
@@ -474,7 +475,7 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	var passer := FakeUnit.new()
 	root.add_child(passer)
 	passer.global_position = Vector3(103.5, 0.0, 95.5)
-	navigation.command_move([passer], Vector3(103.5, 0.0, 112.5), NavigationSystemScript.MoveMode.FREE)
+	navigation.command_move([passer], Vector3(103.5, 0.0, 112.5), NavConstantsScript.MoveMode.FREE)
 	for _iteration in 100:
 		navigation.call("_navigation_tick", 0.05)
 	_expect(passer.global_position.distance_to(Vector3(103.5, 0.0, 112.5)) < 2.0, "local steering must drive straight through a no-stop apron")
@@ -482,7 +483,7 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	var clicker := FakeUnit.new()
 	root.add_child(clicker)
 	clicker.global_position = Vector3(103.5, 0.0, 120.5)
-	var assignments := navigation.command_move([clicker], Vector3(103.5, 0.0, 103.5), NavigationSystemScript.MoveMode.FREE)
+	var assignments := navigation.command_move([clicker], Vector3(103.5, 0.0, 103.5), NavConstantsScript.MoveMode.FREE)
 	var slot_cell: Vector2i = grid.world_to_grid(assignments[0]["position"])
 	_expect(apron.has(slot_cell), "an explicit movement order must retain its selected no-stop destination")
 	_expect(bool(navigation.agent_debug(clicker)["no_stop_destination"]), "the no-stop leg must retain access to its explicit destination")
@@ -505,7 +506,7 @@ func _test_no_stop_cells(grid: MapNavigationGrid) -> void:
 	var produced := FakeUnit.new()
 	root.add_child(produced)
 	produced.global_position = Vector3(103.5, 0.0, 103.5)
-	navigation.command_move([produced], Vector3(103.5, 0.0, 120.5), NavigationSystemScript.MoveMode.FREE)
+	navigation.command_move([produced], Vector3(103.5, 0.0, 120.5), NavConstantsScript.MoveMode.FREE)
 	_expect(bool(navigation.agent_debug(produced)["route_ready"]), "a unit inside the apron must still get a route immediately")
 	for _iteration in 200:
 		navigation.call("_navigation_tick", 0.05)
@@ -785,7 +786,7 @@ func _test_interior_escape(grid: MapNavigationGrid) -> void:
 	produced.global_position = Vector3(103.5, 0.0, 103.5)
 	var destination := Vector3(103.5, 0.0, 120.5)
 	var exit_point := Vector3(103.5, 0.0, 113.0)
-	navigation.command_move([produced], destination, NavigationSystemScript.MoveMode.FREE, exit_point)
+	navigation.command_move([produced], destination, NavConstantsScript.MoveMode.FREE, exit_point)
 	_expect(bool(navigation.agent_debug(produced)["route_ready"]), "a unit inside the interior must still get a route immediately")
 	var first_open_cell := Vector2i(-1, -1)
 	for _iteration in 300:
@@ -803,7 +804,7 @@ func _test_interior_escape(grid: MapNavigationGrid) -> void:
 	var rally_assignments := navigation.command_move(
 		[no_stop_rally_unit],
 		no_stop_rally,
-		NavigationSystemScript.MoveMode.FREE,
+		NavConstantsScript.MoveMode.FREE,
 		exit_point
 	)
 	_expect(rally_assignments.size() == 1, "a produced unit must accept a rally point on no-stop space")
@@ -835,7 +836,7 @@ func _test_immediate_movement(grid: MapNavigationGrid) -> void:
 	var unit := FakeUnit.new()
 	root.add_child(unit)
 	unit.global_position = Vector3(20.5, 0.0, 128.5)
-	navigation.command_move([unit], Vector3(40.5, 0.0, 100.5), NavigationSystemScript.MoveMode.FREE)
+	navigation.command_move([unit], Vector3(40.5, 0.0, 100.5), NavConstantsScript.MoveMode.FREE)
 	_expect(bool(navigation.agent_debug(unit)["route_ready"]), "an obstructed order must have its route ready in the same frame")
 	var agent: Dictionary = navigation._agents[unit.get_instance_id()]
 	var compact_path: Array = agent["path"]
@@ -1443,7 +1444,7 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 		root.add_child(unit)
 		unit.global_position = Vector3(10.0 + float(index), 0.0, 10.0)
 		units.append(unit)
-	var assignments := navigation.command_move(units, Vector3(30.5, 0.0, 30.5), NavigationSystemScript.MoveMode.FREE)
+	var assignments := navigation.command_move(units, Vector3(30.5, 0.0, 30.5), NavConstantsScript.MoveMode.FREE)
 	_expect(assignments.size() == units.size(), "a group command must synchronously assign every destination")
 	_expect(navigation.command_log().size() == 1, "movement commands must be recorded for bug-report replay")
 	for unit in units:
@@ -1471,7 +1472,7 @@ func _test_slots_and_collision(grid: MapNavigationGrid) -> void:
 			)
 	units[0].move_speed = 9.0
 	units[1].move_speed = 3.0
-	navigation.command_move([units[0], units[1]], Vector3(90.0, 0.0, 90.0), NavigationSystemScript.MoveMode.FORMATION)
+	navigation.command_move([units[0], units[1]], Vector3(90.0, 0.0, 90.0), NavConstantsScript.MoveMode.FORMATION)
 	_expect(is_equal_approx(float(navigation.agent_debug(units[0])["group_speed"]), 3.0), "formation speed must match its slowest member")
 
 	var left := FakeUnit.new()
@@ -1549,7 +1550,7 @@ func _test_group_convergence(grid: MapNavigationGrid) -> void:
 		root.add_child(unit)
 		unit.global_position = Vector3(40.0 + float(index % 3), 0.0, 40.0 + float(index / 3))
 		units.append(unit)
-	var assignments := navigation.command_move(units, Vector3(60.0, 0.0, 60.0), NavigationSystemScript.MoveMode.FREE)
+	var assignments := navigation.command_move(units, Vector3(60.0, 0.0, 60.0), NavConstantsScript.MoveMode.FREE)
 	for _iteration in 400:
 		navigation.call("_navigation_tick", 0.05)
 	for assignment in assignments:
@@ -1577,7 +1578,7 @@ func _test_group_shift_keeps_shape(grid: MapNavigationGrid) -> void:
 		root.add_child(unit)
 		unit.global_position = Vector3(100.5 + float(index % 5), 0.0, 100.5 + float(index / 5))
 		units.append(unit)
-	navigation.command_move(units, Vector3(112.5, 0.0, 102.5), NavigationSystemScript.MoveMode.FREE)
+	navigation.command_move(units, Vector3(112.5, 0.0, 102.5), NavConstantsScript.MoveMode.FREE)
 
 	const TICK := 0.05
 	const MAX_TICKS := 1200
@@ -1687,7 +1688,7 @@ func _test_group_rounds_sharp_corner(grid: MapNavigationGrid) -> void:
 		root.add_child(unit)
 		unit.global_position = Vector3(60.0 + float(index % 5), 0.0, 90.0 + float(index / 5))
 		units.append(unit)
-	var assignments := navigation.command_move(units, Vector3(60.5, 0.0, 140.5), NavigationSystemScript.MoveMode.FREE)
+	var assignments := navigation.command_move(units, Vector3(60.5, 0.0, 140.5), NavConstantsScript.MoveMode.FREE)
 	var maximum_tick_usec := 0
 	var maximum_tick_index := 0
 	for _iteration in 1200:
@@ -1735,7 +1736,7 @@ func _test_bunched_group_reverses_at_corner(grid: MapNavigationGrid) -> void:
 		unit.global_position = Vector3(60.0 + float(index % 5), 0.0, 90.0 + float(index / 5))
 		units.append(unit)
 	navigation.command_move(
-		units, Vector3(60.5, 0.0, 140.5), NavigationSystemScript.MoveMode.FREE
+		units, Vector3(60.5, 0.0, 140.5), NavConstantsScript.MoveMode.FREE
 	)
 	# The original sharp-corner benchmark reaches maximum contact around tick
 	# 55. Stop just after the queue has compressed at the shared waypoint.
@@ -1743,7 +1744,7 @@ func _test_bunched_group_reverses_at_corner(grid: MapNavigationGrid) -> void:
 		navigation.call("_navigation_tick", 0.05)
 
 	navigation.command_move(
-		units, Vector3(60.5, 0.0, 80.5), NavigationSystemScript.MoveMode.FREE
+		units, Vector3(60.5, 0.0, 80.5), NavConstantsScript.MoveMode.FREE
 	)
 	var maximum_tick_usec := 0
 	var maximum_tick_index := 0
@@ -1785,7 +1786,7 @@ func _test_dense_group_rounds_solid_region(grid: MapNavigationGrid) -> void:
 		units.append(unit)
 	var command_start := Time.get_ticks_usec()
 	navigation.command_move(
-		units, Vector3(90.5, 0.0, 165.5), NavigationSystemScript.MoveMode.FREE
+		units, Vector3(90.5, 0.0, 165.5), NavConstantsScript.MoveMode.FREE
 	)
 	var command_usec := Time.get_ticks_usec() - command_start
 
@@ -1835,7 +1836,7 @@ func _test_large_pair_keeps_lanes_at_shared_corner(grid: MapNavigationGrid) -> v
 	outer.global_position = Vector3(108.5, 0.0, 87.5)
 	var units: Array[Node3D] = [inner, outer]
 	var assignments := navigation.command_move(
-		units, Vector3(132.5, 0.0, 112.5), NavigationSystemScript.MoveMode.FREE
+		units, Vector3(132.5, 0.0, 112.5), NavConstantsScript.MoveMode.FREE
 	)
 	var inner_agent: Dictionary = navigation._agents[inner.get_instance_id()]
 	var outer_agent: Dictionary = navigation._agents[outer.get_instance_id()]
@@ -1903,7 +1904,7 @@ func _test_grid_aligned_slots(grid: MapNavigationGrid) -> void:
 		root.add_child(large)
 		large.global_position = Vector3(140.0 + float(index) * 2.0, 0.0, 143.0)
 		units.append(large)
-	navigation.command_move(units, Vector3(150.7, 0.0, 150.2), NavigationSystemScript.MoveMode.FREE)
+	navigation.command_move(units, Vector3(150.7, 0.0, 150.2), NavConstantsScript.MoveMode.FREE)
 	for _iteration in 300:
 		navigation.call("_navigation_tick", 0.05)
 
@@ -2180,7 +2181,7 @@ func _test_lane_through_standing_formation(grid: MapNavigationGrid) -> void:
 		root.add_child(unit)
 		unit.global_position = Vector3(148.5 + float(index % 3), 0.0, 148.5 + float(index / 3))
 		formation.append(unit)
-	navigation.command_move(formation, Vector3(150.5, 0.0, 150.5), NavigationSystemScript.MoveMode.FREE)
+	navigation.command_move(formation, Vector3(150.5, 0.0, 150.5), NavConstantsScript.MoveMode.FREE)
 	for _iteration in 200:
 		navigation.call("_navigation_tick", 0.05)
 
@@ -2267,7 +2268,7 @@ func _test_circle_convergence_metrics(grid: MapNavigationGrid) -> void:
 		var angle := TAU * float(index) / 21.0
 		unit.global_position = center + Vector3(cos(angle), 0.0, sin(angle)) * 12.0
 		units.append(unit)
-	navigation.command_move(units, center, NavigationSystemScript.MoveMode.FREE)
+	navigation.command_move(units, center, NavConstantsScript.MoveMode.FREE)
 
 	const TICK := 0.05
 	const MAX_TICKS := 2400

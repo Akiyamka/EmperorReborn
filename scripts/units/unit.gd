@@ -13,7 +13,7 @@ const SpatialOrientationScript := preload("res://scripts/world/spatial_orientati
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
-const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
 const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
 const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
@@ -365,7 +365,7 @@ func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 		_flight_controller.begin_takeoff_toward(world_position, exit_point)
 		return
 	if _navigation_managed and _navigation_system != null:
-		_navigation_system.command_move([self], world_position, _navigation_system.MoveMode.FREE, exit_point)
+		_navigation_system.command_move([self], world_position, NavConstantsScript.MoveMode.FREE, exit_point)
 		return
 	if not prepare_navigation_order(world_position, exit_point, 0):
 		return
@@ -470,6 +470,25 @@ func flight_clip_length(clip_name: StringName, fallback: float) -> float:
 		if animation != null and animation.length > 0.0:
 			return animation.length
 	return fallback
+
+
+## Narrow public surface used by UnitFlightController. Keeping these details
+## on Unit preserves its ownership of terrain and presentation state without
+## making the controller reach through to private implementation methods.
+func flight_set_movement_animation(is_moving: bool) -> void:
+	_set_movement_animation(is_moving)
+
+
+func flight_snap_to_terrain() -> void:
+	_terrain_snap_body()
+
+
+func flight_set_visual_slope_target(terrain_normal: Vector3) -> void:
+	_set_visual_slope_target(terrain_normal)
+
+
+func flight_terrain_hit_at(position: Vector3) -> Dictionary:
+	return _terrain_hit_at(position)
 
 
 ## Called by UnitNavigationSystem before it mutates an agent's route. Units may
@@ -2399,7 +2418,7 @@ func _advance_attack_pursuit(
 	var move_issued := true
 	if _navigation_managed and _navigation_system != null:
 		var assignments: Array = _navigation_system.command_move(
-			[self], pursuit_position, UnitNavigationSystemScript.MoveMode.FREE
+			[self], pursuit_position, NavConstantsScript.MoveMode.FREE
 		)
 		move_issued = not assignments.is_empty()
 	else:

@@ -3,6 +3,8 @@ extends RefCounted
 ## Runtime facade over the baked map. Static terrain stays immutable while
 ## buildings and other persistent obstacles live in a cheap revisioned overlay.
 
+const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
+
 var grid: MapNavigationGrid
 var revision := 0
 
@@ -18,9 +20,9 @@ func setup(source_grid: MapNavigationGrid) -> bool:
 	grid = source_grid
 	if grid == null or not grid.is_loaded():
 		return false
-	_blocked.resize(MapNavigationGrid.NAV_SIZE * MapNavigationGrid.NAV_SIZE)
+	_blocked.resize(MapNavigationGridScript.NAV_SIZE * MapNavigationGridScript.NAV_SIZE)
 	_blocked.fill(0)
-	_no_stop.resize(MapNavigationGrid.NAV_SIZE * MapNavigationGrid.NAV_SIZE)
+	_no_stop.resize(MapNavigationGridScript.NAV_SIZE * MapNavigationGridScript.NAV_SIZE)
 	_no_stop.fill(0)
 	revision = 1
 	return true

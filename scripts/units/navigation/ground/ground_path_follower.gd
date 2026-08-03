@@ -1,5 +1,7 @@
 class_name GroundPathFollower
 extends RefCounted
+
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 ## Runtime pursuit of a compact A* path: look-ahead steering target, monotonic
 ## waypoint advancement, cross-route lane offsetting, and the swept-disc
 ## visibility tests (chord/line-of-sight, per-cell passable/stoppable) that
@@ -8,6 +10,11 @@ extends RefCounted
 ## once the follower has delivered it outside those cells.
 
 var _facade: Node
+var _runtime_map
+var _avoidance
+var _registry
+var _slot_allocator_ref: WeakRef
+var _ground_navigation_ref: WeakRef
 
 ## Continuous swept-disc visibility gathers nearby obstacle cells in a square
 ## around the unit. That is exact and cheap for local corner look-ahead, but a
@@ -21,8 +28,13 @@ const LANE_SIDE_NEGATIVE := -1
 const LANE_SIDE_NEITHER_OPEN := 2
 
 
-func setup(facade: Node) -> void:
+func setup(facade: Node, runtime_map, avoidance, registry, slot_allocator, ground_navigation) -> void:
 	_facade = facade
+	_runtime_map = runtime_map
+	_avoidance = avoidance
+	_registry = registry
+	_slot_allocator_ref = weakref(slot_allocator)
+	_ground_navigation_ref = weakref(ground_navigation)
 
 
 ## Follow a point ahead on the compact path instead of aiming at a corner until
@@ -112,7 +124,7 @@ func advanced_path_index(
 		speed := 0.0
 	) -> int:
 	var result := path_index
-	var cell_size: Vector2 = _facade.runtime_map.grid.cell_size()
+	var cell_size: Vector2 = _runtime_map.grid.cell_size()
 	var cell_width := maxf(minf(cell_size.x, cell_size.y), 0.001)
 	# A step-based avoidance backend (ORCA) can drive a full-speed tick's
 	# worth of displacement straight through a waypoint's old fixed capture
@@ -121,7 +133,7 @@ func advanced_path_index(
 	# at the same never-quite-captured point from alternating sides, which
 	# reverses the commanded heading every tick. Covering at least one tick's
 	# travel keeps a single overshooting step inside the capture disc.
-	var capture := maxf(maxf(0.35, float(agent["radius"]) * 0.4), speed / UnitNavigationSystem.NAVIGATION_TICK_RATE)
+	var capture := maxf(maxf(0.35, float(agent["radius"]) * 0.4), speed / NavConstantsScript.NAVIGATION_TICK_RATE)
 	var base_corridor := maxf(float(agent["radius"]) * 2.0, cell_width * 1.5)
 	while result < path.size() - 1:
 		var waypoint: Vector3 = path[result]
@@ -255,19 +267,19 @@ func path_chord_is_clear(agent: Dictionary, from: Vector3, to: Vector3) -> bool:
 	# an escape sweep which accepts outward motion. That exception is safe for a
 	# short movement tick but must not declare an arbitrary long look-ahead chord
 	# clear through the building it is leaving.
-	if not agent_cell_passable(agent, _facade.runtime_map.grid.world_to_grid(from), 0):
+	if not agent_cell_passable(agent, _runtime_map.grid.world_to_grid(from), 0):
 		return has_clear_line(from, to, agent)
-	var cell_size: Vector2 = _facade.runtime_map.grid.cell_size()
+	var cell_size: Vector2 = _runtime_map.grid.cell_size()
 	var cell_width := maxf(minf(cell_size.x, cell_size.y), 0.001)
 	var chord := to - from
 	chord.y = 0.0
 	if chord.length() > cell_width * CONTINUOUS_CHORD_MAX_CELLS:
 		return has_clear_line(from, to, agent)
-	return _facade.avoidance.terrain_sweep_fraction(agent, to - from) >= 0.999
+	return _avoidance.terrain_sweep_fraction(agent, to - from) >= 0.999
 
 
 func path_look_ahead_distance(agent: Dictionary, speed: float) -> float:
-	var cell_size: Vector2 = _facade.runtime_map.grid.cell_size()
+	var cell_size: Vector2 = _runtime_map.grid.cell_size()
 	var cell_width := maxf(minf(cell_size.x, cell_size.y), 0.001)
 	var radius_distance := float(agent.get("rotation_radius", agent["radius"])) * 1.5
 	var unit: Node3D = agent["unit"]
@@ -276,7 +288,7 @@ func path_look_ahead_distance(agent: Dictionary, speed: float) -> float:
 	var omnidirectional_value = unit.get("can_move_any_direction")
 	if (omnidirectional_value == null or not bool(omnidirectional_value)) \
 	and turn_rate_value != null and float(turn_rate_value) > 0.0:
-		var angular_speed := float(turn_rate_value) * UnitNavigationSystem.NAVIGATION_TICK_RATE
+		var angular_speed := float(turn_rate_value) * NavConstantsScript.NAVIGATION_TICK_RATE
 		turn_distance = clampf(speed / angular_speed * 2.5, cell_width, cell_width * 6.0)
 	return maxf(radius_distance, turn_distance)
 
@@ -286,20 +298,25 @@ func release_departure_access_if_clear(agent: Dictionary) -> void:
 		return
 	var allowed: Dictionary = agent["allowed_cells"]
 	agent["allowed_cells"] = {}
-	_facade._set_agent_rotation_envelope(agent, true)
+	_registry.set_agent_rotation_envelope(agent, true)
 	var unit: Node3D = agent["unit"]
-	var anchor: Vector2i = _facade._parking_anchor(unit.global_position, int(agent["footprint"]))
-	if not _facade._block_stoppable(anchor, int(agent["footprint"]), agent):
-		_facade._set_agent_rotation_envelope(agent, false)
+	var slot_allocator = _slot_allocator_ref.get_ref()
+	var anchor: Vector2i = slot_allocator.parking_anchor(
+		unit.global_position, int(agent["footprint"])
+	)
+	if not slot_allocator.block_stoppable(anchor, int(agent["footprint"]), agent):
+		_registry.set_agent_rotation_envelope(agent, false)
 		agent["allowed_cells"] = allowed
 		return
 	agent["departure_access"] = false
-	_facade._route_agent(agent, unit.global_position, agent["destination"])
+	_ground_navigation_ref.get_ref().route_agent(
+		agent, unit.global_position, agent["destination"]
+	)
 
 
 func has_clear_line(from: Vector3, to: Vector3, agent: Dictionary) -> bool:
-	var start: Vector2i = _facade.runtime_map.grid.world_to_grid(from)
-	var finish: Vector2i = _facade.runtime_map.grid.world_to_grid(to)
+	var start: Vector2i = _runtime_map.grid.world_to_grid(from)
+	var finish: Vector2i = _runtime_map.grid.world_to_grid(to)
 	var delta: Vector2i = finish - start
 	var steps := maxi(absi(delta.x), absi(delta.y))
 	if steps == 0:
@@ -332,7 +349,7 @@ func agent_cell_passable(
 	var clearance := int(agent["clearance"]) if clearance_cells < 0 else clearance_cells
 	var terrain_mask := int(agent["terrain_mask"]) if allowed_terrain_mask < 0 else allowed_terrain_mask
 	var pass_mask := int(agent["pass_mask"])
-	if _facade.runtime_map.is_passable(cell, pass_mask, clearance, terrain_mask):
+	if _runtime_map.is_passable(cell, pass_mask, clearance, terrain_mask):
 		return true
 	var allowed: Dictionary = agent.get("allowed_cells", {})
 	if allowed.is_empty():
@@ -340,11 +357,11 @@ func agent_cell_passable(
 	for y in range(-clearance, clearance + 1):
 		for x in range(-clearance, clearance + 1):
 			var sample := cell + Vector2i(x, y)
-			if not _facade.runtime_map.grid.is_passable(sample, pass_mask):
+			if not _runtime_map.grid.is_passable(sample, pass_mask):
 				return false
-			if terrain_mask != 0 and (terrain_mask & (1 << _facade.runtime_map.grid.terrain_at(sample))) == 0:
+			if terrain_mask != 0 and (terrain_mask & (1 << _runtime_map.grid.terrain_at(sample))) == 0:
 				return false
-			if _facade.runtime_map.is_blocked(sample) and not allowed.has(sample):
+			if _runtime_map.is_blocked(sample) and not allowed.has(sample):
 				return false
 	return true
 
@@ -358,7 +375,7 @@ func agent_cell_stoppable(
 	var clearance := int(agent["clearance"]) if clearance_cells < 0 else clearance_cells
 	var terrain_mask := int(agent["terrain_mask"]) if allowed_terrain_mask < 0 else allowed_terrain_mask
 	var pass_mask := int(agent["pass_mask"])
-	if _facade.runtime_map.is_stoppable(cell, pass_mask, clearance, terrain_mask):
+	if _runtime_map.is_stoppable(cell, pass_mask, clearance, terrain_mask):
 		return true
 	var allowed: Dictionary = agent.get("allowed_cells", {})
 	if allowed.is_empty():
@@ -366,11 +383,11 @@ func agent_cell_stoppable(
 	for y in range(-clearance, clearance + 1):
 		for x in range(-clearance, clearance + 1):
 			var sample := cell + Vector2i(x, y)
-			if not _facade.runtime_map.grid.is_passable(sample, pass_mask):
+			if not _runtime_map.grid.is_passable(sample, pass_mask):
 				return false
-			if terrain_mask != 0 and (terrain_mask & (1 << _facade.runtime_map.grid.terrain_at(sample))) == 0:
+			if terrain_mask != 0 and (terrain_mask & (1 << _runtime_map.grid.terrain_at(sample))) == 0:
 				return false
-			if (_facade.runtime_map.is_blocked(sample) or _facade.runtime_map.is_no_stop(sample)) \
+			if (_runtime_map.is_blocked(sample) or _runtime_map.is_no_stop(sample)) \
 			and not allowed.has(sample):
 				return false
 	return true

@@ -7,33 +7,62 @@ extends RefCounted
 ## bursts every commanded agent's A* in one frame.
 
 const NavAgentRegistryScript := preload("res://scripts/units/navigation/shared/nav_agent_registry.gd")
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
+const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
+const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/building_definition_catalog.gd")
+
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 
 var _facade: Node
+var _runtime_map
+var _reroute_queue: Array = []
+var _agents: Dictionary
+var _registry
+var _slot_allocator
+var _path_follower
+var _ground_navigation
+var _owns_node: Callable
 
 
-func setup(facade: Node) -> void:
+func setup(
+	facade: Node,
+	runtime_map,
+	agents: Dictionary,
+	registry,
+	slot_allocator,
+	path_follower,
+	ground_navigation,
+	owns_node: Callable
+	) -> void:
 	_facade = facade
+	_runtime_map = runtime_map
+	_agents = agents
+	_registry = registry
+	_slot_allocator = slot_allocator
+	_path_follower = path_follower
+	_ground_navigation = ground_navigation
+	_owns_node = owns_node
 
 
 func refresh_building_blockers() -> void:
-	if not _facade.is_inside_tree() or _facade.runtime_map.grid == null:
+	if not _facade.is_inside_tree() or _runtime_map.grid == null:
 		return
 	var blocked := {}
 	var no_stop := {}
 	for node in _facade.get_tree().get_nodes_in_group("buildings"):
 		var building := node as Node3D
-		if building == null or not _facade._owns_node(building):
+		if building == null or not _owns_node.call(building):
 			continue
 		var config = building.get("building_definition") as Resource \
 			if "building_definition" in building else null
 		if config == null:
 			var config_id := StringName(str(building.get("config_id")))
-			config = UnitNavigationSystem._building_definition_catalog.definition(config_id)
+			config = _building_definition_catalog.definition(config_id)
 		if config == null:
 			continue
 		var rows: Array = config.occupy_rows
-		var footprint: Dictionary = UnitNavigationSystem.BuildingFootprintScript.nav_cells_by_marker(
-			building, rows, _facade.runtime_map.grid, UnitNavigationSystem.OCCUPY_CELL_SPAN
+		var footprint: Dictionary = BuildingFootprintScript.nav_cells_by_marker(
+			building, rows, _runtime_map.grid, NavConstantsScript.OCCUPY_CELL_SPAN
 		)
 		for cell in footprint:
 			# Skirts, doors and pads are transit space, but ordinary orders must
@@ -42,7 +71,7 @@ func refresh_building_blockers() -> void:
 			var marker := String(footprint[cell]).to_lower()
 			var target := no_stop if marker in ["s", "d", "p"] else blocked
 			target[cell] = true
-	if _facade.runtime_map.replace_blocked_cells(blocked, no_stop):
+	if _runtime_map.replace_blocked_cells(blocked, no_stop):
 		replan_after_map_change()
 
 
@@ -53,24 +82,24 @@ func refresh_building_blockers() -> void:
 ## agent unconditionally here is what used to turn a single building change
 ## into an O(N) full-A* burst.
 func replan_after_map_change() -> void:
-	_facade._prune_agents()
-	var changed_indices: PackedInt32Array = _facade.runtime_map.changed_cells()
+	_registry.prune_agents(_agents)
+	var changed_indices: PackedInt32Array = _runtime_map.changed_cells()
 	if changed_indices.is_empty():
 		return
 	var changed_lookup := {}
 	for index in changed_indices:
 		changed_lookup[index] = true
-	for key in _facade._agents.keys():
-		var agent: Dictionary = _facade._agents[key]
+	for key in _agents.keys():
+		var agent: Dictionary = _agents[key]
 		if int(agent["command_id"]) <= 0:
 			continue
 		# Air agents never route through the grid at all (see
 		# air/air_navigation.gd) — a building-blocker change can never
 		# invalidate their route.
-		if _facade.registry.domain_for(agent) == NavAgentRegistryScript.Domain.AIR:
+		if _registry.domain_for(agent) == NavAgentRegistryScript.Domain.AIR:
 			continue
-		if agent_route_intersects(agent, changed_lookup) and not _facade._reroute_queue.has(key):
-			_facade._reroute_queue.append(key)
+		if agent_route_intersects(agent, changed_lookup) and not _reroute_queue.has(key):
+			_reroute_queue.append(key)
 
 
 ## True when a building-blocker change might invalidate `agent`'s current
@@ -89,10 +118,10 @@ func replan_after_map_change() -> void:
 func agent_route_intersects(agent: Dictionary, changed_lookup: Dictionary) -> bool:
 	var span := int(agent["footprint"])
 	var destination: Vector3 = agent["destination"]
-	var destination_anchor: Vector2i = _facade._parking_anchor(destination, span)
+	var destination_anchor: Vector2i = _slot_allocator.parking_anchor(destination, span)
 	for y in span:
 		for x in span:
-			var index: int = _facade.runtime_map.grid.cell_index(destination_anchor + Vector2i(x, y))
+			var index: int = _runtime_map.grid.cell_index(destination_anchor + Vector2i(x, y))
 			if index >= 0 and changed_lookup.has(index):
 				return true
 	if bool(agent["direct_path"]):
@@ -101,7 +130,7 @@ func agent_route_intersects(agent: Dictionary, changed_lookup: Dictionary) -> bo
 		# blocker change invalidated its straight line is to re-run the exact
 		# predicate that approved it in the first place.
 		var unit: Node3D = agent["unit"]
-		return not _facade._has_clear_line(unit.global_position, destination, agent)
+		return not _path_follower.has_clear_line(unit.global_position, destination, agent)
 	var corridor: PackedInt32Array = agent.get("corridor", PackedInt32Array())
 	for index in corridor:
 		if changed_lookup.has(index):
@@ -115,30 +144,32 @@ func agent_route_intersects(agent: Dictionary, changed_lookup: Dictionary) -> bo
 ## keep following their existing (possibly slightly stale, but still mostly
 ## valid) path until their turn comes.
 func process_reroute_queue() -> void:
-	if _facade._reroute_queue.is_empty():
+	if _reroute_queue.is_empty():
 		return
 	var changed_by_command := {}
-	var budget := UnitNavigationSystem.REROUTE_BUDGET_PER_TICK
-	while budget > 0 and not _facade._reroute_queue.is_empty():
-		var key = _facade._reroute_queue.pop_front()
+	var budget := NavConstantsScript.REROUTE_BUDGET_PER_TICK
+	while budget > 0 and not _reroute_queue.is_empty():
+		var key = _reroute_queue.pop_front()
 		budget -= 1
-		if not _facade._agents.has(key):
+		if not _agents.has(key):
 			continue
-		var agent: Dictionary = _facade._agents[key]
+		var agent: Dictionary = _agents[key]
 		if int(agent["command_id"]) <= 0:
 			continue
 		var destination: Vector3 = agent["destination"]
 		var span := int(agent["footprint"])
-		var destination_anchor: Vector2i = _facade._parking_anchor(destination, span)
-		var destination_stoppable: bool = _facade._block_stoppable(destination_anchor, span, agent)
+		var destination_anchor: Vector2i = _slot_allocator.parking_anchor(destination, span)
+		var destination_stoppable: bool = _slot_allocator.block_stoppable(destination_anchor, span, agent)
 		if bool(agent.get("no_stop_destination", false)) and destination_stoppable:
 			agent["no_stop_destination"] = false
 		if not destination_stoppable \
-		and not (bool(agent.get("no_stop_destination", false)) and _facade._block_passable(destination_anchor, span, agent)):
-			var replacement: Vector2i = _facade._find_slot(_facade._parking_anchor(destination, span), agent, _facade._reserved_blocks(agent))
+		and not (bool(agent.get("no_stop_destination", false)) and _slot_allocator.block_passable(destination_anchor, span, agent)):
+			var replacement: Vector2i = _slot_allocator.find_slot(
+				destination_anchor, agent, _slot_allocator.reserved_blocks(_agents, agent)
+			)
 			if replacement.x >= 0:
 				var height := destination.y
-				destination = _facade._block_center(replacement, span)
+				destination = _slot_allocator.block_center(replacement, span)
 				destination.y = height
 				agent["destination"] = destination
 				agent["no_stop_destination"] = false
@@ -150,8 +181,10 @@ func process_reroute_queue() -> void:
 					"unit": agent["unit"], "agent_id": agent["id"], "slot_id": -1,
 					"position": destination, "available": true,
 				})
-		_facade._route_agent(agent, (agent["unit"] as Node3D).global_position, destination)
-		_facade._agents[key] = agent
+		_ground_navigation.route_agent(
+			agent, (agent["unit"] as Node3D).global_position, destination
+		)
+		_agents[key] = agent
 	for command_id in changed_by_command:
 		_facade.destination_slots_assigned.emit(command_id, changed_by_command[command_id])
 

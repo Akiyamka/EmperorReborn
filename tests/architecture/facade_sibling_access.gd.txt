@@ -1,0 +1,7 @@
+extends RefCounted
+
+var _facade
+
+
+func route() -> void:
+	_facade.planner.find_path(Vector2i.ZERO, Vector2i.ONE, 1, 0, 0)

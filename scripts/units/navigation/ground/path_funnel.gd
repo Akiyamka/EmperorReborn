@@ -6,11 +6,13 @@ extends RefCounted
 ## (`_path_steering_target`/`_advanced_path_index`) had to work around. See
 ## docs/architecture/navigation-refactor-plan.md stage 4.
 
-var _facade: Node
+var _runtime_map
+var _path_follower
 
 
-func setup(facade: Node) -> void:
-	_facade = facade
+func setup(runtime_map, path_follower) -> void:
+	_runtime_map = runtime_map
+	_path_follower = path_follower
 
 
 ## `raw_path` is the uncompacted cell-by-cell A* route (before waypoint
@@ -20,7 +22,7 @@ func setup(facade: Node) -> void:
 ## reached, the centre of the last routed cell — preserving the "walk as far
 ## as possible" UX of a redirected/partial path).
 func build(raw_path: Array[Vector2i], agent: Dictionary, start: Vector3, destination: Vector3) -> Array[Vector3]:
-	var grid = _facade.runtime_map.grid
+	var grid = _runtime_map.grid
 	var final_point := destination
 	final_point.y = 0.0
 	if not raw_path.is_empty() and grid.world_to_grid(destination) != raw_path.back():
@@ -115,14 +117,14 @@ func _shrink_portal(portal: Array, agent: Dictionary, shrink: float) -> void:
 ## needing to know whether this endpoint came from a cardinal or a diagonal
 ## step.
 func _corner_solid(agent: Dictionary, point: Vector3) -> bool:
-	var grid = _facade.runtime_map.grid
+	var grid = _runtime_map.grid
 	var cell_size: Vector2 = grid.cell_size()
 	var eps_x := cell_size.x * 0.25
 	var eps_z := cell_size.y * 0.25
 	for signs in [Vector2(1.0, 1.0), Vector2(1.0, -1.0), Vector2(-1.0, 1.0), Vector2(-1.0, -1.0)]:
 		var probe := point + Vector3(signs.x * eps_x, 0.0, signs.y * eps_z)
 		var cell: Vector2i = grid.world_to_grid(probe)
-		if not _facade.path_follower.agent_cell_passable(agent, cell, 0):
+		if not _path_follower.agent_cell_passable(agent, cell, 0):
 			return true
 	return false
 

@@ -2,6 +2,7 @@ class_name SteeringStabilizer
 extends RefCounted
 
 const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 ## Hard/soft geometry shared by every ground avoidance backend: terrain swept-
 ## disc checks and pressure field, friendly elastic separation, enemy swept-disc
 ## checks, and the non-holonomic chassis rate limiter (`stabilize_velocity`).
@@ -232,7 +233,7 @@ func terrain_context(agent: Dictionary, movement_reach: float) -> Dictionary:
 	# The cached profile contains only in-bounds cells. Add the small outside
 	# strip only for units whose continuous field actually reaches a map edge.
 	if first.x < 0 or first.y < 0 \
-	or last.x >= MapNavigationGrid.NAV_SIZE or last.y >= MapNavigationGrid.NAV_SIZE:
+	or last.x >= MapNavigationGridScript.NAV_SIZE or last.y >= MapNavigationGridScript.NAV_SIZE:
 		for y in range(first.y, last.y + 1):
 			for x in range(first.x, last.x + 1):
 				var cell := Vector2i(x, y)
@@ -256,13 +257,13 @@ func _obstacle_profile(pass_mask: int, terrain_mask: int) -> Dictionary:
 	var buckets := {}
 	var grid = runtime_map.grid
 	var blocked: PackedByteArray = runtime_map.blocked_cells()
-	for index in MapNavigationGrid.NAV_SIZE * MapNavigationGrid.NAV_SIZE:
+	for index in MapNavigationGridScript.NAV_SIZE * MapNavigationGridScript.NAV_SIZE:
 		if (grid.pass_mask[index] & pass_mask) != 0 and blocked[index] == 0 \
 		and (terrain_mask == 0 or (terrain_mask & (1 << grid.terrain_type[index])) != 0):
 			continue
 		var cell := Vector2i(
-			index % MapNavigationGrid.NAV_SIZE,
-			index / MapNavigationGrid.NAV_SIZE
+			index % MapNavigationGridScript.NAV_SIZE,
+			index / MapNavigationGridScript.NAV_SIZE
 		)
 		var bucket := Vector2i(
 			cell.x / OBSTACLE_BUCKET_CELLS,

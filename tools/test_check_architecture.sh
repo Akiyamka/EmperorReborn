@@ -28,5 +28,6 @@ run_fixture() {
 
 run_fixture 0 clean clean
 run_fixture 1 private-owner private_owner_access
+run_fixture 1 facade-sibling facade_sibling_access
 run_fixture 1 bare-class-comment-preload foo_thing bare_class_comment_preload
 run_fixture 1 direct-autoload direct_autoload

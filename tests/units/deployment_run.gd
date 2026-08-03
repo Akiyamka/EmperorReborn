@@ -4,7 +4,7 @@ const LegacyRulesFixture := preload("res://tests/support/legacy_rules_fixture.gd
 
 const UnitDeploymentControllerScript := preload("res://scripts/units/unit_deployment_controller.gd")
 const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
-const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const MCVModelScene := preload("res://assets/converted/models/G_MCV_h0/G_MCV_h0.scn")
@@ -336,7 +336,7 @@ func _test_house_construction_yard_undeployment() -> void:
 		var move_target: Vector3 = house_case[5] + Vector3(24.0, 0.0, 18.0)
 
 		var result: Dictionary = controller.try_undeploy(
-			building, move_target, UnitNavigationSystemScript.MoveMode.FORMATION
+			building, move_target, NavConstantsScript.MoveMode.FORMATION
 		)
 		_expect(bool(result.get("handled", false)) and bool(result.get("started", false)), "%s must accept an ordinary move command as packing" % house_case[2])
 		_expect(not building.is_queued_for_deletion(), "the Construction Yard must remain until its deconstruct animation finishes")
@@ -364,7 +364,7 @@ func _test_house_construction_yard_undeployment() -> void:
 			var command: Dictionary = navigation.commands[0]
 			_expect(command["units"] == [unit], "the inherited movement command must target the new MCV")
 			_expect(command["target"] == move_target, "the inherited movement command must preserve the clicked destination")
-			_expect(command["move_mode"] == UnitNavigationSystemScript.MoveMode.FORMATION, "the inherited movement command must preserve its mode")
+			_expect(command["move_mode"] == NavConstantsScript.MoveMode.FORMATION, "the inherited movement command must preserve its mode")
 			_expect(command["exit_position"].is_equal_approx(expected_exit), "the MCV must first clear the old Construction Yard footprint")
 		navigation.commands.clear()
 		unit.queue_free()
