@@ -327,6 +327,10 @@ func _initialize() -> void:
 		_test_fire_while_moving_capability
 	)
 	_run_case(
+		"moving after an infantry shot cancels Fire without committing reload",
+		_test_blocking_fire_move_cancel
+	)
+	_run_case(
 		"independent side turrets acquire separate targets and escape blind zones",
 		_test_independent_side_turrets
 	)
@@ -2710,7 +2714,80 @@ func _test_fire_while_moving_capability() -> void:
 	devastator.free()
 
 
+func _test_blocking_fire_move_cancel() -> void:
+	var infantry = UnitScene.instantiate()
+	infantry.config_id = &"ATInfantry"
+	root.add_child(infantry)
+	infantry.replace_visual_scene(ATInfantryModelScene)
+	var emission: Dictionary = infantry.turret_emission_points()[0]
+	var target := Vector3(emission["position"]) \
+		+ Vector3(emission["direction"]).normalized() * 5.0
+	var projectiles: Array = []
+	infantry.weapon_fired.connect(func(
+		shots: Array, _target: Variant, _weapon_index: int
+		) -> void:
+		projectiles.append_array(shots)
+	)
+	_expect(
+		infantry.command_attack(target),
+		"infantry must begin a blocking authored Fire action"
+	)
+	for frame in 240:
+		infantry._process(1.0 / 60.0)
+		if not projectiles.is_empty():
+			break
+	_expect(
+		not projectiles.is_empty() and infantry._fire_sequence_active,
+		"the movement regression must cancel after the shot but before Fire ends"
+	)
+	infantry.move_to(infantry.global_position + Vector3.RIGHT * 10.0)
+	_expect(
+		infantry._weapon_fire_sequences.is_empty(),
+		"a movement order must cancel the blocking Fire sequence"
+	)
+	_expect(
+		is_zero_approx(infantry.combat_turrets[0].reload_ticks_remaining),
+		"canceling blocking Fire for movement must not commit infantry reload"
+	)
+	for projectile in projectiles:
+		if is_instance_valid(projectile):
+			projectile.free()
+	infantry.free()
+
+
 func _test_independent_side_turrets() -> void:
+	var pose_flame = UnitScene.instantiate()
+	pose_flame.config_id = &"HKFlame"
+	root.add_child(pose_flame)
+	pose_flame.replace_visual_scene(HKFlameModelScene)
+	var first_turret = pose_flame.combat_turrets[0]
+	var second_turret = pose_flame.combat_turrets[1]
+	var first_emission: Dictionary = first_turret.peek_emission()
+	var second_emission: Dictionary = second_turret.peek_emission()
+	var first_target := Vector3(first_emission["position"]) \
+		+ Vector3(first_emission["direction"]).rotated(
+			Vector3.UP, deg_to_rad(-25.0)
+		).normalized() * 5.0
+	var second_target := Vector3(second_emission["position"]) \
+		+ Vector3(second_emission["direction"]).normalized() * 5.0
+	_expect(
+		pose_flame._start_authored_fire_sequence(first_turret, first_target),
+		"the first side turret must start its authored sequence"
+	)
+	first_turret.aim_at(first_target, 10.0)
+	var first_direction_before: Vector3 = first_turret.peek_emission()["direction"]
+	_expect(
+		pose_flame._start_authored_fire_sequence(second_turret, second_target),
+		"the second side turret must start while the first sequence is active"
+	)
+	var first_direction_after: Vector3 = first_turret.peek_emission()["direction"]
+	_expect(
+		first_direction_before.normalized().dot(first_direction_after.normalized())
+			> 0.9999,
+		"starting a staggered second sequence must preserve the first turret aim"
+	)
+	pose_flame.free()
+
 	var flame = UnitScene.instantiate()
 	flame.config_id = &"HKFlame"
 	flame.owner_player_id = 1
