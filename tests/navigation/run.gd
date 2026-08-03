@@ -265,6 +265,23 @@ func _test_disconnected_island_orders(grid: MapNavigationGrid) -> void:
 		).length() <= 30.0,
 		"attack pursuit must find a reachable firing cell inside weapon range"
 	)
+	var obstructed_radius := 20.0
+	var line_of_fire_position := navigation.reachable_attack_position(
+		stranded, unreachable_target, 30.0,
+		func(candidate: Vector3) -> bool:
+			return Vector2(
+				candidate.x - unreachable_target.x,
+				candidate.z - unreachable_target.z
+			).length() >= obstructed_radius
+	)
+	_expect(
+		line_of_fire_position.is_finite()
+		and Vector2(
+			line_of_fire_position.x - unreachable_target.x,
+			line_of_fire_position.z - unreachable_target.z
+		).length() >= obstructed_radius,
+		"a perch the weapon could not fire from must be skipped for one that can"
+	)
 	var firing_move := navigation.command_move([stranded], firing_position)
 	_expect(
 		firing_move.size() == 1,

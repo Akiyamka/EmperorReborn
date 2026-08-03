@@ -173,6 +173,32 @@ class PhysicsCombatTarget extends StaticBody3D:
 		damage_taken += amount
 
 
+## Stands in for a cliff face or rock shoulder: static geometry on the terrain
+## collision layer between a shooter and its target.
+class PhysicsCliff extends StaticBody3D:
+	func _init(world_position: Vector3, size: Vector3) -> void:
+		position = world_position
+		collision_layer = 1
+		collision_mask = 0
+		var collision := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = size
+		collision.shape = box
+		add_child(collision)
+
+
+## Same collider and layer as PhysicsCombatTarget, but exposing the footprint
+## hull that identifies a building rather than a unit.
+class PhysicsBuildingBlocker extends PhysicsCombatTarget:
+	func combat_hull() -> PackedVector2Array:
+		return PackedVector2Array([
+			Vector2(-hit_radius, -hit_radius),
+			Vector2(hit_radius, -hit_radius),
+			Vector2(hit_radius, hit_radius),
+			Vector2(-hit_radius, hit_radius),
+		])
+
+
 class PhysicsGround extends StaticBody3D:
 	func _init() -> void:
 		collision_layer = 1
@@ -324,6 +350,10 @@ func _initialize() -> void:
 	_run_case("launcher fire clips schedule every projectile before reload", _test_launcher_fire_sequences)
 	_run_case("continuous flame clips schedule every stream pulse", _test_continuous_flame_sequences)
 	_run_case("pursuit enters a stable firing range", _test_far_attack_pursuit)
+	await _run_async_case(
+		"an obstructed in-range order repositions instead of shooting the obstacle",
+		_test_obstructed_attack_order
+	)
 	_run_case("building state replacement rebinds its turret", _test_building_turret_rebind)
 	_run_case(
 		"all seven defensive buildings automatically acquire and fire",
@@ -340,6 +370,10 @@ func _initialize() -> void:
 	_run_case(
 		"defensive buildings retain explicit out-of-range attack orders",
 		_test_building_attack_order
+	)
+	await _run_async_case(
+		"a defensive building skips shielded targets for reachable ones",
+		_test_building_obstructed_targets
 	)
 	_run_case("building damage visuals use equal health bands", _test_building_damage_visual_states)
 	_run_case("units and buildings expose rules-backed combat armour", _test_combat_targets)
@@ -3402,6 +3436,94 @@ func _test_far_attack_pursuit() -> void:
 	target.free()
 
 
+func _test_obstructed_attack_order() -> void:
+	var attacker = UnitScene.instantiate()
+	attacker.config_id = &"ATAPC"
+	root.add_child(attacker)
+	attacker.replace_visual_scene(ATAPCModelScene)
+	var target = UnitScene.instantiate()
+	target.config_id = &"ATAPC"
+	root.add_child(target)
+	target.replace_visual_scene(ATAPCModelScene)
+	var turret = attacker.combat_turrets[0]
+	var forward: Vector3 = Vector3(turret.peek_emission()["direction"])
+	forward.y = 0.0
+	forward = forward.normalized()
+	target.global_position = attacker.global_position + forward * 8.0
+	var midpoint: Vector3 = attacker.global_position + forward * 4.0
+	var cliff := PhysicsCliff.new(
+		midpoint + Vector3.UP * 3.0, Vector3(12.0, 6.0, 1.0)
+	)
+	root.add_child(cliff)
+	await physics_frame
+
+	_expect(
+		turret.target_range(target) == CombatTurretScript.TargetRange.IN_RANGE,
+		"the obstruction regression must begin with the target inside weapon range"
+	)
+	_expect(
+		not turret.has_line_of_fire(target, attacker),
+		"a rock face between the muzzle and the target must break the line of fire"
+	)
+
+	var fired: Array = []
+	attacker.weapon_fired.connect(
+		func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+			fired.append_array(projectiles)
+	)
+	_expect(attacker.command_attack(target), "the blocked target must still accept an order")
+	for frame in 120:
+		attacker._process(1.0 / 60.0)
+	_expect(
+		fired.is_empty(),
+		"an in-range unit without a line of fire must not shoot into the obstacle"
+	)
+	_expect(
+		attacker.has_attack_order(),
+		"a blocked order must stay active while the unit looks for a firing position"
+	)
+	_expect(
+		Vector2(
+			attacker.target_position.x - attacker.global_position.x,
+			attacker.target_position.z - attacker.global_position.z
+		).length() > 0.0,
+		"a blocked order must send the unit toward a position that can fire"
+	)
+	cliff.free()
+
+	var wall := PhysicsBuildingBlocker.new(midpoint, 2.5)
+	root.add_child(wall)
+	await physics_frame
+	_expect(
+		not turret.has_line_of_fire(target, attacker),
+		"a building footprint between the muzzle and the target must break the line of fire"
+	)
+	wall.free()
+
+	var passer_by := PhysicsCombatTarget.new(midpoint, 2.5)
+	root.add_child(passer_by)
+	await physics_frame
+	_expect(
+		turret.has_line_of_fire(target, attacker),
+		"another unit crossing the line must not obstruct the shot"
+	)
+	for frame in 240:
+		attacker._process(1.0 / 60.0)
+		if not fired.is_empty():
+			break
+	_expect(
+		not fired.is_empty(),
+		"a cleared line of fire must let the standing order execute from where it is"
+	)
+
+	for projectile in fired:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	passer_by.free()
+	attacker.free()
+	target.free()
+
+
 func _test_building_edge_range() -> void:
 	var model := ATInfantryModelScene.instantiate() as Node3D
 	root.add_child(model)
@@ -3930,6 +4052,96 @@ func _test_building_attack_order() -> void:
 		and not projectile.is_queued_for_deletion():
 			projectile.free()
 	target.free()
+	building.free()
+
+
+func _test_building_obstructed_targets() -> void:
+	var building := HKGunTurretScene.instantiate() as Building
+	building.owner_player_id = 1
+	root.add_child(building)
+	await process_frame
+	var turret = building.combat_turrets[0]
+	var emission: Dictionary = turret.peek_emission()
+	var muzzle: Vector3 = Vector3(emission["position"])
+	var direction: Vector3 = Vector3(emission.get("direction", Vector3.BACK))
+	direction.y = 0.0
+	direction = direction.normalized()
+	var side := direction.rotated(Vector3.UP, PI * 0.5)
+
+	var covered := PhysicsCombatTarget.new(muzzle + direction * 8.0)
+	covered.owner_player_id = 2
+	covered.add_to_group(&"units")
+	root.add_child(covered)
+	var exposed := PhysicsCombatTarget.new(muzzle + side * 8.0)
+	exposed.owner_player_id = 2
+	exposed.add_to_group(&"units")
+	root.add_child(exposed)
+	var obstacle := PhysicsBuildingBlocker.new(muzzle + direction * 4.0, 2.5)
+	obstacle.owner_player_id = 1
+	root.add_child(obstacle)
+	await physics_frame
+
+	_expect(
+		turret.target_range(covered) == CombatTurretScript.TargetRange.IN_RANGE
+		and turret.target_range(exposed) == CombatTurretScript.TargetRange.IN_RANGE,
+		"both regression targets must stand inside the turret's weapon range"
+	)
+	_expect(
+		not turret.has_line_of_fire(covered, building),
+		"a building standing in front of the target must break the turret's line of fire"
+	)
+	_expect(
+		turret.has_line_of_fire(exposed, building),
+		"the target beside the obstacle must remain reachable"
+	)
+
+	var fired: Array = []
+	var fired_targets: Array = []
+	building.weapon_fired.connect(
+		func(projectiles: Array, fired_target: Variant, _weapon_index: int) -> void:
+			fired.append_array(projectiles)
+			fired_targets.append(fired_target)
+	)
+	_expect(
+		building.command_attack(covered),
+		"a building must accept an order on a target it cannot currently see"
+	)
+	for frame in 600:
+		building._process(1.0 / 60.0)
+		if not fired.is_empty():
+			break
+	_expect(
+		not fired_targets.is_empty()
+		and fired_targets.all(func(target: Variant) -> bool: return target == exposed),
+		"a shielded target must never be shot at: the turret serves the reachable enemy"
+	)
+	_expect(
+		is_zero_approx(obstacle.damage_taken),
+		"the building in the way must not absorb the turret's shots"
+	)
+	_expect(
+		building.has_attack_order() and building.attack_order_target() == covered,
+		"the blocked order must stay attached in case the obstacle falls"
+	)
+
+	obstacle.free()
+	await physics_frame
+	fired_targets.clear()
+	# The committed authored Fire clip finishes on the target it started with;
+	# the ordered target takes over on the first shot chosen afterwards.
+	for frame in 600:
+		building._process(1.0 / 60.0)
+	_expect(
+		not fired_targets.is_empty() and fired_targets.back() == covered,
+		"once the obstacle is gone the retained order must take the weapon back"
+	)
+
+	for projectile in fired:
+		if is_instance_valid(projectile) \
+		and not projectile.is_queued_for_deletion():
+			projectile.free()
+	covered.free()
+	exposed.free()
 	building.free()
 
 

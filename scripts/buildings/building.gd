@@ -1376,7 +1376,11 @@ func _advance_building_combat(delta: float) -> void:
 	):
 		cancel_attack_order()
 		target = null
-	if target == null:
+	# A stationary turret cannot solve a blocked line of fire by moving, and
+	# shelling the building or cliff in the way is never what the shot was for.
+	# The ordered target stays attached -- the obstacle may fall, or a mobile
+	# target may leave cover -- while the weapon serves reachable enemies.
+	if target == null or not turret.has_line_of_fire(target, self):
 		target = _automatic_target_for(turret)
 
 	var target_in_range: bool = target != null \
@@ -1480,7 +1484,8 @@ func _automatic_target_is_usable(turret, target: Variant) -> bool:
 		return false
 	var target_position := _combat_target_position(candidate)
 	return target_position.is_finite() \
-		and not turret.requires_hull_turn_for(target_position)
+		and not turret.requires_hull_turn_for(target_position) \
+		and turret.has_line_of_fire(candidate, self)
 
 
 func _combat_target_position(target: Variant) -> Vector3:

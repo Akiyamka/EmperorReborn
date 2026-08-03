@@ -261,6 +261,20 @@ Summary of how different bullets miss (follows from the verified behavior above)
   of gameplay range (verified);
 - **downhill range bonus**, increasing with height difference `[← 1 §2]`;
 - firing uphill is possible only with indirect fire `[← 1 §2]`;
+- a flat-flying shot also needs an **unobstructed line of fire**: bullets collide
+  with terrain and buildings while travelling, so a target inside range but
+  behind a cliff shoulder or a building cannot be hit from that spot. Nothing
+  fires without that line (implemented):
+  - a **unit** treats the blocked line like an out-of-range target and keeps
+    repositioning until the shot lands on the target instead of the obstacle; if
+    no reachable position inside weapon range can see the target, it holds;
+  - a **defensive building** cannot reposition, so it drops the shielded target
+    and automatically engages a reachable enemy instead. An explicit order stays
+    attached and takes the weapon back once the obstacle falls or a mobile target
+    leaves cover;
+  - trajectory bullets lob over obstacles and ignore this entirely;
+  - units never obstruct each other's line of fire (implementation decision: a
+    vehicle driving through the line must not abandon a valid engagement);
 - the **target must be visible** (by the player's scouting/vision) to issue an
   attack order `[?]`; the **attack ground** order exists (verified, §3) — firing
   at a coordinate without a target, a tool for manual leading and area fire;

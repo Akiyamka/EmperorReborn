@@ -4,6 +4,7 @@ extends RefCounted
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_definition_catalog.gd")
+const CombatLineOfFireScript := preload("res://scripts/combat/combat_line_of_fire.gd")
 
 ## Converted XBF models preserve the original Emperor attachment markers:
 ##   ::N...  pivot of weapon/turret N
@@ -792,6 +793,47 @@ func target_range(target_or_position: Variant, aim_offset := Vector3.ZERO) -> in
 			if _pitch_limit_error(closer_position) + 0.0001 < pitch_error:
 				return TargetRange.TOO_FAR
 	return TargetRange.IN_RANGE
+
+
+## Reports whether a shot fired from this weapon's muzzles would reach the
+## target instead of detonating on the terrain or building in between. Being in
+## range is not enough: the shell has to get there. Trajectory bullets lob over
+## whatever stands in the way, so only flat-flying weapons are constrained.
+func has_line_of_fire(target_or_position: Variant, shooter: Object = null) -> bool:
+	return has_line_of_fire_from(muzzle_origin(), target_or_position, shooter)
+
+
+## The same query for a position the shooter has not reached yet, so attack
+## pursuit can pick a perch that will be able to fire once it arrives.
+func has_line_of_fire_from(
+		origin: Vector3, target_or_position: Variant, shooter: Object = null
+	) -> bool:
+	if not is_configured() or not is_bound():
+		return true
+	if _model_root == null or not is_instance_valid(_model_root) \
+	or not _model_root.is_inside_tree():
+		return true
+	var bullet = CombatBulletScript.new(
+		bullet_config, warhead_config, projectile_visual_scene, impact_visual_scenes
+	)
+	if bullet.has_trajectory():
+		return true
+	var ignored: Array = [shooter, _model_root]
+	if target_or_position is Object:
+		ignored.append(target_or_position as Object)
+	return CombatLineOfFireScript.is_clear(
+		_model_root.get_world_3d(),
+		origin,
+		_bullet_target_position(target_or_position),
+		ignored
+	)
+
+
+## World point shots leave from. Falls back to the aim pivot for a weapon whose
+## muzzle markers are not currently sampled.
+func muzzle_origin() -> Vector3:
+	var origin := _muzzle_group_origin()
+	return origin if origin.is_finite() else _aim_origin()
 
 
 func try_fire(

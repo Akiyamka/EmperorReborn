@@ -459,8 +459,15 @@ func route_is_unreachable(unit: Node3D) -> bool:
 ## to the unit's connected navigation region and still lies inside weapon
 ## range. Unlike command_move(), this searches the whole radius instead of
 ## testing one guessed perch on the direct unit-target line.
+##
+## `is_fireable_from` optionally rejects candidates the weapon could not
+## actually shoot from, so a target on a plateau or behind a building is
+## engaged from where the shot lands instead of from the foot of the obstacle.
 func reachable_attack_position(
-	unit: Node3D, world_target: Vector3, maximum_range: float
+	unit: Node3D,
+	world_target: Vector3,
+	maximum_range: float,
+	is_fireable_from := Callable()
 	) -> Vector3:
 	if unit == null or runtime_map.grid == null or maximum_range <= 0.0:
 		return Vector3.INF
@@ -485,6 +492,9 @@ func reachable_attack_position(
 			if horizontal_offset.length() > maximum_range:
 				continue
 			if not _ground_target_is_legal(agent, position, false):
+				continue
+			if is_fireable_from.is_valid() \
+			and not bool(is_fireable_from.call(position)):
 				continue
 			if _ground_target_is_reachable(unit, agent, position):
 				return position

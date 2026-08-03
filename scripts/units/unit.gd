@@ -1484,12 +1484,21 @@ func _advance_attack_order(delta: float) -> void:
 		stop_at_current_position()
 		return
 	var in_range_turrets: Array = []
+	var obstructed_turrets: Array = []
 	for turret in _active_turrets():
-		if turret.target_range(attack_target) == CombatTurretScript.TargetRange.IN_RANGE:
+		if turret.target_range(attack_target) != CombatTurretScript.TargetRange.IN_RANGE:
+			continue
+		if turret.has_line_of_fire(attack_target, self):
 			in_range_turrets.append(turret)
+		else:
+			obstructed_turrets.append(turret)
 	if in_range_turrets.is_empty():
 		_recenter_unengaged_turrets([], delta)
-		if primary_turret.target_range(attack_target) == CombatTurretScript.TargetRange.TOO_FAR:
+		# A blocked line is solved the same way as a distant target: keep closing
+		# until the cliff shoulder or building no longer covers it. Firing from
+		# here would only damage the obstacle standing in front of the order.
+		if not obstructed_turrets.is_empty() \
+		or primary_turret.target_range(attack_target) == CombatTurretScript.TargetRange.TOO_FAR:
 			_advance_attack_pursuit(target_world_position, primary_turret, delta)
 			return
 		# A minimum-range violation is not solved by moving closer. Keep the
@@ -1568,6 +1577,7 @@ func _advance_retained_weapon_targets(delta: float) -> void:
 				turret.target_range(retained_target)
 					== CombatTurretScript.TargetRange.IN_RANGE
 				and not turret.requires_hull_turn_for(target_position)
+				and turret.has_line_of_fire(retained_target, self)
 			):
 				turret_target = retained_target
 		if turret_target == null and autonomous:
@@ -1692,7 +1702,8 @@ func _automatic_target_is_usable(turret, target: Variant) -> bool:
 		return false
 	var target_position := _combat_target_position(candidate)
 	return target_position.is_finite() \
-		and not turret.requires_hull_turn_for(target_position)
+		and not turret.requires_hull_turn_for(target_position) \
+		and turret.has_line_of_fire(candidate, self)
 
 
 func _turn_hull_by_adjustment(adjustment: float, delta: float) -> bool:
@@ -2278,6 +2289,24 @@ func _primary_attack_turret(attack_target: Variant):
 	return null
 
 
+## Accepts only perches whose muzzle would see the ordered target. The probe
+## samples terrain height at the candidate because navigation cells carry the
+## map floor rather than the elevation the unit will actually stand at.
+func _line_of_fire_probe(primary_turret) -> Callable:
+	var target: Variant = attack_order_target()
+	if primary_turret == null or target == null:
+		return Callable()
+	var muzzle_origin: Vector3 = primary_turret.muzzle_origin()
+	var muzzle_height := maxf(muzzle_origin.y - global_position.y, 0.0) \
+		if muzzle_origin.is_finite() else 0.0
+	return func(candidate: Vector3) -> bool:
+		var hit := _terrain_hit_at(candidate)
+		var ground: Vector3 = hit["position"] if not hit.is_empty() else candidate
+		return primary_turret.has_line_of_fire_from(
+			ground + Vector3.UP * muzzle_height, target, self
+		)
+
+
 func _advance_attack_pursuit(
 	target_world_position: Vector3, primary_turret, delta: float
 	) -> void:
@@ -2317,12 +2346,26 @@ func _advance_attack_pursuit(
 		and primary_turret != null
 		and _navigation_system.has_method("reachable_attack_position")
 	):
+		var maximum_range := float(primary_turret.maximum_range_world())
 		reachable_position = _navigation_system.call(
 			"reachable_attack_position",
 			self,
 			target_world_position,
-			float(primary_turret.maximum_range_world())
+			maximum_range,
+			_line_of_fire_probe(primary_turret)
 		)
+		if not reachable_position.is_finite():
+			var any_perch: Vector3 = _navigation_system.call(
+				"reachable_attack_position", self, target_world_position, maximum_range
+			)
+			if any_perch.is_finite():
+				# The search covered every reachable cell within weapon range and
+				# none of them can see the target: the obstacle shields it from
+				# this side entirely. Hold instead of grinding into it.
+				stop_at_current_position()
+				_attack_is_pursuing = false
+				_attack_pursuit_destination = Vector3.INF
+				return
 	if reachable_position.is_finite():
 		pursuit_position = reachable_position
 	elif preferred_range > 0.0:
