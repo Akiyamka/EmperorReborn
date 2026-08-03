@@ -1,6 +1,8 @@
 class_name CombatImpactEffect
 extends Node3D
 
+const AuthoredFxBankScript := preload("res://scripts/combat/fx/authored_fx_bank.gd")
+
 ## Short-lived rules-backed impact presentation. Most ExplosionType XBFs are
 ## directly renderable. ShellHit and MissileHit are authored particle-emitter
 ## rigs: their `#bing` cubes are invisible moving anchors. In the XBF event
@@ -9,7 +11,6 @@ extends Node3D
 
 const RULE_UPDATES_PER_SECOND := 20.0
 const DEFAULT_DURATION := 0.5
-const INLINE_FX_TEXTURE_DIR := "res://assets/raw_original_content/3DDATA/Textures"
 const SHELL_HIT_ID := &"ShellHit"
 const MISSILE_HIT_ID := &"MissileHit"
 const SHELL_HIT_BURST_SEQUENCE := "!%Bru"
@@ -35,8 +36,6 @@ const SHELL_HIT_LIGHT_RANGE := 3.5
 const MISSILE_HIT_RING_SPEED := 1.4
 const MISSILE_HIT_RING_VERTICAL_SPEED := 0.55
 const MISSILE_HIT_RING_GRAVITY := 1.1
-
-static var _texture_sequence_cache: Dictionary = {}
 
 var effect_id: StringName = &""
 var _authored_visual: Node3D
@@ -307,13 +306,7 @@ func _spawn_shell_hit_light() -> void:
 
 
 func _find_original_node(node: Node, original_name: String) -> Node3D:
-	if node is Node3D and String(node.get_meta("original_name", "")) == original_name:
-		return node as Node3D
-	for child in node.get_children():
-		var result := _find_original_node(child, original_name)
-		if result != null:
-			return result
-	return null
+	return AuthoredFxBankScript.find_original_node(node, original_name)
 
 
 func _spawn_follow_particle(
@@ -344,71 +337,31 @@ func _spawn_world_particle(
 		world_position: Vector3,
 		free_after_animation: bool = true
 	) -> Node3D:
-	var particle := _create_particle(sequence, textures, size)
-	add_child(particle)
-	particle.top_level = true
-	particle.global_position = world_position
-	_start_particle_animation(particle, textures, duration, free_after_animation)
-	return particle
-
-
-func _create_particle(
-		sequence: String,
-		textures: Array[Texture2D],
-		size: float
-	) -> Node3D:
-	var particle := Node3D.new()
-	particle.name = "ImpactParticle_%d" % _particle_index
-	particle.set_meta("combat_impact_particle", StringName(sequence))
-	_particle_index += 1
-
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.albedo_texture = textures.front()
-	if sequence == SHELL_HIT_SHRAPNEL_SEQUENCE:
-		material.albedo_color = SHELL_HIT_SHRAPNEL_TINT
-	var quad := QuadMesh.new()
-	quad.size = Vector2(size, size)
-	quad.material = material
-	var visual := MeshInstance3D.new()
-	visual.name = "Visual"
-	visual.mesh = quad
-	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	particle.add_child(visual)
-
-	return particle
-
-
-func _start_particle_animation(
-		particle: Node3D,
-		textures: Array[Texture2D],
-		duration: float,
-		free_after_animation: bool
-	) -> void:
-	var visual := particle.get_node_or_null("Visual") as MeshInstance3D
-	var material := (visual.mesh as QuadMesh).material as StandardMaterial3D \
-		if visual != null else null
-	if material == null or textures.is_empty():
-		return
-	var animation := particle.create_tween()
-	var frame_duration := duration / float(textures.size())
-	var is_shell_hit_burst: bool = particle.get_meta(
-		"combat_impact_particle", &""
-	) == StringName(SHELL_HIT_BURST_SEQUENCE)
+	var tint := SHELL_HIT_SHRAPNEL_TINT \
+		if sequence == SHELL_HIT_SHRAPNEL_SEQUENCE else Color.WHITE
+	var opacities := PackedFloat32Array()
 	for frame_index in textures.size():
-		var opacity := SHELL_HIT_SMOKE_OPACITY \
-			if is_shell_hit_burst and frame_index >= SHELL_HIT_SMOKE_FIRST_FRAME \
-			else 1.0
-		animation.tween_callback(
-			_set_particle_frame.bind(material, textures[frame_index], opacity)
+		opacities.append(
+			SHELL_HIT_SMOKE_OPACITY
+			if sequence == SHELL_HIT_BURST_SEQUENCE \
+			and frame_index >= SHELL_HIT_SMOKE_FIRST_FRAME else 1.0
 		)
-		animation.tween_interval(frame_duration)
-	if free_after_animation:
-		animation.finished.connect(particle.queue_free)
+	var spawned := AuthoredFxBankScript.spawn_frame_animated_quad(
+		self, textures, {
+			"name": "ImpactParticle_%d" % _particle_index,
+			"position": world_position,
+			"size": size,
+			"tint": tint,
+			"frame_seconds": duration / float(maxi(textures.size(), 1)),
+			"opacities": opacities,
+			"free_after_animation": free_after_animation,
+			"metadata": {
+				"combat_impact_particle": StringName(sequence),
+			},
+		}
+	)
+	_particle_index += 1
+	return spawned.get("particle") as Node3D
 
 
 func _update_particle_position(
@@ -418,24 +371,9 @@ func _update_particle_position(
 		velocity: Vector3,
 		gravity: float
 	) -> void:
-	if particle == null or not is_instance_valid(particle):
-		return
-	particle.global_position = start + velocity * elapsed \
-		+ Vector3.DOWN * (
-			0.5 * gravity * elapsed * elapsed
-		)
-
-
-func _set_particle_frame(
-		material: StandardMaterial3D,
-		texture: Texture2D,
-		opacity: float
-	) -> void:
-	if material != null:
-		material.albedo_texture = texture
-		var color := material.albedo_color
-		color.a = opacity
-		material.albedo_color = color
+	AuthoredFxBankScript.integrate_motion(
+		elapsed, particle, start, velocity, Vector3.DOWN * gravity
+	)
 
 
 func _set_particle_opacity(opacity: float, material: StandardMaterial3D) -> void:
@@ -446,36 +384,4 @@ func _set_particle_opacity(opacity: float, material: StandardMaterial3D) -> void
 
 
 static func _load_texture_sequence(base_name: String, count: int) -> Array[Texture2D]:
-	var cache_key := "%s:%d" % [base_name, count]
-	if _texture_sequence_cache.has(cache_key):
-		var cached: Array[Texture2D] = []
-		cached.assign(_texture_sequence_cache[cache_key])
-		return cached
-	var result: Array[Texture2D] = []
-	for frame in count:
-		# Concatenate instead of %-formatting because source names such as
-		# `!%Bru` contain a literal format marker.
-		var path := INLINE_FX_TEXTURE_DIR + "/" + base_name + str(frame) + ".tga"
-		var source_texture := load(path) as Texture2D
-		if source_texture == null:
-			return []
-		result.append(_opaque_additive_texture(source_texture))
-	_texture_sequence_cache[cache_key] = result
-	return result
-
-
-static func _opaque_additive_texture(source: Texture2D) -> Texture2D:
-	var image := source.get_image()
-	if image == null or image.is_empty():
-		return source
-	# Original 16-bpp explosion TGAs carry an unused zero alpha bit. Black is
-	# already invisible under additive blending; the color pixels must be opaque.
-	image.convert(Image.FORMAT_RGBA8)
-	var data := image.get_data()
-	for alpha_index in range(3, data.size(), 4):
-		data[alpha_index] = 255
-	image.set_data(
-		image.get_width(), image.get_height(), image.has_mipmaps(),
-		Image.FORMAT_RGBA8, data
-	)
-	return ImageTexture.create_from_image(image)
+	return AuthoredFxBankScript.load_texture_sequence(base_name, count)

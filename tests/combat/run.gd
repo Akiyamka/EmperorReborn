@@ -8,6 +8,7 @@ const CombatGroundDecalScript := preload("res://scripts/combat/combat_ground_dec
 const CombatLingerEffectScript := preload("res://scripts/combat/combat_linger_effect.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
+const ShotPayloadScript := preload("res://scripts/combat/shot_payload.gd")
 const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_definition_catalog.gd")
 const UnitScript := preload("res://scripts/units/unit.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
@@ -284,6 +285,7 @@ func _initialize() -> void:
 	_run_case("simultaneous projectiles retain independent damage scales", _test_projectile_damage_scale_isolation)
 	await _run_async_case("impact resolution applies splash falloff and friendly fire", _test_impact_resolution)
 	_run_case("turret emits bursts and reloads in rule ticks", _test_turret_reload)
+	_run_case("turret FX ownership does not retain its turret", _test_turret_fx_ownership)
 	_run_case(
 		"continuous turrets burst then reload for equal ReloadCount windows",
 		_test_continuous_turret_burst_reload
@@ -1373,8 +1375,9 @@ func _test_continuous_stream_damage_split() -> void:
 	var full_burst_damage: float = flame.damage_against(&"Building")
 
 	var pulse_count := 17
-	var pulse = _runtime_bullet(rules, &"Flame_B")
-	pulse.damage_scale = 1.0 / pulse_count
+	var pulse = ShotPayloadScript.new(
+		_runtime_bullet(rules, &"Flame_B"), 1.0 / pulse_count
+	)
 	_expect(
 		is_equal_approx(pulse.damage_against(&"Building") * pulse_count, full_burst_damage),
 		"summing every evenly scaled pulse must recover exactly one full stream hit"
@@ -1382,6 +1385,17 @@ func _test_continuous_stream_damage_split() -> void:
 	_expect(
 		pulse.damage_against(&"Building") < full_burst_damage,
 		"an individual pulse must deal less than the whole stream's total damage"
+	)
+
+
+func _test_turret_fx_ownership() -> void:
+	var turret = CombatTurretScript.new()
+	_expect(turret.configure(&"ATInfGun"), "the lifetime fixture must configure")
+	var turret_ref: WeakRef = weakref(turret)
+	turret = null
+	_expect(
+		turret_ref.get_ref() == null,
+		"the FX module must not keep its RefCounted turret owner alive"
 	)
 
 

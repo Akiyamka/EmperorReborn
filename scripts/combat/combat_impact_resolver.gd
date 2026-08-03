@@ -13,13 +13,18 @@ const MAX_SPLASH_COLLIDERS := 256
 
 
 func resolve(
-		bullet,
+		bullet_or_payload,
 		world_context: Node,
 		world_position: Vector3,
 		direct_target: Object = null,
-		source: Object = null
+		source: Object = null,
+		damage_scale := 1.0
 	) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
+	var bullet = bullet_or_payload
+	if bullet_or_payload != null and "definition" in bullet_or_payload:
+		damage_scale = float(bullet_or_payload.damage_scale)
+		bullet = bullet_or_payload.definition
 	if bullet == null or bullet.config == null:
 		return results
 
@@ -45,7 +50,9 @@ func resolve(
 		if not _can_resolve_target(bullet, target):
 			continue
 		var direct := target.get_instance_id() == direct_instance_id
-		var result := _resolve_target(bullet, target, source, world_position, direct)
+		var result := _resolve_target(
+			bullet, target, source, world_position, direct, damage_scale
+		)
 		if not result.is_empty():
 			results.append(result)
 	return results
@@ -56,7 +63,8 @@ func _resolve_target(
 		target: Object,
 		source: Object,
 		world_position: Vector3,
-		direct: bool
+		direct: bool,
+		damage_scale: float
 	) -> Dictionary:
 	var armour_type := StringName(String(target.call("combat_armour_type")))
 	var radius: float = float(bullet.blast_radius_world())
@@ -99,7 +107,7 @@ func _resolve_target(
 	var infection_was_applied := bullet.warhead != null \
 		and bullet.warhead.config == null and &"leech" in applied_effects
 	if not infection_was_applied:
-		damage = bullet.damage_against(armour_type) * total_multiplier
+		damage = bullet.damage_against(armour_type) * damage_scale * total_multiplier
 		if damage > 0.0:
 			target.call("take_damage", damage, bullet.death_category())
 

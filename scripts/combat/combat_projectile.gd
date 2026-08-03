@@ -50,6 +50,7 @@ const LASER_TANK_GLOW_ENERGY := 3.0
 const INFANTRY_LASER_COLOR := Color(1.0, 0.55, 0.08)
 
 var bullet
+var _damage_scale := 1.0
 var state := State.READY
 var finish_reason: StringName = &""
 var velocity := Vector3.ZERO
@@ -103,7 +104,9 @@ func launch(
 	if not resolved_target["valid"]:
 		return false
 
-	bullet = bullet_payload
+	_damage_scale = float(bullet_payload.damage_scale) \
+		if "definition" in bullet_payload else 1.0
+	bullet = bullet_payload.definition if "definition" in bullet_payload else bullet_payload
 	name = "Bullet_%s" % String(bullet.id())
 	_create_visual()
 	if get_parent() is Node3D:
@@ -738,7 +741,7 @@ func _impact_ground(world_position: Vector3) -> void:
 
 func _resolve_impact(direct_target: Object, world_position: Vector3) -> void:
 	var results: Array[Dictionary] = _impact_resolver.resolve(
-		bullet, self, world_position, direct_target, _source()
+		bullet, self, world_position, direct_target, _source(), _damage_scale
 	)
 	for result in results:
 		var resolved_target: Object = result["target"] as Object

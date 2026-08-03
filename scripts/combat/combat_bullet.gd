@@ -15,12 +15,6 @@ var config: Resource
 var warhead
 var visual_scene: PackedScene
 var impact_visual_scenes: Dictionary
-## Scales this bullet's Rules.txt Damage. Used to spread a continuous
-## stream's per-clip Damage value evenly across every authored pulse instead
-## of dealing it in full at each one (see `CombatTurret.try_fire`).
-var damage_scale := 1.0
-
-
 func _init(
 		bullet_config: Resource = null,
 		warhead_config: Resource = null,
@@ -34,7 +28,7 @@ func _init(
 
 
 func base_damage() -> float:
-	return maxf(float(config.damage), 0.0) * damage_scale if config != null else 0.0
+	return maxf(float(config.damage), 0.0) if config != null else 0.0
 
 
 func maximum_range() -> float:
