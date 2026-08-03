@@ -118,6 +118,12 @@ func _try_start_dock_upgrade(refinery: Node3D, dock_building_id: StringName = &"
 	_refresh_upgrade_option_states()
 
 
+## One handler for both upgrade kinds; `kind` is the only thing that differed
+## between the four handlers this replaced. For REFINERY_DOCK it is also the
+## dock's own entry point (docs/mechanics/production.md section 4,
+## "instance-bound"): a fresh click chooses the first compatible owned refinery
+## with a free dock state, and once an order is in flight clicks fall through
+## to the normal pause/resume behaviour shared with global upgrades.
 func _on_slot_pressed(building_id: StringName, button_index: int, kind: int) -> bool:
 	if button_index not in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
 		return false

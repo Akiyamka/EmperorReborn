@@ -115,14 +115,22 @@ var _placement_rotated_during_press: bool:
 		return _pointer_gesture.rotated_during_press()
 	set(value):
 		_pointer_gesture.set_rotated_during_press(value)
+## Both of these are shims over WallLineSession, kept because tests address
+## them as fields. Each needs BOTH directions: a setter-only property still
+## has a backing field that reads would silently return (always null), and a
+## getter-only one silently swallows writes into it.
 @warning_ignore("unused_private_class_variable")
 var _wall_marker_scene: PackedScene:
+	get:
+		return _wall_session.marker_scene()
 	set(value):
 		_wall_session.set_marker_scene(value)
 @warning_ignore("unused_private_class_variable")
 var _wall_markers: Dictionary:
 	get:
 		return _wall_session.markers()
+	set(value):
+		_wall_session.set_markers(value)
 
 
 func setup(
@@ -281,7 +289,10 @@ func _track_availability_building(candidate: Variant) -> void:
 ## itself does (_exit_tree()) -- so re-entering the tree and calling setup()
 ## again never reconnects on top of a still-live subscription.
 func _untrack_availability_building(node: Node) -> void:
-	_tracked_availability_buildings.erase(node.get_instance_id())
+	# node_removed fires for every node in the game, so leave immediately
+	# unless this really was one of the buildings we subscribed to.
+	if not _tracked_availability_buildings.erase(node.get_instance_id()):
+		return
 	if not is_instance_valid(node):
 		return
 	if node.has_signal("owner_changed") \
@@ -551,7 +562,7 @@ func _try_toggle_building_repair(screen_position: Vector2) -> void:
 	if building == null:
 		status_changed.emit("Select one of your damaged buildings to repair")
 		return
-	if not _can_sell_building(building):
+	if not _is_local_player_building(building):
 		status_changed.emit("You can only repair your own buildings")
 		return
 	if not &"health" in building or not &"max_health" in building or float(building.get("health")) >= float(building.get("max_health")):
@@ -640,7 +651,7 @@ func _try_sell_building(screen_position: Vector2) -> void:
 		status_changed.emit("Select one of your buildings to sell")
 		return
 
-	if not _can_sell_building(building):
+	if not _is_local_player_building(building):
 		status_changed.emit("You can only sell your own buildings")
 		return
 
@@ -663,7 +674,7 @@ func _update_mode_cursor() -> void:
 		var building := _find_building(hit.get("collider") as Node)
 		var cursor := (
 			CursorManagerScript.CursorType.SELL
-			if _can_sell_building(building)
+			if _is_local_player_building(building)
 			else CursorManagerScript.CursorType.CANT_SELL
 		)
 		cursors.set_override(BUILDING_MODE_CURSOR_OVERRIDE, cursor, 50)
@@ -686,7 +697,9 @@ func _update_mode_cursor() -> void:
 	cursors.clear_override(BUILDING_MODE_CURSOR_OVERRIDE)
 
 
-func _can_sell_building(building: Node3D) -> bool:
+## Ownership gate shared by sell, repair and primary designation -- all three
+## require the building to belong to the local player.
+func _is_local_player_building(building: Node3D) -> bool:
 	var players = _players()
 	return (
 		building != null
@@ -697,7 +710,7 @@ func _can_sell_building(building: Node3D) -> bool:
 
 
 func _can_repair_building(building: Node3D) -> bool:
-	return _can_sell_building(building) \
+	return _is_local_player_building(building) \
 		and &"health" in building \
 		and &"max_health" in building \
 		and float(building.get("health")) < float(building.get("max_health"))
@@ -717,7 +730,7 @@ func _try_handle_building_double_click(screen_position: Vector2) -> bool:
 	if building == null:
 		return false
 
-	if not _can_sell_building(building):
+	if not _is_local_player_building(building):
 		return false
 
 	var now := Time.get_ticks_msec()

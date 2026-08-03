@@ -56,6 +56,23 @@ var _can_build := false
 var _is_wall_candidate := false
 var _skip_build_radius_check := false
 
+# _occupied_building_nav_cells() answers from map-wide building state, so this
+# cache used to be `static var` shared by every BuildingPlacement, with
+# SceneTree.node_added/node_removed subscriptions that were never disconnected
+# -- shared mutable state plus a leak, and a source of cross-test coupling in
+# headless runs where the scene is rebuilt. It is per-instance now, and
+# _exit_tree() unsubscribes.
+#
+# The tradeoff that buys, spelled out because the static version existed for a
+# reason: the per-frame consumer (_rebuild_preview_for_anchors, which reads
+# this every frame while a placement preview is live) keeps its cache, because
+# that BuildingPlacement lives for the whole placement session. The one
+# consumer that loses caching is UnitDeploymentController._deployment_candidate,
+# which builds a throwaway BuildingPlacement per call and frees it -- so it now
+# rescans instead of reusing a valid cache. That path is throttled to
+# DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC (1000 ms, unit_command_controller.gd)
+# and only runs while the pointer is over a selected MCV, so it is one scan a
+# second, not a per-frame cost.
 var _occupied_cells_cache: Dictionary = {}
 var _occupied_cells_cache_valid := false
 var _occupied_cells_tracking_started := false

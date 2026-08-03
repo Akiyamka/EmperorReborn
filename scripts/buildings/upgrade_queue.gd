@@ -1,6 +1,13 @@
 class_name UpgradeQueue
 extends RefCounted
 
+## docs/mechanics/production.md section 4 "Upgrades": upgrades have their own
+## queue, one per player -- as opposed to BuildingQueue (also one per player,
+## but for buildings) and per-building-type unit queues. The gradual-payment
+## tick itself lives in the shared ProductionQueue below; what stays here is
+## the upgrade-shaped display API (UpgradeOrder, with kind and
+## target_refinery), so callers never have to funnel building- and
+## upgrade-shaped orders through one type.
 signal order_ready(order: UpgradeOrder)
 
 const UpgradeOrderScript := preload("res://scripts/buildings/upgrade_order.gd")

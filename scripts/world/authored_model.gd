@@ -116,6 +116,22 @@ static func add_selection_collision(owner: Node3D, sources: Array[Node3D]) -> St
 	return body
 
 
+## Distance from the node's origin to the front edge of its baked selection
+## collision. Converted Emperor models are Z-mirrored, placing their exit/apron
+## on local +Z, so the positive-Z extent is the front-edge distance.
+##
+## One implementation on purpose: rally-point placement and refinery-front
+## placement both measure the same edge, and when this lived as a private
+## method it was shared by all three call sites. Two copies drifted apart once,
+## which only showed on the no-occupy-rows fallback path.
+static func front_collision_extent(node: Node3D) -> float:
+	var collision_body := node.get_node_or_null("SelectionCollision") as StaticBody3D
+	if collision_body == null or not collision_body.has_meta("collision_bounds"):
+		return 0.0
+	var bounds: AABB = collision_body.get_meta("collision_bounds")
+	return maxf(absf(bounds.position.z), absf(bounds.end.z))
+
+
 static func selection_bounds(root: Node, coordinate_root: Node3D) -> AABB:
 	var markers: Array[Node3D] = []
 	_collect_meta_nodes(root, &"selection_bounds", markers)

@@ -37,17 +37,54 @@ func configure(owner: Node3D, fire_controller) -> void:
 
 
 func advance(delta: float) -> void:
+	if _owner == null:
+		return
 	_automatic_cooldown = maxf(_automatic_cooldown - maxf(delta, 0.0), 0.0)
 	_advance_popup_transition(delta)
+	# The engagement and the authored fire animation may both drive the active
+	# model. Restore the hold pose on each side of them -- here so aiming sees
+	# it, and again in after_authored_advance() so the rendered frame keeps it
+	# once the authored controller has advanced on the facade.
 	restore_popup_hold_pose()
 	_advance_engagement(delta)
-	# The engagement and authored animation may both alter the active model.
-	# Restore once on each side so aiming sees the hold pose and the rendered
-	# frame retains it after the authored controller advances on the facade.
 
 
 func after_authored_advance() -> void:
 	restore_popup_hold_pose()
+
+
+## Lifecycle protocol (docs/architecture/scripts-refactor-plan.md, "Lifecycle-
+## протокол для модулей, владеющих ссылками на модель"). _transition_player is
+## a cached reference into the owner's model subtree, so it must be droppable
+## without waiting for the module itself to die. Both entry points below are
+## idempotent: bind_model() detaches before it re-attaches, and the facade's
+## _exit_tree() can run after a detach has already happened.
+func detach_model() -> void:
+	_popup_state = PopupState.RETRACTED
+	_transition_player = null
+	_transition_animation = &""
+	_transition_elapsed = 0.0
+	_transition_duration = 0.0
+
+
+## detach_model() plus the rest of the module's state, including the back
+## reference to the facade. Building never re-enters the tree (the only
+## remove_child of a live building, match_snapshot._clear_children, frees it
+## immediately), and Node._ready() would not run a second time anyway, so this
+## is terminal -- every entry point below tolerates a null _owner rather than
+## assuming it is called again.
+func dispose() -> void:
+	detach_model()
+	if _fire_controller != null:
+		_fire_controller.cancel()
+	_has_order = false
+	_is_ground = false
+	_ground_position = Vector3.INF
+	_target_ref = null
+	_automatic_ref = null
+	_automatic_cooldown = 0.0
+	_owner = null
+	_fire_controller = null
 
 
 func can_attack(target_or_position: Variant) -> bool:
@@ -59,6 +96,10 @@ func can_attack(target_or_position: Variant) -> bool:
 	return false
 
 
+## Buildings accept the same explicit attack contract as units. They retain an
+## out-of-range target rather than pursuing it and begin firing if it later
+## enters range. Relation checks remain in UnitCommandController so Ctrl can
+## deliberately force fire against allied or neutral targets.
 func command_attack(target_or_position: Variant) -> bool:
 	if not can_attack(target_or_position):
 		return false
@@ -87,6 +128,9 @@ func cancel_order() -> void:
 	_owner.call("_emit_attack_order_changed", false, null)
 
 
+## Shared Stop-command contract. Stationary buildings can only have an explicit
+## attack order, so Stop deliberately leaves rally points and production state
+## unchanged.
 func cancel_all_orders() -> bool:
 	if not _has_order:
 		return false
@@ -114,17 +158,11 @@ func active_animation_player(animation_name: StringName) -> AnimationPlayer:
 	return _active_animation_player(animation_name)
 
 
-func reset_popup_transition() -> void:
-	_popup_state = PopupState.RETRACTED
-	_transition_player = null
-	_transition_animation = &""
-	_transition_elapsed = 0.0
-	_transition_duration = 0.0
-
-
 func bind_model(model_root: Node3D) -> void:
+	if _owner == null:
+		return
 	_fire_controller.cancel()
-	reset_popup_transition()
+	detach_model()
 	for turret in _owner.combat_turrets:
 		turret.bind_model(model_root, turret.weapon_index())
 		if model_root != null:
@@ -137,7 +175,7 @@ func bind_model(model_root: Node3D) -> void:
 
 func restore_popup_hold_pose() -> void:
 	if not _uses_popup_turret() or _popup_state != PopupState.DEPLOYED \
-		or _fire_controller.is_active():
+		or _fire_controller == null or _fire_controller.is_active():
 		return
 	var player := _active_animation_player(POPUP_HOLD_ANIMATION)
 	if player == null:
@@ -159,6 +197,10 @@ func _advance_engagement(delta: float) -> void:
 		or not _target_position(target).is_finite()):
 		cancel_order()
 		target = null
+	# A stationary turret cannot solve a blocked line of fire by moving, and
+	# shelling the building or cliff in the way is never what the shot was for.
+	# The ordered target stays attached -- the obstacle may fall, or a mobile
+	# target may leave cover -- while the weapon serves reachable enemies.
 	if target == null or not turret.has_line_of_fire(target, _owner):
 		target = _automatic_target_for(turret)
 
@@ -249,13 +291,15 @@ func _target_position(target: Variant) -> Vector3:
 
 
 func _is_operational() -> bool:
-	return _owner.config_id in DEFENSIVE_TURRET_IDS \
+	# _owner is null after dispose(); every public entry point funnels through
+	# here or _uses_popup_turret(), so guarding both covers a disposed module.
+	return _owner != null and _owner.config_id in DEFENSIVE_TURRET_IDS \
 		and _owner.is_construction_complete() and _owner.health > 0.0 \
 		and not _owner.is_queued_for_deletion() and not _owner.combat_turrets.is_empty()
 
 
 func _uses_popup_turret() -> bool:
-	return _owner.building_definition != null \
+	return _owner != null and _owner.building_definition != null \
 		and POPUP_TURRET_ROLE in _owner.building_definition.roles
 
 
@@ -313,6 +357,8 @@ func _finish_popup_transition() -> void:
 
 
 func _active_animation_player(animation_name: StringName) -> AnimationPlayer:
+	if _owner == null:
+		return null
 	var state_root: Node3D = _owner.call("state_root", _owner.current_state)
 	if state_root == null:
 		return null

@@ -32,6 +32,12 @@ func has(building_id: StringName) -> bool:
 	return _ids.has(building_id)
 
 
+## Resolved from the preloaded map first, then straight from the shared
+## catalog. Deliberately no roster/autoload lookup on this path: a freed
+## building's _exit_tree() can still reach BuildingController's option-state
+## refresh through the energy/resources signal chain after that controller has
+## itself left the tree, and absolute-path autoload lookups are invalid by
+## then. Definition data is static, so it never needs one.
 func config(building_id: StringName) -> Resource:
 	return _configs.get(building_id, _catalog.definition(building_id))
 

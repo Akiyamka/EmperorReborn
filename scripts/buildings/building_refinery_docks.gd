@@ -4,14 +4,16 @@ extends RefCounted
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
 const OccupyGridScript := preload("res://scripts/buildings/occupy_grid.gd")
+const BuildingRallyPointScript := preload("res://scripts/buildings/building_rally_point.gd")
 
 const REFINERY_ROLE := "Refinery"
 const RELEASE_DELAY_SECONDS := 3.0
 const INVALID_DOCK := -1
 const MAX_UPGRADES := 2
-const OCCUPY_CELL_WORLD_SPAN := 2.0
-const RALLY_POINT_CLEARANCE := 1.5
+const OCCUPY_CELL_WORLD_SPAN := OccupyGridScript.CELL_WORLD_SPAN
+const RALLY_POINT_CLEARANCE := BuildingRallyPointScript.CLEARANCE
 const ANIMATIONS: Array[StringName] = [&"Refinery_Pad_1", &"Refinery_Pad_2"]
 const POINT_ORDER := [0, 2, 1]
 
@@ -178,11 +180,7 @@ func _front_footprint_extent() -> float:
 	var rows := _occupy_rows()
 	if not rows.is_empty():
 		return float(rows.size()) * OCCUPY_CELL_WORLD_SPAN * 0.5
-	var collision_body := _owner.get_node_or_null("SelectionCollision") as StaticBody3D
-	if collision_body != null and collision_body.has_meta("collision_bounds"):
-		var bounds: AABB = collision_body.get_meta("collision_bounds")
-		return maxf(bounds.end.z, 0.0)
-	return 0.0
+	return AuthoredModelScript.front_collision_extent(_owner)
 
 
 func _dock_points() -> Array:

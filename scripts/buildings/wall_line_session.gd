@@ -26,7 +26,7 @@ func configure(
 		marker_parent: Node3D,
 		placement,
 		queue,
-		marker_scene: PackedScene,
+		wall_marker_scene: PackedScene,
 		config_provider: Callable,
 		rows_provider: Callable,
 		display_provider: Callable,
@@ -37,7 +37,7 @@ func configure(
 ) -> void:
 	_marker_parent = marker_parent
 	_placement = placement
-	_marker_scene = marker_scene
+	_marker_scene = wall_marker_scene
 	_queue = queue
 	_config_provider = config_provider
 	_rows_provider = rows_provider
@@ -147,8 +147,13 @@ func start_chain(
 		order_building_id: StringName,
 		selected_buildable_cells: Array[Vector2i]
 ) -> void:
+	# Callers that never went through begin() (a direct start_chain, e.g. from
+	# a test) can arrive without an id; the Atreides wall is the default the
+	# wall tool has always fallen back to.
+	if String(order_building_id).is_empty():
+		order_building_id = &"ATWall"
 	if _chain != null or _queue.has_order():
-		_status.call("Wall queue is busy")
+		_status.call("Building queue is busy")
 		clear_markers()
 		return
 	var config: Resource = _config_provider.call(order_building_id)
@@ -323,6 +328,14 @@ func set_chain(value) -> void:
 
 func markers() -> Dictionary:
 	return _markers
+
+
+func set_markers(value: Dictionary) -> void:
+	_markers = value
+
+
+func marker_scene() -> PackedScene:
+	return _marker_scene
 
 
 func set_marker_scene(value: PackedScene) -> void:

@@ -2,9 +2,10 @@ class_name BuildingRallyPoint
 extends RefCounted
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
 const OccupyGridScript := preload("res://scripts/buildings/occupy_grid.gd")
 const MARKER_SCENE := preload("res://assets/converted/ui/cursor_models/place_flag.scn")
-const CELL_SPAN := 2.0
+const CELL_SPAN := OccupyGridScript.CELL_WORLD_SPAN
 const CLEARANCE := 1.5
 const LINE_COLOR := Color(0.12, 1.0, 0.28, 0.9)
 const LINE_WIDTH := 0.10
@@ -184,11 +185,7 @@ func _front_footprint_extent() -> float:
 
 
 func _front_collision_extent() -> float:
-	var body := _owner.get_node_or_null("SelectionCollision") as StaticBody3D
-	if body != null and body.has_meta("collision_bounds"):
-		var bounds: AABB = body.get_meta("collision_bounds")
-		return maxf(absf(bounds.position.z), absf(bounds.end.z))
-	return 0.0
+	return AuthoredModelScript.front_collision_extent(_owner)
 
 
 func _authored_exit_node() -> Node3D:

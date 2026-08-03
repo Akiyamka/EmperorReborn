@@ -139,9 +139,9 @@ func _init() -> void:
 
 func _ready() -> void:
 	add_to_group("buildings")
-	_wall_visual.configure(self)
-	_refinery_docks.configure(self)
-	_building_combat.configure(self, _authored_fire_controller)
+	# The three model-facing modules were already configured in _init() -- see
+	# the comment there. Only _rally and _combat_hull are configured below,
+	# because they need the scene tree (child creation / model metadata).
 	var state_player := get_node_or_null("StatePlayer") as AnimationPlayer
 	if state_player != null:
 		# The outer state clip contains a full copy of Stationary transforms.
@@ -182,6 +182,9 @@ func _exit_tree() -> void:
 	if is_in_group("wall_buildings"):
 		_wall_visual.defer_adjacent_refresh()
 	_set_generated_energy(0)
+	# Last: dispose() drops the module's back reference to this node, so
+	# everything above that still needs a live facade has already run.
+	_building_combat.dispose()
 
 
 func _process(delta: float) -> void:
@@ -226,11 +229,9 @@ func _set_default_rally_point_if_unset() -> void:
 	_rally.set_default_if_unset()
 
 
-func _refresh_rally_point_line_visibility() -> void:
-	_rally.refresh_visibility()
-
-
-func _refresh_rally_point_marker() -> void:
+## The rally line and its marker share one visibility rule, so this is a
+## single call -- BuildingRallyPoint.refresh_visibility() updates both.
+func _refresh_rally_point_visuals() -> void:
 	_rally.refresh_visibility()
 
 
@@ -289,7 +290,7 @@ func play_state(state: StringName) -> void:
 		player.advance(0.0)
 		_refresh_wall_variant_visual()
 		_apply_refinery_upgrade_pose()
-		_bind_combat_turrets(_state_root(state))
+		_bind_combat_turrets(state_root(state))
 		return
 
 	var states := get_node_or_null("States")
@@ -300,7 +301,7 @@ func play_state(state: StringName) -> void:
 		child.visible = _child_state_name(child) == state
 	_refresh_wall_variant_visual()
 	_apply_refinery_upgrade_pose()
-	_bind_combat_turrets(_state_root(state))
+	_bind_combat_turrets(state_root(state))
 
 
 ## Recomputes this wall plus the at-most-four segments whose topology can
@@ -379,12 +380,12 @@ func _damage_visual_states() -> Array[StringName]:
 	return result
 
 
-## Public accessor: extracted "*/*/_state_root" modules (BuildingWallVisual,
-## BuildingRefineryDocks, BuildingCombat) reach the owning Building only
-## through an untyped/base-typed `_owner` reference, and tools/check_
-## architecture.sh forbids `_owner._private_method` access -- so this is the
-## one entry point they call (via `_owner.call("state_root", state)`) instead
-## of each keeping its own copy of the States-child search below.
+## Single entry point for "which States child is this state?". The extracted
+## modules (BuildingWallVisual, BuildingRefineryDocks, BuildingCombat) reach
+## their owner through a base-typed `_owner`, and tools/check_architecture.sh
+## forbids `_owner._private_method`, so this is deliberately public and they
+## call it as `_owner.call("state_root", state)` rather than each keeping a
+## copy of the search below -- there used to be one per module.
 func state_root(state: StringName) -> Node3D:
 	var states := get_node_or_null("States")
 	if states == null:
@@ -393,11 +394,6 @@ func state_root(state: StringName) -> Node3D:
 		if _child_state_name(child) == state and child is Node3D:
 			return child as Node3D
 	return null
-
-
-## Thin wrapper kept for building.gd's own internal call sites (play_state()).
-func _state_root(state: StringName) -> Node3D:
-	return state_root(state)
 
 
 func _child_state_name(child: Node) -> StringName:
@@ -533,8 +529,7 @@ func set_selected(value: bool) -> void:
 	is_selected = value
 	if _selection_halo != null:
 		_selection_halo.set_selected(value)
-	_refresh_rally_point_line_visibility()
-	_refresh_rally_point_marker()
+	_refresh_rally_point_visuals()
 
 
 func set_hovered(value: bool) -> void:
@@ -770,7 +765,7 @@ func _configure_combat_turret() -> void:
 		return
 	var turret = CombatTurretScript.new()
 	if turret.configure(turret_id):
-		turret.bind_model(_state_root(current_state), 0)
+		turret.bind_model(state_root(current_state), 0)
 		combat_turrets.append(turret)
 
 

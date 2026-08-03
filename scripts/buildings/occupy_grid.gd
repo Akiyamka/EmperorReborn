@@ -1,6 +1,10 @@
 class_name OccupyGrid
 extends RefCounted
 
+## One occupy cell is two world units across. Declared here because every
+## consumer of occupy rows needs it and it used to be re-declared per module.
+const CELL_WORLD_SPAN := 2.0
+
 
 static func width(rows: Array) -> int:
 	var result := 0
