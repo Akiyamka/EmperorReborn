@@ -26,6 +26,9 @@ const PlacementPointerGestureScript := preload("res://scripts/buildings/placemen
 const BuildingSaleServiceScript := preload("res://scripts/buildings/building_sale_service.gd")
 const BuildingCatalogViewScript := preload("res://scripts/buildings/building_catalog_view.gd")
 const WallLineSessionScript := preload("res://scripts/buildings/wall_line_session.gd")
+const BuildingAvailabilityTrackerScript := preload(
+	"res://scripts/buildings/building_availability_tracker.gd"
+)
 
 const DEFAULT_BUILD_RADIUS_TILES := 6
 const WALL_BUILDING_GROUP := "Wall"
@@ -44,9 +47,8 @@ var max_tech_level: int = TechnologyTreeScript.UNLIMITED_TECH_LEVEL
 var _catalog_view = BuildingCatalogViewScript.new()
 var _technology_tree: TechnologyTree = TechnologyTreeScript.new()
 var _game_settings_catalog := GameSettingsCatalogScript.new()
-var _availability_dirty := true
+var _availability_tracker := BuildingAvailabilityTrackerScript.new()
 var _refreshing_building_option_states := false
-var _tracked_availability_buildings: Dictionary = {}
 var _building_queue: BuildingQueue = BuildingQueueScript.new()
 var _building_placement: BuildingPlacement = BuildingPlacementScript.new()
 var _local_player_resource: PlayerData
@@ -124,7 +126,7 @@ func setup(
 ) -> void:
 	camera = placement_camera
 	_catalog_view.configure(building_ids)
-	_mark_availability_dirty()
+	_availability_tracker.mark_dirty()
 	_wall_session.configure(
 		self, _building_placement, _building_queue, wall_marker_scene,
 		Callable(self, "_building_config"), Callable(self, "_building_occupy_rows"),
@@ -156,7 +158,7 @@ func setup(
 		_sale_service.completed.connect(_on_building_sale_completed)
 
 	_bind_local_player_roster()
-	_bind_availability_sources()
+	_availability_tracker.bind(self)
 	_refresh_player_resources()
 	_refresh_availability_if_dirty()
 	_refresh_building_option_states()
@@ -182,135 +184,19 @@ func process(delta: float) -> void:
 
 
 func _exit_tree() -> void:
-	var tree := get_tree()
-	if tree != null:
-		if tree.node_added.is_connected(_on_availability_node_added):
-			tree.node_added.disconnect(_on_availability_node_added)
-		if tree.node_removed.is_connected(_on_availability_node_removed):
-			tree.node_removed.disconnect(_on_availability_node_removed)
-	# Disconnect every still-tracked building's subscriptions too, not just
-	# forget them -- otherwise a controller that re-enters the tree and calls
-	# setup() again reconnects on top of connections _bind_availability_
-	# sources() never tore down, and Godot errors with "Signal is already
-	# connected" on the next signal this building fires.
-	for instance_id in _tracked_availability_buildings.keys():
-		var building_ref: WeakRef = _tracked_availability_buildings[instance_id]
-		var node: Node = building_ref.get_ref() if building_ref != null else null
-		if node != null and is_instance_valid(node):
-			_untrack_availability_building(node)
-	_tracked_availability_buildings.clear()
+	_availability_tracker.unbind()
 	var cursors: Variant = _cursor_manager()
 	if cursors != null:
 		cursors.clear_override(BUILDING_MODE_CURSOR_OVERRIDE)
 
-
-func _bind_availability_sources() -> void:
-	var tree := get_tree()
-	if tree == null:
-		return
-	if not tree.node_added.is_connected(_on_availability_node_added):
-		tree.node_added.connect(_on_availability_node_added)
-	if not tree.node_removed.is_connected(_on_availability_node_removed):
-		tree.node_removed.connect(_on_availability_node_removed)
-	for building in tree.get_nodes_in_group("buildings"):
-		_track_availability_building(building)
-	_mark_availability_dirty()
-
-
-func _on_availability_node_added(node: Node) -> void:
-	# node_added precedes Building._ready(), where the group is assigned.
-	if node.is_in_group("buildings"):
-		_track_availability_building(node)
-		return
-	# node_added fires for every node entering the tree -- projectiles,
-	# decals, particles, corpses -- so cheaply rule out anything that can
-	# never end up a tracked building before paying for a deferred call.
-	# Building (and the BuildingStub test double, which is a plain Node, not
-	# Node3D) always declares construction_completed; incidental scenery
-	# never does, so that alone is the filter -- do not additionally require
-	# `is Node3D` here, or the test double stops matching.
-	if node.has_signal("construction_completed"):
-		call_deferred("_track_availability_building", node)
-
-
-func _on_availability_node_removed(node: Node) -> void:
-	# node_removed fires for every node in the game. Marking availability dirty
-	# unconditionally turned any churn into a full recompute on the next frame --
-	# and BuildingPlacement churns hard: every cursor move while stretching a wall
-	# line releases its preview cells through remove_child(), so the O(ids x
-	# buildings) scan this cache exists to avoid ran every frame of the drag.
-	if _untrack_availability_building(node):
-		_mark_availability_dirty()
-
-
-func _track_availability_building(candidate: Variant) -> void:
-	# A node can leave the tree before this deferred post-ready check runs.
-	if not is_instance_valid(candidate) or not candidate is Node:
-		return
-	var node := candidate as Node
-	if not node.is_in_group("buildings"):
-		return
-	var instance_id := node.get_instance_id()
-	if _tracked_availability_buildings.has(instance_id):
-		return
-	_tracked_availability_buildings[instance_id] = weakref(node)
-	if node.has_signal("owner_changed") \
-			and not node.is_connected("owner_changed", _on_availability_owner_changed):
-		node.connect("owner_changed", _on_availability_owner_changed)
-	if node.has_signal("construction_completed") \
-			and not node.is_connected("construction_completed", _mark_availability_dirty):
-		node.connect("construction_completed", _mark_availability_dirty)
-	if node.has_signal("upgrade_level_changed") \
-			and not node.is_connected("upgrade_level_changed", _on_availability_upgrade_changed):
-		node.connect("upgrade_level_changed", _on_availability_upgrade_changed)
-	if not node.tree_exiting.is_connected(_mark_availability_dirty):
-		node.tree_exiting.connect(_mark_availability_dirty)
-	_mark_availability_dirty()
-
-
-## Symmetric counterpart of _track_availability_building()'s four connects,
-## called both when a building leaves the tree and when this controller
-## itself does (_exit_tree()) -- so re-entering the tree and calling setup()
-## again never reconnects on top of a still-live subscription.
-## Returns whether the node really was one of the tracked buildings -- callers
-## use that to decide whether anything about availability can have changed.
-func _untrack_availability_building(node: Node) -> bool:
-	if not _tracked_availability_buildings.erase(node.get_instance_id()):
-		return false
-	if not is_instance_valid(node):
-		return true
-	if node.has_signal("owner_changed") \
-			and node.is_connected("owner_changed", _on_availability_owner_changed):
-		node.disconnect("owner_changed", _on_availability_owner_changed)
-	if node.has_signal("construction_completed") \
-			and node.is_connected("construction_completed", _mark_availability_dirty):
-		node.disconnect("construction_completed", _mark_availability_dirty)
-	if node.has_signal("upgrade_level_changed") \
-			and node.is_connected("upgrade_level_changed", _on_availability_upgrade_changed):
-		node.disconnect("upgrade_level_changed", _on_availability_upgrade_changed)
-	if node.tree_exiting.is_connected(_mark_availability_dirty):
-		node.tree_exiting.disconnect(_mark_availability_dirty)
-	return true
-
-
-func _on_availability_owner_changed(_player_id: int) -> void:
-	_mark_availability_dirty()
-
-
-func _on_availability_upgrade_changed(_level: int) -> void:
-	_mark_availability_dirty()
-
-
-func _mark_availability_dirty() -> void:
-	_availability_dirty = true
 
 
 ## HEAD's _is_building_available() started with `if not is_inside_tree():
 ## return false` -- once outside the tree (mid-teardown, or before the first
 ## add_child()), nothing is available, full stop. _catalog_view.is_available()
 ## has no notion of "in tree" (it is a plain RefCounted), and the normal dirty
-## check below only recomputes when _mark_availability_dirty() has actually
-## fired, so a controller that leaves the tree without one more dirtying
+## check below only recomputes when the availability tracker has actually seen
+## a change, so a controller that leaves the tree without one more dirtying
 ## event would otherwise keep serving its last, possibly-true, cached
 ## availability forever. Recompute unconditionally (bypassing the dirty
 ## flag) with a null player whenever outside the tree instead: every
@@ -323,11 +209,9 @@ func _refresh_availability_if_dirty() -> void:
 		if _catalog_view.refresh_availability(_technology_tree, null, no_buildings, max_tech_level):
 			_refresh_building_option_states()
 		return
-	if not _availability_dirty:
+	if not _availability_tracker.consume_dirty():
 		return
-	_availability_dirty = false
-	var buildings: Array[Node] = []
-	buildings.assign(get_tree().get_nodes_in_group("buildings"))
+	var buildings := _availability_tracker.buildings()
 	if _catalog_view.refresh_availability(_technology_tree, _local_player(), buildings, max_tech_level):
 		_refresh_building_option_states()
 

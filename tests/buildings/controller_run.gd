@@ -607,10 +607,10 @@ func _test_leaving_wall_mode_cancels_its_own_preview(token: int) -> int:
 	return token
 
 
-## _track_availability_building() connects owner_changed/construction_
+## BuildingAvailabilityTracker connects owner_changed/construction_
 ## completed/upgrade_level_changed/tree_exiting on every tracked building, but
-## _exit_tree() used to only forget them (_tracked_availability_buildings.
-## clear()) without disconnecting -- so a controller that leaves the tree
+## _exit_tree() used to only forget them (clearing the tracked map)
+## without disconnecting -- so a controller that leaves the tree
 ## (freed and replaced, or simply re-parented) and calls setup() again would
 ## reconnect on top of connections that were never torn down, and Godot logs
 ## "Signal is already connected" for every live building. Exercise exactly
@@ -636,21 +636,21 @@ func _test_availability_resubscribe_after_tree_reentry(token: int, local_player:
 	# post-resubscribe connection-count check alone cannot go red on the bug
 	# this guards against. Assert the actual root cause directly: leaving the
 	# tree must tear down every subscription it made, not just forget about
-	# it in _tracked_availability_buildings.
+	# it in the tracker's map.
 	_expect(
-		not con_yard.is_connected("owner_changed", Callable(controller, "_on_availability_owner_changed")),
+		not con_yard.is_connected("owner_changed", Callable(controller._availability_tracker, "_on_owner_changed")),
 		"leaving the tree must disconnect owner_changed from a tracked building"
 	)
 	_expect(
-		not con_yard.is_connected("construction_completed", Callable(controller, "_mark_availability_dirty")),
+		not con_yard.is_connected("construction_completed", Callable(controller._availability_tracker, "mark_dirty")),
 		"leaving the tree must disconnect construction_completed from a tracked building"
 	)
 	_expect(
-		not con_yard.is_connected("upgrade_level_changed", Callable(controller, "_on_availability_upgrade_changed")),
+		not con_yard.is_connected("upgrade_level_changed", Callable(controller._availability_tracker, "_on_upgrade_changed")),
 		"leaving the tree must disconnect upgrade_level_changed from a tracked building"
 	)
 	_expect(
-		not con_yard.is_connected("tree_exiting", Callable(controller, "_mark_availability_dirty")),
+		not con_yard.is_connected("tree_exiting", Callable(controller._availability_tracker, "mark_dirty")),
 		"leaving the tree must disconnect tree_exiting from a tracked building"
 	)
 
@@ -676,7 +676,7 @@ func _test_availability_resubscribe_after_tree_reentry(token: int, local_player:
 	)
 
 	# A duplicated connection cannot be detected by counting effects of firing
-	# the signal once -- _mark_availability_dirty() only sets a boolean flag,
+	# the signal once -- mark_dirty() only sets a boolean flag,
 	# so N connections firing on one event still only mark it dirty once
 	# either way. The exactly-one-connection assertions above are the direct
 	# evidence; re-firing here just confirms the surviving connection still
@@ -725,13 +725,13 @@ func _test_availability_forces_false_when_leaving_tree(token: int, local_player:
 	root.remove_child(controller)
 	# _building_placement is this controller's own child, and children exit
 	# the tree before their parent's own _exit_tree() runs -- so its removal
-	# happens to fire _on_availability_node_removed() while the tree signal
-	# is still connected, marking availability dirty as an incidental side
-	# effect of this controller's own teardown cascade. Force the flag back
-	# off to isolate the actual scenario this guards: nothing external marks
+	# happens to reach the tracker's node_removed handler while the tree
+	# signal is still connected, marking availability dirty as an incidental
+	# side effect of this controller's own teardown cascade. Consume the flag
+	# to isolate the actual scenario this guards: nothing external marks
 	# availability dirty after leaving the tree, so a stale cached "true"
 	# must not survive on its own.
-	controller._availability_dirty = false
+	controller._availability_tracker.consume_dirty()
 	var latest_state: Dictionary = {}
 	controller.building_option_state_changed.connect(func(option_state: BuildingOptionState) -> void:
 		latest_state[option_state.building_id] = option_state.state
@@ -797,7 +797,7 @@ func _test_unrelated_node_removal_keeps_availability_cache(token: int, _local_pl
 	controller.setup(null, null, null, building_ids, null, null, null, null)
 	controller.process(0.0)
 	_expect(
-		not controller._availability_dirty,
+		not controller._availability_tracker.is_dirty(),
 		"a completed refresh must leave the availability cache clean"
 	)
 
@@ -805,7 +805,7 @@ func _test_unrelated_node_removal_keeps_availability_cache(token: int, _local_pl
 	root.add_child(scratch)
 	root.remove_child(scratch)
 	_expect(
-		not controller._availability_dirty,
+		not controller._availability_tracker.is_dirty(),
 		"a node that was never a tracked building must not invalidate availability"
 	)
 	scratch.free()
