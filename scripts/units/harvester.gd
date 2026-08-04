@@ -675,7 +675,7 @@ func _start_action_animation(animation_name: StringName) -> float:
 			animation.loop_mode = Animation.LOOP_NONE
 			duration = maxf(duration, animation.length)
 		player.speed_scale = 1.0
-		_play_animation_from_start(player, animation_name)
+		play_animation_from_start(player, animation_name)
 	return duration
 
 

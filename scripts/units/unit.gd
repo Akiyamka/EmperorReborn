@@ -20,6 +20,7 @@ const UnitTerrainAlignmentScript := preload("res://scripts/units/unit_terrain_al
 const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const UnitDeathSequenceScript := preload("res://scripts/units/unit_death_sequence.gd")
 const UnitShaderFxScript := preload("res://scripts/units/unit_shader_fx.gd")
+const UnitIdleAnimationsScript := preload("res://scripts/units/unit_idle_animations.gd")
 const CombatTargetAcquisitionScript := preload(
 	"res://scripts/combat/combat_target_acquisition.gd"
 )
@@ -58,8 +59,7 @@ const MOVE_START_ANIMATION := &"Move_Start"
 const MOVE_STOP_ANIMATION := &"Move_Stop"
 const TURN_LEFT_ANIMATION := &"Turn_Left"
 const TURN_RIGHT_ANIMATION := &"Turn_Right"
-const IDLE_ANIMATION := &"Stationary"
-const IDLE_ANIMATION_PREFIX := "Idle"
+const IDLE_ANIMATION := UnitIdleAnimationsScript.IDLE_ANIMATION
 ## The original MCV model has no clip literally named Deploy. Move_Stop is its
 ## authored transition from driving to a braced stationary pose and is the
 ## source-backed fallback for the first phase of deployment. Deploy_Gun is the
@@ -76,14 +76,13 @@ const UNDEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
 ]
 ## Deployed-mode idle clips (Kindjal only) mirror the travel-mode Idle_*
 ## naming so the same random-variant machinery in _idle_animations applies.
-const DEPLOYED_IDLE_ANIMATION_PREFIX := "Deployed_Idle"
 ## The single canonical deployed-mode fire clip after the converter-stage
 ## rename (see converters/model_bake_builder.gd CLIP_NAME_OVERRIDES).
 const DEPLOYED_FIRE_ANIMATION := &"Deployed_Fire"
 ## Deploy_Gun_Hold is the authored held pose at the end of the deploy clip.
 ## Mortar/Kobra have no Deployed_Idle_* clips, so this is played once and
 ## held rather than falling back to Stationary/Idle_* (the travel-mode pose).
-const DEPLOYED_HOLD_ANIMATION := &"Deploy_Gun_Hold"
+const DEPLOYED_HOLD_ANIMATION := UnitIdleAnimationsScript.DEPLOYED_HOLD_ANIMATION
 const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
 const ATTACK_REPATH_INTERVAL_SECONDS := 0.25
 const ATTACK_REPATH_DISTANCE := 0.5
@@ -157,7 +156,7 @@ var _shader_fx := UnitShaderFxScript.new()
 var _selection_halo
 var _animation_players: Array[AnimationPlayer] = []
 var _movement_animation_active := false
-var _stationary_repeats_remaining: Dictionary = {}
+var _idle_animations := UnitIdleAnimationsScript.new()
 var _navigation_managed := false
 var _navigation_system = null
 var _pending_navigation_order := Vector3.ZERO
@@ -221,6 +220,7 @@ func _init() -> void:
 	_death_sequence.configure(self)
 	_shader_fx.configure(self)
 	_target_acquisition.configure(self)
+	_idle_animations.configure(self)
 
 
 func _ready() -> void:
@@ -1466,7 +1466,7 @@ func _start_authored_fire_sequence(turret, attack_target: Variant = null) -> boo
 		_authored_fire_shot_times(player, animation, turret, animation_name),
 		not can_fire_moving,
 		_reload_starts_after_fire_animation(),
-		_restore_combat_turret_poses
+		restore_combat_turret_poses
 	)
 
 
@@ -2177,18 +2177,13 @@ func _prioritize_animations_before_unit_logic() -> void:
 		player.process_priority = mini(player.process_priority, process_priority - 1)
 
 
+## The animation_finished hookup stays here deliberately: _sever_connections_
+## into() only recognises connections whose callable belongs to this Unit, so a
+## module connecting on its own behalf would silently escape the death handoff.
 func _prepare_idle_animations() -> void:
-	_stationary_repeats_remaining.clear()
+	_idle_animations.reset()
 	for player in _animation_players:
-		var idle_animations := _idle_animations(player)
-		for animation_name in idle_animations:
-			var animation := player.get_animation(animation_name)
-			if animation != null:
-				animation.loop_mode = Animation.LOOP_NONE
-		if not idle_animations.is_empty() and player.has_animation(IDLE_ANIMATION):
-			var stationary := player.get_animation(IDLE_ANIMATION)
-			if stationary != null:
-				stationary.loop_mode = Animation.LOOP_NONE
+		_idle_animations.prepare(player)
 		if not player.animation_finished.is_connected(_on_animation_finished.bind(player)):
 			player.animation_finished.connect(_on_animation_finished.bind(player))
 
@@ -2205,7 +2200,7 @@ func _set_movement_animation(
 		_cancel_blocking_fire_sequences()
 	if _uses_mech_gait:
 		_set_mech_locomotion_animation(is_moving, speed_scale, turn_animation)
-		_restore_combat_turret_poses()
+		restore_combat_turret_poses()
 		return
 	if not is_moving:
 		_mech_gait_elapsed = 0.0
@@ -2219,8 +2214,8 @@ func _set_movement_animation(
 				player.speed_scale = speed_scale
 				continue
 		player.speed_scale = 1.0
-		_play_idle_sequence(player)
-	_restore_combat_turret_poses()
+		_idle_animations.play_sequence(player)
+	restore_combat_turret_poses()
 
 
 func _set_mech_locomotion_animation(
@@ -2243,7 +2238,7 @@ func _set_mech_locomotion_animation(
 		_mech_locomotion_state = MechLocomotionState.IDLE
 		for player in _animation_players:
 			player.speed_scale = 1.0
-			_play_idle_sequence(player)
+			_idle_animations.play_sequence(player)
 		return
 
 	if turn_animation in [TURN_LEFT_ANIMATION, TURN_RIGHT_ANIMATION] \
@@ -2338,75 +2333,7 @@ func _animation_playback_duration(animation_name: StringName, speed_scale: float
 	return duration
 
 
-func _play_idle_sequence(player: AnimationPlayer) -> void:
-	var idle_animations := _idle_animations(player)
-	if idle_animations.is_empty():
-		if is_deployed() and player.has_animation(DEPLOYED_HOLD_ANIMATION):
-			_hold_deployed_pose(player)
-			return
-		if player.has_animation(IDLE_ANIMATION) and player.current_animation != IDLE_ANIMATION:
-			player.play(IDLE_ANIMATION)
-		return
-
-	var player_id := player.get_instance_id()
-	var is_sequence_animation := player.current_animation == IDLE_ANIMATION \
-		or player.current_animation in idle_animations
-	if is_sequence_animation and player.is_playing() and _stationary_repeats_remaining.has(player_id):
-		return
-	_start_stationary_batch(player, idle_animations)
-
-
-## Kobra/Mortar have no authored Deployed_Idle_* clip: rather than falling
-## back to the travel-mode Stationary/Idle_* pose, hold the braced pose at the
-## end of Deploy_Gun (Deploy_Gun_Hold) for as long as the unit stays deployed.
-func _hold_deployed_pose(player: AnimationPlayer) -> void:
-	if player.current_animation == DEPLOYED_HOLD_ANIMATION and player.is_playing():
-		return
-	var animation := player.get_animation(DEPLOYED_HOLD_ANIMATION)
-	if animation != null:
-		animation.loop_mode = Animation.LOOP_LINEAR
-	# Preserve the hidden final bigflash pose until the hold clip receives its
-	# first animation tick. Rewinding the completed Deployed_Fire here exposes
-	# its large first-frame flash for one rendered frame.
-	player.stop(true)
-	player.play(DEPLOYED_HOLD_ANIMATION)
-	_restore_combat_turret_poses()
-
-
-func _start_stationary_batch(player: AnimationPlayer, idle_animations: Array[StringName]) -> void:
-	var player_id := player.get_instance_id()
-	# A deployed unit must only ever consider its Deployed_Idle_* clips here:
-	# a literal "Stationary" clip on the same model belongs to travel mode.
-	if not is_deployed() and player.has_animation(IDLE_ANIMATION):
-		_stationary_repeats_remaining[player_id] = randi_range(5, 15)
-		_play_animation_from_start(player, IDLE_ANIMATION)
-		return
-	_stationary_repeats_remaining[player_id] = 0
-	_play_random_idle(player, idle_animations)
-
-
-func _play_random_idle(player: AnimationPlayer, idle_animations: Array[StringName]) -> void:
-	var total_weight := 0.0
-	for animation_name in idle_animations:
-		total_weight += _idle_animation_weight(animation_name)
-
-	var roll := randf() * total_weight
-	for animation_name in idle_animations:
-		roll -= _idle_animation_weight(animation_name)
-		if roll <= 0.0:
-			_play_animation_from_start(player, animation_name)
-			return
-	_play_animation_from_start(player, idle_animations.back())
-
-
-func _idle_animation_weight(animation_name: StringName) -> float:
-	var suffix := String(animation_name).trim_prefix(IDLE_ANIMATION_PREFIX).trim_prefix("_")
-	if not suffix.is_valid_int():
-		return 1.0
-	return 1.0 / float(maxi(int(suffix), 0) + 1)
-
-
-func _play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
+func play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
 	# Keep the outgoing pose while stopping so its first-frame effects are not
 	# exposed, then apply the incoming transform pose immediately. Waiting for
 	# the next AnimationPlayer tick leaves a one-frame hybrid of the outgoing
@@ -2415,7 +2342,7 @@ func _play_animation_from_start(player: AnimationPlayer, animation_name: StringN
 	player.stop(true)
 	player.play(animation_name)
 	_apply_animation_start_transforms(player, animation_name)
-	_restore_combat_turret_poses()
+	restore_combat_turret_poses()
 
 
 func _apply_animation_start_transforms(
@@ -2438,21 +2365,12 @@ func _apply_animation_start_transforms(
 			target.transform = value as Transform3D
 
 
-func _restore_combat_turret_poses() -> void:
+func restore_combat_turret_poses() -> void:
 	# An inactive deploy-state turret shares authored pivots with the active
 	# model pose but must not write its own rest transform over that animation.
 	for turret in _active_turrets():
 		if turret != null:
 			turret.restore_aim_pose()
-
-
-func _idle_animations(player: AnimationPlayer) -> Array[StringName]:
-	var prefix := DEPLOYED_IDLE_ANIMATION_PREFIX if is_deployed() else IDLE_ANIMATION_PREFIX
-	var result: Array[StringName] = []
-	for animation_name in player.get_animation_list():
-		if String(animation_name).begins_with(prefix):
-			result.append(animation_name)
-	return result
 
 
 func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:
@@ -2491,7 +2409,7 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 			_mech_start_remaining = 0.0
 			for animation_player in _animation_players:
 				animation_player.speed_scale = 1.0
-				_play_idle_sequence(animation_player)
+				_idle_animations.play_sequence(animation_player)
 			return
 		var active_turn_animation := TURN_LEFT_ANIMATION \
 			if _mech_locomotion_state == MechLocomotionState.TURNING_LEFT \
@@ -2510,19 +2428,13 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 			return
 	if _movement_animation_active:
 		return
-	var idle_animations := _idle_animations(player)
-	if idle_animations.is_empty():
-		return
-	var player_id := player.get_instance_id()
-	if animation_name == IDLE_ANIMATION:
-		var repeats_left := int(_stationary_repeats_remaining.get(player_id, 1)) - 1
-		_stationary_repeats_remaining[player_id] = repeats_left
-		if repeats_left > 0:
-			_play_animation_from_start(player, IDLE_ANIMATION)
-		else:
-			_play_random_idle(player, idle_animations)
-	elif animation_name in idle_animations:
-		_start_stationary_batch(player, idle_animations)
+	_idle_animations.on_animation_finished(animation_name, player)
+
+
+## Test-only shim: tests/match/demo_boot_run.gd calls this by name. The
+## weighting itself belongs to UnitIdleAnimations.
+func _idle_animation_weight(animation_name: StringName) -> float:
+	return _idle_animations.weight_of(animation_name)
 
 
 func _movement_animation_speed_scale() -> float:

@@ -4618,13 +4618,13 @@ func _test_kobra_travel_fire_pose_boundaries() -> void:
 		# Reproduce the stale inactive-turret pose that used to be written by
 		# _restore_combat_turret_poses immediately after play().
 		deployed_turret.restore_aim_pose()
-		kobra._play_animation_from_start(player, animation_name)
+		kobra.play_animation_from_start(player, animation_name)
 		_expect(
 			absf(barrel.global_basis.z.normalized().y) < 0.1,
 			"%s must apply its horizontal barrel pose before the next animation tick"
 				% animation_name
 		)
-		kobra._play_animation_from_start(player, &"Stationary")
+		kobra.play_animation_from_start(player, &"Stationary")
 		_expect(
 			absf(barrel.global_basis.z.normalized().y) < 0.1,
 			"Stationary must not expose the inactive deployed turret pose after %s"
