@@ -1418,6 +1418,45 @@ grep -rn 'get_node_or_null("/root/' scripts/ | grep -v autoload_lookup.gd && fai
 Модули с кэшем узлов (`unit_locomotion`, `unit_deploy_state`, `unit_fire_overlay`,
 `unit_shader_fx`) реализуют lifecycle-протокол с первого коммита, а не «потом».
 
+#### Сделано (`unit.gd` 3003 → 2553)
+
+| Модуль | Кэширует узлы | Что понадобилось открыть на фасаде |
+|---|---|---|
+| `units/unit_terrain_alignment.gd` | нет | — (всё нужное уже публично) |
+| `units/unit_death_sequence.gd` | нет | `find_animation_clip`, `prepare_model_for_corpse` |
+| `units/unit_shader_fx.gd` | **да** → `attach_model`/`detach_model`/`dispose` | — |
+| `combat/combat_target_acquisition.gd` (общий с `Building`) | нет | — |
+| `units/unit_idle_animations.gd` | нет (ключи — `instance_id`) | `play_animation_from_start`, `restore_combat_turret_poses` |
+
+Два уточнения, выведенные по ходу:
+
+- **модули без состояния сцены подключаются в `_init()`, а не в `_ready()`.** Тесты
+  подменяют `_ready()` пустым телом (`tests/units/harvester_run.gd` — `TestHarvester`), и
+  модуль, сконфигурированный только в `_ready()`, у такого юнита остаётся с `_unit == null`.
+  Ссылка на владельца — не состояние дерева, поэтому её место в `_init()`;
+  в `_ready()` остаётся только то, что требует уже разрешённого `visual_root`
+  (`UnitTerrainAlignment.capture_rest_pose`, `UnitShaderFx.attach_model`);
+- **подключение `animation_finished` остаётся на фасаде.** `_sever_connections_into()`
+  видит только те подключения, чей `callable.get_object() == self`, поэтому модуль,
+  подписавшийся от своего имени, молча выпадет из death-handoff'а. `UnitIdleAnimations`
+  поэтому получает `prepare(player)` (только loop-mode), а `connect` делает `Unit`.
+
+#### Блокер для `unit_locomotion` (gait + анимация локомоции)
+
+`tests/match/demo_boot_run.gd:351,356,361,381,416` **пишет** `_mech_gait_elapsed` через
+`unit.set(...)`, чтобы просканировать authored-профиль скорости по фазам, и читает его
+обратно (`:391,398`). По правилу этапа 0.5 поле, в которое пишет тест, остаётся полем
+фасада — а gait-состояние неделимо (`_mech_locomotion_state` общий у физики и анимации),
+поэтому «половину в модуль» разрезать нельзя. Варианты — ровно два, и выбор делается один
+раз:
+
+1. **мигрировать тест** на публичный API модуля (`gait_phase()`/`seek_gait_phase()`), приняв,
+   что у модуля появляется сеттер, которым продакшн не пользуется;
+2. **оставить gait на фасаде** и вынести только то, что фазу не трогает.
+
+До решения извлечён `units/unit_idle_animations.gd` — часть кластера, которая не касается
+`_mech_gait_elapsed` вообще.
+
 ### Этап 8 — `match/`, `harvester.gd`, `ui/`, `map_spice_layer.gd`
 Точечные разрезы по списку выше. Самостоятельны и могут идти параллельно/позже.
 
