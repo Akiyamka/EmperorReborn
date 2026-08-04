@@ -29,7 +29,7 @@ func _initialize() -> void:
 	var target_page := floori(float(target_index) / float(SidePanel.QUEUE_PAGE_SIZE))
 	panel._pages_by_tab[SidePanel.Tab.BUILDINGS] = target_page
 	panel._rebuild_queue_grid()
-	_expect(panel._building_slot(&"ORBarracks") != null, "an Ordos option is reachable on its page")
+	_expect(panel._slot_for(SidePanel.OptionKind.BUILDING, &"ORBarracks") != null, "an Ordos option is reachable on its page")
 
 	panel.configure_ordered_roster(ids, [&"Atreides"], [&"Fremen"])
 	building_ids = panel._building_ids_for_tab(SidePanel.Tab.BUILDINGS)
@@ -61,7 +61,7 @@ func _initialize() -> void:
 			&"ATBarracks", BuildingOptionStateScript.State.DISABLED, 0.0, "", "Needs power"
 		)
 	)
-	var building_slot = panel._building_slot(&"ATBarracks")
+	var building_slot = panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATBarracks")
 	_expect(
 		building_slot != null and building_slot.visible,
 		"a disabled building slot keeps its authored cell"
@@ -80,7 +80,7 @@ func _initialize() -> void:
 	_expect(panel._page_previous.visible and panel._page_next.visible, "upgrade options paginate independently")
 	panel._pages_by_tab[SidePanel.Tab.UPGRADES] = 1
 	panel._rebuild_queue_grid()
-	var upgrade_slot = panel._upgrade_slot(&"ATBarracks")
+	var upgrade_slot = panel._slot_for(SidePanel.OptionKind.UPGRADE, &"ATBarracks")
 	_expect(upgrade_slot != null, "an upgrade on the second page is reachable")
 	var disabled_state = BuildingOptionStateScript.new(
 		&"ATBarracks", BuildingOptionStateScript.State.DISABLED, 0.0, "", "Unavailable"
@@ -92,7 +92,7 @@ func _initialize() -> void:
 	# stored state has to be re-applied to the fresh slot rather than surviving
 	# on the old one.
 	panel._rebuild_queue_grid()
-	upgrade_slot = panel._upgrade_slot(&"ATBarracks")
+	upgrade_slot = panel._slot_for(SidePanel.OptionKind.UPGRADE, &"ATBarracks")
 	_expect(
 		upgrade_slot != null and not upgrade_slot.visible,
 		"a rebuilt upgrade slot re-applies its stored state"

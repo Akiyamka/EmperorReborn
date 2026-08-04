@@ -766,7 +766,7 @@ func _test_upgrade_availability_polls() -> void:
 	side_panel._set_active_tab(3) # Tab.UPGRADES
 	await process_frame
 
-	var slot_before = side_panel._upgrade_slot(&"ATBarracks")
+	var slot_before = side_panel._slot_for(SidePanel.OptionKind.UPGRADE, &"ATBarracks")
 	_expect(
 		slot_before != null and not slot_before.visible,
 		"ATBarracks upgrade must start hidden -- the fixture has no Barracks yet"
@@ -781,7 +781,7 @@ func _test_upgrade_availability_polls() -> void:
 	for i in 5:
 		await process_frame
 
-	var slot_after = side_panel._upgrade_slot(&"ATBarracks")
+	var slot_after = side_panel._slot_for(SidePanel.OptionKind.UPGRADE, &"ATBarracks")
 	_expect(
 		slot_after != null and slot_after.visible,
 		"ATBarracks upgrade must become visible once a Barracks is placed, without any manual refresh call"
@@ -797,7 +797,7 @@ func _test_upgrade_availability_polls() -> void:
 	for i in 5:
 		await process_frame
 
-	var slot_purchased = side_panel._upgrade_slot(&"ATBarracks")
+	var slot_purchased = side_panel._slot_for(SidePanel.OptionKind.UPGRADE, &"ATBarracks")
 	_expect(
 		slot_purchased != null and not slot_purchased.visible,
 		"a purchased upgrade's slot must be hidden, not left visible with an OWNED label"
@@ -831,8 +831,8 @@ func _test_unit_roster_availability() -> void:
 	)
 
 	# Tab.INFANTRY is the panel's boot default, so both slots are live.
-	var infantry_slot = side_panel._building_slot(&"ATInfantry")
-	var kindjal_slot = side_panel._building_slot(&"ATKindjal")
+	var infantry_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATInfantry")
+	var kindjal_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATKindjal")
 	_expect(
 		infantry_slot != null and infantry_slot.visible and infantry_slot.disabled,
 		"ATInfantry must retain its fixed empty slot before a Barracks exists"
@@ -852,8 +852,8 @@ func _test_unit_roster_availability() -> void:
 	for i in 5:
 		await process_frame
 
-	infantry_slot = side_panel._building_slot(&"ATInfantry")
-	kindjal_slot = side_panel._building_slot(&"ATKindjal")
+	infantry_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATInfantry")
+	kindjal_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATKindjal")
 	_expect(
 		infantry_slot != null and infantry_slot.visible and infantry_slot.disabled,
 		"ATInfantry must retain its slot while the owned Barracks is being built"
@@ -873,7 +873,7 @@ func _test_unit_roster_availability() -> void:
 	for i in 5:
 		await process_frame
 
-	infantry_slot = side_panel._building_slot(&"ATInfantry")
+	infantry_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATInfantry")
 	_expect(
 		infantry_slot != null and infantry_slot.visible,
 		"ATInfantry must become visible after the Barracks construction animation completes"
@@ -884,7 +884,7 @@ func _test_unit_roster_availability() -> void:
 	for i in 5:
 		await process_frame
 
-	kindjal_slot = side_panel._building_slot(&"ATKindjal")
+	kindjal_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATKindjal")
 	_expect(
 		kindjal_slot != null and kindjal_slot.visible,
 		"ATKindjal must become visible once the Barracks is upgraded"
