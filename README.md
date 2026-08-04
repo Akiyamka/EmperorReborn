@@ -127,6 +127,31 @@ clean-cache check, mount the checkout read-only with an empty temporary
 `/workspace/.godot` rather than deleting or trusting a user's existing `.godot`;
 stale editor cache paths are not source-of-truth.
 
+### Frame-time smoke test
+
+`make godot-perf` loads `demo_match.tscn` with a fixture snapshot of 49
+footprint-packed buildings, parks the camera over that base and reports median
+frame time. It is not part of `make godot-test`, because the numbers only mean
+something compared against another run on the same machine:
+
+```sh
+make godot-perf                    # headless, in the container
+make godot-perf PERF_BUDGET_MS=11  # non-zero exit when the median frame is slower
+```
+
+For the frame time a player actually sees, run it against a real rendering
+driver on the host — the container has no GPU — and optionally capture the view:
+
+```sh
+godot --path . --script res://tests/perf/demo_match_perf_run.gd -- \
+	--frames=300 --warmup=60 --screenshot=/tmp/view.png
+```
+
+Camera placement, zoom, frame counts and the failure budget are all flags; see
+the header of `tests/perf/demo_match_perf_run.gd`. The snapshot it measures is
+`tests/perf/fixtures/demo_match_perf_snapshot.json`, not the developer's own
+`user://` start state.
+
 Export the browser build with `make godot-export-web`; use
 `make godot-watch-export` for repeated exports. Serve `exports/web/` through a
 web server rather than opening `index.html` directly.
