@@ -198,7 +198,7 @@ func _test_death_mid_fire_sequence() -> void:
 
 	var overlay := AnimationPlayer.new()
 	unit.add_child(overlay)
-	unit._weapon_fire_overlays[0] = overlay
+	unit._fire_overlay.adopt_overlay(0, overlay)
 	unit._weapon_fire_sequences[0] = {
 		"turret": null,
 		"target": {},
@@ -342,7 +342,7 @@ func _test_dying_unit_leaves_no_reference_into_its_corpse() -> void:
 
 	var overlay := AnimationPlayer.new()
 	unit.add_child(overlay)
-	unit._weapon_fire_overlays[0] = overlay
+	unit._fire_overlay.adopt_overlay(0, overlay)
 
 	var target := Node3D.new()
 	world.add_child(target)

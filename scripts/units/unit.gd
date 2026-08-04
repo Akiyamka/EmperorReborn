@@ -24,6 +24,7 @@ const UnitIdleAnimationsScript := preload("res://scripts/units/unit_idle_animati
 const UnitLocomotionScript := preload("res://scripts/units/unit_locomotion.gd")
 const UnitDeployStateScript := preload("res://scripts/units/unit_deploy_state.gd")
 const UnitAttackOrderScript := preload("res://scripts/units/unit_attack_order.gd")
+const UnitFireOverlayScript := preload("res://scripts/units/unit_fire_overlay.gd")
 const CombatTargetAcquisitionScript := preload(
 	"res://scripts/combat/combat_target_acquisition.gd"
 )
@@ -146,8 +147,7 @@ var _authored_fire_controller = AuthoredFireControllerScript.new()
 var _weapon_targets: Dictionary = {}
 var _target_acquisition := CombatTargetAcquisitionScript.new()
 var _moving_fire_weapons: Dictionary = {}
-var _weapon_can_fire_while_moving: Dictionary = {}
-var _weapon_fire_overlays: Dictionary = {}
+var _fire_overlay := UnitFireOverlayScript.new()
 
 
 ## Modules that hold no tree state are bound here rather than in _ready(), so
@@ -162,6 +162,7 @@ func _init() -> void:
 	_locomotion.configure(self)
 	_deploy.configure(self)
 	_attack_order.configure(self)
+	_fire_overlay.configure(self)
 
 
 func _ready() -> void:
@@ -754,10 +755,7 @@ func prepare_model_for_corpse(model: Node3D) -> void:
 	for turret in combat_turrets:
 		turret.unbind_model()
 	_shader_fx.detach_model()
-	for overlay_value: Variant in _weapon_fire_overlays.values():
-		if is_instance_valid(overlay_value):
-			(overlay_value as Node).free()
-	_weapon_fire_overlays.clear()
+	_fire_overlay.detach_model()
 	# Generic: disconnect every signal connection THIS unit made onto `model`
 	# or any of its descendants, regardless of which signal or when it was
 	# connected. This is what closes _prepare_idle_animations()'s
@@ -1195,7 +1193,7 @@ func _start_authored_fire_sequence(turret, attack_target: Variant = null) -> boo
 		return false
 	if attack_target == null:
 		attack_target = attack_order_target()
-	var binding := _fire_animation_binding(turret.weapon_index())
+	var binding := fire_animation_binding(turret.weapon_index())
 	if binding.is_empty():
 		return false
 	var player := binding["player"] as AnimationPlayer
@@ -1205,9 +1203,8 @@ func _start_authored_fire_sequence(turret, attack_target: Variant = null) -> boo
 		return false
 
 	var can_fire_moving := weapon_can_fire_while_moving(weapon_index)
-	var playback_player: AnimationPlayer = _weapon_fire_overlays.get(
-		weapon_index
-	) as AnimationPlayer if can_fire_moving else player
+	var playback_player: AnimationPlayer = _fire_overlay.player_for(weapon_index) \
+		if can_fire_moving else player
 	if not can_fire_moving:
 		for state_value: Variant in _weapon_fire_sequences.values():
 			if bool((state_value as Dictionary).get("blocking", false)):
@@ -1294,7 +1291,7 @@ func _cancel_blocking_fire_sequences() -> void:
 ## (see converters/model_bake_builder.gd CLIP_NAME_OVERRIDES); the ordinary
 ## Fire_<index> chain below is travel-mode only and must never be reached
 ## while deployed, since Fire_0 is the travel-mode animation.
-func _fire_animation_binding(weapon_index: int) -> Dictionary:
+func fire_animation_binding(weapon_index: int) -> Dictionary:
 	if is_deployed():
 		for player in _animation_players:
 			if player.has_animation(DEPLOYED_FIRE_ANIMATION):
@@ -1660,116 +1657,14 @@ func _collect_animation_players() -> Array[AnimationPlayer]:
 
 
 func weapon_can_fire_while_moving(weapon_index: int) -> bool:
-	return bool(_weapon_can_fire_while_moving.get(weapon_index, false))
+	return _fire_overlay.can_fire_while_moving(weapon_index)
 
 
 func _refresh_weapon_runtime() -> void:
-	for overlay_value: Variant in _weapon_fire_overlays.values():
-		if is_instance_valid(overlay_value) and overlay_value is AnimationPlayer:
-			(overlay_value as AnimationPlayer).queue_free()
-	_weapon_fire_overlays.clear()
-	_weapon_can_fire_while_moving.clear()
 	_weapon_targets.clear()
 	_target_acquisition.clear()
 	_moving_fire_weapons.clear()
-	# Only a turret active in the unit's spawn-time state (always TRAVEL) can
-	# ever fire while moving; a combat-deploy unit's deployed turret is
-	# inactive here and immobile whenever it later becomes active, so it never
-	# needs a fire-while-moving overlay bound to the wrong (travel-mode) clip.
-	for turret in _active_turrets():
-		var weapon_index: int = turret.weapon_index()
-		var binding := _fire_animation_binding(weapon_index)
-		var can_layer := false
-		if turret.has_independent_yaw() and not binding.is_empty():
-			can_layer = (
-				unit_definition != null and unit_definition.can_fly
-			) or _fire_animation_is_turret_local(binding, turret)
-		_weapon_can_fire_while_moving[weapon_index] = can_layer
-		if can_layer:
-			var overlay := _create_fire_overlay(binding, turret)
-			if overlay != null:
-				_weapon_fire_overlays[weapon_index] = overlay
-
-
-func _fire_animation_is_turret_local(binding: Dictionary, turret) -> bool:
-	var player := binding.get("player") as AnimationPlayer
-	var animation_name := StringName(binding.get("name", &""))
-	if player == null:
-		return false
-	var animation := player.get_animation(animation_name)
-	if animation == null:
-		return false
-	for track in animation.get_track_count():
-		if not _animation_track_changes(animation, track):
-			continue
-		var track_path := String(animation.track_get_path(track))
-		if not track_path.ends_with(":transform"):
-			continue
-		var target_node := _animation_track_node(player, track_path)
-		if target_node != null and not turret.owns_aim_branch(target_node):
-			return false
-	return true
-
-
-func _create_fire_overlay(binding: Dictionary, turret) -> AnimationPlayer:
-	var source_player := binding.get("player") as AnimationPlayer
-	var animation_name := StringName(binding.get("name", &""))
-	if source_player == null or source_player.get_parent() == null:
-		return null
-	var source_animation := source_player.get_animation(animation_name)
-	if source_animation == null:
-		return null
-	var animation := source_animation.duplicate(true) as Animation
-	for track in range(animation.get_track_count() - 1, -1, -1):
-		var track_path := String(animation.track_get_path(track))
-		var target_node := _animation_track_node(source_player, track_path)
-		var keep: bool = _animation_track_changes(animation, track) \
-			and (
-				(unit_definition != null and unit_definition.can_fly)
-				or target_node == null
-				or turret.owns_aim_branch(target_node)
-			)
-		if not keep:
-			animation.remove_track(track)
-	var overlay := AnimationPlayer.new()
-	overlay.name = "WeaponFireOverlay_%d" % turret.weapon_index()
-	overlay.root_node = source_player.root_node
-	overlay.process_priority = process_priority - 1
-	overlay.set_meta("combat_weapon_fire_overlay", true)
-	source_player.get_parent().add_child(overlay)
-	var library := AnimationLibrary.new()
-	library.add_animation(animation_name, animation)
-	overlay.add_animation_library(&"", library)
-	return overlay
-
-
-func _animation_track_node(player: AnimationPlayer, track_path: String) -> Node:
-	if player == null:
-		return null
-	var animation_root := player.get_node_or_null(player.root_node)
-	if animation_root == null:
-		return null
-	var separator := track_path.find(":")
-	var node_path := track_path.substr(0, separator) \
-		if separator >= 0 else track_path
-	return animation_root.get_node_or_null(NodePath(node_path))
-
-
-func _animation_track_changes(animation: Animation, track: int) -> bool:
-	if animation.track_get_key_count(track) < 2:
-		return false
-	var first: Variant = animation.track_get_key_value(track, 0)
-	for key in range(1, animation.track_get_key_count(track)):
-		var value: Variant = animation.track_get_key_value(track, key)
-		if first is Transform3D and value is Transform3D:
-			var a := first as Transform3D
-			var b := value as Transform3D
-			if not a.origin.is_equal_approx(b.origin) \
-			or not a.basis.is_equal_approx(b.basis):
-				return true
-		elif value != first:
-			return true
-	return false
+	_fire_overlay.rebuild(_active_turrets())
 
 
 func _prioritize_animations_before_unit_logic() -> void:
@@ -1834,7 +1729,7 @@ func _apply_animation_start_transforms(
 		or animation.track_get_key_count(track) == 0 \
 		or animation.track_get_key_time(track, 0) > FIRE_EVENT_EPSILON:
 			continue
-		var target := _animation_track_node(
+		var target := AuthoredModelScript.track_node(
 			player, String(animation.track_get_path(track))
 		) as Node3D
 		var value: Variant = animation.track_get_key_value(track, 0)

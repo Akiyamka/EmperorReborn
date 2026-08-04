@@ -35,6 +35,39 @@ static func scroll_fx_meshes(root: Node) -> Array[MeshInstance3D]:
 	return result
 
 
+## The node an animation track drives, resolved through the player's own
+## animation root — the track path is relative to it, not to the player.
+static func track_node(player: AnimationPlayer, track_path: String) -> Node:
+	if player == null:
+		return null
+	var animation_root := player.get_node_or_null(player.root_node)
+	if animation_root == null:
+		return null
+	var separator := track_path.find(":")
+	var node_path := track_path.substr(0, separator) if separator >= 0 else track_path
+	return animation_root.get_node_or_null(NodePath(node_path))
+
+
+## True when a track actually animates something. Converted clips carry tracks
+## that repeat one value for their whole length; those describe a rest pose,
+## not motion, and layering them would fight whatever else owns the node.
+static func track_changes(animation: Animation, track: int) -> bool:
+	if animation.track_get_key_count(track) < 2:
+		return false
+	var first: Variant = animation.track_get_key_value(track, 0)
+	for key in range(1, animation.track_get_key_count(track)):
+		var value: Variant = animation.track_get_key_value(track, key)
+		if first is Transform3D and value is Transform3D:
+			var a := first as Transform3D
+			var b := value as Transform3D
+			if not a.origin.is_equal_approx(b.origin) \
+			or not a.basis.is_equal_approx(b.basis):
+				return true
+		elif value != first:
+			return true
+	return false
+
+
 static func find_clip(players: Array[AnimationPlayer], candidates: Array[StringName]) -> Dictionary:
 	for candidate in candidates:
 		for player in players:

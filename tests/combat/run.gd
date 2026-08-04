@@ -3117,7 +3117,7 @@ func _test_unit_attack_order() -> void:
 	var mongoose_player := mongoose.get_node("VisualRoot").find_child(
 		"AnimationPlayer", true, false
 	) as AnimationPlayer
-	var mongoose_fire_overlay := mongoose._weapon_fire_overlays.get(0) \
+	var mongoose_fire_overlay := mongoose._fire_overlay.player_for(0) \
 		as AnimationPlayer
 	_expect(
 		mongoose_player != null
@@ -3384,7 +3384,7 @@ func _test_launcher_fire_sequences() -> void:
 		root.add_child(launcher)
 		launcher.replace_visual_scene(definition[1])
 		for turret in launcher.combat_turrets:
-			var binding: Dictionary = launcher._fire_animation_binding(turret.weapon_index())
+			var binding: Dictionary = launcher.fire_animation_binding(turret.weapon_index())
 			var player := binding["player"] as AnimationPlayer
 			var animation_name := StringName(binding["name"])
 			var animation := player.get_animation(animation_name)
@@ -3451,7 +3451,7 @@ func _test_continuous_flame_sequences() -> void:
 		)
 		for turret_index in mini(unit.combat_turrets.size(), expected_counts.size()):
 			var turret = unit.combat_turrets[turret_index]
-			var binding: Dictionary = unit._fire_animation_binding(turret.weapon_index())
+			var binding: Dictionary = unit.fire_animation_binding(turret.weapon_index())
 			var player := binding.get("player") as AnimationPlayer
 			var animation_name := StringName(binding.get("name", &""))
 			var animation := player.get_animation(animation_name) if player != null else null
@@ -4585,7 +4585,7 @@ func _test_kobra_travel_fire_variants() -> void:
 
 	var seen_names := {}
 	for _sample in 60:
-		var binding: Dictionary = kobra._fire_animation_binding(travel_turret.weapon_index())
+		var binding: Dictionary = kobra.fire_animation_binding(travel_turret.weapon_index())
 		_expect(not binding.is_empty(), "a travel-mode Kobra must resolve a fire clip")
 		if binding.is_empty():
 			continue
