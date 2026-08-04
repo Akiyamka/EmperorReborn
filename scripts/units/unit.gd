@@ -71,6 +71,16 @@ enum SlopeAlignmentMode {
 	DISABLED,
 }
 
+## What decides whether a turret is on target this frame. A turret normally
+## aims itself; one that has no yaw of its own is aimed by turning the whole
+## unit, so the hull turn already performed is the answer and asking the
+## turret again would only report its unchanged local pose.
+enum AimSource {
+	TURRET,
+	HULL_ON_TARGET,
+	HULL_TURNING,
+}
+
 @export var config_id: StringName
 @export var owner_player_id := PlayerDataScript.NEUTRAL_PLAYER_ID:
 	set(value):
@@ -1059,11 +1069,11 @@ func _advance_attack_order(delta: float) -> void:
 		var turret_target: Variant = attack_target \
 			if turret in direct_turrets or turret == hull_turret \
 			else _target_acquisition.target_for(turret)
-		if _advance_turret_engagement(
-			turret, turret_target, delta,
-			fixed_hull_aimed if turret == hull_turret \
-				and turret.requires_hull_turn() else null
-			):
+		var aim_source := AimSource.TURRET
+		if turret == hull_turret and turret.requires_hull_turn():
+			aim_source = AimSource.HULL_ON_TARGET if fixed_hull_aimed \
+				else AimSource.HULL_TURNING
+		if _advance_turret_engagement(turret, turret_target, delta, aim_source):
 			engaged_turrets.append(turret)
 	_recenter_unengaged_turrets(engaged_turrets, delta)
 
@@ -1098,7 +1108,7 @@ func _advance_retained_weapon_targets(delta: float) -> void:
 
 
 func _advance_turret_engagement(
-	turret, target: Variant, delta: float, aimed_override: Variant = null
+	turret, target: Variant, delta: float, aim_source := AimSource.TURRET
 	) -> bool:
 	if turret == null or target == null:
 		return false
@@ -1106,8 +1116,9 @@ func _advance_turret_engagement(
 	if not target_world_position.is_finite() \
 	or turret.target_range(target) != CombatTurretScript.TargetRange.IN_RANGE:
 		return false
-	var aimed := bool(aimed_override) if aimed_override is bool \
-		else bool(turret.aim_at(target_world_position, delta))
+	var aimed := bool(turret.aim_at(target_world_position, delta)) \
+		if aim_source == AimSource.TURRET \
+		else aim_source == AimSource.HULL_ON_TARGET
 	if not aimed or _weapon_fire_sequences.has(turret.weapon_index()):
 		return true
 	# A stream weapon's authored Fire clip is one short burst meant to replay
@@ -1241,22 +1252,8 @@ func _on_authored_weapon_fired(
 	weapon_fired.emit(projectiles, target, weapon_index)
 
 
-func _finish_fire_sequence() -> void:
-	if _weapon_fire_sequences.is_empty():
-		return
-	_finish_fire_sequence_for(int(_weapon_fire_sequences.keys().front()))
-
-
-func _cancel_fire_sequence(restore_idle := true) -> void:
-	_cancel_all_fire_sequences(restore_idle)
-
-
 func _reload_starts_after_fire_animation() -> bool:
 	return unit_definition != null and unit_definition.infantry
-
-
-func _clear_fire_sequence() -> void:
-	_cancel_all_fire_sequences(false)
 
 
 func _finish_fire_sequence_for(weapon_index: int) -> void:
