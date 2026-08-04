@@ -3,10 +3,12 @@ extends RefCounted
 
 const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
+const CombatTargetAcquisitionScript := preload(
+	"res://scripts/combat/combat_target_acquisition.gd"
+)
 
 enum PopupState { RETRACTED, DEPLOYING, DEPLOYED, UNDEPLOYING }
 
-const AUTO_TARGET_REFRESH_SECONDS := 0.25
 const POPUP_TURRET_ROLE := &"PopupTurret"
 const POPUP_DEPLOY_ANIMATION := &"Deploy_Gun"
 const POPUP_HOLD_ANIMATION := &"Deploy_Gun_Hold"
@@ -22,8 +24,7 @@ var _has_order := false
 var _is_ground := false
 var _ground_position := Vector3.INF
 var _target_ref: WeakRef
-var _automatic_ref: WeakRef
-var _automatic_cooldown := 0.0
+var _target_acquisition := CombatTargetAcquisitionScript.new()
 var _popup_state := PopupState.RETRACTED
 var _transition_player: AnimationPlayer
 var _transition_animation: StringName = &""
@@ -34,12 +35,13 @@ var _transition_duration := 0.0
 func configure(owner: Node3D, fire_controller) -> void:
 	_owner = owner
 	_fire_controller = fire_controller
+	_target_acquisition.configure(owner)
 
 
 func advance(delta: float) -> void:
 	if _owner == null:
 		return
-	_automatic_cooldown = maxf(_automatic_cooldown - maxf(delta, 0.0), 0.0)
+	_target_acquisition.advance(delta)
 	_advance_popup_transition(delta)
 	# The engagement and the authored fire animation may both drive the active
 	# model. Restore the hold pose on each side of them -- here so aiming sees
@@ -81,8 +83,7 @@ func dispose() -> void:
 	_is_ground = false
 	_ground_position = Vector3.INF
 	_target_ref = null
-	_automatic_ref = null
-	_automatic_cooldown = 0.0
+	_target_acquisition.dispose()
 	_owner = null
 	_fire_controller = null
 
@@ -108,8 +109,7 @@ func command_attack(target_or_position: Variant) -> bool:
 	_is_ground = target_or_position is Vector3
 	_ground_position = target_or_position if _is_ground else Vector3.INF
 	_target_ref = null if _is_ground else weakref(target_or_position as Object)
-	_automatic_ref = null
-	_automatic_cooldown = 0.0
+	_target_acquisition.clear()
 	_owner.call("_emit_attack_order_changed", true, target_or_position)
 	return true
 
@@ -117,8 +117,7 @@ func command_attack(target_or_position: Variant) -> bool:
 func cancel_order() -> void:
 	if _fire_controller != null:
 		_fire_controller.cancel()
-	_automatic_ref = null
-	_automatic_cooldown = 0.0
+	_target_acquisition.clear()
 	if not _has_order:
 		return
 	_has_order = false
@@ -202,7 +201,7 @@ func _advance_engagement(delta: float) -> void:
 	# The ordered target stays attached -- the obstacle may fall, or a mobile
 	# target may leave cover -- while the weapon serves reachable enemies.
 	if target == null or not turret.has_line_of_fire(target, _owner):
-		target = _automatic_target_for(turret)
+		target = _target_acquisition.target_for(turret)
 
 	var target_in_range: bool = target != null and turret.target_range(target) \
 		== CombatTurretScript.TargetRange.IN_RANGE
@@ -238,52 +237,6 @@ func _advance_engagement(delta: float) -> void:
 	var projectiles: Array = turret.try_fire_at(target, _owner)
 	if not projectiles.is_empty():
 		_owner.call("_emit_weapon_fired", projectiles, target, turret.weapon_index())
-
-
-func _automatic_target_for(turret) -> Variant:
-	var cached: Variant = _automatic_ref.get_ref() if _automatic_ref != null else null
-	if _automatic_target_is_usable(turret, cached):
-		return cached
-	if _automatic_cooldown > 0.0:
-		return null
-	_automatic_cooldown = AUTO_TARGET_REFRESH_SECONDS
-	var tree := _owner.get_tree()
-	if tree == null:
-		return null
-	var best_target: Node3D
-	var best_distance := INF
-	var candidates: Array[Node] = []
-	candidates.append_array(tree.get_nodes_in_group(&"units"))
-	candidates.append_array(tree.get_nodes_in_group(&"buildings"))
-	for candidate_node in candidates:
-		if not candidate_node is Node3D or candidate_node == _owner:
-			continue
-		var candidate := candidate_node as Node3D
-		if not _automatic_target_is_usable(turret, candidate):
-			continue
-		var distance := _owner.global_position.distance_squared_to(candidate.global_position)
-		if distance < best_distance or (is_equal_approx(distance, best_distance) \
-			and best_target != null \
-			and candidate.get_instance_id() < best_target.get_instance_id()):
-			best_distance = distance
-			best_target = candidate
-	_automatic_ref = weakref(best_target) if best_target != null else null
-	return best_target
-
-
-func _automatic_target_is_usable(turret, target: Variant) -> bool:
-	if not target is Node3D or not is_instance_valid(target):
-		return false
-	var candidate := target as Node3D
-	if not CombatTargetScript.is_alive(candidate) or not candidate.has_method("is_enemy_of") \
-		or not bool(candidate.call("is_enemy_of", _owner.owner_player_id)):
-		return false
-	if turret.target_range(candidate) != CombatTurretScript.TargetRange.IN_RANGE:
-		return false
-	var target_position := _target_position(candidate)
-	return target_position.is_finite() \
-		and not turret.requires_hull_turn_for(target_position) \
-		and turret.has_line_of_fire(candidate, _owner)
 
 
 func _target_position(target: Variant) -> Vector3:

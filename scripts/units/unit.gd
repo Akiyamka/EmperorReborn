@@ -20,6 +20,9 @@ const UnitTerrainAlignmentScript := preload("res://scripts/units/unit_terrain_al
 const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const UnitDeathSequenceScript := preload("res://scripts/units/unit_death_sequence.gd")
 const UnitShaderFxScript := preload("res://scripts/units/unit_shader_fx.gd")
+const CombatTargetAcquisitionScript := preload(
+	"res://scripts/combat/combat_target_acquisition.gd"
+)
 static var _definition_catalog := UnitSceneCatalogScript.shared()
 
 signal owner_changed(player_id: int)
@@ -84,7 +87,6 @@ const DEPLOYED_HOLD_ANIMATION := &"Deploy_Gun_Hold"
 const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
 const ATTACK_REPATH_INTERVAL_SECONDS := 0.25
 const ATTACK_REPATH_DISTANCE := 0.5
-const AUTO_TARGET_REFRESH_SECONDS := 0.25
 
 enum SlopeAlignmentMode {
 	AUTO,
@@ -205,8 +207,7 @@ var _fire_sequence_active: bool:
 var _weapon_fire_sequences: Dictionary = {}
 var _authored_fire_controller = AuthoredFireControllerScript.new()
 var _weapon_targets: Dictionary = {}
-var _weapon_auto_targets: Dictionary = {}
-var _weapon_auto_target_cooldowns: Dictionary = {}
+var _target_acquisition := CombatTargetAcquisitionScript.new()
 var _moving_fire_weapons: Dictionary = {}
 var _weapon_can_fire_while_moving: Dictionary = {}
 var _weapon_fire_overlays: Dictionary = {}
@@ -219,6 +220,7 @@ func _init() -> void:
 	_terrain_alignment.configure(self)
 	_death_sequence.configure(self)
 	_shader_fx.configure(self)
+	_target_acquisition.configure(self)
 
 
 func _ready() -> void:
@@ -257,7 +259,7 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
-	_advance_auto_target_cooldowns(delta)
+	_target_acquisition.advance(delta)
 	for turret in combat_turrets:
 		turret.advance_ticks(delta * RULE_COMBAT_TICKS_PER_SECOND)
 	# Authored locomotion/fire overlays run before Unit. Restore and advance the
@@ -1141,8 +1143,7 @@ func command_attack(target_or_position: Variant) -> bool:
 	_attack_pursuit_destination = Vector3.INF
 	_attack_pursuit_rejected = false
 	_weapon_targets.clear()
-	_weapon_auto_targets.clear()
-	_weapon_auto_target_cooldowns.clear()
+	_target_acquisition.clear()
 	_moving_fire_weapons.clear()
 	for turret in _active_turrets():
 		if turret.can_target(target_or_position):
@@ -1154,8 +1155,7 @@ func command_attack(target_or_position: Variant) -> bool:
 func cancel_attack_order() -> void:
 	_cancel_all_fire_sequences()
 	_weapon_targets.clear()
-	_weapon_auto_targets.clear()
-	_weapon_auto_target_cooldowns.clear()
+	_target_acquisition.clear()
 	_moving_fire_weapons.clear()
 	if not _has_attack_order:
 		return
@@ -1195,8 +1195,7 @@ func _replace_attack_with_move() -> void:
 	_attack_pursuit_destination = Vector3.INF
 	_attack_pursuit_rejected = false
 	_weapon_targets = retained_targets
-	_weapon_auto_targets.clear()
-	_weapon_auto_target_cooldowns.clear()
+	_target_acquisition.clear()
 	if had_attack_order:
 		attack_order_changed.emit(false, null)
 
@@ -1301,7 +1300,7 @@ func _advance_attack_order(delta: float) -> void:
 	for turret in in_range_turrets:
 		var turret_target: Variant = attack_target \
 			if turret in direct_turrets or turret == hull_turret \
-			else _automatic_target_for(turret)
+			else _target_acquisition.target_for(turret)
 		if _advance_turret_engagement(
 			turret, turret_target, delta,
 			fixed_hull_aimed if turret == hull_turret \
@@ -1322,8 +1321,7 @@ func _advance_retained_weapon_targets(delta: float) -> void:
 		var retained_target: Variant = _weapon_target(weapon_index)
 		if retained_target != null and not _combat_target_is_alive(retained_target):
 			_weapon_targets.erase(weapon_index)
-			_weapon_auto_targets.erase(weapon_index)
-			_weapon_auto_target_cooldowns.erase(weapon_index)
+			_target_acquisition.forget(weapon_index)
 			retained_target = null
 		var turret_target: Variant = null
 		if retained_target != null:
@@ -1336,7 +1334,7 @@ func _advance_retained_weapon_targets(delta: float) -> void:
 			):
 				turret_target = retained_target
 		if turret_target == null and autonomous:
-			turret_target = _automatic_target_for(turret)
+			turret_target = _target_acquisition.target_for(turret)
 		if not _advance_turret_engagement(turret, turret_target, delta):
 			_recenter_turret_if_idle(turret, delta)
 
@@ -1391,74 +1389,6 @@ func _recenter_turret_if_idle(turret, delta: float) -> void:
 	if turret == null or _weapon_fire_sequences.has(turret.weapon_index()):
 		return
 	turret.recenter(delta)
-
-
-func _automatic_target_for(turret) -> Variant:
-	if turret == null:
-		return null
-	var weapon_index: int = turret.weapon_index()
-	var cached: Variant = _weak_target(_weapon_auto_targets.get(weapon_index, {}))
-	if _automatic_target_is_usable(turret, cached):
-		return cached
-	if float(_weapon_auto_target_cooldowns.get(weapon_index, 0.0)) > 0.0:
-		return null
-	_weapon_auto_target_cooldowns[weapon_index] = AUTO_TARGET_REFRESH_SECONDS
-	var best_target: Node3D = null
-	var best_distance := INF
-	var tree := get_tree()
-	if tree == null:
-		return null
-	var candidates: Array[Node] = []
-	candidates.append_array(tree.get_nodes_in_group(&"units"))
-	candidates.append_array(tree.get_nodes_in_group(&"buildings"))
-	for candidate_node in candidates:
-		if not candidate_node is Node3D or candidate_node == self:
-			continue
-		var candidate := candidate_node as Node3D
-		if not _automatic_target_is_usable(turret, candidate):
-			continue
-		var distance := global_position.distance_squared_to(candidate.global_position)
-		if distance < best_distance \
-		or (
-			is_equal_approx(distance, best_distance)
-			and best_target != null
-			and candidate.get_instance_id() < best_target.get_instance_id()
-		):
-			best_distance = distance
-			best_target = candidate
-	if best_target == null:
-		_weapon_auto_targets.erase(weapon_index)
-		return null
-	_weapon_auto_targets[weapon_index] = {"ref": weakref(best_target)}
-	return best_target
-
-
-func _advance_auto_target_cooldowns(delta: float) -> void:
-	for weapon_index: Variant in _weapon_auto_target_cooldowns.keys():
-		var remaining := maxf(
-			float(_weapon_auto_target_cooldowns[weapon_index]) - maxf(delta, 0.0),
-			0.0
-		)
-		if remaining <= 0.0:
-			_weapon_auto_target_cooldowns.erase(weapon_index)
-		else:
-			_weapon_auto_target_cooldowns[weapon_index] = remaining
-
-
-func _automatic_target_is_usable(turret, target: Variant) -> bool:
-	if not target is Node3D or not is_instance_valid(target):
-		return false
-	var candidate := target as Node3D
-	if not _combat_target_is_alive(candidate) \
-	or not candidate.has_method("is_enemy_of") \
-	or not bool(candidate.call("is_enemy_of", owner_player_id)):
-		return false
-	if turret.target_range(candidate) != CombatTurretScript.TargetRange.IN_RANGE:
-		return false
-	var target_world_position := _combat_target_position(candidate)
-	return target_world_position.is_finite() \
-		and not turret.requires_hull_turn_for(target_world_position) \
-		and turret.has_line_of_fire(candidate, self)
 
 
 func _turn_hull_by_adjustment(adjustment: float, delta: float) -> bool:
@@ -2007,8 +1937,7 @@ func _sync_active_turret_weapons() -> void:
 			continue
 		_finish_fire_sequence_for(weapon_index)
 		_weapon_targets.erase(weapon_index)
-		_weapon_auto_targets.erase(weapon_index)
-		_weapon_auto_target_cooldowns.erase(weapon_index)
+		_target_acquisition.forget(weapon_index)
 		_moving_fire_weapons.erase(weapon_index)
 		turret.reset_aim()
 
@@ -2135,8 +2064,7 @@ func _refresh_weapon_runtime() -> void:
 	_weapon_fire_overlays.clear()
 	_weapon_can_fire_while_moving.clear()
 	_weapon_targets.clear()
-	_weapon_auto_targets.clear()
-	_weapon_auto_target_cooldowns.clear()
+	_target_acquisition.clear()
 	_moving_fire_weapons.clear()
 	# Only a turret active in the unit's spawn-time state (always TRAVEL) can
 	# ever fire while moving; a combat-deploy unit's deployed turret is
