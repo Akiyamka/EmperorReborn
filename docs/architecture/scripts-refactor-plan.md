@@ -1418,17 +1418,24 @@ grep -rn 'get_node_or_null("/root/' scripts/ | grep -v autoload_lookup.gd && fai
 Модули с кэшем узлов (`unit_locomotion`, `unit_deploy_state`, `unit_fire_overlay`,
 `unit_shader_fx`) реализуют lifecycle-протокол с первого коммита, а не «потом».
 
-#### Сделано (`unit.gd` 3003 → 2553)
+#### Сделано: `unit.gd` 3484 → 1873, восемь модулей
 
-| Модуль | Кэширует узлы | Что понадобилось открыть на фасаде |
+| Модуль | Кэширует узлы модели | Что понадобилось открыть на фасаде |
 |---|---|---|
 | `units/unit_terrain_alignment.gd` | нет | — (всё нужное уже публично) |
 | `units/unit_death_sequence.gd` | нет | `find_animation_clip`, `prepare_model_for_corpse` |
 | `units/unit_shader_fx.gd` | **да** → `attach_model`/`detach_model`/`dispose` | — |
 | `combat/combat_target_acquisition.gd` (общий с `Building`) | нет | — |
 | `units/unit_idle_animations.gd` | нет (ключи — `instance_id`) | `play_animation_from_start`, `restore_combat_turret_poses` |
+| `units/unit_locomotion.gd` (gait + анимация локомоции) | **да** → `attach_model`/`detach_model` | `has_active_move_order` |
+| `units/unit_deploy_state.gd` | **да** (`detach_model`) | `turn_toward`, `sync_active_turret_weapons`, `set_navigation_hold`, `emit_deployment_animation_finished` |
+| `units/unit_attack_order.gd` | нет | `navigation_route_is_unreachable`, `navigation_reachable_attack_position`, `issue_attack_move` |
+| `units/unit_fire_overlay.gd` | **да** (сам создаёт узлы) | `fire_animation_binding` |
 
-Два уточнения, выведенные по ходу:
+Ни один модуль не обращается к `_owner._private`: там, где это понадобилось, фасад получил
+узкий публичный метод подсистемы, как и предписывает раздел про навигацию.
+
+Четыре уточнения, выведенные по ходу и обязательные для следующих извлечений:
 
 - **модули без состояния сцены подключаются в `_init()`, а не в `_ready()`.** Тесты
   подменяют `_ready()` пустым телом (`tests/units/harvester_run.gd` — `TestHarvester`), и
@@ -1439,23 +1446,33 @@ grep -rn 'get_node_or_null("/root/' scripts/ | grep -v autoload_lookup.gd && fai
 - **подключение `animation_finished` остаётся на фасаде.** `_sever_connections_into()`
   видит только те подключения, чей `callable.get_object() == self`, поэтому модуль,
   подписавшийся от своего имени, молча выпадет из death-handoff'а. `UnitIdleAnimations`
-  поэтому получает `prepare(player)` (только loop-mode), а `connect` делает `Unit`.
+  поэтому получает `prepare(player)` (только loop-mode), а `connect` делает `Unit`;
+- **`detach_model()` у `UnitFireOverlay` освобождает узлы немедленно, а не `queue_free()`.**
+  Handoff обязан не оставить ни одного живого overlay в этом же кадре — иначе
+  fire-sequence, который его называет, кастует освобождённый объект в `_exit_tree()`
+  (краш cdc79b6, на который есть тест). Пересборка overlay'ев, наоборот, откладывает:
+  уходящие плееры могут ещё играть в текущем кадре;
+- **сигналы остаются на фасаде.** `deployment_animation_finished` и `attack_order_changed`
+  эмитит `Unit`; модуль либо возвращает «случилось», либо просит фасад через публичный
+  метод. Подписчики держат `Unit`, а не модуль.
 
-#### Блокер для `unit_locomotion` (gait + анимация локомоции)
+#### Решение по правилу этапа 0.5 (принято пользователем)
 
-`tests/match/demo_boot_run.gd:351,356,361,381,416` **пишет** `_mech_gait_elapsed` через
-`unit.set(...)`, чтобы просканировать authored-профиль скорости по фазам, и читает его
-обратно (`:391,398`). По правилу этапа 0.5 поле, в которое пишет тест, остаётся полем
-фасада — а gait-состояние неделимо (`_mech_locomotion_state` общий у физики и анимации),
-поэтому «половину в модуль» разрезать нельзя. Варианты — ровно два, и выбор делается один
-раз:
+Правило «поле, в которое пишет тест, остаётся полем фасада» заблокировало бы `unit_locomotion`
+(`_mech_gait_elapsed`), `unit_deploy_state` (`_deployment_animation_player`),
+`unit_attack_order` (`_has_attack_order` и др.) и `unit_fire_overlay` (`_weapon_fire_overlays`)
+— то есть четыре из восьми кластеров. Выбран вариант **мигрировать тесты на публичный API
+модуля**, с оговоркой: подготовка состояния идёт через тот же путь, которым его создаёт
+продакшн, а не через сеттер, заведённый ради теста:
 
-1. **мигрировать тест** на публичный API модуля (`gait_phase()`/`seek_gait_phase()`), приняв,
-   что у модуля появляется сеттер, которым продакшн не пользуется;
-2. **оставить gait на фасаде** и вынести только то, что фазу не трогает.
-
-До решения извлечён `units/unit_idle_animations.gd` — часть кластера, которая не касается
-`_mech_gait_elapsed` вообще.
+- `unit._deploy.start_transition([клип])` вместо присваивания `_deployment_animation_player`
+  (плюс ассерт, что ссылка действительно закэшировалась — иначе setup молча перестал бы
+  воспроизводить то, ради чего написан);
+- `unit._attack_order.begin(target)` вместо трёх полей приказа;
+- `unit._fire_overlay.adopt_overlay(0, player)` — тот же метод, которым `rebuild()`
+  регистрирует созданные им плееры;
+- `unit._locomotion.seek_gait_phase(x)`/`gait_phase()` — единственное место, где у модуля
+  появился аксессор, которым продакшн не пользуется; он документирован как таковой.
 
 ### Этап 8 — `match/`, `harvester.gd`, `ui/`, `map_spice_layer.gd`
 Точечные разрезы по списку выше. Самостоятельны и могут идти параллельно/позже.
