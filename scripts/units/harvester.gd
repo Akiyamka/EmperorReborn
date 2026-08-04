@@ -76,7 +76,7 @@ func prepare_navigation_order(
 		return true
 	_harvest_cycle_enabled = false
 	_return_main_base = null
-	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+	if _is_unload_animating():
 		_queue_pending_order(PendingOrder.MOVE, {
 			"position": world_position,
 			"exit_point": exit_point,
@@ -107,7 +107,7 @@ func command_harvest(spice_layer, navigation_grid, cell: Vector2i) -> bool:
 	if not can_harvest_spice() or spice_layer == null or navigation_grid == null:
 		return false
 	_enable_harvest_cycle(spice_layer, navigation_grid)
-	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+	if _is_unload_animating():
 		_queue_pending_order(PendingOrder.HARVEST, {
 			"spice_layer": spice_layer,
 			"grid": navigation_grid,
@@ -148,7 +148,7 @@ func command_unload(refinery: Node, navigation_grid, spice_layer = null) -> bool
 	_return_main_base = null
 	if spice_layer != null:
 		_enable_harvest_cycle(spice_layer, navigation_grid)
-	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+	if _is_unload_animating():
 		_queue_pending_order(PendingOrder.UNLOAD, {
 			"refinery": refinery,
 			"grid": navigation_grid,
@@ -248,7 +248,7 @@ func unload_dock() -> int:
 
 
 func cancel_harvest_order() -> void:
-	var was_animating := _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END]
+	var was_animating := _is_harvest_animating()
 	_harvest_phase = HarvestPhase.NONE
 	_harvest_phase_remaining = 0.0
 	_harvest_spice_layer = null
@@ -262,6 +262,19 @@ func cancel_harvest_order() -> void:
 
 func has_harvest_order() -> bool:
 	return _harvest_phase != HarvestPhase.NONE
+
+
+## The three phases that play an authored clip, as opposed to driving or
+## waiting. Both machines are asked this constantly, and the answer means the
+## same thing for either: the harvester currently owns its own animation, so
+## movement and idle animation must keep their hands off it, and a new order
+## has to wait for the clip to end rather than cutting it mid-frame.
+func _is_harvest_animating() -> bool:
+	return _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END]
+
+
+func _is_unload_animating() -> bool:
+	return _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]
 
 
 func has_active_order() -> bool:
@@ -326,7 +339,7 @@ func advance_harvest_order(delta: float) -> void:
 
 	var remaining_delta := maxf(delta, 0.0)
 	var transitions := 0
-	while _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END] and transitions < 4:
+	while _is_harvest_animating() and transitions < 4:
 		if _harvest_phase_remaining > remaining_delta:
 			_harvest_phase_remaining -= remaining_delta
 			break
@@ -383,7 +396,7 @@ func advance_unload_order(delta: float) -> void:
 
 	var remaining_delta := maxf(delta, 0.0)
 	var transitions := 0
-	while _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END] and transitions < 256:
+	while _is_unload_animating() and transitions < 256:
 		var segment := minf(_unload_phase_remaining, remaining_delta)
 		if _unload_phase == UnloadPhase.HOLD and not _unload_interrupted:
 			_transfer_unload_credits(segment)
@@ -446,13 +459,13 @@ func _begin_unload_phase(phase: UnloadPhase) -> void:
 	match phase:
 		UnloadPhase.START:
 			_set_unload_navigation_hold(true)
-			_unload_phase_remaining = _start_unload_animation(UNLOAD_START_ANIMATION)
+			_unload_phase_remaining = _start_action_animation(UNLOAD_START_ANIMATION)
 		UnloadPhase.HOLD:
 			_unload_phase_remaining = maxf(
-				_start_unload_animation(UNLOAD_HOLD_ANIMATION), UNLOAD_HOLD_FALLBACK_SECONDS
+				_start_action_animation(UNLOAD_HOLD_ANIMATION), UNLOAD_HOLD_FALLBACK_SECONDS
 			)
 		UnloadPhase.END:
-			_unload_phase_remaining = _start_unload_animation(UNLOAD_END_ANIMATION)
+			_unload_phase_remaining = _start_action_animation(UNLOAD_END_ANIMATION)
 
 
 func _transfer_unload_credits(delta: float) -> void:
@@ -491,12 +504,12 @@ func _begin_harvest_phase(phase: HarvestPhase) -> void:
 	_harvest_phase = phase
 	match phase:
 		HarvestPhase.START:
-			_harvest_phase_remaining = _start_harvest_animation(HARVEST_START_ANIMATION)
+			_harvest_phase_remaining = _start_action_animation(HARVEST_START_ANIMATION)
 		HarvestPhase.HOLD:
-			_start_harvest_animation(HARVEST_HOLD_ANIMATION)
+			_start_action_animation(HARVEST_HOLD_ANIMATION)
 			_harvest_phase_remaining = HARVEST_HOLD_SECONDS
 		HarvestPhase.END:
-			_harvest_phase_remaining = _start_harvest_animation(HARVEST_END_ANIMATION)
+			_harvest_phase_remaining = _start_action_animation(HARVEST_END_ANIMATION)
 
 
 func _collect_harvest_cycle() -> void:
@@ -638,7 +651,7 @@ func _is_close_to_harvest_cell(cell: Vector2i) -> bool:
 
 
 func _finish_harvest_order() -> void:
-	var was_animating := _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END]
+	var was_animating := _is_harvest_animating()
 	stop_at_current_position()
 	_harvest_phase = HarvestPhase.NONE
 	_harvest_phase_remaining = 0.0
@@ -649,22 +662,14 @@ func _finish_harvest_order() -> void:
 		_set_movement_animation(false)
 
 
-## Returns the clip duration so start/end complete before the state advances.
-## Missing clips intentionally have zero duration and keep gameplay functional.
-func _start_harvest_animation(animation_name: StringName) -> float:
-	return _start_action_animation(animation_name)
-
-
-func _start_unload_animation(animation_name: StringName) -> float:
-	return _start_action_animation(animation_name)
-
-
 func _set_unload_navigation_hold(active: bool) -> void:
 	if _navigation_managed and _navigation_system != null \
 	and _navigation_system.has_method("set_hold_position"):
 		_navigation_system.call("set_hold_position", self, active)
 
 
+## Returns the clip duration so start/end complete before the state advances.
+## Missing clips intentionally have zero duration and keep gameplay functional.
 func _start_action_animation(animation_name: StringName) -> float:
 	var duration := 0.0
 	for player in _animation_players:
@@ -720,14 +725,14 @@ func _is_valid_owned_refinery(refinery: Node) -> bool:
 func _interrupt_invalid_refinery() -> void:
 	_pending_order = PendingOrder.NONE
 	_pending_order_data.clear()
-	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+	if _is_unload_animating():
 		_interrupt_unload_animation()
 		return
 	_cancel_unload_immediately()
 
 
 func _interrupt_unload_animation() -> void:
-	if _unload_phase not in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+	if not _is_unload_animating():
 		return
 	_unload_interrupted = true
 
@@ -746,7 +751,7 @@ func _cancel_unload_immediately() -> void:
 func cancel_unload_order() -> void:
 	_pending_order = PendingOrder.NONE
 	_pending_order_data.clear()
-	if _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+	if _is_unload_animating():
 		_interrupt_unload_animation()
 	else:
 		_cancel_unload_immediately()
@@ -817,14 +822,12 @@ func _apply_unit_definition() -> void:
 func _set_movement_animation(
 		is_moving: bool, speed_scale := 1.0, turn_animation: StringName = &""
 	) -> void:
-	if _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END] \
-	or _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+	if _is_harvest_animating() or _is_unload_animating():
 		return
 	super._set_movement_animation(is_moving, speed_scale, turn_animation)
 
 
 func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:
-	if _harvest_phase in [HarvestPhase.START, HarvestPhase.HOLD, HarvestPhase.END] \
-	or _unload_phase in [UnloadPhase.START, UnloadPhase.HOLD, UnloadPhase.END]:
+	if _is_harvest_animating() or _is_unload_animating():
 		return
 	super._on_animation_finished(animation_name, player)

@@ -80,12 +80,14 @@ class TestHarvester extends HarvesterScript:
 	func navigation_collision_radius(fallback: float) -> float:
 		return fallback
 
-	func _start_harvest_animation(animation_name: StringName) -> float:
+	# Stands in for the authored clips: records what was played and reports a
+	# duration per clip. The two hold clips differ on purpose -- the harvest
+	# hold has no authored length, so its interval must come from
+	# HARVEST_HOLD_SECONDS, while the unload hold is timed by the clip itself.
+	func _start_action_animation(animation_name: StringName) -> float:
 		animation_log.append(animation_name)
-		return 0.1 if animation_name != HARVEST_HOLD_ANIMATION else 0.0
-
-	func _start_unload_animation(animation_name: StringName) -> float:
-		animation_log.append(animation_name)
+		if animation_name == HARVEST_HOLD_ANIMATION:
+			return 0.0
 		return 0.5 if animation_name == UNLOAD_HOLD_ANIMATION else 0.1
 
 
