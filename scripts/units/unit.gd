@@ -21,6 +21,7 @@ const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_c
 const UnitDeathSequenceScript := preload("res://scripts/units/unit_death_sequence.gd")
 const UnitShaderFxScript := preload("res://scripts/units/unit_shader_fx.gd")
 const UnitIdleAnimationsScript := preload("res://scripts/units/unit_idle_animations.gd")
+const UnitLocomotionScript := preload("res://scripts/units/unit_locomotion.gd")
 const CombatTargetAcquisitionScript := preload(
 	"res://scripts/combat/combat_target_acquisition.gd"
 )
@@ -54,12 +55,6 @@ const FIRE_ANIMATION_SPEED_SCALE := (
 )
 const FIRE_ANIMATION_PREFIX := "Fire_"
 const FIRE_EVENT_EPSILON := 0.0001
-const MOVING_ANIMATION := &"Move"
-const MOVE_START_ANIMATION := &"Move_Start"
-const MOVE_STOP_ANIMATION := &"Move_Stop"
-const TURN_LEFT_ANIMATION := &"Turn_Left"
-const TURN_RIGHT_ANIMATION := &"Turn_Right"
-const IDLE_ANIMATION := UnitIdleAnimationsScript.IDLE_ANIMATION
 ## The original MCV model has no clip literally named Deploy. Move_Stop is its
 ## authored transition from driving to a braced stationary pose and is the
 ## source-backed fallback for the first phase of deployment. Deploy_Gun is the
@@ -79,11 +74,6 @@ const UNDEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
 ## The single canonical deployed-mode fire clip after the converter-stage
 ## rename (see converters/model_bake_builder.gd CLIP_NAME_OVERRIDES).
 const DEPLOYED_FIRE_ANIMATION := &"Deployed_Fire"
-## Deploy_Gun_Hold is the authored held pose at the end of the deploy clip.
-## Mortar/Kobra have no Deployed_Idle_* clips, so this is played once and
-## held rather than falling back to Stationary/Idle_* (the travel-mode pose).
-const DEPLOYED_HOLD_ANIMATION := UnitIdleAnimationsScript.DEPLOYED_HOLD_ANIMATION
-const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
 const ATTACK_REPATH_INTERVAL_SECONDS := 0.25
 const ATTACK_REPATH_DISTANCE := 0.5
 
@@ -91,15 +81,6 @@ enum SlopeAlignmentMode {
 	AUTO,
 	ENABLED,
 	DISABLED,
-}
-
-enum MechLocomotionState {
-	IDLE,
-	STARTING,
-	MOVING,
-	TURNING_LEFT,
-	TURNING_RIGHT,
-	STOPPING,
 }
 
 ## MCV deploy (TRAVEL -> DEPLOYING -> [consumed: unit freed]) uses only the
@@ -155,7 +136,6 @@ var combat_turrets: Array = []
 var _shader_fx := UnitShaderFxScript.new()
 var _selection_halo
 var _animation_players: Array[AnimationPlayer] = []
-var _movement_animation_active := false
 var _idle_animations := UnitIdleAnimationsScript.new()
 var _navigation_managed := false
 var _navigation_system = null
@@ -165,13 +145,7 @@ var _has_pending_navigation_order := false
 var _navigation_requested_velocity := Vector3.ZERO
 var _navigation_debug_visible := false
 var _terrain_alignment := UnitTerrainAlignmentScript.new()
-var _uses_mech_gait := false
-var _mech_gait_elapsed := 0.0
-var _mech_motion_profile: Array[Dictionary] = []
-var _mech_authored_average_speed := 0.0
-var _mech_motion_cycle_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
-var _mech_locomotion_state := MechLocomotionState.IDLE
-var _mech_start_remaining := 0.0
+var _locomotion := UnitLocomotionScript.new()
 var _flight_controller: UnitFlightController = null
 var _death_sequence := UnitDeathSequenceScript.new()
 ## Not `velocity`: navigation_step() zeroes its vertical component, and
@@ -221,6 +195,7 @@ func _init() -> void:
 	_shader_fx.configure(self)
 	_target_acquisition.configure(self)
 	_idle_animations.configure(self)
+	_locomotion.configure(self)
 
 
 func _ready() -> void:
@@ -241,8 +216,9 @@ func _ready() -> void:
 	_add_authored_collision()
 	_shader_fx.attach_model()
 	_animation_players = _collect_animation_players()
+	_locomotion.attach_model(_animation_players)
 	_refresh_weapon_runtime()
-	_refresh_mech_motion_profile()
+	_locomotion.refresh_motion_profile()
 	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
@@ -308,7 +284,7 @@ func _physics_process(delta: float) -> void:
 		return
 	if _navigation_managed:
 		return
-	_advance_mech_start_transition(delta)
+	_locomotion.advance_start_transition(delta)
 	var offset := target_position - global_position
 	offset.y = 0.0
 	var requested_velocity := Vector3.ZERO
@@ -326,20 +302,20 @@ func _physics_process(delta: float) -> void:
 		else:
 			velocity = Vector3.ZERO
 		if not heading_reached:
-			turn_animation = _mech_turn_animation_for_direction(direction)
+			turn_animation = _locomotion.turn_animation_for(direction)
 
 	_set_navigation_debug_direction(requested_velocity)
-	var animation_speed_scale := _movement_animation_speed_scale()
+	var animation_speed_scale := _locomotion.movement_animation_speed_scale()
 	_set_movement_animation(
 		not velocity.is_zero_approx()
 			or not turn_animation.is_empty()
-			or _mech_transition_or_pause_has_move_order(),
+			or _locomotion.transition_or_pause_has_move_order(),
 		animation_speed_scale,
 		turn_animation
 	)
-	if _mech_locomotion_state == MechLocomotionState.STARTING:
+	if _locomotion.is_starting():
 		velocity = Vector3.ZERO
-	_advance_mech_gait(delta, animation_speed_scale)
+	_locomotion.advance_gait(delta, animation_speed_scale)
 	move_and_slide()
 	_snap_to_terrain(delta)
 
@@ -557,7 +533,7 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 		velocity = Vector3.ZERO
 		_set_navigation_debug_direction(Vector3.ZERO)
 		return
-	_advance_mech_start_transition(delta)
+	_locomotion.advance_start_transition(delta)
 	# Preserve the requested course before a tracked unit possibly converts its
 	# translational velocity to zero while turning in place. This is the value
 	# shown by the selected-unit navigation debug arrow.
@@ -566,12 +542,7 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 	var turn_animation := &""
 	var steering_direction := velocity.normalized() \
 		if velocity.length_squared() > 0.000001 else Vector3.ZERO
-	if (
-		steering_direction.is_zero_approx()
-		and _uses_mech_gait
-		and _mech_locomotion_state != MechLocomotionState.STARTING
-		and _mech_has_active_move_order()
-	):
+	if steering_direction.is_zero_approx() and _locomotion.wants_destination_heading():
 		var destination_offset := target_position - global_position
 		destination_offset.y = 0.0
 		steering_direction = destination_offset.normalized()
@@ -582,18 +553,18 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 		if not can_move_any_direction and not heading_reached:
 			velocity = Vector3.ZERO
 		if not heading_reached:
-			turn_animation = _mech_turn_animation_for_direction(steering_direction)
-	var animation_speed_scale := _movement_animation_speed_scale()
+			turn_animation = _locomotion.turn_animation_for(steering_direction)
+	var animation_speed_scale := _locomotion.movement_animation_speed_scale()
 	_set_movement_animation(
 		not velocity.is_zero_approx()
 			or not turn_animation.is_empty()
-			or _mech_transition_or_pause_has_move_order(),
+			or _locomotion.transition_or_pause_has_move_order(),
 		animation_speed_scale,
 		turn_animation
 	)
-	if _mech_locomotion_state == MechLocomotionState.STARTING:
+	if _locomotion.is_starting():
 		velocity = Vector3.ZERO
-	_advance_mech_gait(delta, animation_speed_scale)
+	_locomotion.advance_gait(delta, animation_speed_scale)
 	# Unit/unit collision has already been resolved centrally as swept discs.
 	# Applying the exact fixed navigation delta avoids depending on physics-frame
 	# frequency and keeps command replays stable.
@@ -605,83 +576,13 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 ## applying it afterwards would let following units plan through a mech that is
 ## currently in its slower between-step phase.
 func navigation_move_speed() -> float:
-	if not _uses_mech_gait:
-		return move_speed
-	if _mech_motion_profile.is_empty():
-		return mech_speed
-	return _mech_authored_phase_speed() * _mech_gait_cadence()
+	return _locomotion.navigation_move_speed()
 
 
-func _advance_mech_gait(delta: float, animation_speed_scale: float) -> void:
-	if (
-		not _uses_mech_gait
-		or _mech_locomotion_state != MechLocomotionState.MOVING
-		or delta <= 0.0
-	):
-		return
-	var cycle_duration := _mech_move_cycle_duration()
-	_mech_gait_elapsed = fposmod(
-		_mech_gait_elapsed + delta * maxf(animation_speed_scale, 0.0),
-		cycle_duration
-	)
-
-
-func _advance_mech_start_transition(delta: float) -> void:
-	if _mech_locomotion_state != MechLocomotionState.STARTING or delta <= 0.0:
-		return
-	# Physics owns the transition deadline as well as AnimationPlayer. This
-	# keeps deterministic/manual simulations moving even when no render frame
-	# advances the player, while the normal animation_finished path can still
-	# switch to Move first during ordinary scene playback.
-	_mech_start_remaining = maxf(_mech_start_remaining - delta, 0.0)
-	if _mech_start_remaining <= 0.0:
-		_begin_mech_move(_mech_gait_cadence())
-
-
-func _mech_move_cycle_duration() -> float:
-	if not _mech_motion_profile.is_empty():
-		return _mech_motion_cycle_seconds
-	for player in _animation_players:
-		if not player.has_animation(MOVING_ANIMATION):
-			continue
-		var animation := player.get_animation(MOVING_ANIMATION)
-		if animation != null and animation.length > 0.0:
-			return animation.length
-	return DEFAULT_MECH_MOVE_CYCLE_SECONDS
-
-
-func _mech_authored_phase_speed() -> float:
-	if _mech_motion_profile.is_empty():
-		return mech_speed
-	var phase := fposmod(_mech_gait_elapsed, _mech_motion_cycle_seconds)
-	var result := float(_mech_motion_profile[0]["speed"])
-	for key in _mech_motion_profile:
-		if float(key["time"]) > phase + 0.000001:
-			break
-		result = float(key["speed"])
-	return maxf(result, 0.0)
-
-
-func _mech_gait_cadence() -> float:
-	if _mech_motion_profile.is_empty() or _mech_authored_average_speed <= 0.0:
-		return 1.0
-	return mech_speed / _mech_authored_average_speed
-
-
-func _mech_transition_or_pause_has_move_order() -> bool:
-	if not _uses_mech_gait or not _mech_has_active_move_order():
-		return false
-	if _mech_locomotion_state in [
-		MechLocomotionState.STARTING,
-		MechLocomotionState.TURNING_LEFT,
-		MechLocomotionState.TURNING_RIGHT,
-		MechLocomotionState.STOPPING,
-	]:
-		return true
-	return not _mech_motion_profile.is_empty() and _mech_authored_phase_speed() <= 0.0
-
-
-func _mech_has_active_move_order() -> bool:
+## Public because UnitLocomotion asks for it: the order itself belongs to the
+## facade (target_position plus the navigation system's arrival tolerance),
+## the gait only reacts to it.
+func has_active_move_order() -> bool:
 	var tolerance := arrival_radius
 	if (
 		_navigation_managed
@@ -695,84 +596,6 @@ func _mech_has_active_move_order() -> bool:
 	var offset := target_position - global_position
 	offset.y = 0.0
 	return offset.length() > tolerance
-
-
-func _mech_turn_animation_for_direction(direction: Vector3) -> StringName:
-	if not _uses_mech_gait or direction.length_squared() <= 0.000001:
-		return &""
-	var target_yaw := SpatialOrientationScript.yaw_facing(direction, global_rotation.y)
-	var signed_angle := angle_difference(global_rotation.y, target_yaw)
-	if is_zero_approx(signed_angle):
-		return &""
-	return TURN_LEFT_ANIMATION if signed_angle > 0.0 else TURN_RIGHT_ANIMATION
-
-
-func _refresh_mech_motion_profile() -> void:
-	_mech_motion_profile.clear()
-	_mech_authored_average_speed = 0.0
-	_mech_motion_cycle_seconds = DEFAULT_MECH_MOVE_CYCLE_SECONDS
-	if not _uses_mech_gait or visual_root == null:
-		return
-	var model_root := AuthoredFireControllerScript.find_xbf_motion_root(visual_root)
-	if model_root == null:
-		return
-	var move_entry := {}
-	for entry_value: Variant in model_root.get_meta("xbf_animation_entries", []):
-		var entry := entry_value as Dictionary
-		if String(entry.get("name", "")).strip_edges() == String(MOVING_ANIMATION):
-			move_entry = entry
-			break
-	if move_entry.is_empty():
-		return
-	var start_frame := int(move_entry.get("start_frame", -1))
-	var end_frame := int(move_entry.get("end_frame", -1))
-	if start_frame < 0 or end_frame < start_frame:
-		return
-	_mech_motion_cycle_seconds = (
-		float(end_frame - start_frame + 1) / BAKED_MODEL_FRAMES_PER_SECOND
-	)
-	for event_value: Variant in model_root.get_meta("xbf_fx_events", []):
-		var event := event_value as Dictionary
-		var frame := int(event.get("frame", -1))
-		if int(event.get("type", -1)) != 11 \
-		or frame < start_frame or frame > end_frame:
-			continue
-		var speed := _xbf_scalar_event_value(event)
-		if speed < 0.0:
-			continue
-		_mech_motion_profile.append({
-			"time": float(frame - start_frame) / BAKED_MODEL_FRAMES_PER_SECOND,
-			"speed": speed,
-		})
-	_mech_motion_profile.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return float(a["time"]) < float(b["time"])
-	)
-	if _mech_motion_profile.is_empty() \
-	or not is_zero_approx(float(_mech_motion_profile[0]["time"])):
-		_mech_motion_profile.clear()
-		return
-	var distance_per_cycle := 0.0
-	for index in _mech_motion_profile.size():
-		var segment_start := float(_mech_motion_profile[index]["time"])
-		var segment_end := _mech_motion_cycle_seconds
-		if index + 1 < _mech_motion_profile.size():
-			segment_end = float(_mech_motion_profile[index + 1]["time"])
-		distance_per_cycle += float(_mech_motion_profile[index]["speed"]) \
-			* maxf(segment_end - segment_start, 0.0)
-	_mech_authored_average_speed = distance_per_cycle / _mech_motion_cycle_seconds
-	if _mech_authored_average_speed <= 0.0:
-		_mech_motion_profile.clear()
-
-
-static func _xbf_scalar_event_value(event: Dictionary) -> float:
-	if event.has("value"):
-		return float(event["value"])
-	var payload: Variant = event.get("raw_payload")
-	if not payload is PackedByteArray or (payload as PackedByteArray).size() != 8:
-		return -1.0
-	var buffer := StreamPeerBuffer.new()
-	buffer.data_array = payload as PackedByteArray
-	return buffer.get_double()
 
 
 func navigation_blocked_by_enemy(enemies: Array[Node3D]) -> void:
@@ -861,7 +684,7 @@ func setup(unit_id: StringName) -> void:
 
 	_apply_unit_definition()
 	_refresh_weapon_runtime()
-	_refresh_mech_motion_profile()
+	_locomotion.refresh_motion_profile()
 	health = max_health
 	shields = max_shields
 	_terrain_alignment.refresh_slope_target()
@@ -880,8 +703,9 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 	_bind_combat_turrets()
 	_shader_fx.attach_model()
 	_animation_players = _collect_animation_players()
+	_locomotion.attach_model(_animation_players)
 	_refresh_weapon_runtime()
-	_refresh_mech_motion_profile()
+	_locomotion.refresh_motion_profile()
 	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
@@ -980,6 +804,7 @@ func prepare_model_for_corpse(model: Node3D) -> void:
 	# disconnect alone does not help a plain field that some other code path
 	# reads without going through a signal.
 	_animation_players.clear()
+	_locomotion.detach_model()
 	# _deployment_animation_player is populated straight from
 	# _animation_players (_start_deployment_animation(), line ~2408) but,
 	# unlike _animation_players itself, is a scalar field that keeps pointing
@@ -1205,7 +1030,7 @@ func has_attack_order() -> bool:
 
 
 func has_active_order() -> bool:
-	return _has_attack_order or is_deploying() or _mech_has_active_move_order()
+	return _has_attack_order or is_deploying() or has_active_move_order()
 
 
 func attack_order_target() -> Variant:
@@ -1474,7 +1299,7 @@ func _advance_fire_sequences(delta: float) -> void:
 	var restore_idle := _authored_fire_controller.advance_sequences(
 		_weapon_fire_sequences, delta, self, _reload_starts_after_fire_animation()
 	)
-	if restore_idle and not _movement_animation_active:
+	if restore_idle and not _locomotion.is_movement_animation_active():
 		_set_movement_animation(false)
 
 
@@ -1506,7 +1331,7 @@ func _finish_fire_sequence_for(weapon_index: int) -> void:
 	var restore_idle := _authored_fire_controller.finish_sequence(
 		_weapon_fire_sequences, weapon_index, _reload_starts_after_fire_animation()
 	)
-	if restore_idle and not _movement_animation_active:
+	if restore_idle and not _locomotion.is_movement_animation_active():
 		_set_movement_animation(false)
 
 
@@ -1682,7 +1507,7 @@ func _advance_attack_pursuit(
 		_attack_is_pursuing
 		and not target_moved
 		and not route_unreachable
-		and _mech_has_active_move_order()
+		and has_active_move_order()
 	):
 		return
 	_attack_is_pursuing = true
@@ -1782,7 +1607,7 @@ func cancel_all_orders() -> bool:
 	var had_order := (
 		_has_attack_order
 		or _has_pending_navigation_order
-		or _mech_has_active_move_order()
+		or has_active_move_order()
 	)
 	if not had_order:
 		return false
@@ -2014,10 +1839,7 @@ func _apply_unit_definition() -> void:
 
 	move_speed = float(unit_definition.speed)
 	mech_speed = maxf(float(unit_definition.mech_speed), 0.0)
-	_uses_mech_gait = unit_definition.mech and mech_speed > 0.0
-	_mech_gait_elapsed = 0.0
-	_mech_locomotion_state = MechLocomotionState.IDLE
-	_mech_start_remaining = 0.0
+	_locomotion.adopt_definition(unit_definition)
 	turn_rate = maxf(float(unit_definition.turn_rate), 0.0)
 	can_move_any_direction = unit_definition.can_move_any_direction
 	max_health = float(unit_definition.health)
@@ -2198,139 +2020,10 @@ func _set_movement_animation(
 		if not is_moving:
 			return
 		_cancel_blocking_fire_sequences()
-	if _uses_mech_gait:
-		_set_mech_locomotion_animation(is_moving, speed_scale, turn_animation)
-		restore_combat_turret_poses()
-		return
-	if not is_moving:
-		_mech_gait_elapsed = 0.0
-		_mech_start_remaining = 0.0
-	_movement_animation_active = is_moving
-	for player in _animation_players:
-		if is_moving:
-			if player.has_animation(MOVING_ANIMATION):
-				if player.current_animation != MOVING_ANIMATION:
-					player.play(MOVING_ANIMATION)
-				player.speed_scale = speed_scale
-				continue
-		player.speed_scale = 1.0
-		_idle_animations.play_sequence(player)
+	_locomotion.apply_movement_animation(
+		is_moving, speed_scale, turn_animation, _idle_animations.play_sequence
+	)
 	restore_combat_turret_poses()
-
-
-func _set_mech_locomotion_animation(
-		is_moving: bool, move_speed_scale: float, turn_animation: StringName
-	) -> void:
-	var was_moving := _movement_animation_active
-	_movement_animation_active = is_moving
-	if not is_moving:
-		_mech_gait_elapsed = 0.0
-		_mech_start_remaining = 0.0
-		if (
-			_mech_locomotion_state == MechLocomotionState.STOPPING
-			and _any_animation_playing(MOVE_STOP_ANIMATION)
-		):
-			return
-		if was_moving and _any_player_has_animation(MOVE_STOP_ANIMATION):
-			_mech_locomotion_state = MechLocomotionState.STOPPING
-			_play_mech_clip(MOVE_STOP_ANIMATION, _mech_gait_cadence())
-			return
-		_mech_locomotion_state = MechLocomotionState.IDLE
-		for player in _animation_players:
-			player.speed_scale = 1.0
-			_idle_animations.play_sequence(player)
-		return
-
-	if turn_animation in [TURN_LEFT_ANIMATION, TURN_RIGHT_ANIMATION] \
-	and _any_player_has_animation(turn_animation):
-		_mech_start_remaining = 0.0
-		_mech_locomotion_state = MechLocomotionState.TURNING_LEFT \
-			if turn_animation == TURN_LEFT_ANIMATION \
-			else MechLocomotionState.TURNING_RIGHT
-		# TurnRate already controls the physical hull yaw. These authored clips
-		# describe the feet/body pose during that turn and retain their own time.
-		_play_mech_clip(turn_animation, 1.0)
-		return
-
-	if (
-		_mech_locomotion_state == MechLocomotionState.STARTING
-		and _any_animation_playing(MOVE_START_ANIMATION)
-	):
-		return
-	if _mech_locomotion_state == MechLocomotionState.MOVING:
-		_play_mech_clip(MOVING_ANIMATION, move_speed_scale)
-		return
-
-	if _any_player_has_animation(MOVE_START_ANIMATION):
-		_mech_locomotion_state = MechLocomotionState.STARTING
-		var start_speed_scale := _mech_gait_cadence()
-		_mech_start_remaining = _animation_playback_duration(
-			MOVE_START_ANIMATION, start_speed_scale
-		)
-		_play_mech_clip(MOVE_START_ANIMATION, start_speed_scale)
-		if _mech_start_remaining <= 0.0:
-			_begin_mech_move(move_speed_scale)
-		return
-	_begin_mech_move(move_speed_scale)
-
-
-func _begin_mech_move(speed_scale: float) -> void:
-	_mech_locomotion_state = MechLocomotionState.MOVING
-	_mech_start_remaining = 0.0
-	_play_mech_clip(MOVING_ANIMATION, speed_scale)
-
-
-func _play_mech_clip(animation_name: StringName, speed_scale: float) -> void:
-	for player in _animation_players:
-		var selected_animation := animation_name
-		if not player.has_animation(selected_animation):
-			if animation_name in [
-				MOVE_START_ANIMATION,
-				MOVE_STOP_ANIMATION,
-				TURN_LEFT_ANIMATION,
-				TURN_RIGHT_ANIMATION,
-			] and player.has_animation(MOVING_ANIMATION):
-				selected_animation = MOVING_ANIMATION
-			else:
-				continue
-		if (
-			player.current_animation != selected_animation
-			or not player.is_playing()
-		):
-			if player.current_animation == selected_animation:
-				player.stop()
-			player.play(selected_animation)
-		player.speed_scale = maxf(speed_scale, 0.0)
-
-
-func _any_player_has_animation(animation_name: StringName) -> bool:
-	for player in _animation_players:
-		if player.has_animation(animation_name):
-			return true
-	return false
-
-
-func _any_animation_playing(animation_name: StringName) -> bool:
-	for player in _animation_players:
-		if (
-			player.has_animation(animation_name)
-			and player.current_animation == animation_name
-			and player.is_playing()
-		):
-			return true
-	return false
-
-
-func _animation_playback_duration(animation_name: StringName, speed_scale: float) -> float:
-	var duration := 0.0
-	var safe_speed_scale := maxf(speed_scale, 0.000001)
-	for player in _animation_players:
-		if not player.has_animation(animation_name):
-			continue
-		var animation := player.get_animation(animation_name)
-		if animation != null:
-			duration = maxf(duration, animation.length / safe_speed_scale)
-	return duration
 
 
 func play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
@@ -2384,7 +2077,7 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 		_reload_starts_after_fire_animation()
 	)
 	if fire_finish_result > 0:
-		if fire_finish_result == 2 and not _movement_animation_active:
+		if fire_finish_result == 2 and not _locomotion.is_movement_animation_active():
 			_set_movement_animation(false)
 		return
 	if (
@@ -2394,59 +2087,11 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 	):
 		deployment_animation_finished.emit()
 		return
-	if _uses_mech_gait:
-		if (
-			_mech_locomotion_state == MechLocomotionState.STARTING
-			and animation_name == MOVE_START_ANIMATION
-		):
-			_begin_mech_move(_mech_gait_cadence())
-			return
-		if (
-			_mech_locomotion_state == MechLocomotionState.STOPPING
-			and animation_name == MOVE_STOP_ANIMATION
-		):
-			_mech_locomotion_state = MechLocomotionState.IDLE
-			_mech_start_remaining = 0.0
-			for animation_player in _animation_players:
-				animation_player.speed_scale = 1.0
-				_idle_animations.play_sequence(animation_player)
-			return
-		var active_turn_animation := TURN_LEFT_ANIMATION \
-			if _mech_locomotion_state == MechLocomotionState.TURNING_LEFT \
-			else TURN_RIGHT_ANIMATION
-		if (
-			_mech_locomotion_state in [
-				MechLocomotionState.TURNING_LEFT,
-				MechLocomotionState.TURNING_RIGHT,
-			]
-			and animation_name == active_turn_animation
-			and _movement_animation_active
-		):
-			player.stop()
-			player.play(animation_name)
-			player.speed_scale = 1.0
-			return
-	if _movement_animation_active:
+	if _locomotion.on_animation_finished(
+		animation_name, player, _idle_animations.play_sequence
+	):
 		return
 	_idle_animations.on_animation_finished(animation_name, player)
-
-
-## Test-only shim: tests/match/demo_boot_run.gd calls this by name. The
-## weighting itself belongs to UnitIdleAnimations.
-func _idle_animation_weight(animation_name: StringName) -> float:
-	return _idle_animations.weight_of(animation_name)
-
-
-func _movement_animation_speed_scale() -> float:
-	var phase_speed := navigation_move_speed()
-	if _uses_mech_gait and not _mech_motion_profile.is_empty():
-		var cadence := _mech_gait_cadence()
-		if _mech_authored_phase_speed() <= 0.0:
-			return cadence
-		return cadence * velocity.length() / maxf(phase_speed, 0.000001)
-	if phase_speed <= 0.0:
-		return 1.0
-	return velocity.length() / phase_speed
 
 
 func _refresh_owner_visuals() -> void:

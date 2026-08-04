@@ -2630,7 +2630,7 @@ func _test_fire_while_moving_capability() -> void:
 	mongoose.weapon_fired.connect(func(
 		projectiles: Array, fired_target: Variant, _weapon_index: int
 		) -> void:
-		movement_samples.append(mongoose._movement_animation_active)
+		movement_samples.append(mongoose._locomotion.is_movement_animation_active())
 		fired_targets.append(fired_target)
 		var muzzle: Vector3 = mongoose.combat_turrets[0].peek_emission()["direction"]
 		muzzle.y = 0.0

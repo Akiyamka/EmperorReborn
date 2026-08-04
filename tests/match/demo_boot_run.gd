@@ -291,7 +291,7 @@ func _test_unit_movement_animations() -> void:
 			_expect(player.current_animation == &"Stationary", "%s idle sequence must start with Stationary" % unit_name)
 			if player.has_animation(&"Idle_0") and player.has_animation(&"Idle_1"):
 				_expect(
-					unit.call("_idle_animation_weight", &"Idle_0") > unit.call("_idle_animation_weight", &"Idle_1"),
+					unit._idle_animations.weight_of(&"Idle_0") > unit._idle_animations.weight_of(&"Idle_1"),
 					"%s higher-numbered Idle* clips must have lower selection weight" % unit_name
 				)
 			var stationary_plays := 0
@@ -337,8 +337,8 @@ func _test_mech_gait_speeds() -> void:
 		is_equal_approx(unit.mech_speed, configured_mech_speed),
 		"Mongoose must load its editable MechSpeed rule"
 	)
-	var authored_average := float(unit.get("_mech_authored_average_speed"))
-	var cadence := float(unit.call("_mech_gait_cadence"))
+	var authored_average := unit._locomotion.authored_average_speed()
+	var cadence := unit._locomotion.gait_cadence()
 	_expect(
 		is_equal_approx(authored_average, 2.66),
 		"Mongoose must average its authored 1.0/3.5/0.8 Move speed events"
@@ -348,17 +348,17 @@ func _test_mech_gait_speeds() -> void:
 		"MechSpeed must calibrate the authored profile's average through cadence"
 	)
 
-	unit.set("_mech_gait_elapsed", 0.0)
+	unit._locomotion.seek_gait_phase(0.0)
 	_expect(
 		is_equal_approx(unit.navigation_move_speed(), 1.0 * cadence),
 		"Mongoose Move must begin with its authored 1.0 speed"
 	)
-	unit.set("_mech_gait_elapsed", 0.20)
+	unit._locomotion.seek_gait_phase(0.20)
 	_expect(
 		is_equal_approx(unit.navigation_move_speed(), 3.5 * cadence),
 		"Mongoose must switch to its authored fast phase at frame 6"
 	)
-	unit.set("_mech_gait_elapsed", 0.60)
+	unit._locomotion.seek_gait_phase(0.60)
 	_expect(
 		is_equal_approx(unit.navigation_move_speed(), 0.8 * cadence),
 		"Mongoose must switch to its authored slow phase at frame 14"
@@ -370,7 +370,7 @@ func _test_mech_gait_speeds() -> void:
 
 	unit.velocity = Vector3.RIGHT * unit.navigation_move_speed()
 	_expect(
-		is_equal_approx(float(unit.call("_movement_animation_speed_scale")), cadence),
+		is_equal_approx(unit._locomotion.movement_animation_speed_scale(), cadence),
 		"the physical XBF speed and Move playback must share one cadence"
 	)
 
@@ -378,7 +378,7 @@ func _test_mech_gait_speeds() -> void:
 	unit.replace_visual_scene(HKDevastatorModelScene)
 	var forward := unit.facing_direction()
 	unit.set_navigation_destination(unit.global_position + forward * 10.0)
-	unit.set("_mech_gait_elapsed", 0.0)
+	unit._locomotion.seek_gait_phase(0.0)
 	_expect(
 		is_zero_approx(unit.navigation_move_speed()),
 		"Devastator must begin Move with its authored zero-speed phase"
@@ -388,14 +388,14 @@ func _test_mech_gait_speeds() -> void:
 	_expect(
 		devastator_player != null
 		and devastator_player.current_animation == &"Move_Start"
-		and is_zero_approx(float(unit.get("_mech_gait_elapsed"))),
+		and is_zero_approx(unit._locomotion.gait_phase()),
 		"Devastator must finish Move_Start before beginning its zero-speed Move phase"
 	)
 	if devastator_player != null:
 		devastator_player.animation_finished.emit(&"Move_Start")
 	unit.navigation_step(Vector3.ZERO, 0.1)
 	_expect(
-		float(unit.get("_mech_gait_elapsed")) > 0.0
+		unit._locomotion.gait_phase() > 0.0
 		and devastator_player != null
 		and devastator_player.current_animation == &"Move",
 		"an authored zero-speed Move phase must advance instead of resetting to idle"
@@ -413,7 +413,7 @@ func _test_mech_gait_speeds() -> void:
 	)
 	var parked_distance := lerpf(unit.arrival_radius, navigation_arrival, 0.5)
 	unit.set_navigation_destination(unit.global_position + unit.facing_direction() * parked_distance)
-	unit.set("_mech_gait_elapsed", 0.0)
+	unit._locomotion.seek_gait_phase(0.0)
 	unit.navigation_step(Vector3.ZERO, 0.1)
 	_expect(
 		devastator_player != null and devastator_player.current_animation == &"Move_Stop",
