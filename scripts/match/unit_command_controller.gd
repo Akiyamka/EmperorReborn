@@ -733,12 +733,7 @@ func _deployment_cursor_for(entity) -> int:
 	# BuildingPlacement footprint probe below needs the throttle.
 	if _deployment_controller.has_method("is_combat_deploy_candidate") \
 	and bool(_deployment_controller.call("is_combat_deploy_candidate", entity)):
-		return (
-			CursorManagerScript.CursorType.DEPLOY
-			if _deployment_controller.has_method("can_issue_deploy")
-			and bool(_deployment_controller.call("can_issue_deploy", entity))
-			else CursorManagerScript.CursorType.CANT_DEPLOY
-		)
+		return _deploy_cursor_for(entity)
 
 	# A full Construction Yard footprint check is expensive. It is only needed
 	# while the pointer is over the one selected MCV, and its cursor result does
@@ -750,13 +745,21 @@ func _deployment_cursor_for(entity) -> int:
 	or now_msec - _deployment_cursor_last_check_msec >= DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC:
 		_deployment_cursor_entity_id = entity_id
 		_deployment_cursor_last_check_msec = now_msec
-		_deployment_cursor_result = (
-			CursorManagerScript.CursorType.DEPLOY
-			if _deployment_controller.has_method("can_issue_deploy")
-			and bool(_deployment_controller.call("can_issue_deploy", entity))
-			else CursorManagerScript.CursorType.CANT_DEPLOY
-		)
+		_deployment_cursor_result = _deploy_cursor_for(entity)
 	return _deployment_cursor_result
+
+
+## Whether the deployment controller would accept a deploy order right now.
+## Both branches of _deployment_cursor_for() ask this -- the cheap combat check
+## every call, the MCV's footprint probe on a throttle -- and both answer it
+## the same way.
+func _deploy_cursor_for(entity) -> int:
+	return (
+		CursorManagerScript.CursorType.DEPLOY
+		if _deployment_controller.has_method("can_issue_deploy")
+		and bool(_deployment_controller.call("can_issue_deploy", entity))
+		else CursorManagerScript.CursorType.CANT_DEPLOY
+	)
 
 
 func _cursor_time_msec() -> int:
