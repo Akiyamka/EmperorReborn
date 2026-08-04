@@ -262,9 +262,7 @@ func _test_death_mid_own_fire_animation() -> void:
 	# of the unit's own (real, model-owned) AnimationPlayers.
 	var target := Node3D.new()
 	world.add_child(target)
-	unit._has_attack_order = true
-	unit._attack_is_ground = false
-	unit._attack_target_ref = weakref(target)
+	unit._attack_order.begin(target)
 	var fire_player := unit._animation_players[0]
 	unit._weapon_fire_sequences[0] = {
 		"turret": null,
@@ -348,9 +346,7 @@ func _test_dying_unit_leaves_no_reference_into_its_corpse() -> void:
 
 	var target := Node3D.new()
 	world.add_child(target)
-	unit._has_attack_order = true
-	unit._attack_is_ground = false
-	unit._attack_target_ref = weakref(target)
+	unit._attack_order.begin(target)
 	var fire_player := unit._animation_players[0]
 	unit._weapon_fire_sequences[0] = {
 		"turret": null,

@@ -23,6 +23,7 @@ const UnitShaderFxScript := preload("res://scripts/units/unit_shader_fx.gd")
 const UnitIdleAnimationsScript := preload("res://scripts/units/unit_idle_animations.gd")
 const UnitLocomotionScript := preload("res://scripts/units/unit_locomotion.gd")
 const UnitDeployStateScript := preload("res://scripts/units/unit_deploy_state.gd")
+const UnitAttackOrderScript := preload("res://scripts/units/unit_attack_order.gd")
 const CombatTargetAcquisitionScript := preload(
 	"res://scripts/combat/combat_target_acquisition.gd"
 )
@@ -61,8 +62,6 @@ const FIRE_EVENT_EPSILON := 0.0001
 ## The single canonical deployed-mode fire clip after the converter-stage
 ## rename (see converters/model_bake_builder.gd CLIP_NAME_OVERRIDES).
 const DEPLOYED_FIRE_ANIMATION := &"Deployed_Fire"
-const ATTACK_REPATH_INTERVAL_SECONDS := 0.25
-const ATTACK_REPATH_DISTANCE := 0.5
 
 enum SlopeAlignmentMode {
 	AUTO,
@@ -133,15 +132,7 @@ var _death_sequence := UnitDeathSequenceScript.new()
 ## of which movement path is active.
 var _previous_global_position := Vector3.ZERO
 var _deploy := UnitDeployStateScript.new()
-var _has_attack_order := false
-var _attack_ground_position := Vector3.INF
-var _attack_target_ref: WeakRef
-var _attack_is_ground := false
-var _attack_is_pursuing := false
-var _attack_repath_remaining := 0.0
-var _attack_last_path_position := Vector3.INF
-var _attack_pursuit_destination := Vector3.INF
-var _attack_pursuit_rejected := false
+var _attack_order := UnitAttackOrderScript.new()
 var _issuing_attack_move := false
 ## Test-only compatibility property: tests/combat/run.gd reads this by name.
 @warning_ignore("unused_private_class_variable")
@@ -170,6 +161,7 @@ func _init() -> void:
 	_idle_animations.configure(self)
 	_locomotion.configure(self)
 	_deploy.configure(self)
+	_attack_order.configure(self)
 
 
 func _ready() -> void:
@@ -218,7 +210,7 @@ func _process(delta: float) -> void:
 	_advance_attack_order(delta)
 	_advance_fire_sequences(delta)
 	if (
-		not _has_attack_order
+		not _attack_order.is_active()
 		and _weapon_targets.is_empty()
 		and _moving_fire_weapons.is_empty()
 	):
@@ -933,15 +925,7 @@ func command_attack(target_or_position: Variant) -> bool:
 		return false
 	_cancel_all_fire_sequences()
 	stop_at_current_position()
-	_has_attack_order = true
-	_attack_is_ground = target_or_position is Vector3
-	_attack_ground_position = target_or_position if _attack_is_ground else Vector3.INF
-	_attack_target_ref = null if _attack_is_ground else weakref(target_or_position as Object)
-	_attack_is_pursuing = false
-	_attack_repath_remaining = 0.0
-	_attack_last_path_position = Vector3.INF
-	_attack_pursuit_destination = Vector3.INF
-	_attack_pursuit_rejected = false
+	_attack_order.begin(target_or_position)
 	_weapon_targets.clear()
 	_target_acquisition.clear()
 	_moving_fire_weapons.clear()
@@ -957,18 +941,8 @@ func cancel_attack_order() -> void:
 	_weapon_targets.clear()
 	_target_acquisition.clear()
 	_moving_fire_weapons.clear()
-	if not _has_attack_order:
-		return
-	_has_attack_order = false
-	_attack_is_ground = false
-	_attack_ground_position = Vector3.INF
-	_attack_target_ref = null
-	_attack_is_pursuing = false
-	_attack_repath_remaining = 0.0
-	_attack_last_path_position = Vector3.INF
-	_attack_pursuit_destination = Vector3.INF
-	_attack_pursuit_rejected = false
-	attack_order_changed.emit(false, null)
+	if _attack_order.clear():
+		attack_order_changed.emit(false, null)
 
 
 func _replace_attack_with_move() -> void:
@@ -984,16 +958,7 @@ func _replace_attack_with_move() -> void:
 				_weapon_targets[weapon_index] as Dictionary
 			).duplicate()
 	_cancel_blocking_fire_sequences()
-	var had_attack_order := _has_attack_order
-	_has_attack_order = false
-	_attack_is_ground = false
-	_attack_ground_position = Vector3.INF
-	_attack_target_ref = null
-	_attack_is_pursuing = false
-	_attack_repath_remaining = 0.0
-	_attack_last_path_position = Vector3.INF
-	_attack_pursuit_destination = Vector3.INF
-	_attack_pursuit_rejected = false
+	var had_attack_order := _attack_order.clear()
 	_weapon_targets = retained_targets
 	_target_acquisition.clear()
 	if had_attack_order:
@@ -1001,29 +966,25 @@ func _replace_attack_with_move() -> void:
 
 
 func has_attack_order() -> bool:
-	return _has_attack_order
+	return _attack_order.is_active()
 
 
 func has_active_order() -> bool:
-	return _has_attack_order or is_deploying() or has_active_move_order()
+	return _attack_order.is_active() or is_deploying() or has_active_move_order()
 
 
 func attack_order_target() -> Variant:
-	if not _has_attack_order:
-		return null
-	if _attack_is_ground:
-		return _attack_ground_position
-	return _attack_target_ref.get_ref() if _attack_target_ref != null else null
+	return _attack_order.target()
 
 
 func _advance_attack_order(delta: float) -> void:
 	if _active_turrets().is_empty():
 		return
-	if not _has_attack_order:
+	if not _attack_order.is_active():
 		_advance_retained_weapon_targets(delta)
 		return
 	var attack_target: Variant = attack_order_target()
-	if not _attack_is_ground and not _combat_target_is_alive(attack_target):
+	if not _attack_order.is_ground() and not _combat_target_is_alive(attack_target):
 		cancel_attack_order()
 		stop_at_current_position()
 		return
@@ -1053,17 +1014,13 @@ func _advance_attack_order(delta: float) -> void:
 		# here would only damage the obstacle standing in front of the order.
 		if not obstructed_turrets.is_empty() \
 		or primary_turret.target_range(attack_target) == CombatTurretScript.TargetRange.TOO_FAR:
-			_advance_attack_pursuit(target_world_position, primary_turret, delta)
+			_attack_order.advance_pursuit(target_world_position, primary_turret, delta)
 			return
 		# A minimum-range violation is not solved by moving closer. Keep the
 		# explicit order active so a moving target can re-enter weapon range.
-		if _attack_is_pursuing:
-			stop_at_current_position()
-			_attack_is_pursuing = false
+		_attack_order.stop_pursuit()
 		return
-	if _attack_is_pursuing:
-		stop_at_current_position()
-		_attack_is_pursuing = false
+	_attack_order.stop_pursuit()
 
 	var direct_turrets: Array = []
 	for turret in in_range_turrets:
@@ -1443,108 +1400,45 @@ func _primary_attack_turret(attack_target: Variant):
 	return null
 
 
-## Accepts only perches whose muzzle would see the ordered target. The probe
-## samples terrain height at the candidate because navigation cells carry the
-## map floor rather than the elevation the unit will actually stand at.
-func _line_of_fire_probe(primary_turret) -> Callable:
-	var target: Variant = attack_order_target()
-	if primary_turret == null or target == null:
-		return Callable()
-	var muzzle_origin: Vector3 = primary_turret.muzzle_origin()
-	var muzzle_height := maxf(muzzle_origin.y - global_position.y, 0.0) \
-		if muzzle_origin.is_finite() else 0.0
-	return func(candidate: Vector3) -> bool:
-		var hit := _terrain_hit_at(candidate)
-		var ground: Vector3 = hit["position"] if not hit.is_empty() else candidate
-		return primary_turret.has_line_of_fire_from(
-			ground + Vector3.UP * muzzle_height, target, self
-		)
+func _combat_target_position(attack_target: Variant) -> Vector3:
+	return CombatTargetScript.position_of(attack_target, global_position)
 
 
-func _advance_attack_pursuit(
-	target_world_position: Vector3, primary_turret, delta: float
-	) -> void:
-	_attack_repath_remaining = maxf(_attack_repath_remaining - delta, 0.0)
-	var target_moved := not _attack_last_path_position.is_finite() \
-		or _attack_last_path_position.distance_to(target_world_position) >= ATTACK_REPATH_DISTANCE
-	var route_unreachable: bool = (
-		_navigation_managed
-		and _navigation_system != null
-		and _navigation_system.has_method("route_is_unreachable")
+func _combat_target_is_alive(attack_target: Variant) -> bool:
+	return CombatTargetScript.is_alive(attack_target)
+
+
+## Narrow navigation surface for UnitAttackOrder: pursuit needs to know
+## whether the current route is hopeless, where it could stand to shoot from,
+## and how to ask for a move — but not which navigation system is in play, or
+## whether this unit is managed by one at all.
+func navigation_route_is_unreachable() -> bool:
+	return _navigation_managed \
+		and _navigation_system != null \
+		and _navigation_system.has_method("route_is_unreachable") \
 		and bool(_navigation_system.call("route_is_unreachable", self))
+
+
+func navigation_reachable_attack_position(
+	target_world_position: Vector3, maximum_range: float, probe := Callable()
+) -> Vector3:
+	if not _navigation_managed \
+	or _navigation_system == null \
+	or not _navigation_system.has_method("reachable_attack_position"):
+		return Vector3.INF
+	if probe.is_null():
+		return _navigation_system.call(
+			"reachable_attack_position", self, target_world_position, maximum_range
+		)
+	return _navigation_system.call(
+		"reachable_attack_position", self, target_world_position, maximum_range, probe
 	)
-	if target_moved:
-		_attack_pursuit_destination = Vector3.INF
-		_attack_pursuit_rejected = false
-		route_unreachable = false
-	if _attack_repath_remaining > 0.0 \
-	or (
-		_attack_is_pursuing
-		and not target_moved
-		and not route_unreachable
-		and has_active_move_order()
-	):
-		return
-	_attack_is_pursuing = true
-	_attack_last_path_position = target_world_position
-	_attack_repath_remaining = ATTACK_REPATH_INTERVAL_SECONDS
-	var pursuit_position := target_world_position
-	var horizontal_offset := target_world_position - global_position
-	horizontal_offset.y = 0.0
-	var preferred_range := float(primary_turret.maximum_range_world()) * 0.8 \
-		if primary_turret != null else 0.0
-	var reachable_position := Vector3.INF
-	if (
-		_navigation_managed
-		and _navigation_system != null
-		and primary_turret != null
-		and _navigation_system.has_method("reachable_attack_position")
-	):
-		var maximum_range := float(primary_turret.maximum_range_world())
-		reachable_position = _navigation_system.call(
-			"reachable_attack_position",
-			self,
-			target_world_position,
-			maximum_range,
-			_line_of_fire_probe(primary_turret)
-		)
-		if not reachable_position.is_finite():
-			var any_perch: Vector3 = _navigation_system.call(
-				"reachable_attack_position", self, target_world_position, maximum_range
-			)
-			if any_perch.is_finite():
-				# The search covered every reachable cell within weapon range and
-				# none of them can see the target: the obstacle shields it from
-				# this side entirely. Hold instead of grinding into it.
-				stop_at_current_position()
-				_attack_is_pursuing = false
-				_attack_pursuit_destination = Vector3.INF
-				return
-	if reachable_position.is_finite():
-		pursuit_position = reachable_position
-	elif preferred_range > 0.0:
-		# Navigate to a firing position rather than the target coordinate itself.
-		# An attack-ground point on top of a cliff may be unreachable to a ground
-		# unit even though a position in front of it is a valid artillery perch.
-		# If that first perch still cannot satisfy the elevation limits, halve
-		# the remaining distance on the next arrival and continue approaching.
-		var remaining_distance := minf(
-			preferred_range, horizontal_offset.length() * 0.5
-		)
-		pursuit_position = target_world_position \
-			- horizontal_offset.normalized() * remaining_distance
-	if (
-		not reachable_position.is_finite()
-		and (route_unreachable or _attack_pursuit_rejected)
-		and _attack_pursuit_destination.is_finite()
-	):
-		# The requested perch landed on disconnected terrain (commonly the red
-		# face or the separately connected top of a cliff). Back it toward the
-		# unit until the navigation grid accepts a firing position on this side.
-		pursuit_position = global_position.lerp(
-			_attack_pursuit_destination, 0.5
-		)
-	_attack_pursuit_destination = pursuit_position
+
+
+## Issues the pursuit move and returns whether navigation accepted it. The
+## _issuing_attack_move flag stays here because prepare_navigation_order()
+## reads it: it marks a move this unit asked for itself, not a player order.
+func issue_attack_move(pursuit_position: Vector3) -> bool:
 	_issuing_attack_move = true
 	var move_issued := true
 	if _navigation_managed and _navigation_system != null:
@@ -1555,16 +1449,7 @@ func _advance_attack_pursuit(
 	else:
 		move_to(pursuit_position)
 	_issuing_attack_move = false
-	_attack_pursuit_rejected = not move_issued
-	_attack_is_pursuing = move_issued
-
-
-func _combat_target_position(attack_target: Variant) -> Vector3:
-	return CombatTargetScript.position_of(attack_target, global_position)
-
-
-func _combat_target_is_alive(attack_target: Variant) -> bool:
-	return CombatTargetScript.is_alive(attack_target)
+	return move_issued
 
 
 func stop_at_current_position() -> void:
@@ -1580,7 +1465,7 @@ func stop_at_current_position() -> void:
 ## override this, clear their own state, and then call super.
 func cancel_all_orders() -> bool:
 	var had_order := (
-		_has_attack_order
+		_attack_order.is_active()
 		or _has_pending_navigation_order
 		or has_active_move_order()
 	)
