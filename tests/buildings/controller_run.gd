@@ -134,6 +134,14 @@ func _initialize() -> void:
 		_test_leaving_wall_mode_cancels_its_own_preview
 	)
 	_run_case(
+		"starting a wall chain stamps it with the roster's local player",
+		_test_wall_chain_owner_comes_from_roster.bind(local_player)
+	)
+	_run_case(
+		"unrelated nodes leaving the tree do not invalidate availability",
+		_test_unrelated_node_removal_keeps_availability_cache.bind(local_player)
+	)
+	_run_case(
 		"leaving and re-entering the tree does not double-connect availability signals",
 		_test_availability_resubscribe_after_tree_reentry.bind(local_player)
 	)
@@ -748,6 +756,61 @@ func _enter_mode(controller: BuildingController, mode: StringName) -> void:
 			controller._set_repair_mode(true)
 		&"wall_line":
 			controller._set_wall_line_mode(true, &"ATWall")
+
+
+## The wall tests above all install a WallChain directly, so nothing exercised
+## start_chain() itself -- where the chain is stamped with its owner. That owner
+## is the roster's local_player_id, not the local PlayerData's player_id, and
+## reading the wrong one crashed the moment a player finished a wall line.
+func _test_wall_chain_owner_comes_from_roster(token: int, local_player: PlayerData) -> int:
+	var controller := _new_controller()
+	_setup_without_assets(controller)
+	_setup_controller_placement(controller,
+		null, FakeGrid.new(), null, null, null, null, null, Callable()
+	)
+	var cells: Array[Vector2i] = [Vector2i(2, 4), Vector2i(4, 4)]
+	controller._start_wall_chain(Vector2i(2, 4), Vector2i(4, 4), &"ATWall", cells)
+	_expect(
+		controller._wall_chain != null,
+		"a wall line over buildable cells must produce a chain"
+	)
+	if controller._wall_chain != null:
+		_expect(
+			controller._wall_chain.owner_player_id == local_player.player_id,
+			"the chain must carry the roster's local player id, got %s" % [
+				controller._wall_chain.owner_player_id
+			]
+		)
+	controller._cancel_building_order()
+	controller.free()
+	return token
+
+
+## node_removed fires for every node in the game. BuildingPlacement releases its
+## preview cells through remove_child() on every cursor move, so treating any
+## removal as an availability change put the O(ids x buildings) recompute back
+## on every frame of a wall-line drag -- the exact cost the cache exists to
+## avoid.
+func _test_unrelated_node_removal_keeps_availability_cache(token: int, _local_player: PlayerData) -> int:
+	var controller := _new_controller()
+	var building_ids: Array[StringName] = [&"ATBarracks"]
+	controller.setup(null, null, null, building_ids, null, null, null, null)
+	controller.process(0.0)
+	_expect(
+		not controller._availability_dirty,
+		"a completed refresh must leave the availability cache clean"
+	)
+
+	var scratch := Node3D.new()
+	root.add_child(scratch)
+	root.remove_child(scratch)
+	_expect(
+		not controller._availability_dirty,
+		"a node that was never a tracked building must not invalidate availability"
+	)
+	scratch.free()
+	controller.free()
+	return token
 
 
 func _expect(condition: bool, message: String) -> void:

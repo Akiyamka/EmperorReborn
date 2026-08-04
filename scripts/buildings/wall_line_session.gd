@@ -18,6 +18,7 @@ var _rows_provider: Callable
 var _display_provider: Callable
 var _scene_provider: Callable
 var _player_provider: Callable
+var _owner_id_provider: Callable
 var _status: Callable
 var _refresh: Callable
 
@@ -32,6 +33,7 @@ func configure(
 		display_provider: Callable,
 		scene_provider: Callable,
 		player_provider: Callable,
+		owner_id_provider: Callable,
 		status: Callable,
 		refresh: Callable
 ) -> void:
@@ -44,6 +46,7 @@ func configure(
 	_display_provider = display_provider
 	_scene_provider = scene_provider
 	_player_provider = player_provider
+	_owner_id_provider = owner_id_provider
 	_status = status
 	_refresh = refresh
 
@@ -169,8 +172,11 @@ func start_chain(
 		_status.call("Wall line has no buildable segments")
 		_end_chain()
 		return
-	var player = _player_provider.call()
-	var owner_id = player.local_player_id if player != null else null
+	# Two different owners are in play here and they are not interchangeable:
+	# _player_provider answers the local PlayerData (what _refund() spends from),
+	# while the chain needs the roster's local_player_id. Collapsing them into one
+	# provider is what crashed -- PlayerData has player_id, not local_player_id.
+	var owner_id = _owner_id_provider.call() if not _owner_id_provider.is_null() else null
 	_chain = WallChainScript.new(
 		order_building_id, _display_provider.call(order_building_id),
 		maxi(config.cost, 0), maxf(config.build_time_ticks, 1.0), cells, owner_id

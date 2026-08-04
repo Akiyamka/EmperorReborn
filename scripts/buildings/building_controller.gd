@@ -129,7 +129,8 @@ func setup(
 		self, _building_placement, _building_queue, wall_marker_scene,
 		Callable(self, "_building_config"), Callable(self, "_building_occupy_rows"),
 		Callable(self, "_building_display_name"), Callable(self, "_building_scene_path"),
-		Callable(self, "_local_player"), Callable(self, "_emit_status"),
+		Callable(self, "_local_player"), Callable(self, "_local_owner_player_id"),
+		Callable(self, "_emit_status"),
 		Callable(self, "_refresh_building_option_states")
 	)
 	if _building_placement.get_parent() != self:
@@ -233,8 +234,13 @@ func _on_availability_node_added(node: Node) -> void:
 
 
 func _on_availability_node_removed(node: Node) -> void:
-	_untrack_availability_building(node)
-	_mark_availability_dirty()
+	# node_removed fires for every node in the game. Marking availability dirty
+	# unconditionally turned any churn into a full recompute on the next frame --
+	# and BuildingPlacement churns hard: every cursor move while stretching a wall
+	# line releases its preview cells through remove_child(), so the O(ids x
+	# buildings) scan this cache exists to avoid ran every frame of the drag.
+	if _untrack_availability_building(node):
+		_mark_availability_dirty()
 
 
 func _track_availability_building(candidate: Variant) -> void:
@@ -266,13 +272,13 @@ func _track_availability_building(candidate: Variant) -> void:
 ## called both when a building leaves the tree and when this controller
 ## itself does (_exit_tree()) -- so re-entering the tree and calling setup()
 ## again never reconnects on top of a still-live subscription.
-func _untrack_availability_building(node: Node) -> void:
-	# node_removed fires for every node in the game, so leave immediately
-	# unless this really was one of the buildings we subscribed to.
+## Returns whether the node really was one of the tracked buildings -- callers
+## use that to decide whether anything about availability can have changed.
+func _untrack_availability_building(node: Node) -> bool:
 	if not _tracked_availability_buildings.erase(node.get_instance_id()):
-		return
+		return false
 	if not is_instance_valid(node):
-		return
+		return true
 	if node.has_signal("owner_changed") \
 			and node.is_connected("owner_changed", _on_availability_owner_changed):
 		node.disconnect("owner_changed", _on_availability_owner_changed)
@@ -284,6 +290,7 @@ func _untrack_availability_building(node: Node) -> void:
 		node.disconnect("upgrade_level_changed", _on_availability_upgrade_changed)
 	if node.tree_exiting.is_connected(_mark_availability_dirty):
 		node.tree_exiting.disconnect(_mark_availability_dirty)
+	return true
 
 
 func _on_availability_owner_changed(_player_id: int) -> void:
@@ -1162,6 +1169,15 @@ func _local_player() -> PlayerData:
 	if players == null:
 		return null
 	return players.local_player() as PlayerData
+
+
+## The roster's local player id, or null when there is no roster. Deliberately
+## not _local_player_id(): that answers -1 for "nobody", while placement reads
+## owner_player_id == null as "leave this building unowned", and -1 would be
+## taken for a real player id.
+func _local_owner_player_id():
+	var players = _players()
+	return players.local_player_id if players != null else null
 
 
 func _local_player_id() -> int:
