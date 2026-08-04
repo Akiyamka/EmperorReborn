@@ -2,7 +2,6 @@ extends CharacterBody3D
 class_name Unit
 
 const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
-const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
 const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 const TeamColorScript := preload("res://scripts/world/team_color.gd")
 const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
@@ -17,6 +16,7 @@ const SpatialOrientationScript := preload("res://scripts/world/spatial_orientati
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
+const UnitTerrainAlignmentScript := preload("res://scripts/units/unit_terrain_alignment.gd")
 const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
 const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
@@ -36,12 +36,6 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 
 const COLLISION_OBJECT_NAME := "#~~0"
-const TERRAIN_COLLISION_MASK := 1
-const TERRAIN_RAY_HEIGHT := 200.0
-const MIN_SLOPE_SPEED_MULTIPLIER := 0.65
-const MAX_SLOPE_SPEED_MULTIPLIER := 1.50
-const SLOPE_PROBE_DISTANCE := 0.5
-const SLOPE_ALIGNMENT_RESPONSE := 10.0
 ## The incidental Tleilaxu walker predates the Mech rule used by the three
 ## playable House walkers, but its converted model has the same articulated
 ## leg hierarchy and must retain a level gameplay root as well.
@@ -49,7 +43,7 @@ const LEGACY_WALKER_UNIT_IDS: Array[StringName] = [&"INTLWalker"]
 ## Rules.txt stores TurnRate in radians per movement update. Navigation runs at
 ## 20 fixed updates per second, so use the same cadence for the unmanaged
 ## fallback to keep turning independent of the caller's frame rate.
-const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
+const RULE_MOVEMENT_UPDATES_PER_SECOND := UnitTerrainAlignmentScript.MOVEMENT_UPDATES_PER_SECOND
 ## Converted XBF tracks use a 20 Hz timeline, while the original firing
 ## cadence measured from ReloadCount and Fire clip frame counts is 25 Hz.
 ## Fire clips therefore traverse the baked timeline at 25/20 speed.
@@ -176,9 +170,7 @@ var _pending_navigation_exit := Vector3.INF
 var _has_pending_navigation_order := false
 var _navigation_requested_velocity := Vector3.ZERO
 var _navigation_debug_visible := false
-var _visual_root_rest_basis := Basis.IDENTITY
-var _visual_slope_target_basis := Basis.IDENTITY
-var _last_terrain_normal := Vector3.UP
+var _terrain_alignment := UnitTerrainAlignmentScript.new()
 var _uses_mech_gait := false
 var _mech_gait_elapsed := 0.0
 var _mech_motion_profile: Array[Dictionary] = []
@@ -229,14 +221,20 @@ var _weapon_can_fire_while_moving: Dictionary = {}
 var _weapon_fire_overlays: Dictionary = {}
 
 
+## Modules that hold no tree state are bound here rather than in _ready(), so
+## they also work on a unit whose _ready() is stubbed out (see the harvester
+## suite's TestHarvester) and before the node enters the tree.
+func _init() -> void:
+	_terrain_alignment.configure(self)
+
+
 func _ready() -> void:
 	if not _authored_fire_controller.weapon_fired.is_connected(
 		_on_authored_weapon_fired
 	):
 		_authored_fire_controller.weapon_fired.connect(_on_authored_weapon_fired)
-	if visual_root != null:
-		_visual_root_rest_basis = visual_root.transform.basis.orthonormalized()
-		_visual_slope_target_basis = _visual_root_rest_basis
+	# The authored rest pose only exists once visual_root has resolved.
+	_terrain_alignment.capture_rest_pose()
 	_apply_unit_definition()
 	target_position = global_position
 	_previous_global_position = global_position
@@ -318,7 +316,7 @@ func _physics_process(delta: float) -> void:
 		if _deployment_aligning:
 			if _turn_toward(_deployment_alignment_direction, delta):
 				_deployment_aligning = false
-				_set_visual_slope_target(_last_terrain_normal)
+				_terrain_alignment.refresh_slope_target()
 				_start_deployment_animation()
 		return
 	if is_deployed():
@@ -809,58 +807,19 @@ func _snap_to_terrain(delta: float = 0.0) -> void:
 	_terrain_snap_body()
 
 
-## Extracted so a landed/grounded flying unit (UnitFlightController.advance)
-## sits on real terrain/apron height exactly like a ground unit; airborne
-## flight phases bypass this entirely (fixed cruise altitude, no terrain-follow).
 func _terrain_snap_body() -> void:
-	# Units are moved horizontally, then projected back onto the terrain mesh.
-	# Keeping this independent of CharacterBody's floor state lets authored unit
-	# collision volumes remain usable for selection while the unit follows every
-	# height change in the map instead of retaining its spawn elevation.
-	var hit := _terrain_hit_at(global_position)
-	if hit.is_empty():
-		return
-
-	global_position.y = (hit["position"] as Vector3).y
-	_set_visual_slope_target(hit.get("normal", Vector3.UP) as Vector3)
+	_terrain_alignment.snap_body_to_terrain()
 
 
-## Keeps gameplay orientation, navigation collision and the selection halo
-## upright while tilting only the rendered model. A terrain normal uniquely
-## determines pitch and roll; projecting the unit's forward vector onto that
-## plane preserves its current yaw.
+## Test-only shim: tests/match/demo_boot_run.gd calls this by name. Not
+## architecture — the state lives in UnitTerrainAlignment.
 func _set_visual_slope_target(terrain_normal: Vector3) -> void:
-	_last_terrain_normal = terrain_normal.normalized() \
-		if terrain_normal.length_squared() > 0.000001 else Vector3.UP
-	if _last_terrain_normal.dot(Vector3.UP) < 0.0:
-		_last_terrain_normal = -_last_terrain_normal
-	if visual_root == null or not aligns_visual_to_terrain_slope():
-		_visual_slope_target_basis = _visual_root_rest_basis
-		return
-
-	var unit_basis := global_transform.basis.orthonormalized()
-	var slope_forward := (-unit_basis.z).slide(_last_terrain_normal)
-	if slope_forward.length_squared() <= 0.000001:
-		slope_forward = unit_basis.x.cross(_last_terrain_normal)
-	if slope_forward.length_squared() <= 0.000001:
-		_visual_slope_target_basis = _visual_root_rest_basis
-		return
-	slope_forward = slope_forward.normalized()
-	var slope_z := -slope_forward
-	var slope_x := _last_terrain_normal.cross(slope_z).normalized()
-	var slope_basis := Basis(slope_x, _last_terrain_normal, slope_z).orthonormalized()
-	_visual_slope_target_basis = (
-		unit_basis.inverse() * slope_basis * _visual_root_rest_basis
-	).orthonormalized()
+	_terrain_alignment.set_slope_target(terrain_normal)
 
 
+## Test-only shim: tests/match/demo_boot_run.gd calls this by name.
 func _advance_visual_slope_alignment(delta: float) -> void:
-	if visual_root == null or delta <= 0.0:
-		return
-	var blend := 1.0 - exp(-SLOPE_ALIGNMENT_RESPONSE * delta)
-	visual_root.transform.basis = visual_root.transform.basis.orthonormalized().slerp(
-		_visual_slope_target_basis, clampf(blend, 0.0, 1.0)
-	).orthonormalized()
+	_terrain_alignment.advance_slope_alignment(delta)
 
 
 func aligns_visual_to_terrain_slope() -> bool:
@@ -881,40 +840,13 @@ func aligns_visual_to_terrain_slope() -> bool:
 
 
 func _slope_speed_multiplier(direction: Vector3, delta: float) -> float:
-	if _flight_controller != null and _flight_controller.flight_is_airborne_phase():
-		return 1.0
-	var current_hit := _terrain_hit_at(global_position)
-	if current_hit.is_empty():
-		return 1.0
-
-	var probe_distance := maxf(move_speed * delta, SLOPE_PROBE_DISTANCE)
-	var ahead := global_position + direction * probe_distance
-	var ahead_hit := _terrain_hit_at(ahead)
-	if ahead_hit.is_empty():
-		return 1.0
-
-	var current_position: Vector3 = current_hit["position"]
-	var ahead_position: Vector3 = ahead_hit["position"]
-	var slope := (ahead_position.y - current_position.y) / probe_distance
-	if slope > 0.0:
-		return maxf(1.0 - slope * 0.65, MIN_SLOPE_SPEED_MULTIPLIER)
-	return minf(1.0 - slope * 0.75, MAX_SLOPE_SPEED_MULTIPLIER)
+	return _terrain_alignment.slope_speed_multiplier(direction, delta)
 
 
+## Kept on the facade for Harvester (harvester.gd:376) and
+## tests/match/demo_boot_run.gd, both of which call it by name.
 func _turn_toward(direction: Vector3, delta: float) -> bool:
-	var horizontal_direction := Vector3(direction.x, 0.0, direction.z)
-	if horizontal_direction.length_squared() <= 0.000001:
-		return true
-	horizontal_direction = horizontal_direction.normalized()
-	var current_yaw := global_rotation.y
-	var target_yaw := SpatialOrientationScript.yaw_facing(horizontal_direction, current_yaw)
-	if is_zero_approx(angle_difference(current_yaw, target_yaw)):
-		return true
-	if turn_rate <= 0.0 or delta <= 0.0:
-		return false
-	var maximum_step := turn_rate * RULE_MOVEMENT_UPDATES_PER_SECOND * delta
-	global_rotation.y = rotate_toward(current_yaw, target_yaw, maximum_step)
-	return is_zero_approx(angle_difference(global_rotation.y, target_yaw))
+	return _terrain_alignment.turn_toward(direction, delta)
 
 
 func facing_direction() -> Vector3:
@@ -926,15 +858,15 @@ func face_direction(direction: Vector3) -> void:
 	var target_yaw := SpatialOrientationScript.yaw_facing(direction, current_yaw)
 	if is_inside_tree():
 		global_rotation.y = target_yaw
-		_set_visual_slope_target(_last_terrain_normal)
+		# Yaw moved, so the model's slope tilt is re-derived from the same
+		# terrain normal rather than waiting for the next terrain sample.
+		_terrain_alignment.refresh_slope_target()
 	else:
 		rotation.y = target_yaw
 
 
 func _terrain_hit_at(position: Vector3) -> Dictionary:
-	return TerrainProbeScript.height_hit(
-		get_world_3d(), position, TERRAIN_COLLISION_MASK, [get_rid()], TERRAIN_RAY_HEIGHT
-	)
+	return _terrain_alignment.terrain_hit_at(position)
 
 
 func setup(unit_id: StringName) -> void:
@@ -948,7 +880,7 @@ func setup(unit_id: StringName) -> void:
 	_refresh_mech_motion_profile()
 	health = max_health
 	shields = max_shields
-	_set_visual_slope_target(_last_terrain_normal)
+	_terrain_alignment.refresh_slope_target()
 
 
 ## Used by runtime unit production and startup snapshots when a generic Unit
