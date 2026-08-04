@@ -617,12 +617,11 @@ func _move_to_harvest_cell(cell: Vector2i) -> void:
 	_harvest_exit_grid = null
 	_issuing_harvest_move = true
 	var target: Vector3 = _harvest_grid.call("grid_to_world", cell)
-	if _navigation_managed and _navigation_system != null \
-	and _navigation_system.has_method("command_depart") \
-	and _is_valid_owned_refinery(exit_refinery):
+	var departed := false
+	if _is_valid_owned_refinery(exit_refinery):
 		var cells := exit_refinery.call("refinery_dock_navigation_cells", exit_grid) as Dictionary
-		_navigation_system.call("command_depart", self, target, cells)
-	else:
+		departed = navigation_command_depart(target, cells)
+	if not departed:
 		move_to(target)
 	_issuing_harvest_move = false
 
@@ -646,8 +645,7 @@ func _is_close_to_harvest_cell(cell: Vector2i) -> bool:
 	# action radius because nearer non-overlapping blocks already belong to its
 	# peers. Reaching that navigation-owned safe destination is still arrival;
 	# otherwise the gameplay state remains in TRAVEL forever with no route left.
-	return _navigation_managed and _navigation_system != null \
-		and _is_close_to_world(target_position)
+	return is_navigation_managed() and _is_close_to_world(target_position)
 
 
 func _finish_harvest_order() -> void:
@@ -663,25 +661,14 @@ func _finish_harvest_order() -> void:
 
 
 func _set_unload_navigation_hold(active: bool) -> void:
-	if _navigation_managed and _navigation_system != null \
-	and _navigation_system.has_method("set_hold_position"):
-		_navigation_system.call("set_hold_position", self, active)
+	if is_navigation_managed():
+		set_navigation_hold(active)
 
 
 ## Returns the clip duration so start/end complete before the state advances.
 ## Missing clips intentionally have zero duration and keep gameplay functional.
 func _start_action_animation(animation_name: StringName) -> float:
-	var duration := 0.0
-	for player in _animation_players:
-		if not player.has_animation(animation_name):
-			continue
-		var animation := player.get_animation(animation_name)
-		if animation != null:
-			animation.loop_mode = Animation.LOOP_NONE
-			duration = maxf(duration, animation.length)
-		player.speed_scale = 1.0
-		play_animation_from_start(player, animation_name)
-	return duration
+	return play_action_animation(animation_name)
 
 
 func _issue_unload_move(position: Vector3) -> void:
@@ -693,22 +680,18 @@ func _issue_unload_move(position: Vector3) -> void:
 
 func _issue_dock_move(position: Vector3) -> void:
 	_set_unload_navigation_hold(false)
-	if _navigation_managed and _navigation_system != null and _navigation_system.has_method("command_dock"):
-		var cells := _unload_refinery.call("refinery_dock_navigation_cells", _unload_grid) as Dictionary
-		_issuing_unload_move = true
-		_navigation_system.call("command_dock", self, position, cells)
-		_issuing_unload_move = false
-		return
-	_issue_unload_move(position)
+	var cells := _unload_refinery.call("refinery_dock_navigation_cells", _unload_grid) as Dictionary
+	_issuing_unload_move = true
+	var docked := navigation_command_dock(position, cells)
+	_issuing_unload_move = false
+	if not docked:
+		_issue_unload_move(position)
 
 
 func _is_close_to_world(target: Vector3) -> bool:
 	var offset := target - global_position
 	offset.y = 0.0
-	var tolerance := maxf(arrival_radius, 0.35)
-	if _navigation_managed and _navigation_system != null \
-	and _navigation_system.has_method("arrival_tolerance"):
-		tolerance = maxf(tolerance, float(_navigation_system.call("arrival_tolerance", self)) + 0.01)
+	var tolerance := navigation_arrival_tolerance(maxf(arrival_radius, 0.35))
 	return offset.length() <= tolerance
 
 
@@ -791,9 +774,7 @@ func _execute_pending_order() -> void:
 			var position := data.get("position", global_position) as Vector3
 			var exit_point := data.get("exit_point", Vector3.INF) as Vector3
 			var move_mode := int(data.get("move_mode", 0))
-			if _navigation_managed and _navigation_system != null:
-				_navigation_system.call("command_move", [self], position, move_mode, exit_point)
-			else:
+			if not navigation_command_move(position, move_mode, exit_point):
 				super.move_to(position, exit_point)
 		PendingOrder.HARVEST:
 			if spice >= max_spice:

@@ -1550,6 +1550,52 @@ func set_selected(value: bool) -> void:
 		_selection_halo.set_selected(value)
 
 
+## Whether the navigation system owns this unit's movement. A unit outside it
+## (a test fixture, a unit not yet registered) moves by writing target_position
+## directly, and must not be given navigation-only orders.
+func is_navigation_managed() -> bool:
+	return _navigation_managed and _navigation_system != null
+
+
+## The three navigation orders that are not plain movement. Each reports
+## whether the navigation system took it, so a caller can fall back to ordinary
+## movement when it did not -- which is also what happens outside the system.
+##
+## `allowed_cells` is the per-agent exception that lets a harvester stand on a
+## refinery's dock cells, which are otherwise blocked.
+func navigation_command_dock(world_position: Vector3, allowed_cells: Dictionary) -> bool:
+	if not is_navigation_managed() or not _navigation_system.has_method("command_dock"):
+		return false
+	_navigation_system.call("command_dock", self, world_position, allowed_cells)
+	return true
+
+
+func navigation_command_depart(world_position: Vector3, allowed_cells: Dictionary) -> bool:
+	if not is_navigation_managed() or not _navigation_system.has_method("command_depart"):
+		return false
+	_navigation_system.call("command_depart", self, world_position, allowed_cells)
+	return true
+
+
+func navigation_command_move(
+	world_position: Vector3, move_mode: int, exit_point := Vector3.INF
+) -> bool:
+	if not is_navigation_managed():
+		return false
+	_navigation_system.call("command_move", [self], world_position, move_mode, exit_point)
+	return true
+
+
+## How close counts as arrived. The navigation system's own tolerance wins when
+## it is larger: it parks agents on non-overlapping footprint blocks, so a unit
+## can be finished moving while still further from the point than its arrival
+## radius.
+func navigation_arrival_tolerance(fallback: float) -> float:
+	if not is_navigation_managed() or not _navigation_system.has_method("arrival_tolerance"):
+		return fallback
+	return maxf(fallback, float(_navigation_system.call("arrival_tolerance", self)) + 0.01)
+
+
 ## Public because UnitDeployState needs it: a deploying unit is pinned in
 ## place, and the navigation system owns that lock.
 func set_navigation_hold(locked: bool) -> void:
@@ -1703,6 +1749,24 @@ func _set_movement_animation(
 		is_moving, speed_scale, turn_animation, _idle_animations.play_sequence
 	)
 	restore_combat_turret_poses()
+
+
+## Plays a one-shot action clip on every player that has it and returns its
+## duration, so a caller can time a state on the authored length. A clip no
+## model provides has zero duration, which keeps the state machine running at
+## full speed instead of stalling.
+func play_action_animation(animation_name: StringName) -> float:
+	var duration := 0.0
+	for player in _animation_players:
+		if not player.has_animation(animation_name):
+			continue
+		var animation := player.get_animation(animation_name)
+		if animation != null:
+			animation.loop_mode = Animation.LOOP_NONE
+			duration = maxf(duration, animation.length)
+		player.speed_scale = 1.0
+		play_animation_from_start(player, animation_name)
+	return duration
 
 
 func play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
