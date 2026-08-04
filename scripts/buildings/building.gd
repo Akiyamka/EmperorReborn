@@ -1,6 +1,7 @@
 class_name Building
 extends Node3D
 
+const FireRequestScript := preload("res://scripts/combat/fire_request.gd")
 const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
 const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 const TeamColorScript := preload("res://scripts/world/team_color.gd")
@@ -638,7 +639,9 @@ func fire_weapon_at(
 	var turret = _combat_turret_for_weapon(weapon_index)
 	if turret == null:
 		return []
-	return turret.try_fire_at(target_or_position, self, projectile_parent, aim_offset)
+	return turret.try_fire_at(
+		FireRequestScript.at(target_or_position, self, projectile_parent, aim_offset)
+	)
 
 
 func can_attack(target_or_position: Variant) -> bool:

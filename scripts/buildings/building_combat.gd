@@ -1,6 +1,7 @@
 class_name BuildingCombat
 extends RefCounted
 
+const FireRequestScript := preload("res://scripts/combat/fire_request.gd")
 const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const CombatTargetAcquisitionScript := preload(
@@ -234,7 +235,7 @@ func _advance_engagement(delta: float) -> void:
 		return
 	if _fire_controller.try_start(target) or _fire_controller.has_fire_animation():
 		return
-	var projectiles: Array = turret.try_fire_at(target, _owner)
+	var projectiles: Array = turret.try_fire_at(FireRequestScript.at(target, _owner))
 	if not projectiles.is_empty():
 		_owner.call("_emit_weapon_fired", projectiles, target, turret.weapon_index())
 

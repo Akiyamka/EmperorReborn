@@ -1,6 +1,7 @@
 class_name AuthoredFireController
 extends RefCounted
 
+const FireRequestScript := preload("res://scripts/combat/fire_request.gd")
 const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
 
 signal weapon_fired(projectiles: Array, target: Variant, weapon_index: int)
@@ -130,7 +131,7 @@ func advance_sequences(
 			if target == null:
 				continue
 			var projectiles: Array = turret.try_fire_at(
-				target, source, null, Vector3.ZERO, false, false, true, damage_scale
+				FireRequestScript.authored(target, source, damage_scale)
 			)
 			if projectiles.is_empty():
 				continue

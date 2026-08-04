@@ -6,6 +6,7 @@ const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
 const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
 const CombatGroundDecalScript := preload("res://scripts/combat/combat_ground_decal.gd")
 const CombatLingerEffectScript := preload("res://scripts/combat/combat_linger_effect.gd")
+const FireRequestScript := preload("res://scripts/combat/fire_request.gd")
 const LaserBeamScript := preload("res://scripts/combat/fx/laser_beam.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
@@ -891,7 +892,7 @@ func _test_laser_hitscan_visual() -> void:
 			break
 	tank_emission = laser_tank_turret.peek_emission()
 	var tank_projectiles: Array = laser_tank_turret.try_fire_at(
-		tank_target, laser_tank_model, root
+		FireRequestScript.at(tank_target, laser_tank_model, root)
 	)
 	var tank_muzzle := root.get_node_or_null("MuzzleFlash_Ltmuzzle") as Node3D
 	var tank_muzzle_visual := tank_muzzle.get_node_or_null("Visual") as Node3D \
@@ -942,7 +943,7 @@ func _test_laser_hitscan_visual() -> void:
 	var infantry_target := Vector3(emission.get("position", Vector3.ZERO)) \
 		+ Vector3(emission.get("direction", Vector3.FORWARD)) * 5.0
 	var infantry_projectiles: Array = infantry_turret.try_fire_at(
-		infantry_target, infantry_model, root
+		FireRequestScript.at(infantry_target, infantry_model, root)
 	)
 	_expect(
 		infantry_projectiles.size() == 1
@@ -1865,9 +1866,9 @@ func _test_model_fx_bank_streams() -> void:
 		var emission := turret.peek_emission()
 		var target_position: Vector3 = Vector3(emission["position"]) \
 			+ Vector3(emission["direction"]) * 2.0
-		var projectiles: Array = turret.try_fire_at(
-			target_position, model, root, Vector3.ZERO, false
-		)
+		var stream_request := FireRequestScript.at(target_position, model, root)
+		stream_request.begin_reload_after_shot = false
+		var projectiles: Array = turret.try_fire_at(stream_request)
 		_expect(
 			projectiles.size() == 1
 			and _muzzle_effects(&"shot_light").is_empty(),
@@ -1906,13 +1907,15 @@ func _test_turret_projectile_launch() -> void:
 	var emission := turret.peek_emission()
 	var direction: Vector3 = emission["direction"]
 	_expect(
-		turret.try_fire_at(Vector3(emission["position"]) + direction * 100.0, model, root).is_empty(),
+		turret.try_fire_at(
+			FireRequestScript.at(Vector3(emission["position"]) + direction * 100.0, model, root)
+		).is_empty(),
 		"an out-of-range request must not emit a projectile"
 	)
 	_expect(is_zero_approx(turret.reload_ticks_remaining), "a rejected request must not consume reload")
 	var target_position: Vector3 = Vector3(emission["position"]) + direction * 10.0
 	_expect(
-		turret.try_fire_at(target_position, model, root).is_empty(),
+		turret.try_fire_at(FireRequestScript.at(target_position, model, root)).is_empty(),
 		"a trajectory weapon must not fire while its barrel still points along the direct line"
 	)
 	var trajectory_aimed := false
@@ -1926,7 +1929,7 @@ func _test_turret_projectile_launch() -> void:
 		"the Minotaurus pitch joint must visibly raise the barrels for trajectory fire"
 	)
 	var aimed_emission := turret.peek_emission()
-	var projectiles: Array = turret.try_fire_at(target_position, model, root)
+	var projectiles: Array = turret.try_fire_at(FireRequestScript.at(target_position, model, root))
 	_expect(projectiles.size() == 1, "an in-range request must create one physical projectile")
 	if not projectiles.is_empty():
 		var projectile = projectiles[0]
@@ -2164,7 +2167,7 @@ func _test_mongoose_launch_and_impact_fx() -> void:
 		turret.aim_at(target_position, 1.0 / 60.0),
 		"the yaw-only Mongoose launcher must accept a ground point ahead"
 	)
-	var projectiles: Array = turret.try_fire_at(target_position, model, root)
+	var projectiles: Array = turret.try_fire_at(FireRequestScript.at(target_position, model, root))
 	_expect(projectiles.size() == 1, "the Mongoose launch must emit one HEAT_B missile")
 	if projectiles.is_empty():
 		model.free()
@@ -2375,7 +2378,7 @@ func _test_fixed_turret() -> void:
 
 	var target_position: Vector3 = Vector3(emission["position"]) \
 		+ Vector3(emission["direction"]) * 5.0
-	var projectiles: Array = turret.try_fire_at(target_position, model, root)
+	var projectiles: Array = turret.try_fire_at(FireRequestScript.at(target_position, model, root))
 	_expect(projectiles.size() == 1, "ATInfGun must emit its conceptual LMG_B shot")
 	_expect(
 		root.get_node_or_null("MuzzleFlash_Smuzz2") == null
@@ -2420,7 +2423,7 @@ func _test_single_axis_turret() -> void:
 		turret.is_aimed_at(close_target),
 		"the Laser Tank must acquire a close target from its pivot despite its offset muzzle"
 	)
-	var close_projectiles: Array = turret.try_fire_at(close_target, model, root)
+	var close_projectiles: Array = turret.try_fire_at(FireRequestScript.at(close_target, model, root))
 	_expect(
 		close_projectiles.size() == 1,
 		"the Laser Tank must fire inside the false offset-muzzle dead zone"
@@ -2494,9 +2497,9 @@ func _test_parallel_trajectory_salvo() -> void:
 	var projectiles: Array = []
 	for shot in 4:
 		emissions.append(turret.peek_emission())
-		var fired: Array = turret.try_fire_at(
-			target_position, model, root, Vector3.ZERO, false
-		)
+		var barrel_request := FireRequestScript.at(target_position, model, root)
+		barrel_request.begin_reload_after_shot = false
+		var fired: Array = turret.try_fire_at(barrel_request)
 		if not fired.is_empty():
 			projectiles.append(fired.front())
 	_expect(
@@ -3686,9 +3689,10 @@ func _test_building_edge_range() -> void:
 		turret.target_range(building) == CombatTurretScript.TargetRange.IN_RANGE,
 		"a building whose near edge is inside maximum range must be attackable"
 	)
-	var edge_projectiles: Array = turret.try_fire_at(
-		building, null, root, Vector3.ZERO, false, false
-	)
+	var edge_request := FireRequestScript.at(building, null, root)
+	edge_request.begin_reload_after_shot = false
+	edge_request.require_aim = false
+	var edge_projectiles: Array = turret.try_fire_at(edge_request)
 	_expect(
 		edge_projectiles.size() == 1,
 		"projectile launch must accept the same building-edge range"

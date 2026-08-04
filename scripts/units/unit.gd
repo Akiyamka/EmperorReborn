@@ -1,6 +1,7 @@
 extends CharacterBody3D
 class_name Unit
 
+const FireRequestScript := preload("res://scripts/combat/fire_request.gd")
 const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
 const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 const TeamColorScript := preload("res://scripts/world/team_color.gd")
@@ -880,7 +881,9 @@ func fire_weapon_at(
 	var turret = _combat_turret_for_weapon(weapon_index)
 	if turret == null:
 		return []
-	return turret.try_fire_at(target_or_position, self, projectile_parent, aim_offset)
+	return turret.try_fire_at(
+		FireRequestScript.at(target_or_position, self, projectile_parent, aim_offset)
+	)
 
 
 func _combat_turret_for_weapon(weapon_index: int):
@@ -1125,7 +1128,7 @@ func _advance_turret_engagement(
 		if starting_new_burst:
 			turret.begin_continuous_burst()
 		return true
-	var projectiles: Array = turret.try_fire_at(target, self)
+	var projectiles: Array = turret.try_fire_at(FireRequestScript.at(target, self))
 	if not projectiles.is_empty():
 		weapon_fired.emit(projectiles, target, turret.weapon_index())
 	return true

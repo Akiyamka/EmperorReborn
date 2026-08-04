@@ -2,6 +2,7 @@ class_name CombatTurret
 extends RefCounted
 
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
+const FireRequestScript := preload("res://scripts/combat/fire_request.gd")
 const BallisticsScript := preload("res://scripts/combat/ballistics.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_definition_catalog.gd")
@@ -798,25 +799,18 @@ func try_fire(
 ## Emits fully configured world-space projectile nodes toward either a live
 ## target or an attack-ground position. Range is checked before reload/muzzle
 ## state is consumed; the target position is sampled now (there is no lead).
-func try_fire_at(
-		target_or_position: Variant,
-		source: Object = null,
-		projectile_parent: Node = null,
-		aim_offset := Vector3.ZERO,
-		begin_reload_after_shot := true,
-		require_aim := true,
-		committed_sequence := false,
-		damage_scale := 1.0
-	) -> Array:
+func try_fire_at(request: FireRequest) -> Array:
+	var target_or_position: Variant = request.target
+	var aim_offset: Vector3 = request.aim_offset
 	var result: Array = []
 	if not is_configured() or not is_bound() \
-	or (not committed_sequence and not is_ready()):
+	or (not request.committed_sequence and not is_ready()):
 		return result
 	var target_position := _bullet_target_position(target_or_position)
 	var preview_emission := peek_emission()
 	if not target_position.is_finite() or preview_emission.is_empty():
 		return result
-	if require_aim and not is_aimed_at(target_position + aim_offset):
+	if request.require_aim and not is_aimed_at(target_position + aim_offset):
 		return result
 	var preview_bullet = _definition_view()
 	if target_or_position is Vector3 and not preview_bullet.can_hit_ground():
@@ -843,7 +837,8 @@ func try_fire_at(
 	):
 		return result
 
-	var parent := projectile_parent if projectile_parent != null else _default_projectile_parent()
+	var parent: Node = request.projectile_parent \
+		if request.projectile_parent != null else _default_projectile_parent()
 	if parent == null or not parent.is_inside_tree():
 		return result
 	# Fire animations can key the barrel away from the servo-owned aim pose
@@ -855,7 +850,9 @@ func try_fire_at(
 		trajectory_launch_direction = _desired_firing_direction(
 			target_position + aim_offset
 		)
-	var payloads := try_fire(begin_reload_after_shot, committed_sequence, damage_scale)
+	var payloads := try_fire(
+		request.begin_reload_after_shot, request.committed_sequence, request.damage_scale
+	)
 	for index in payloads.size():
 		var projectile = CombatProjectileScript.new()
 		parent.add_child(projectile)
@@ -866,8 +863,8 @@ func try_fire_at(
 			emission["direction"] = trajectory_launch_direction
 		if not projectile.launch(
 			payloads[index], emission, target_or_position,
-			source if source != null else _model_root, bullet_gravity, aim_offset,
-			range_origin
+			request.source if request.source != null else _model_root,
+			bullet_gravity, aim_offset, range_origin
 		):
 			projectile.free()
 			continue
