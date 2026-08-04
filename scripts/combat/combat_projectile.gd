@@ -93,6 +93,14 @@ func launch(
 	if not resolved_target["valid"]:
 		return false
 
+	# A shot is aimed either at an entity that can move, die and be missed, or
+	# at a fixed coordinate. Resolved once here: five separate `is Object`
+	# tests below used to re-derive it, and every one of them had to agree.
+	#
+	# Spelled with `is`, not `target_or_position as Object`: the cast does not
+	# produce null for a Vector3, so an attack-ground shot would come out of it
+	# looking like a live target.
+	var target_entity: Object = target_or_position if target_or_position is Object else null
 	_damage_scale = float(bullet_payload.damage_scale) \
 		if "definition" in bullet_payload else 1.0
 	bullet = bullet_payload.definition if "definition" in bullet_payload else bullet_payload
@@ -104,16 +112,16 @@ func launch(
 	_launch_position = global_position
 	_aim_position = Vector3(resolved_target["position"]) + aim_offset
 	_trajectory_impact_position = _aim_position
-	_targets_ground_position = target_or_position is Vector3
+	_targets_ground_position = target_entity == null
 	var gameplay_range_origin := range_origin \
 		if range_origin.is_finite() else _launch_position
-	if target_or_position is Object:
+	if target_entity != null:
 		var center_offset := _aim_position - gameplay_range_origin
 		var center_distance := Vector2(center_offset.x, center_offset.z).length()
 		var surface_distance: float = bullet.horizontal_target_distance(
 			gameplay_range_origin,
 			_aim_position,
-			target_or_position as Object
+			target_entity
 		)
 		_target_range_allowance = maxf(center_distance - surface_distance, 0.0)
 	# Flight budget, not firing range: a homing shot spends extra distance
@@ -121,10 +129,10 @@ func launch(
 	_maximum_flight_distance = bullet.flight_range_world() \
 		+ gameplay_range_origin.distance_to(_launch_position) \
 		+ _target_range_allowance
-	if target_or_position is Object:
-		_target_ref = weakref(target_or_position as Object)
+	if target_entity != null:
+		_target_ref = weakref(target_entity)
 		_tracks_live_target = true
-		if not bullet.can_hit(target_or_position as Object):
+		if not bullet.can_hit(target_entity):
 			return false
 		if not _target_is_alive():
 			return false
@@ -134,7 +142,7 @@ func launch(
 
 	var authored_direction := Vector3(emission.get("direction", Vector3.ZERO))
 	var attack_ground_direction := _launch_position.direction_to(_aim_position) \
-		if target_or_position is Vector3 and not bullet.has_trajectory() \
+		if target_entity == null and not bullet.has_trajectory() \
 		else Vector3.ZERO
 	# A yaw-only launcher cannot encode the vertical component of an
 	# attack-ground shot in its muzzle marker. Direct coordinate shots must use
@@ -155,17 +163,12 @@ func launch(
 	_face_direction(_direction)
 	_missile_trail.build(bullet, global_position, elapsed_seconds)
 
-	if (
-		target_or_position is Object
-		and not bullet.can_reach_target(
-			gameplay_range_origin,
-			_aim_position,
-			target_or_position as Object
-		)
-	) or (
-		not target_or_position is Object
-		and not bullet.can_reach(gameplay_range_origin, _aim_position)
-	):
+	var in_range: bool = (
+		bullet.can_reach_target(gameplay_range_origin, _aim_position, target_entity)
+		if target_entity != null
+		else bullet.can_reach(gameplay_range_origin, _aim_position)
+	)
+	if not in_range:
 		_expire(&"out_of_range")
 		return false
 	if bullet.is_hitscan():
@@ -346,14 +349,10 @@ func _advance_trajectory(_previous_elapsed: float, current_elapsed: float) -> vo
 	var segment := to - from
 	traveled_distance += segment.length()
 	velocity = _trajectory_initial_velocity + Vector3.DOWN * (_gravity_world * time)
-	if _handle_collisions(_collisions_between(from, to)):
+	# An arcing shell's heading is the segment it just flew, not the one it was
+	# launched on; a step too short to have a direction keeps the previous one.
+	if _step_to(from, to, Vector3.ZERO if segment.is_zero_approx() else segment.normalized()):
 		return
-	if _fallback_target_collision(from, to):
-		return
-	global_position = to
-	if not segment.is_zero_approx():
-		_direction = segment.normalized()
-		_face_direction(_direction)
 	if (
 		_targets_ground_position
 		and current_elapsed + 0.000001 >= _trajectory_duration
@@ -381,18 +380,31 @@ func _advance_direct(delta: float, previous_elapsed: float) -> void:
 	var to := from + _direction * step_distance
 	velocity = _direction * bullet.speed()
 	traveled_distance += step_distance
-	if _handle_collisions(_collisions_between(from, to)):
+	if _step_to(from, to, _direction):
 		return
-	if _fallback_target_collision(from, to):
-		return
-	global_position = to
-	_face_direction(_direction)
 
 	if not tracks_live_homing_target \
 	and traveled_distance + 0.000001 >= _aim_travel_distance:
 		_resolve_arrival(global_position)
 	elif traveled_distance + 0.000001 >= _maximum_flight_distance:
 		_expire(&"range_exhausted")
+
+
+## Flies one segment, reporting whether that ended the shot. Both drivers move
+## the same way: anything the segment crosses is resolved first, then the
+## fallback for targets with no precise collision, and only a step that hit
+## nothing actually moves the node. A non-zero `facing` also becomes the new
+## heading.
+func _step_to(from: Vector3, to: Vector3, facing: Vector3) -> bool:
+	if _handle_collisions(_collisions_between(from, to)):
+		return true
+	if _fallback_target_collision(from, to):
+		return true
+	global_position = to
+	if not facing.is_zero_approx():
+		_direction = facing
+		_face_direction(_direction)
+	return false
 
 
 func _update_homing(delta: float) -> void:
