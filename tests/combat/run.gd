@@ -6,6 +6,7 @@ const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
 const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_resolver.gd")
 const CombatGroundDecalScript := preload("res://scripts/combat/combat_ground_decal.gd")
 const CombatLingerEffectScript := preload("res://scripts/combat/combat_linger_effect.gd")
+const LaserBeamScript := preload("res://scripts/combat/fx/laser_beam.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const ShotPayloadScript := preload("res://scripts/combat/shot_payload.gd")
@@ -858,7 +859,7 @@ func _test_laser_hitscan_visual() -> void:
 	_expect(
 		glow_material != null
 		and is_equal_approx(glow_material.albedo_color.a, 0.24)
-		and glow_mesh.top_radius > CombatProjectileScript.LASER_GLOW_RADIUS
+		and glow_mesh.top_radius > LaserBeamScript.GLOW_RADIUS
 		and glow_material.emission.b > glow_material.emission.g
 		and glow_material.emission.g > glow_material.emission.r
 		and glow_material.emission_energy_multiplier > 2.5,

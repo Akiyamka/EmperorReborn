@@ -36,19 +36,9 @@ const MAX_PIERCING_COLLISIONS_PER_STEP := 64
 const DIRECT_PROJECTILE_SIZE := 0.12
 const HOMING_PROJECTILE_SIZE := 0.16
 const TRAJECTORY_PROJECTILE_SIZE := 0.18
-const MISSILE_TRAIL_SIDES := 6
-const MAX_MISSILE_TRAIL_POINTS := 128
-const MISSILE_TRAIL_RADIUS_SCALE := SOURCE_MODEL_WORLD_SCALE * 0.65
+const MissileTrailScript := preload("res://scripts/combat/fx/missile_trail.gd")
+const LaserBeamScript := preload("res://scripts/combat/fx/laser_beam.gd")
 const NO_PROPULSION_FLASH_BULLETS: Array[StringName] = [&"KobraHowitzer_B"]
-const LASER_VISUAL_DURATION := 0.16
-const LASER_CORE_RADIUS := 0.025
-const LASER_GLOW_RADIUS := 0.07
-const LASER_TANK_GLOW_RADIUS := 0.1
-const LASER_RADIAL_SEGMENTS := 8
-const LASER_TANK_COLOR := Color(0.2, 1.0, 0.08)
-const LASER_TANK_GLOW_COLOR := Color(0.08, 0.72, 1.0, 0.24)
-const LASER_TANK_GLOW_ENERGY := 3.0
-const INFANTRY_LASER_COLOR := Color(1.0, 0.55, 0.08)
 
 var bullet
 var _damage_scale := 1.0
@@ -73,15 +63,13 @@ var _gravity_world := 0.0
 var _trajectory_duration := 0.0
 var _trajectory_initial_velocity := Vector3.ZERO
 var _maximum_flight_distance := 0.0
-var _missile_trail_mesh: ImmediateMesh
-var _missile_trail_material: StandardMaterial3D
-var _missile_trail_points: Array[Dictionary] = []
-var _missile_trail_duration := 0.0
+var _missile_trail := MissileTrailScript.new()
 var _impact_resolver = CombatImpactResolverScript.new()
 
 
 func _init() -> void:
 	set_physics_process(false)
+	_missile_trail.configure(self)
 
 
 func launch(
@@ -165,7 +153,7 @@ func launch(
 	state = State.FLYING
 	set_physics_process(true)
 	_face_direction(_direction)
-	_create_missile_trail()
+	_missile_trail.build(bullet, global_position, elapsed_seconds)
 
 	if (
 		target_or_position is Object
@@ -248,140 +236,6 @@ func _hide_authored_propulsion_flash(node: Node) -> void:
 		_hide_authored_propulsion_flash(child)
 
 
-func _create_missile_trail() -> void:
-	if (
-		bullet == null
-		or bullet.is_hitscan()
-		or not bullet.has_missile_trail()
-		or bullet.missile_trail_size() <= 0.0
-		or bullet.missile_trail_length() <= 0
-	):
-		return
-
-	# Treat Length as the authored history count and Delta as its fractional
-	# rule-tick spacing. Keeping that history in seconds lets the wake follow the
-	# projectile's actual past positions along a ballistic arc.
-	_missile_trail_duration = maxf(
-		float(bullet.missile_trail_length())
-			* maxf(bullet.missile_trail_delta(), 0.05)
-			/ RULE_UPDATES_PER_SECOND,
-		1.0 / RULE_UPDATES_PER_SECOND
-	)
-	_missile_trail_mesh = ImmediateMesh.new()
-	_missile_trail_material = StandardMaterial3D.new()
-	_missile_trail_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_missile_trail_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_missile_trail_material.vertex_color_use_as_albedo = true
-	_missile_trail_material.albedo_color = Color.WHITE
-	_missile_trail_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-
-	var trail_visual := MeshInstance3D.new()
-	trail_visual.name = "MissileTrail"
-	trail_visual.mesh = _missile_trail_mesh
-	trail_visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(trail_visual)
-	_missile_trail_points.append({
-		"position": global_position,
-		"time": elapsed_seconds,
-	})
-
-
-func _sample_missile_trail() -> void:
-	if _missile_trail_mesh == null:
-		return
-	var point := {
-		"position": global_position,
-		"time": elapsed_seconds,
-	}
-	if _missile_trail_points.is_empty():
-		_missile_trail_points.append(point)
-	else:
-		var previous_position := Vector3(_missile_trail_points.back()["position"])
-		if previous_position.distance_squared_to(global_position) > 0.000001:
-			_missile_trail_points.append(point)
-
-	var oldest_time := elapsed_seconds - _missile_trail_duration
-	while (
-		_missile_trail_points.size() > 2
-		and float(_missile_trail_points[1]["time"]) < oldest_time
-	):
-		_missile_trail_points.pop_front()
-	while _missile_trail_points.size() > MAX_MISSILE_TRAIL_POINTS:
-		_missile_trail_points.pop_front()
-	_rebuild_missile_trail()
-
-
-func _rebuild_missile_trail() -> void:
-	_missile_trail_mesh.clear_surfaces()
-	if _missile_trail_points.size() < 2 or _missile_trail_duration <= 0.0:
-		return
-
-	var trail_color := _missile_trail_color(bullet.missile_trail_style())
-	var base_radius: float = bullet.missile_trail_size() * MISSILE_TRAIL_RADIUS_SCALE
-	_missile_trail_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, _missile_trail_material)
-	for point_index in _missile_trail_points.size() - 1:
-		var first_ring := _missile_trail_ring(point_index, base_radius, trail_color)
-		var second_ring := _missile_trail_ring(point_index + 1, base_radius, trail_color)
-		for side in MISSILE_TRAIL_SIDES:
-			var next_side := (side + 1) % MISSILE_TRAIL_SIDES
-			_add_missile_trail_vertex(first_ring[side])
-			_add_missile_trail_vertex(second_ring[side])
-			_add_missile_trail_vertex(second_ring[next_side])
-			_add_missile_trail_vertex(first_ring[side])
-			_add_missile_trail_vertex(second_ring[next_side])
-			_add_missile_trail_vertex(first_ring[next_side])
-	_missile_trail_mesh.surface_end()
-
-
-func _missile_trail_ring(
-		point_index: int,
-		base_radius: float,
-		trail_color: Color
-	) -> Array[Dictionary]:
-	var world_position := Vector3(_missile_trail_points[point_index]["position"])
-	var previous_position := Vector3(
-		_missile_trail_points[maxi(point_index - 1, 0)]["position"]
-	)
-	var next_position := Vector3(
-		_missile_trail_points[mini(point_index + 1, _missile_trail_points.size() - 1)]["position"]
-	)
-	var tangent := previous_position.direction_to(next_position)
-	if tangent.is_zero_approx():
-		tangent = _direction if not _direction.is_zero_approx() else Vector3.FORWARD
-	var reference := Vector3.RIGHT if absf(tangent.dot(Vector3.UP)) > 0.9 else Vector3.UP
-	var axis_a := tangent.cross(reference).normalized()
-	var axis_b := tangent.cross(axis_a).normalized()
-	var age := maxf(elapsed_seconds - float(_missile_trail_points[point_index]["time"]), 0.0)
-	var remaining := clampf(1.0 - age / _missile_trail_duration, 0.0, 1.0)
-	var radius := base_radius * lerpf(0.08, 1.0, remaining)
-	var color := trail_color
-	color.a *= remaining * remaining
-
-	var ring: Array[Dictionary] = []
-	for side in MISSILE_TRAIL_SIDES:
-		var angle := TAU * float(side) / float(MISSILE_TRAIL_SIDES)
-		var offset := (axis_a * cos(angle) + axis_b * sin(angle)) * radius
-		ring.append({
-			"position": to_local(world_position + offset),
-			"color": color,
-		})
-	return ring
-
-
-func _add_missile_trail_vertex(vertex: Dictionary) -> void:
-	_missile_trail_mesh.surface_set_color(Color(vertex["color"]))
-	_missile_trail_mesh.surface_add_vertex(Vector3(vertex["position"]))
-
-
-func _missile_trail_color(style: int) -> Color:
-	# Style 6 is KobraHowitzer_B's pale aerodynamic wake. The remaining styles
-	# retain a neutral smoke presentation until their original palettes are
-	# characterized independently.
-	if style == 6:
-		return Color(0.58, 0.65, 0.68, 0.48)
-	return Color(0.62, 0.62, 0.60, 0.56)
-
-
 func advance(delta: float) -> void:
 	if state != State.FLYING or delta <= 0.0:
 		return
@@ -397,7 +251,7 @@ func advance(delta: float) -> void:
 			_advance_trajectory(previous_elapsed, elapsed_seconds)
 		else:
 			_advance_direct(step, previous_elapsed)
-		_sample_missile_trail()
+		_missile_trail.sample(global_position, elapsed_seconds, _direction)
 		remaining -= step
 
 
@@ -734,7 +588,7 @@ func _finish(reason: StringName, world_position: Vector3) -> void:
 		bullet != null
 		and bullet.is_laser()
 		and reason in [&"impact_target", &"impact_ground"]
-		and _create_laser_visual(_launch_position, world_position)
+		and LaserBeamScript.build(self, bullet.id(), _launch_position, world_position)
 	)
 	finished.emit(finish_reason, world_position)
 	if not is_inside_tree():
@@ -743,91 +597,12 @@ func _finish(reason: StringName, world_position: Vector3) -> void:
 		var cleanup := Timer.new()
 		cleanup.name = "LaserCleanup"
 		cleanup.one_shot = true
-		cleanup.wait_time = LASER_VISUAL_DURATION
+		cleanup.wait_time = LaserBeamScript.LIFETIME_SECONDS
 		add_child(cleanup)
 		cleanup.timeout.connect(_queue_free_finished)
 		cleanup.start()
 	else:
 		call_deferred("_queue_free_finished")
-
-
-func _create_laser_visual(start_position: Vector3, end_position: Vector3) -> bool:
-	if not is_inside_tree() or get_node_or_null("LaserBeam") != null:
-		return false
-	var segment := end_position - start_position
-	var length := segment.length()
-	if length <= 0.000001:
-		return false
-
-	var beam_direction := segment / length
-	var beam := Node3D.new()
-	beam.name = "LaserBeam"
-	beam.set_meta("start_position", start_position)
-	beam.set_meta("end_position", end_position)
-	add_child(beam)
-	# Impact resolution moves the projectile node to the hit position. Keeping
-	# the beam top-level prevents that parent move from dragging its midpoint
-	# away from the muzzle on the same frame.
-	beam.top_level = true
-	beam.global_transform = Transform3D(
-		Basis(Quaternion(Vector3.UP, beam_direction)),
-		start_position.lerp(end_position, 0.5)
-	)
-
-	var is_infantry_laser: bool = bullet.id() == &"InfLaser_B"
-	var color: Color = INFANTRY_LASER_COLOR if is_infantry_laser else LASER_TANK_COLOR
-	var glow_color: Color = Color(color.r, color.g, color.b, 0.24) \
-		if is_infantry_laser else LASER_TANK_GLOW_COLOR
-	var glow_energy: float = 2.5 if is_infantry_laser else LASER_TANK_GLOW_ENERGY
-	var glow_radius: float = LASER_GLOW_RADIUS \
-		if is_infantry_laser else LASER_TANK_GLOW_RADIUS
-	_add_laser_layer(
-		beam, "Glow", length, glow_radius,
-		glow_color, glow_energy
-	)
-	_add_laser_layer(
-		beam, "Core", length, LASER_CORE_RADIUS,
-		Color(
-			lerpf(color.r, 1.0, 0.72),
-			lerpf(color.g, 1.0, 0.72),
-			lerpf(color.b, 1.0, 0.72),
-			0.98
-		),
-		5.0
-	)
-	return true
-
-
-func _add_laser_layer(
-		parent: Node3D,
-		layer_name: String,
-		length: float,
-		radius: float,
-		color: Color,
-		emission_energy: float
-	) -> void:
-	var mesh := CylinderMesh.new()
-	mesh.height = length
-	mesh.top_radius = radius
-	mesh.bottom_radius = radius
-	mesh.radial_segments = LASER_RADIAL_SEGMENTS
-	mesh.rings = 1
-
-	var material := StandardMaterial3D.new()
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = color
-	material.emission_enabled = true
-	material.emission = Color(color.r, color.g, color.b)
-	material.emission_energy_multiplier = emission_energy
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mesh.material = material
-
-	var visual := MeshInstance3D.new()
-	visual.name = layer_name
-	visual.mesh = mesh
-	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	parent.add_child(visual)
 
 
 func _queue_free_finished() -> void:
