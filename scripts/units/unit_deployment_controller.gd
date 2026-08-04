@@ -130,37 +130,21 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 	if not can_handle(unit):
 		return {"handled": false, "available": false, "message": ""}
 	if bool(unit.call("is_deploying")):
-		return {"handled": true, "available": false, "message": "MCV is already deploying"}
+		return _reject("MCV is already deploying")
 	if _navigation_grid == null or not _navigation_grid.is_loaded():
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: navigation grid is unavailable",
-		}
+		return _reject("MCV cannot deploy: navigation grid is unavailable")
 	if _buildings_root == null:
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: buildings root is unavailable",
-		}
+		return _reject("MCV cannot deploy: buildings root is unavailable")
 
 	var con_yard := _construction_yard_for(unit)
 	var building_id: StringName = con_yard.get("id", &"")
 	var config: Resource = con_yard.get("config")
 	if building_id == &"" or config == null:
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: its rules have no Construction Yard",
-		}
+		return _reject("MCV cannot deploy: its rules have no Construction Yard")
 
 	var building_scene := _cached_building_scene(building_id)
 	if building_scene == null:
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: %s scene is unavailable" % String(building_id),
-		}
+		return _reject("MCV cannot deploy: %s scene is unavailable" % String(building_id))
 
 	var placement: BuildingPlacement = BuildingPlacementScript.new()
 	add_child(placement)
@@ -175,22 +159,14 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 	occupy_rows.assign(config.occupy_rows)
 	if not placement.begin(building_id, String(building_id), occupy_rows, false, true):
 		placement.free()
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: %s has no valid footprint" % String(building_id),
-		}
+		return _reject("MCV cannot deploy: %s has no valid footprint" % String(building_id))
 
 	placement.set_rotation_quarter_turns(_deployment_quarter_turns(unit))
 	var hover_cell := _deployment_hover_cell(unit)
 	var evaluation: int = placement.evaluate_at_hover_cell(hover_cell)
 	if evaluation != BuildingPlacement.PlaceResult.AVAILABLE:
 		placement.free()
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy at this location",
-		}
+		return _reject("MCV cannot deploy at this location")
 
 	return {
 		"handled": true,
@@ -201,6 +177,14 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 		"building_id": building_id,
 		"building_scene": building_scene,
 	}
+
+
+## Every rejection past the can_handle() gate has the same shape and differs
+## only in its message. `handled` stays true there: the unit *is* an MCV, it
+## just cannot deploy right now, and the caller must not fall through to the
+## ordinary move order.
+static func _reject(message: String) -> Dictionary:
+	return {"handled": true, "available": false, "message": message}
 
 
 ## Whether a move order on this building should be routed to try_undeploy

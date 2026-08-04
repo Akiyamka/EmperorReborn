@@ -351,27 +351,32 @@ func _configure_demo_players() -> void:
 	players.set_relation(LOCAL_PLAYER_ID, ENEMY_PLAYER_ID, PlayerDataScript.Relation.ENEMY)
 
 
-func _local_player_building_option_ids() -> Array[StringName]:
+## The local player's PlayerData, or null when the roster autoload is missing
+## (headless tests) or the match has not been set up yet. Every sidebar option
+## list below gates on it: without a player there is no house to filter by, and
+## falling back to the unfiltered catalog would offer the local side buildings
+## it cannot construct.
+func _local_player():
 	var players = _players()
-	if players == null:
-		return []
+	return players.player(LOCAL_PLAYER_ID) if players != null else null
 
-	var local_player = players.player(LOCAL_PLAYER_ID)
+
+func _local_player_building_option_ids() -> Array[StringName]:
+	var local_player = _local_player()
 	if local_player == null:
 		return []
-
-	return _building_definition_catalog.buildable_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.buildable_ids_for_house(
+		local_player.house_id, local_player.subhouse_ids
+	)
 
 
 func _local_player_house_id() -> StringName:
-	var players = _players()
-	var local_player = players.player(LOCAL_PLAYER_ID) if players != null else null
+	var local_player = _local_player()
 	return local_player.house_id if local_player != null else &""
 
 
 func _local_player_subhouse_ids() -> Array[StringName]:
-	var players = _players()
-	var local_player = players.player(LOCAL_PLAYER_ID) if players != null else null
+	var local_player = _local_player()
 	return local_player.subhouse_ids.duplicate() if local_player != null else []
 
 
@@ -408,39 +413,30 @@ func _refresh_sidebar_house_pages() -> void:
 
 
 func _local_player_wall_building_ids() -> Array[StringName]:
-	var players = _players()
-	if players == null:
-		return []
-
-	var local_player = players.player(LOCAL_PLAYER_ID)
+	var local_player = _local_player()
 	if local_player == null:
 		return []
+	return _building_definition_catalog.wall_ids_for_house(
+		local_player.house_id, local_player.subhouse_ids
+	)
 
-	return _building_definition_catalog.wall_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
-
+## The producible unit list is house-independent (a factory builds whatever its
+## own rules allow), but the gate stays: with no local player there is no
+## sidebar to populate at all.
 func _local_player_unit_option_ids() -> Array[StringName]:
-	var players = _players()
-	if players == null:
+	if _local_player() == null:
 		return []
-
-	var local_player = players.player(LOCAL_PLAYER_ID)
-	if local_player == null:
-		return []
-
 	return _unit_definition_catalog.producible_unit_ids()
 
 
 func _local_player_upgrade_option_ids() -> Array[StringName]:
-	var players = _players()
-	if players == null:
-		return []
-
-	var local_player = players.player(LOCAL_PLAYER_ID)
+	var local_player = _local_player()
 	if local_player == null:
 		return []
-
-	return _building_definition_catalog.upgrade_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.upgrade_ids_for_house(
+		local_player.house_id, local_player.subhouse_ids
+	)
 
 
 func _players():
