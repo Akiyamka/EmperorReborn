@@ -5,6 +5,7 @@ const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd"
 const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 const TeamColorScript := preload("res://scripts/world/team_color.gd")
 const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const DamagePolicyScript := preload("res://scripts/combat/damage_policy.gd")
 const CombatHullScript := preload("res://scripts/combat/combat_hull.gd")
 const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
 const SelectionHaloBindingScript := preload("res://scripts/ui/selection_halo_binding.gd")
@@ -545,18 +546,15 @@ func take_damage(amount: float, _death_cause: StringName = &"") -> void:
 	# damage type, so the death cause is accepted for signature parity with
 	# Unit.take_damage() — callers don't need to branch by target type — but
 	# genuinely unused here.
-	if invulnerable or amount <= 0.0 or health <= 0.0:
+	# The arithmetic is shared with Unit.take_damage(); applying it is not,
+	# because the health setter here recomputes power and damage-state visuals.
+	var outcome := DamagePolicyScript.resolve(amount, health, shields, invulnerable)
+	if outcome.absorbed_by_shields > 0.0:
+		shields -= outcome.absorbed_by_shields
+	if outcome.health_delta == 0.0:
 		return
-
-	var remaining_damage := amount
-	if shields > 0.0:
-		var absorbed := minf(shields, remaining_damage)
-		shields -= absorbed
-		remaining_damage -= absorbed
-	if remaining_damage <= 0.0:
-		return
-	health -= remaining_damage
-	if health <= 0.0:
+	health += outcome.health_delta
+	if outcome.is_lethal:
 		# §2.1 "Building destruction": no debris/ruins remain, so the footprint
 		# is freed immediately via queue_free() — survivors must be spawned
 		# first, before the building (and its footprint bounds) disappear.

@@ -8,6 +8,7 @@ const TeamColorScript := preload("res://scripts/world/team_color.gd")
 const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
 const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
 const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const DamagePolicyScript := preload("res://scripts/combat/damage_policy.gd")
 const AuthoredFireControllerScript := preload(
 	"res://scripts/combat/authored_fire_controller.gd"
 )
@@ -989,18 +990,15 @@ func grant_temporary_invulnerability(duration: float) -> void:
 
 
 func take_damage(amount: float, death_cause: StringName = &"") -> void:
-	if invulnerable or amount <= 0.0 or health <= 0.0:
+	# The arithmetic is shared with Building.take_damage(); applying it is not,
+	# because the health/shields setters here run unit-specific side effects.
+	var outcome := DamagePolicyScript.resolve(amount, health, shields, invulnerable)
+	if outcome.absorbed_by_shields > 0.0:
+		shields -= outcome.absorbed_by_shields
+	if outcome.health_delta == 0.0:
 		return
-
-	var remaining_damage := amount
-	if shields > 0.0:
-		var absorbed := minf(shields, remaining_damage)
-		shields -= absorbed
-		remaining_damage -= absorbed
-	if remaining_damage <= 0.0:
-		return
-	health -= remaining_damage
-	if health <= 0.0:
+	health += outcome.health_delta
+	if outcome.is_lethal:
 		_begin_death_sequence(death_cause)
 
 
