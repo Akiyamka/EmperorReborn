@@ -18,12 +18,7 @@ const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.
 const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
 const UnitTerrainAlignmentScript := preload("res://scripts/units/unit_terrain_alignment.gd")
 const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
-const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
-const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
-const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
-const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
-const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
-const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
+const UnitDeathSequenceScript := preload("res://scripts/units/unit_death_sequence.gd")
 static var _definition_catalog := UnitSceneCatalogScript.shared()
 
 signal owner_changed(player_id: int)
@@ -179,9 +174,7 @@ var _mech_motion_cycle_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
 var _mech_locomotion_state := MechLocomotionState.IDLE
 var _mech_start_remaining := 0.0
 var _flight_controller: UnitFlightController = null
-## Policy object picked once in _apply_unit_definition, alongside where it
-## already reads unit_definition.infantry today. See unit_death_strategy.gd.
-var _death_strategy: UnitDeathStrategy = null
+var _death_sequence := UnitDeathSequenceScript.new()
 ## Not `velocity`: navigation_step() zeroes its vertical component, and
 ## UnitFlightController writes global_position directly, bypassing velocity
 ## entirely during takeoff/landing. Updated at the top of every
@@ -226,6 +219,7 @@ var _weapon_fire_overlays: Dictionary = {}
 ## suite's TestHarvester) and before the node enters the tree.
 func _init() -> void:
 	_terrain_alignment.configure(self)
+	_death_sequence.configure(self)
 
 
 func _ready() -> void:
@@ -942,141 +936,12 @@ func combat_is_airborne() -> bool:
 	return unit_definition != null and unit_definition.can_fly
 
 
-## Called on the killing blow instead of queue_free() directly. The unit is
-## still freed the instant health crosses zero, exactly as before this
-## feature — see the death-animation plan's "Core design decision" for why a
-## `_dying` guard living through the animation was rejected (it would need
-## mirroring across is_deploying()-style checks scattered through this file,
-## plus an explicit deselect UnitCommandController does not otherwise need).
-## A corpse node is spawned in the unit's place only when an authored clip
-## actually matches; otherwise this degrades byte-for-byte to today's
-## behaviour so units without a death clip never regress.
+## Entry point kept on the facade: take_damage() calls it, and the surrounding
+## docs (death_corpse.gd, unit_death_strategy.gd) name it. Everything it used
+## to do lives in UnitDeathSequence; _previous_global_position is the facade's
+## own bookkeeping and is handed over by value.
 func _begin_death_sequence(cause: StringName) -> void:
-	var candidates: Array[StringName] = (
-		_death_strategy.death_animation_candidates(cause, is_deployed())
-		if _death_strategy != null else []
-	)
-	var found := _find_animation_player(candidates)
-	var player := found.get("player") as AnimationPlayer
-	var clip := StringName(found.get("name", &""))
-	var parent := get_parent()
-	var model := (
-		visual_root.get_child(0) as Node3D
-		if visual_root != null and visual_root.get_child_count() > 0 else null
-	)
-	if player == null or model == null or parent == null:
-		# No corpse at all (no clip matched, or nothing to detach), but a
-		# vehicle with a rules-authored explosion must still visually explode
-		# — the death clip and the explosion FX are independent per the
-		# original data (ExplosionType/ExplosionEffects vs Explode animation),
-		# so losing one must not silently drop the other.
-		var start_paths: Array[String] = (
-			_death_strategy.death_start_sound_paths(_owner_faction_id(), config_id)
-			if _death_strategy != null else []
-		)
-		DeathSoundPlayerScript.play_pool(parent, global_position, start_paths)
-		_spawn_death_explosion_effects(parent, global_position)
-		queue_free()
-		return
-
-	var world_transform := visual_root.global_transform
-	_prepare_model_for_corpse(model)
-	visual_root.remove_child(model)
-
-	var launch_impulse: Vector3 = (
-		_death_strategy.death_launch_impulse(cause) if _death_strategy != null else Vector3.ZERO
-	)
-	# Inherited momentum is a property of the death cause, not of body type
-	# (death-animation plan, "Momentum policy"): Shot/Burn/Gassed clips are
-	# authored in place and must drop whatever velocity the unit had, while a
-	# flying unit's corpse must always fall regardless of what killed it.
-	var carries_momentum: bool = (
-		(unit_definition != null and unit_definition.can_fly)
-		or not launch_impulse.is_zero_approx()
-	)
-	var momentum := Vector3.ZERO
-	if carries_momentum:
-		var physics_delta := get_physics_process_delta_time()
-		var inherited_velocity := (
-			(global_position - _previous_global_position) / physics_delta
-			if physics_delta > 0.0 else Vector3.ZERO
-		)
-		momentum = inherited_velocity + launch_impulse
-
-	var owner_faction := _owner_faction_id()
-	var sound_layers: Array = (
-		_death_strategy.death_sound_event_layers(cause, owner_faction, config_id)
-		if _death_strategy != null else []
-	)
-	var sound_event_ids := _resolve_sound_event_ids(sound_layers)
-	var start_paths: Array[String] = (
-		_death_strategy.death_start_sound_paths(owner_faction, config_id)
-		if _death_strategy != null else []
-	)
-	DeathCorpseScript.spawn(
-		parent, model, world_transform, clip, sound_event_ids, momentum, owner_player_id,
-		start_paths,
-	)
-	_spawn_death_explosion_effects(parent, world_transform.origin)
-	queue_free()
-
-
-## Spawns this unit's rules-authored death explosion (UnitDefinition's
-## explosion_effect_ids, falling back to its single explosion_type_id —
-## mirrors CombatBullet.explosion_effect_ids()) as a sibling of the dying
-## unit, exactly like CombatProjectile._spawn_explosion_visuals(). Must never
-## parent to `self`: the unit is freed the instant this call returns, which
-## would take a child effect down with it. Infantry naturally get no effect
-## here since their UnitDefinition carries no explosion ids at all — nothing
-## unit-type-specific needed.
-##
-## Also plays the death strategy's VFX-timed sound layer
-## (death_vfx_sound_paths(), vehicles' size-tier boom) right here rather than
-## from DeathCorpse or attached to the CombatImpactEffect node itself: this
-## is the one call site that already fires at "the explosion SFX is shown"
-## for both branches of _begin_death_sequence (with a corpse and the early
-## no-corpse return alike), so tying the sound to it directly is explicit
-## rather than coincidental. It is deliberately NOT a child of the spawned
-## CombatImpactEffect — that node's own Cleanup timer frees it after its
-## (short, ~0.5s) visual lifetime, which would cut an explosion sample short;
-## playing it as a parent-level fire-and-forget layer (DeathSoundPlayer.
-## play_pool) instead lets it run to completion independent of the visual.
-func _spawn_death_explosion_effects(parent: Node, world_position: Vector3) -> void:
-	if unit_definition == null or parent == null or not parent.is_inside_tree():
-		return
-	var vfx_sound_paths: Array[String] = (
-		_death_strategy.death_vfx_sound_paths(config_id) if _death_strategy != null else []
-	)
-	DeathSoundPlayerScript.play_pool(parent, world_position, vfx_sound_paths)
-	for effect_id in _death_explosion_effect_ids():
-		var scene_path := String(unit_definition.explosion_scene_paths.get(effect_id, ""))
-		if scene_path.is_empty():
-			continue
-		var scene := load(scene_path) as PackedScene
-		if scene == null:
-			continue
-		var effect = CombatImpactEffectScript.new()
-		parent.add_child(effect)
-		if not effect.configure(effect_id, scene, world_position):
-			effect.free()
-
-
-## Mirrors CombatBullet.explosion_effect_ids(): an explicit effect list wins,
-## falling back to the single ExplosionType id only when no effect list was
-## authored, so a unit's death visual resolves its two Rules.txt fields the
-## same way its own bullets already do.
-func _death_explosion_effect_ids() -> Array[StringName]:
-	var result: Array[StringName] = []
-	if unit_definition == null:
-		return result
-	for value in unit_definition.explosion_effect_ids:
-		var effect_id := StringName(value)
-		if effect_id != &"" and effect_id not in result:
-			result.append(effect_id)
-	var primary_id: StringName = unit_definition.explosion_type_id
-	if result.is_empty() and primary_id != &"":
-		result.append(primary_id)
-	return result
+	_death_sequence.begin(cause, _previous_global_position)
 
 
 ## Scrubs the runtime state Unit bound onto the model subtree before handing
@@ -1096,7 +961,7 @@ func _death_explosion_effect_ids() -> Array[StringName]:
 ## which walks this instance's own script variables after a death and fails
 ## if anything still points at a node under the corpse — so forgetting an
 ## entry here fails loudly in that test rather than regressing silently.
-func _prepare_model_for_corpse(model: Node3D) -> void:
+func prepare_model_for_corpse(model: Node3D) -> void:
 	# Must run before any overlay player is freed below: a fire sequence's
 	# state dict can still hold that same player in state["player"], and
 	# freeing it out from under a live entry leaves a dangling reference that
@@ -1175,38 +1040,6 @@ func _sever_connections_into(subtree_root: Node) -> void:
 				var callable := connection.get("callable") as Callable
 				if callable.get_object() == self:
 					node.disconnect(signal_name, callable)
-
-
-## Resolves every manifest-backed sound *layer* the strategy proposed,
-## collapsing each layer's candidate list to the single first id the SFX-hook
-## converter actually generated a resource for (per-house hook -> generic
-## hook -> nothing); a layer whose candidates all went ungenerated simply
-## drops out without taking the others with it. This is infantry-only now —
-## vehicle death explosions bypass GeneratedVoiceManifest entirely via
-## death_vfx_sound_paths()/death_start_sound_paths() (direct WAV pools, see
-## VehicleDeathStrategy/docs/quirks.md), so `layers` here is at most the one
-## per-cause layer InfantryDeathStrategy.death_sound_event_layers() returns.
-func _resolve_sound_event_ids(layers: Array) -> Array[StringName]:
-	var resolved: Array[StringName] = []
-	for layer: Array in layers:
-		for candidate: StringName in layer:
-			if not GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(_death_sound_key(candidate)):
-				continue
-			if not resolved.has(candidate):
-				resolved.append(candidate)
-			break
-	return resolved
-
-
-func _death_sound_key(sound_event_id: StringName) -> StringName:
-	return StringName(String(sound_event_id).to_lower())
-
-
-func _owner_faction_id() -> StringName:
-	var roster_player = owner_player()
-	if roster_player == null:
-		return &""
-	return roster_player.house_id
 
 
 func combat_aim_position() -> Vector3:
@@ -2107,7 +1940,7 @@ func _start_undeployment_animation() -> void:
 
 
 func _start_transition_animation(candidates: Array[StringName]) -> void:
-	var found := _find_animation_player(candidates)
+	var found := find_animation_clip(candidates)
 	_deployment_animation_player = found.get("player") as AnimationPlayer
 	_deployment_animation_name = StringName(found.get("name", &""))
 
@@ -2125,7 +1958,7 @@ func _start_transition_animation(candidates: Array[StringName]) -> void:
 ## Shared "first player owning one of these candidate clips" scan, in
 ## candidate-preference order. Used by both deployment transitions and death
 ## animation selection (_begin_death_sequence) so the two don't drift apart.
-func _find_animation_player(candidates: Array[StringName]) -> Dictionary:
+func find_animation_clip(candidates: Array[StringName]) -> Dictionary:
 	return AuthoredModelScript.find_clip(_animation_players, candidates)
 
 
@@ -2280,10 +2113,7 @@ func _apply_unit_definition() -> void:
 	max_health = float(unit_definition.health)
 	max_shields = float(unit_definition.shield_health)
 	armour_type = unit_definition.armour_type
-	_death_strategy = (
-		InfantryDeathStrategyScript.new() if unit_definition.infantry
-		else VehicleDeathStrategyScript.new()
-	)
+	_death_sequence.adopt_definition(unit_definition)
 	_configure_combat_turrets()
 	if unit_definition.can_fly:
 		if _flight_controller == null:
