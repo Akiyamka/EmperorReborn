@@ -2,6 +2,7 @@ class_name CombatTurret
 extends RefCounted
 
 const CombatBulletScript := preload("res://scripts/combat/combat_bullet.gd")
+const BallisticsScript := preload("res://scripts/combat/ballistics.gd")
 const CombatProjectileScript := preload("res://scripts/combat/combat_projectile.gd")
 const CombatDefinitionCatalogScript := preload("res://scripts/combat/combat_definition_catalog.gd")
 const CombatLineOfFireScript := preload("res://scripts/combat/combat_line_of_fire.gd")
@@ -1229,16 +1230,16 @@ func _desired_firing_direction(world_position: Vector3) -> Vector3:
 	if target_heading.is_zero_approx():
 		target_heading = target_direction
 	var trajectory_impact_position: Vector3 = (
-		CombatProjectileScript.parallel_trajectory_impact_position(
+		BallisticsScript.parallel_impact_position(
 			trajectory_origin, world_position, target_heading
 		)
 	)
 	var trajectory_direction := trajectory_impact_position - trajectory_origin
-	var velocities: Array[Vector3] = CombatProjectileScript.trajectory_launch_velocities(
+	var velocities: Array[Vector3] = BallisticsScript.launch_velocities(
 		bullet,
 		trajectory_origin,
 		trajectory_impact_position,
-		CombatProjectileScript.trajectory_gravity_world(bullet_gravity),
+		BallisticsScript.gravity_world(bullet_gravity),
 		bullet.maximum_range_world()
 	)
 	if velocities.is_empty():
