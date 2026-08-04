@@ -158,7 +158,7 @@ func _ready() -> void:
 	_apply_building_definition()
 	health = max_health
 	shields = max_shields
-	_scroll_fx_meshes = _collect_scroll_fx_meshes()
+	_scroll_fx_meshes = AuthoredModelScript.scroll_fx_meshes(self)
 	_refresh_owner_visuals()
 	_refresh_generated_energy()
 	_sync_purchased_upgrade()
@@ -242,19 +242,6 @@ func _emit_rally_point_changed(position: Vector3) -> void:
 func exit_direction() -> Vector3:
 	var direction := SpatialOrientationScript.world_horizontal_axis(self, LOCAL_EXIT_DIRECTION)
 	return direction if not direction.is_zero_approx() else Vector3.BACK
-
-
-func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:
-	var result: Array[MeshInstance3D] = []
-	_collect_scroll_fx_meshes_from(self, result)
-	return result
-
-
-func _collect_scroll_fx_meshes_from(node: Node, result: Array[MeshInstance3D]) -> void:
-	if node is MeshInstance3D and node.has_meta("scroll_fx"):
-		result.append(node)
-	for child in node.get_children():
-		_collect_scroll_fx_meshes_from(child, result)
 
 
 func _add_selection_collision() -> void:

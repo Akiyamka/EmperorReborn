@@ -19,6 +19,7 @@ const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit
 const UnitTerrainAlignmentScript := preload("res://scripts/units/unit_terrain_alignment.gd")
 const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const UnitDeathSequenceScript := preload("res://scripts/units/unit_death_sequence.gd")
+const UnitShaderFxScript := preload("res://scripts/units/unit_shader_fx.gd")
 static var _definition_catalog := UnitSceneCatalogScript.shared()
 
 signal owner_changed(player_id: int)
@@ -150,10 +151,7 @@ var shields := 0.0:
 		_refresh_shield_visibility()
 var passengers := 0.0
 var combat_turrets: Array = []
-var _shield_meshes: Array[MeshInstance3D] = []
-var _shield_time := 0.0
-var _scroll_fx_meshes: Array[MeshInstance3D] = []
-var _scroll_fx_time := 0.0
+var _shader_fx := UnitShaderFxScript.new()
 var _selection_halo
 var _animation_players: Array[AnimationPlayer] = []
 var _movement_animation_active := false
@@ -220,6 +218,7 @@ var _weapon_fire_overlays: Dictionary = {}
 func _init() -> void:
 	_terrain_alignment.configure(self)
 	_death_sequence.configure(self)
+	_shader_fx.configure(self)
 
 
 func _ready() -> void:
@@ -238,8 +237,7 @@ func _ready() -> void:
 	# collision layer remains enabled, so mouse rays can still select this unit.
 	collision_mask = 0
 	_add_authored_collision()
-	_shield_meshes = _collect_shield_meshes()
-	_scroll_fx_meshes = _collect_scroll_fx_meshes()
+	_shader_fx.attach_model()
 	_animation_players = _collect_animation_players()
 	_refresh_weapon_runtime()
 	_refresh_mech_motion_profile()
@@ -282,17 +280,7 @@ func _process(delta: float) -> void:
 		for turret in _active_turrets():
 			turret.recenter(delta)
 	_advance_visual_slope_alignment(delta)
-	# These shaders take their scroll/pulse phase from here: a continuous
-	# phase cannot come from animation tracks (it would snap on clip loops),
-	# and TIME in the shader would keep the editor viewport redrawing.
-	if shields > 0.0 and not _shield_meshes.is_empty():
-		_shield_time += delta
-		for mesh_instance in _shield_meshes:
-			mesh_instance.set_instance_shader_parameter("fx_time", _shield_time)
-	if not _scroll_fx_meshes.is_empty():
-		_scroll_fx_time += delta
-		for mesh_instance in _scroll_fx_meshes:
-			mesh_instance.set_instance_shader_parameter("fx_time", _scroll_fx_time)
+	_shader_fx.advance(delta, shields)
 
 
 func _physics_process(delta: float) -> void:
@@ -888,8 +876,7 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 		child.free()
 	visual_root.add_child(model_scene.instantiate())
 	_bind_combat_turrets()
-	_shield_meshes = _collect_shield_meshes()
-	_scroll_fx_meshes = _collect_scroll_fx_meshes()
+	_shader_fx.attach_model()
 	_animation_players = _collect_animation_players()
 	_refresh_weapon_runtime()
 	_refresh_mech_motion_profile()
@@ -971,10 +958,7 @@ func prepare_model_for_corpse(model: Node3D) -> void:
 	_cancel_all_fire_sequences(false)
 	for turret in combat_turrets:
 		turret.unbind_model()
-	for mesh_instance in _shield_meshes:
-		mesh_instance.visible = false
-	for mesh_instance in _scroll_fx_meshes:
-		mesh_instance.visible = false
+	_shader_fx.detach_model()
 	for overlay_value: Variant in _weapon_fire_overlays.values():
 		if is_instance_valid(overlay_value):
 			(overlay_value as Node).free()
@@ -994,8 +978,6 @@ func prepare_model_for_corpse(model: Node3D) -> void:
 	# disconnect alone does not help a plain field that some other code path
 	# reads without going through a signal.
 	_animation_players.clear()
-	_shield_meshes.clear()
-	_scroll_fx_meshes.clear()
 	# _deployment_animation_player is populated straight from
 	# _animation_players (_start_deployment_animation(), line ~2408) but,
 	# unlike _animation_players itself, is a scalar field that keeps pointing
@@ -2089,8 +2071,7 @@ func is_enemy_of(player_id: int) -> bool:
 
 
 func _refresh_shield_visibility() -> void:
-	for mesh_instance in _shield_meshes:
-		mesh_instance.visible = shields > 0.0
+	_shader_fx.refresh_shield_visibility(shields)
 
 
 func _apply_unit_definition() -> void:
@@ -2137,22 +2118,6 @@ func _configure_combat_turrets() -> void:
 func _bind_combat_turrets() -> void:
 	for turret in combat_turrets:
 		turret.bind_model(visual_root, turret.weapon_index())
-
-
-func _collect_shield_meshes() -> Array[MeshInstance3D]:
-	var result: Array[MeshInstance3D] = []
-	for mesh_instance in _mesh_instances():
-		if String(mesh_instance.get_parent().name).to_lower().contains("shield"):
-			result.append(mesh_instance)
-	return result
-
-
-func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:
-	var result: Array[MeshInstance3D] = []
-	for mesh_instance in _mesh_instances():
-		if mesh_instance.has_meta("scroll_fx"):
-			result.append(mesh_instance)
-	return result
 
 
 func _collect_animation_players() -> Array[AnimationPlayer]:
@@ -2746,18 +2711,3 @@ func _aabb_corners(bounds: AABB) -> Array[Vector3]:
 			for z in [bounds.position.z, bounds.end.z]:
 				corners.append(Vector3(x, y, z))
 	return corners
-
-
-func _mesh_instances() -> Array[MeshInstance3D]:
-	var result: Array[MeshInstance3D] = []
-	if visual_root == null:
-		return result
-	_collect_mesh_instances(visual_root, result)
-	return result
-
-
-func _collect_mesh_instances(node: Node, result: Array[MeshInstance3D]) -> void:
-	if node is MeshInstance3D:
-		result.append(node)
-	for child in node.get_children():
-		_collect_mesh_instances(child, result)

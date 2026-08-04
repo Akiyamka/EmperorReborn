@@ -13,6 +13,28 @@ static func animation_players(root: Node) -> Array[AnimationPlayer]:
 	return result
 
 
+static func mesh_instances(root: Node) -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	if root == null:
+		return result
+	if root is MeshInstance3D:
+		result.append(root as MeshInstance3D)
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		result.append(node as MeshInstance3D)
+	return result
+
+
+## Meshes the converter tagged as continuously scrolling (windtrap blades,
+## unit energy shields). Their phase is driven per frame by the owner, since a
+## baked track would snap back to 0 on every clip loop.
+static func scroll_fx_meshes(root: Node) -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	for mesh_instance in mesh_instances(root):
+		if mesh_instance.has_meta("scroll_fx"):
+			result.append(mesh_instance)
+	return result
+
+
 static func find_clip(players: Array[AnimationPlayer], candidates: Array[StringName]) -> Dictionary:
 	for candidate in candidates:
 		for player in players:
