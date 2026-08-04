@@ -365,8 +365,15 @@ func _test_dying_unit_leaves_no_reference_into_its_corpse() -> void:
 		"blocking": true,
 	}
 	# Exercises the third site this audit found: nothing but the death
-	# handoff itself ever clears this field.
-	unit._deployment_animation_player = fire_player
+	# handoff itself ever clears the deploy machine's cached transition
+	# player. Planted through the production path that caches it, so the setup
+	# cannot drift away from what deploying actually does.
+	var planted_clip := StringName(fire_player.get_animation_list()[0])
+	unit._deploy.start_transition([planted_clip] as Array[StringName])
+	_expect(
+		unit._deploy.transition_player() == fire_player,
+		"the deploy transition must cache the model player this test plants"
+	)
 
 	unit.take_damage(unit.max_health + unit.max_shields + 10.0, &"Shot")
 

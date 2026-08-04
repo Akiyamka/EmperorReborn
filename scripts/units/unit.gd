@@ -22,6 +22,7 @@ const UnitDeathSequenceScript := preload("res://scripts/units/unit_death_sequenc
 const UnitShaderFxScript := preload("res://scripts/units/unit_shader_fx.gd")
 const UnitIdleAnimationsScript := preload("res://scripts/units/unit_idle_animations.gd")
 const UnitLocomotionScript := preload("res://scripts/units/unit_locomotion.gd")
+const UnitDeployStateScript := preload("res://scripts/units/unit_deploy_state.gd")
 const CombatTargetAcquisitionScript := preload(
 	"res://scripts/combat/combat_target_acquisition.gd"
 )
@@ -55,20 +56,6 @@ const FIRE_ANIMATION_SPEED_SCALE := (
 )
 const FIRE_ANIMATION_PREFIX := "Fire_"
 const FIRE_EVENT_EPSILON := 0.0001
-## The original MCV model has no clip literally named Deploy. Move_Stop is its
-## authored transition from driving to a braced stationary pose and is the
-## source-backed fallback for the first phase of deployment. Deploy_Gun is the
-## authored clip for the combat-deploy strategy (Kindjal/Mortar/Kobra); it is
-## first so those units resolve it before ever reaching the MCV fallback.
-const DEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
-	&"Deploy_Gun", &"Deploy", &"Deploying", &"Unpack", &"Move_Stop"
-]
-## Undeploy has no MCV-side authored clip at all (the Construction Yard's own
-## Deconstruct animation handles that transformation instead), so this list
-## only ever resolves for the combat-deploy strategy.
-const UNDEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
-	&"Undeploy_Gun", &"Undeploy", &"Undeploying"
-]
 ## Deployed-mode idle clips (Kindjal only) mirror the travel-mode Idle_*
 ## naming so the same random-variant machinery in _idle_animations applies.
 ## The single canonical deployed-mode fire clip after the converter-stage
@@ -81,16 +68,6 @@ enum SlopeAlignmentMode {
 	AUTO,
 	ENABLED,
 	DISABLED,
-}
-
-## MCV deploy (TRAVEL -> DEPLOYING -> [consumed: unit freed]) uses only the
-## first half of this machine. Combat deploy (Kindjal/Mortar/Kobra) uses all
-## four states, toggling DEPLOYED <-> TRAVEL through DEPLOYING/UNDEPLOYING.
-enum DeployState {
-	TRAVEL,
-	DEPLOYING,
-	DEPLOYED,
-	UNDEPLOYING,
 }
 
 @export var config_id: StringName
@@ -155,11 +132,7 @@ var _death_sequence := UnitDeathSequenceScript.new()
 ## unit's position at the start of the most recent physics step, regardless
 ## of which movement path is active.
 var _previous_global_position := Vector3.ZERO
-var _deploy_state := DeployState.TRAVEL
-var _deployment_aligning := false
-var _deployment_alignment_direction := Vector3.ZERO
-var _deployment_animation_player: AnimationPlayer
-var _deployment_animation_name: StringName = &""
+var _deploy := UnitDeployStateScript.new()
 var _has_attack_order := false
 var _attack_ground_position := Vector3.INF
 var _attack_target_ref: WeakRef
@@ -196,6 +169,7 @@ func _init() -> void:
 	_target_acquisition.configure(self)
 	_idle_animations.configure(self)
 	_locomotion.configure(self)
+	_deploy.configure(self)
 
 
 func _ready() -> void:
@@ -273,11 +247,9 @@ func _physics_process(delta: float) -> void:
 		return
 	if is_deploying():
 		velocity = Vector3.ZERO
-		if _deployment_aligning:
-			if _turn_toward(_deployment_alignment_direction, delta):
-				_deployment_aligning = false
-				_terrain_alignment.refresh_slope_target()
-				_start_deployment_animation()
+		if _deploy.advance_alignment(delta):
+			_terrain_alignment.refresh_slope_target()
+			_deploy.start_deploy_animation()
 		return
 	if is_deployed():
 		velocity = Vector3.ZERO
@@ -650,10 +622,15 @@ func _slope_speed_multiplier(direction: Vector3, delta: float) -> float:
 	return _terrain_alignment.slope_speed_multiplier(direction, delta)
 
 
-## Kept on the facade for Harvester (harvester.gd:376) and
-## tests/match/demo_boot_run.gd, both of which call it by name.
-func _turn_toward(direction: Vector3, delta: float) -> bool:
+## Rotates the hull toward `direction` by at most one tick's worth of yaw.
+func turn_toward(direction: Vector3, delta: float) -> bool:
 	return _terrain_alignment.turn_toward(direction, delta)
+
+
+## Test-only shim: tests/match/demo_boot_run.gd calls this by name, and
+## Harvester (harvester.gd) calls it as an inherited member.
+func _turn_toward(direction: Vector3, delta: float) -> bool:
+	return turn_toward(direction, delta)
 
 
 func facing_direction() -> Vector3:
@@ -805,15 +782,13 @@ func prepare_model_for_corpse(model: Node3D) -> void:
 	# reads without going through a signal.
 	_animation_players.clear()
 	_locomotion.detach_model()
-	# _deployment_animation_player is populated straight from
-	# _animation_players (_start_deployment_animation(), line ~2408) but,
-	# unlike _animation_players itself, is a scalar field that keeps pointing
-	# at that same model AnimationPlayer until explicitly cleared — nothing
-	# else resets it on death, so a unit killed while deploying kept a live
-	# direct pointer into the corpse's subtree here. This is the newly-found
-	# third site in the same class as cdc79b6/2b745b2.
-	_deployment_animation_player = null
-	_deployment_animation_name = &""
+	# UnitDeployState caches the transition AnimationPlayer straight out of
+	# the model. Unlike _animation_players it is a scalar that keeps pointing
+	# at that player until explicitly cleared — nothing else resets it on
+	# death, so a unit killed while deploying kept a live direct pointer into
+	# the corpse's subtree. This is the newly-found third site in the same
+	# class as cdc79b6/2b745b2.
+	_deploy.detach_model()
 	# Reachable only via _on_animation_finished (now unreachable, see above),
 	# but nulled anyway so nothing can call back into it and so it no longer
 	# holds this Unit and one of the corpse's players alive together.
@@ -1620,76 +1595,15 @@ func cancel_all_orders() -> bool:
 
 
 ## Shared unit deployment interface. Eligibility and the per-unit strategy
-## live in UnitDeploymentController; Unit owns the common locked alignment and
-## animation phases so future deployable units can reuse the same contract.
+## live in UnitDeploymentController; UnitDeployState owns the common locked
+## alignment and animation phases so future deployable units can reuse the
+## same contract.
 func deploy(desired_facing: Vector3 = Vector3.ZERO) -> bool:
-	if _deploy_state != DeployState.TRAVEL:
-		return false
-	_deploy_state = DeployState.DEPLOYING
-	_sync_active_turret_weapons()
-	stop_at_current_position()
-	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
-		_navigation_system.call("set_hold_position", self, true)
-
-	_deployment_alignment_direction = Vector3(
-		desired_facing.x, 0.0, desired_facing.z
-	)
-	_deployment_aligning = (
-		_deployment_alignment_direction.length_squared()
-			> SpatialOrientationScript.DIRECTION_EPSILON
-		and not _turn_toward(_deployment_alignment_direction, 0.0)
-	)
-	if _deployment_aligning and turn_rate > 0.0:
-		_deployment_alignment_direction = _deployment_alignment_direction.normalized()
-		return true
-	if _deployment_aligning:
-		# A deployable unit without an authored turn rate cannot complete a
-		# gradual alignment, so preserve the generic deployment contract.
-		face_direction(_deployment_alignment_direction)
-		_deployment_aligning = false
-
-	_start_deployment_animation()
-	return true
+	return _deploy.begin_deploy(desired_facing)
 
 
-## Combat-deploy strategy's toggle-back. The MCV/Construction Yard pair never
-## calls this: its "undeploy" is a different unit (the spawned MCV) built by
-## UnitDeploymentController's own Deconstruct handling, not a state on the
-## same Unit instance.
 func undeploy() -> bool:
-	if _deploy_state != DeployState.DEPLOYED:
-		return false
-	_deploy_state = DeployState.UNDEPLOYING
-	_sync_active_turret_weapons()
-	stop_at_current_position()
-	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
-		_navigation_system.call("set_hold_position", self, true)
-	_start_undeployment_animation()
-	return true
-
-
-func _start_deployment_animation() -> void:
-	_start_transition_animation(DEPLOYMENT_ANIMATION_CANDIDATES)
-
-
-func _start_undeployment_animation() -> void:
-	_start_transition_animation(UNDEPLOYMENT_ANIMATION_CANDIDATES)
-
-
-func _start_transition_animation(candidates: Array[StringName]) -> void:
-	var found := find_animation_clip(candidates)
-	_deployment_animation_player = found.get("player") as AnimationPlayer
-	_deployment_animation_name = StringName(found.get("name", &""))
-
-	if _deployment_animation_player == null:
-		call_deferred("_emit_deployment_animation_finished")
-		return
-
-	var animation := _deployment_animation_player.get_animation(_deployment_animation_name)
-	if animation != null:
-		animation.loop_mode = Animation.LOOP_NONE
-	_deployment_animation_player.stop()
-	_deployment_animation_player.play(_deployment_animation_name)
+	return _deploy.begin_undeploy()
 
 
 ## Shared "first player owning one of these candidate clips" scan, in
@@ -1702,45 +1616,23 @@ func find_animation_clip(candidates: Array[StringName]) -> Dictionary:
 ## Both transition directions count as "deploying" for every gameplay lock: a
 ## unit is equally immobile while folding out and while folding back in.
 func is_deploying() -> bool:
-	return _deploy_state == DeployState.DEPLOYING or _deploy_state == DeployState.UNDEPLOYING
+	return _deploy.is_transitioning()
 
 
-## Stationary combat mode (Kindjal/Mortar/Kobra). Never true for the MCV,
-## which has no DEPLOYED state of its own: a successful deploy consumes it
-## into a Construction Yard instead.
 func is_deployed() -> bool:
-	return _deploy_state == DeployState.DEPLOYED
+	return _deploy.is_deployed()
 
 
-func _emit_deployment_animation_finished() -> void:
+## Public because UnitDeployState defers to it when a model has no authored
+## transition clip: the signal belongs to the Unit its subscribers hold.
+func emit_deployment_animation_finished() -> void:
 	if is_deploying():
 		deployment_animation_finished.emit()
 
 
-## The deployment strategy calls this after the animation-to-world handoff.
-## `consumed` means the transition completed as intended: for the MCV this is
-## true only on a successful Construction Yard placement (the unit is freed
-## immediately after by the caller, so the resulting DeployState is moot); for
-## the combat strategy it is true whenever deploy()/undeploy() simply run to
-## completion, since nothing here is ever destroyed. `false` means the
-## transition was aborted (MCV placement failed after the animation already
-## played) and must fully unwind back to the state before it started.
 func finish_deployment(consumed: bool) -> void:
-	if not is_deploying():
+	if not _deploy.finish(consumed):
 		return
-	var was_deploying := _deploy_state == DeployState.DEPLOYING
-	_deployment_aligning = false
-	_deployment_alignment_direction = Vector3.ZERO
-	_deployment_animation_player = null
-	_deployment_animation_name = &""
-	if consumed:
-		_deploy_state = DeployState.DEPLOYED if was_deploying else DeployState.TRAVEL
-	else:
-		_deploy_state = DeployState.TRAVEL if was_deploying else DeployState.DEPLOYED
-	_sync_active_turret_weapons()
-	var still_locked := is_deployed()
-	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
-		_navigation_system.call("set_hold_position", self, still_locked)
 	_set_movement_animation(false)
 
 
@@ -1752,7 +1644,7 @@ func finish_deployment(consumed: bool) -> void:
 ## animation, and stamping the combat-owned rest pose here would fight or
 ## outlast that animation (e.g. snapping a just-folded-away deploy-only
 ## turret back to its deployed pose).
-func _sync_active_turret_weapons() -> void:
+func sync_active_turret_weapons() -> void:
 	var active_indices := {}
 	for turret in _active_turrets():
 		active_indices[turret.weapon_index()] = true
@@ -1774,6 +1666,13 @@ func set_selected(value: bool) -> void:
 	is_selected = value
 	if _selection_halo != null:
 		_selection_halo.set_selected(value)
+
+
+## Public because UnitDeployState needs it: a deploying unit is pinned in
+## place, and the navigation system owns that lock.
+func set_navigation_hold(locked: bool) -> void:
+	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
+		_navigation_system.call("set_hold_position", self, locked)
 
 
 func navigation_requested_velocity() -> Vector3:
@@ -2080,11 +1979,7 @@ func _on_animation_finished(animation_name: StringName, player: AnimationPlayer)
 		if fire_finish_result == 2 and not _locomotion.is_movement_animation_active():
 			_set_movement_animation(false)
 		return
-	if (
-		is_deploying()
-		and player == _deployment_animation_player
-		and animation_name == _deployment_animation_name
-	):
+	if _deploy.on_animation_finished(animation_name, player):
 		deployment_animation_finished.emit()
 		return
 	if _locomotion.on_animation_finished(
