@@ -11,32 +11,25 @@ signal spice_mound_activated(source_cell: Vector2i, early_activation: bool, worl
 signal spice_spread_stage(source_cell: Vector2i, stage: int, stage_count: int, changed_cells: int)
 signal spice_spread_finished(source_cell: Vector2i)
 
-const TERRAIN_SHADER := preload("res://scripts/world/map/terrain.gdshader")
-const SPICE_COMPOSITE_SHADER := preload("res://scripts/world/map/spice_composite.gdshader")
-const SPICE_TEXTURE := preload("res://assets/raw_original_content/3DDATA/Textures/spicetga_32.tga")
 const SPICE_MOUND_SCENE := preload("res://scenes/world/spice_mound.tscn")
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 const MapSpiceHazardScript := preload("res://scripts/world/map/map_spice_hazard.gd")
 const MapSpiceSpreadScript := preload("res://scripts/world/map/map_spice_spread.gd")
-const COMPOSITE_TEXTURE_SIZE := 1024
+const MapSpiceRenderScript := preload("res://scripts/world/map/map_spice_render.gd")
 
 var world_bounds := AABB()
 
 var _navigation_grid: MapNavigationGrid
 var _spice_values := PackedByteArray()
 var _spice_mounds := PackedByteArray()
-var _spice_image: Image
-var _spice_mound_image: Image
-var _spice_texture: ImageTexture
-var _spice_mound_texture: ImageTexture
 var _source_grid_size := Vector2i.ZERO
 var _terrain_grid_size := Vector2i.ZERO
-var _composite_viewport: SubViewport
 var _terrain_mesh: MeshInstance3D
 var _spice_mounds_root: Node3D
 var _spice_mound_nodes: Dictionary = {}
 var _hazard := MapSpiceHazardScript.new()
 var _spread := MapSpiceSpreadScript.new()
+var _render := MapSpiceRenderScript.new()
 
 
 func _init() -> void:
@@ -67,9 +60,9 @@ func load_baked(data: BakedMapData, navigation_grid: MapNavigationGrid, terrain_
 	if _terrain_grid_size.x <= 0 or _terrain_grid_size.y <= 0:
 		_terrain_grid_size = _source_grid_size
 	_load_spice_mounds(data.spice_mound_cells)
-	_build_textures()
+	_render.build(_spice_values, _spice_mounds)
 	_terrain_mesh = terrain_mesh
-	_bind_terrain_materials(terrain_mesh)
+	_render.bind_terrain_materials(terrain_mesh, world_bounds)
 	_spawn_spice_mounds(data.spice_mound_cells)
 	return true
 
@@ -132,9 +125,8 @@ func set_spice(cell: Vector2i, amount: int) -> bool:
 		return true
 	_spice_values[index] = clamped
 	_navigation_grid.spice_value[index] = clamped
-	_spice_image.set_pixel(cell.x, cell.y, Color(float(clamped) / 255.0, 0.0, 0.0))
-	_spice_texture.update(_spice_image)
-	_request_composite_update()
+	_render.set_spice_cell(cell, clamped)
+	_render.flush_spice()
 	spice_changed.emit(cell, previous, clamped)
 	return true
 
@@ -179,12 +171,11 @@ func add_spice_batch(entries: Array) -> int:
 			continue
 		_spice_values[index] = current
 		_navigation_grid.spice_value[index] = current
-		_spice_image.set_pixel(cell.x, cell.y, Color(float(current) / 255.0, 0.0, 0.0))
+		_render.set_spice_cell(cell, current)
 		changes.append({"cell": cell, "previous": previous, "current": current})
 
 	if not changes.is_empty():
-		_spice_texture.update(_spice_image)
-		_request_composite_update()
+		_render.flush_spice()
 		for change: Dictionary in changes:
 			spice_changed.emit(change["cell"], change["previous"], change["current"])
 	return changes.size()
@@ -213,11 +204,11 @@ func _set_source_spice_mound(source_cell: Vector2i, present: bool) -> bool:
 			if _spice_mounds[index] == value:
 				continue
 			_spice_mounds[index] = value
-			_spice_mound_image.set_pixel(x, y, Color(float(value) / 255.0, 0.0, 0.0))
+			_render.set_mound_cell(Vector2i(x, y), value)
 			changed = true
 	if not changed:
 		return true
-	_spice_mound_texture.update(_spice_mound_image)
+	_render.flush_mounds()
 	if present:
 		_spawn_spice_mound(source_cell)
 	else:
@@ -227,19 +218,17 @@ func _set_source_spice_mound(source_cell: Vector2i, present: bool) -> bool:
 
 
 func spice_mask_texture() -> ImageTexture:
-	return _spice_texture
+	return _render.spice_mask_texture()
 
 
 func spice_mound_mask_texture() -> ImageTexture:
-	return _spice_mound_texture
+	return _render.mound_mask_texture()
 
 
 func detach_visuals() -> void:
 	_spread.cancel_all()
 	_hazard.cancel_all()
-	if is_instance_valid(_composite_viewport):
-		_composite_viewport.free()
-	_composite_viewport = null
+	_render.detach()
 	if is_instance_valid(_spice_mounds_root):
 		_spice_mounds_root.free()
 	_spice_mounds_root = null
@@ -257,33 +246,6 @@ func _load_spice_mounds(source_cells: Array[Vector2i]) -> void:
 		for y in range(rect.position.y, rect.end.y):
 			for x in range(rect.position.x, rect.end.x):
 				_spice_mounds[y * MapNavigationGridScript.NAV_SIZE + x] = 255
-
-
-func _build_textures() -> void:
-	var size := MapNavigationGridScript.NAV_SIZE
-	_spice_image = Image.create_from_data(size, size, false, Image.FORMAT_R8, _spice_values)
-	_spice_mound_image = Image.create_from_data(size, size, false, Image.FORMAT_R8, _spice_mounds)
-	_spice_texture = ImageTexture.create_from_image(_spice_image)
-	_spice_mound_texture = ImageTexture.create_from_image(_spice_mound_image)
-
-
-func _bind_terrain_materials(terrain_mesh: MeshInstance3D) -> void:
-	if terrain_mesh == null or terrain_mesh.mesh == null:
-		return
-	_build_composite_viewport(terrain_mesh)
-	for surface_index in terrain_mesh.mesh.get_surface_count():
-		var source_material := terrain_mesh.mesh.surface_get_material(surface_index) as ShaderMaterial
-		if source_material == null or source_material.shader != TERRAIN_SHADER:
-			continue
-		var material := source_material.duplicate() as ShaderMaterial
-		material.set_shader_parameter(&"spice_field_overlay", _composite_viewport.get_texture())
-		material.set_shader_parameter(&"spice_world_rect", Vector4(
-			world_bounds.position.x,
-			world_bounds.position.z,
-			world_bounds.size.x,
-			world_bounds.size.z
-		))
-		terrain_mesh.set_surface_override_material(surface_index, material)
 
 
 func _spawn_spice_mounds(source_cells: Array[Vector2i]) -> void:
@@ -445,33 +407,6 @@ func _terrain_height_at(world_xz: Vector2) -> float:
 		1
 	)
 	return (hit.get("position", Vector3(0.0, world_bounds.position.y, 0.0)) as Vector3).y
-
-
-func _build_composite_viewport(terrain_mesh: MeshInstance3D) -> void:
-	_composite_viewport = SubViewport.new()
-	_composite_viewport.name = "SpiceCompositeViewport"
-	_composite_viewport.size = Vector2i(COMPOSITE_TEXTURE_SIZE, COMPOSITE_TEXTURE_SIZE)
-	_composite_viewport.disable_3d = true
-	_composite_viewport.transparent_bg = true
-	_composite_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
-	_composite_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
-	terrain_mesh.add_child(_composite_viewport)
-
-	var composite_material := ShaderMaterial.new()
-	composite_material.shader = SPICE_COMPOSITE_SHADER
-	composite_material.set_shader_parameter(&"spice_field_mask", _spice_texture)
-	composite_material.set_shader_parameter(&"spice_field_tex", SPICE_TEXTURE)
-	var composite_rect := ColorRect.new()
-	composite_rect.name = "SpiceComposite"
-	composite_rect.size = Vector2(COMPOSITE_TEXTURE_SIZE, COMPOSITE_TEXTURE_SIZE)
-	composite_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	composite_rect.material = composite_material
-	_composite_viewport.add_child(composite_rect)
-
-
-func _request_composite_update() -> void:
-	if is_instance_valid(_composite_viewport):
-		_composite_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 
 func _mound_nav_rect(cell: Vector2i) -> Rect2i:
