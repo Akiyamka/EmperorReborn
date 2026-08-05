@@ -44,6 +44,9 @@ var _aligning := false
 var _alignment_direction := Vector3.ZERO
 var _transition_player: AnimationPlayer
 var _transition_animation: StringName = &""
+## Turrets that were active going into an undeploy, still being turned back
+## toward hull-aligned before the coil clip starts. See begin_undeploy().
+var _recentering_turrets: Array = []
 
 
 func configure(unit: CharacterBody3D) -> void:
@@ -53,6 +56,7 @@ func configure(unit: CharacterBody3D) -> void:
 func detach_model() -> void:
 	_transition_player = null
 	_transition_animation = &""
+	_recentering_turrets.clear()
 
 
 func dispose() -> void:
@@ -71,6 +75,14 @@ func is_transitioning() -> bool:
 ## into a Construction Yard instead.
 func is_deployed() -> bool:
 	return _state == State.DEPLOYED
+
+
+## True only for the fold-back leg. Idle-animation selection treats this the
+## same as is_deployed() so the model keeps its deployed hold/idle pose
+## through the turret-recenter gate in begin_undeploy(), instead of flashing
+## to the travel-mode Stationary pose before the coil clip even starts.
+func is_undeploying() -> bool:
+	return _state == State.UNDEPLOYING
 
 
 ## Read accessor for the cached transition player. Production never needs it;
@@ -110,14 +122,37 @@ func begin_deploy(desired_facing: Vector3) -> bool:
 ## calls this: its "undeploy" is a different unit (the spawned MCV) built by
 ## UnitDeploymentController's own Deconstruct handling, not a state on the
 ## same Unit instance.
+## Aims-at-anything-independent-of-the-hull turrets (e.g. the deployed
+## Kobra's gun, +/-190 deg of yaw) must not simply cut to the coil clip's
+## frame-0 hull-aligned pose: that reads as the turret teleporting. Snapshot
+## each about-to-deactivate turret's aim before sync_active_turret_weapons()
+## zeroes its servo bookkeeping via reset_aim() (which deliberately never
+## touches the pivot transform, so the pivot is still at the true angle),
+## restore it right after, and let advance_undeploy_alignment() walk it back
+## to hull-aligned at the turret's own turn rate before the clip starts.
 func begin_undeploy() -> bool:
 	if _state != State.DEPLOYED:
 		return false
+	var turrets_to_recenter: Array = _unit.combat_turrets.filter(
+		func(turret): return turret.is_active_while_deployed(true)
+	)
+	var snapshots: Array[Vector2] = []
+	for turret in turrets_to_recenter:
+		snapshots.append(Vector2(turret.current_yaw, turret.current_pitch))
+
 	_state = State.UNDEPLOYING
 	_unit.sync_active_turret_weapons()
 	_unit.stop_at_current_position()
 	_unit.set_navigation_hold(true)
-	start_transition(UNDEPLOY_ANIMATION_CANDIDATES)
+
+	_recentering_turrets = turrets_to_recenter
+	for i in _recentering_turrets.size():
+		var turret = _recentering_turrets[i]
+		turret.current_yaw = snapshots[i].x
+		turret.current_pitch = snapshots[i].y
+
+	if _recentering_turrets.is_empty():
+		start_transition(UNDEPLOY_ANIMATION_CANDIDATES)
 	return true
 
 
@@ -135,6 +170,28 @@ func advance_alignment(delta: float) -> bool:
 
 func start_deploy_animation() -> void:
 	start_transition(DEPLOY_ANIMATION_CANDIDATES)
+
+
+## Turns whichever turret(s) were active going into undeploy gradually back
+## toward hull-aligned, respecting each turret's own yaw/pitch speed. False
+## while nothing to do or still turning; true exactly once, on the frame
+## every recentering turret reports centered -- mirrors advance_alignment()'s
+## contract for the hull-turn phase of begin_deploy().
+func advance_undeploy_alignment(delta: float) -> bool:
+	if _recentering_turrets.is_empty():
+		return false
+	var all_centered := true
+	for turret in _recentering_turrets:
+		if not turret.recenter(delta):
+			all_centered = false
+	if not all_centered:
+		return false
+	_recentering_turrets.clear()
+	return true
+
+
+func start_undeploy_animation() -> void:
+	start_transition(UNDEPLOY_ANIMATION_CANDIDATES)
 
 
 func start_transition(candidates: Array[StringName]) -> void:
@@ -176,6 +233,7 @@ func finish(consumed: bool) -> bool:
 	var was_deploying := _state == State.DEPLOYING
 	_aligning = false
 	_alignment_direction = Vector3.ZERO
+	_recentering_turrets.clear()
 	detach_model()
 	if consumed:
 		_state = State.DEPLOYED if was_deploying else State.TRAVEL

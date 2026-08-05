@@ -216,6 +216,13 @@ func _process(delta: float) -> void:
 	# combat-owned servo first, then sample the muzzle for this frame's shots;
 	# otherwise a moving turret launches along the clip's forward rest pose.
 	_combat.advance(delta)
+	# Same ordering requirement as _combat.advance() above: the looping
+	# Deploy_Gun_Hold clip keys the turret pivot every frame, so recentering
+	# it must also run after the AnimationPlayers (_process, not
+	# _physics_process) or the animation's authored pose instantly overwrites
+	# each gradual step, making the turret look like it never turns at all.
+	if _deploy.advance_undeploy_alignment(delta):
+		_deploy.start_undeploy_animation()
 	_advance_visual_slope_alignment(delta)
 	_shader_fx.advance(delta, shields)
 	if _harvester != null:
@@ -1026,6 +1033,12 @@ func is_deploying() -> bool:
 
 func is_deployed() -> bool:
 	return _deploy.is_deployed()
+
+
+## See UnitDeployState.is_undeploying(): used by idle-animation selection to
+## keep showing the deployed pose while the turret-recenter gate runs.
+func is_undeploying() -> bool:
+	return _deploy.is_undeploying()
 
 
 ## Public because UnitDeployState defers to it when a model has no authored

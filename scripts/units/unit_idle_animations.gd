@@ -48,8 +48,18 @@ func prepare(player: AnimationPlayer) -> void:
 			stationary.loop_mode = Animation.LOOP_NONE
 
 
+## The undeploy leg briefly re-evaluates idle animation while UnitDeployState
+## turns the turret back to hull-aligned (see begin_undeploy()'s turret-
+## recenter gate) before the Undeploy_Gun clip actually starts. Treating
+## is_undeploying() the same as is_deployed() here keeps the model on its
+## deployed idle/hold pose through that gate instead of flashing to the
+## travel-mode Stationary pose and back.
+func _shows_deployed_pose() -> bool:
+	return _unit.is_deployed() or _unit.is_undeploying()
+
+
 func animations_for(player: AnimationPlayer) -> Array[StringName]:
-	var prefix := DEPLOYED_IDLE_ANIMATION_PREFIX if _unit.is_deployed() \
+	var prefix := DEPLOYED_IDLE_ANIMATION_PREFIX if _shows_deployed_pose() \
 		else IDLE_ANIMATION_PREFIX
 	var result: Array[StringName] = []
 	for animation_name in player.get_animation_list():
@@ -61,7 +71,7 @@ func animations_for(player: AnimationPlayer) -> Array[StringName]:
 func play_sequence(player: AnimationPlayer) -> void:
 	var idle_animations := animations_for(player)
 	if idle_animations.is_empty():
-		if _unit.is_deployed() and player.has_animation(DEPLOYED_HOLD_ANIMATION):
+		if _shows_deployed_pose() and player.has_animation(DEPLOYED_HOLD_ANIMATION):
 			_hold_deployed_pose(player)
 			return
 		if player.has_animation(IDLE_ANIMATION) and player.current_animation != IDLE_ANIMATION:
@@ -131,7 +141,7 @@ func _start_stationary_batch(
 	var player_id := player.get_instance_id()
 	# A deployed unit must only ever consider its Deployed_Idle_* clips here:
 	# a literal "Stationary" clip on the same model belongs to travel mode.
-	if not _unit.is_deployed() and player.has_animation(IDLE_ANIMATION):
+	if not _shows_deployed_pose() and player.has_animation(IDLE_ANIMATION):
 		_stationary_repeats_remaining[player_id] = randi_range(5, 15)
 		_unit.play_animation_from_start(player, IDLE_ANIMATION)
 		return
