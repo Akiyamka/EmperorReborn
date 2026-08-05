@@ -3,8 +3,7 @@ extends RefCounted
 ## Corridor-of-cells funnel: turns a raw A* cell-by-cell route into a handful
 ## of world-space apex points a body can walk between in straight lines,
 ## replacing the per-tick square-cell steering geometry
-## (`_path_steering_target`/`_advanced_path_index`) had to work around. See
-## docs/architecture/navigation-refactor-plan.md stage 4.
+## (`_path_steering_target`/`_advanced_path_index`) had to work around.
 
 var _runtime_map
 var _path_follower
