@@ -2,7 +2,7 @@
 
 This document records gaps, contradictions, and implicit behavior in the
 original game's data and engine. Each entry separates facts visible in the
-shipped data from compatibility decisions made by EmperorReborn.
+shipped data from compatibility decisions made by OpenEBfD.
 
 ## Production
 
@@ -17,7 +17,7 @@ The `MCV` unit has `BuildTime = 864`.
 so their duration must be derived or hardcoded outside the visible ConYard
 fields. The exact original derivation has not been verified.
 
-**EmperorReborn compatibility decision:** When a global upgrade has no
+**OpenEBfD compatibility decision:** When a global upgrade has no
 `BuildTime`, follow its `Resource` link and use the linked entity's build time.
 Construction Yard upgrades therefore use the MCV's 864 ticks. A 60-tick
 fallback is reserved for malformed configs with neither a direct time nor a
@@ -32,7 +32,7 @@ usable resource link.
 ground. Dynamic scaling still follows changes in the actual movement speed,
 but the clip's base rate is too low.
 
-**EmperorReborn compatibility status:** No per-model base-rate correction has
+**OpenEBfD compatibility status:** No per-model base-rate correction has
 been established yet. The infantry `Move` clip needs a tuned baseline speed
 multiplier.
 
@@ -41,7 +41,7 @@ multiplier.
 **Observed behavior:** Building flags animated as if blown by wind cycle at an
 anomalously high speed relative to the rest of the scene.
 
-**EmperorReborn compatibility status:** No correction is applied yet. The
+**OpenEBfD compatibility status:** No correction is applied yet. The
 flag animation rate needs separate tuning so it is not affected by unrelated
 unit movement animation scaling.
 
@@ -58,7 +58,7 @@ but no `xaf` model field. Their rules only reference effect resources
 **Original-engine quirk:** These unit definitions do not provide a standalone
 H0 model through the shipped rules and unit-model files.
 
-**EmperorReborn compatibility decision:** `convert_all_units.gd` reports and
+**OpenEBfD compatibility decision:** `convert_all_units.gd` reports and
 skips these three definitions. It generates scenes for every unit with a
 resolvable H0 source model; effect-only units remain represented by their
 referenced effects rather than placeholder meshes.
@@ -75,7 +75,7 @@ clips, then expands during `Fire_0`.
 misspelled, model-specific name for authored muzzle-flash geometry. Treating
 it as ordinary geometry leaves its mesh visible during idle animations.
 
-**EmperorReborn compatibility decision:** `ModelBakeBuilder` recognizes
+**OpenEBfD compatibility decision:** `ModelBakeBuilder` recognizes
 `flah~?` as embedded muzzle-flash geometry only when converting
 `HK_Trooper_H0.xbf`. Its mesh is hidden by default and in non-fire clips, and
 is enabled for `Fire_0`, matching the existing handling of `bigflash`
@@ -98,7 +98,7 @@ static matrices from animation before rendering. Baking them verbatim makes
 Godot's 3D editor instantiate the invalid static pose before autoplay can
 apply `Stationary`, producing non-finite renderer transforms.
 
-**EmperorReborn compatibility decision:** For the nine affected nodes,
+**OpenEBfD compatibility decision:** For the nine affected nodes,
 `ModelBakeBuilder` uses the first valid animation frame as the static pose and
 omits object-transform keys after frame 583. Named clips, vertex animation,
 and FX timing remain unchanged. As a general safety invariant, any other
@@ -122,7 +122,7 @@ range against an adjacent target, not a mode unlocked by a deploy state.
 The `turret_disable_if_unit_*` flags on this unit are stale or mis-set data
 left over from copying a deployable unit's turret rows.
 
-**EmperorReborn compatibility decision:** `tools/generate_unit_definitions.py`
+**OpenEBfD compatibility decision:** `tools/generate_unit_definitions.py`
 applies a `TURRET_DEPLOY_GATE_OVERRIDES` table that clears both flags when
 generating `IMADVSardaukarGun.tres` / `IMADVSardaukarKnife.tres`, so both
 turrets are always active and the unit is excluded from the (otherwise
@@ -148,11 +148,11 @@ which the FX event table uses to anchor the `Fire_1` muzzle bank
 
 **Original-engine quirk:** `Mortorgun01` is authoring scaffolding for the
 `1gun` attachment point, not a second visible barrel. The original engine
-apparently never rendered it; EmperorReborn's converter had no signal to
+apparently never rendered it; OpenEBfD's converter had no signal to
 distinguish it from real geometry, so it rendered as a motionless, oversized
 duplicate of the real barrel sitting near the mount point in every clip.
 
-**EmperorReborn compatibility decision:** `ModelBakeBuilder` hides
+**OpenEBfD compatibility decision:** `ModelBakeBuilder` hides
 `Mortorgun01`'s mesh (and its `gunleg03`/`gunleg04` children) via
 `HIDDEN_SOURCE_MESH_COMPONENTS`, tagged `source_asset_quirk =
 "unrendered_duplicate"`, the same mechanism used for the Atreides Refinery's
@@ -176,7 +176,7 @@ longer than the straight line that was range-checked at launch, so the missile
 runs out of budget in mid-air against a target that was comfortably in range
 when it fired.
 
-**EmperorReborn compatibility decision:** flight budget is separated from
+**OpenEBfD compatibility decision:** flight budget is separated from
 firing range. `BulletDefinition.flight_range_scale` multiplies `MaxRange` for
 the projectile's travel allowance only; turret range checks
 (`CombatBullet.maximum_range_world`) are untouched. The generator
@@ -207,7 +207,7 @@ a "chained/secondary explosion" concept that the original engine's data does
 not express. Do not read "chained explosions are unimplemented" out of this;
 the concept simply does not exist in the source to implement.
 
-**EmperorReborn compatibility decision:** The column, its schema declarations
+**OpenEBfD compatibility decision:** The column, its schema declarations
 (`assets/converted/schema.sql`, `tools/rules_editor/schema.sql`), and its
 `FK_TARGETS` mapping entry were removed, with a comment left in the schema
 files so the column is not reintroduced. `assets/converted/rules.db` had the
@@ -264,7 +264,7 @@ real 22-sample generic `normalmandying` hook. Atreides and Harkonnen infantry
 — by far the most common death in the game — would have died in total
 silence, while Ordos worked only by accident of `ORDOSSFX.TXT` sorting last.
 
-**EmperorReborn compatibility decision:** Fixed at the convert stage, per
+**OpenEBfD compatibility decision:** Fixed at the convert stage, per
 this project's rule that wrong source data is corrected where it is
 converted rather than papered over with a runtime special case.
 `tools/generate_voice_feedback.py`'s `main()` now drops any death/explosion
@@ -320,7 +320,7 @@ generic id (so it must never be handed to an arbitrary vehicle or to
 infantry) — that grep fact stands — but "personal hook + generic tier, both
 concurrent" as a *selection mechanism* does not.
 
-**EmperorReborn compatibility decision:** abandon precision. `VehicleDeathStrategy`
+**OpenEBfD compatibility decision:** abandon precision. `VehicleDeathStrategy`
 drops `PERSONAL_DEATH_HOOKS` and the whole `GeneratedVoiceManifest`
 indirection for this mechanism entirely, replaced by a hand-specified
 three-pool system (`ExplosionTierPools`: `small`/`medium`/`large`, each a
@@ -361,7 +361,7 @@ no per-house or generic `*ManDying`-family hook for a physical blow-up at all �
 the `[explode]` family it appears to want is `HarkDevastatorDie` (above), a
 vehicle's personal hook.
 
-**EmperorReborn compatibility decision:** `InfantryDeathStrategy` proposes no
+**OpenEBfD compatibility decision:** `InfantryDeathStrategy` proposes no
 sound layer for `Blow_Up`. The boom the player hears in the original belongs to
 the *weapon's* detonation, a separate system (`combat_impact_resolver.gd` /
 `combat_projectile.gd`) that has no SFX wiring yet; giving the corpse its own
@@ -396,7 +396,7 @@ that object by triangle connectivity, these components are `Mesh_03` and
 original model asset. They are an asset defect rather than geometry from a
 valid refinery state.
 
-**EmperorReborn compatibility decision:** Preserve both components in the
+**OpenEBfD compatibility decision:** Preserve both components in the
 converted scene for source fidelity, but mark them with the
 `source_asset_quirk = "broken_geometry"` metadata and keep them hidden. The
 remaining idle geometry and the independently controlled left and right
@@ -423,7 +423,7 @@ screen. Its world-space lighting normals remain inward, which the original
 simply displays as slightly wrong shading. Nothing in the shipped data marks
 which mirrored meshes are pre-compensated this way.
 
-**EmperorReborn compatibility decision:** Godot flips face culling for
+**OpenEBfD compatibility decision:** Godot flips face culling for
 instances with a negative world determinant, which renders exactly the
 pre-compensated meshes inside out while the correctly authored mirrored
 meshes need no help. `ModelBakeBuilder` therefore tracks the net mirror
@@ -448,7 +448,7 @@ XBF; it is not an animation-table parsing error. Buildings use `Stationary` as
 their resting state, so the mislabeled optional idle clip did not affect the
 original building state.
 
-**EmperorReborn compatibility decision:** `ModelXbf` preserves the authored
+**OpenEBfD compatibility decision:** `ModelXbf` preserves the authored
 table for lossless inspection. `ModelBakeBuilder` repairs only the converted
 `AT_MGT` `Idle_0` clip by assigning it that file's `Stationary` frame range,
 while retaining frames 200..240 as `source_start_frame`/`source_end_frame`
@@ -464,7 +464,7 @@ but its source model is `OR_IN_Penguins_H0.xbf`.
 **Original-engine quirk:** The art-table XAF names are not a one-to-one match
 for these shipped building XBF filenames.
 
-**EmperorReborn compatibility decision:** `convert_all_buildings.gd` maps
+**OpenEBfD compatibility decision:** `convert_all_buildings.gd` maps
 these two building IDs to their actual H0 prefixes before conversion. All 152
 rules-defined buildings therefore produce scenes without placeholder models.
 
@@ -485,7 +485,7 @@ procedurally during the explode window; the XBF carries only the assembled
 ruin pose. Generic flying-debris projectiles (`[DebrisTypes]`,
 `3DDATA/Debris*.XAF`) are a separate system layered on top.
 
-**EmperorReborn compatibility status:** The converter preserves the `%`
+**OpenEBfD compatibility status:** The converter preserves the `%`
 marker in each node's `original_name` metadata and correctly bakes the HK
 style keyframed variant. No procedural scatter is implemented yet, so
 `%`-style destroy states currently show the static assembled ruin for the
@@ -502,7 +502,7 @@ identical in placement to H0.
 was free to reparent or rebake local spaces between them, and only the
 composed transform is meaningful.
 
-**EmperorReborn compatibility decision:** No special handling is needed - the
+**OpenEBfD compatibility decision:** No special handling is needed - the
 converter carries node transforms through, and baked scenes render
 correctly. Be aware that the Godot editor's mesh-resource preview shows the
 mesh in local space without the node transform, so such meshes look lying
@@ -525,7 +525,7 @@ marker does not fully describe the render mode. The additional state used by
 the original renderer has not been identified in the converted material
 data.
 
-**EmperorReborn compatibility decision:** `convert_cursor_models.gd` records
+**OpenEBfD compatibility decision:** `convert_cursor_models.gd` records
 source-specific `SCREEN_SURFACE_QUIRKS` for `cu_move_h0.xbf`,
 `cu_attack_h0.xbf`, and `cu_deploy_h0.xbf`: only their `whitering2.tga`
 surfaces are moved to the Screen pass. Other uses of this shared texture
@@ -548,7 +548,7 @@ and treats these pixels as opaque (CorrinoEngine `LibEmperor/Tga.cs` documents
 this: "It seems the alpha value is not used here"). Transparency in these
 assets comes only from the magenta colour key.
 
-**EmperorReborn compatibility decision:** Godot's TGA decoder honours the
+**OpenEBfD compatibility decision:** Godot's TGA decoder honours the
 alpha bit, which made every 16bpp texture fully transparent - materials with
 alpha-scissor or discard rendered their meshes invisible (e.g. the ConYard
 Damage2 wall block). `TextureImageUtils.load_image` detects 16bpp in the TGA

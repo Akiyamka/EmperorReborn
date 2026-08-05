@@ -1,6 +1,6 @@
 # Emperor Rules Editor
 
-NeutralinoJS editor for EmperorReborn's `assets/converted/rules.db`.
+NeutralinoJS editor for OpenEBfD's `assets/converted/rules.db`.
 
 The database is generated from `assets/raw_original_content/MODEL/Rules.txt`
 and can also be enriched with art bindings from
@@ -20,7 +20,7 @@ npm run neutralino:update
 
 ## Run
 
-From the EmperorReborn repository root:
+From the OpenEBfD repository root:
 
 ```sh
 make rules-editor
