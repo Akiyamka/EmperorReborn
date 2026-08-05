@@ -132,8 +132,11 @@ var _harvester = null
 ## Cargo stays canonical on the facade like health and shields do: the match
 ## snapshot reads it by name, and the selection halo draws its ring from it.
 ##
-## A capacity is also what makes a unit a harvester: setting one attaches the
-## harvesting loop, and that is the whole of "is a harvester" now.
+## A *spice* capacity is also what makes a unit a harvester: setting one
+## attaches the harvesting loop. Deliberately this field and no other -- a
+## carrier's passenger capacity and a launcher's ammunition are their own
+## fields (see selection_halo's max_passengers), and neither has anything to do
+## with driving to a field and eating it.
 @export var max_spice := 0.0:
 	set(value):
 		max_spice = maxf(value, 0.0)
@@ -1795,7 +1798,10 @@ func _prepare_idle_animations() -> void:
 ## own completion is not theirs to handle either.
 ## The harvesting loop exists exactly while the unit has somewhere to put
 ## spice. Attached from data rather than from a dedicated subclass, which is
-## why a test fixture that only sets a capacity gets one too.
+## why a test fixture that only sets a spice capacity gets one too.
+##
+## If a future unit needs a hold without harvesting -- or harvesting without a
+## hold -- this is the line to change, not the meaning of max_spice.
 func _sync_harvester_controller() -> void:
 	if max_spice > 0.0:
 		if _harvester == null:
