@@ -387,7 +387,7 @@ func capture_current_rest_pose() -> void:
 		else Vector3.INF
 
 
-func aim_at(world_position: Vector3, delta: float) -> bool:
+func aim_at(world_position: Vector3, delta: float, pivot_relative_yaw := false) -> bool:
 	if not is_bound():
 		return false
 	# Authored Stationary/Move tracks can key a turret ancestor back to its
@@ -398,7 +398,7 @@ func aim_at(world_position: Vector3, delta: float) -> bool:
 	if _yaw_pivot != null:
 		var yaw_config := _yaw_config()
 		var desired_yaw := _clamp_rule_angle(
-			_desired_yaw(world_position), yaw_config,
+			_desired_yaw(world_position, pivot_relative_yaw), yaw_config,
 			&"minimum_yaw", &"maximum_yaw"
 		)
 		_turn_yaw_toward(
@@ -1176,15 +1176,29 @@ func _apply_pivot_rotation(pivot: Node3D, yaw: float, pitch: float) -> void:
 	pivot.transform = Transform3D(rest.basis * rotation, rest.origin)
 
 
-func _desired_yaw(world_position: Vector3) -> float:
+func _desired_yaw(world_position: Vector3, pivot_relative := false) -> float:
 	var emission := peek_emission()
 	if emission.is_empty():
 		return current_yaw
 	var direction: Vector3 = emission["direction"]
-	# Aim the rigid barrel group from its pivot. Aiming separately from the
-	# active side muzzle would turn the whole group a little toward the centre
-	# and make consecutive Minotaurus shells converge.
-	var target_direction: Vector3 = world_position - _aim_origin()
+	# Must converge on exactly the criterion the caller gates firing on, or
+	# the servo can settle at a point that check reports as unaimed and stop
+	# moving for good. A yaw-only mount already gets pivot-relative aiming
+	# from _yaw_target_direction() below regardless (aiming separately from
+	# the active side muzzle would turn a rigid multi-barrel group a little
+	# toward the centre and make consecutive shells converge, e.g. the
+	# ORLaserTank/ATRocketTurret offset-muzzle cases). A turret with its own
+	# pitch joint defaults to the same muzzle-relative direction is_aimed_at()
+	# checks -- ATAPC's gun offset from its yaw pivot is the prominent case
+	# where converging on the pivot instead leaves a residual error the
+	# muzzle-relative check never accepts, permanently jamming the turret
+	# just after its first shot -- except when the caller explicitly wants
+	# the pivot-relative contract of is_group_yaw_aimed_at() instead (a
+	# building's rigid multi-barrel mount with its own pitch joint, e.g.
+	# ATRocketTurret).
+	var target_direction: Vector3 = (world_position - _aim_origin()) \
+		if (pivot_relative and _pitch_pivot != null) \
+		else _yaw_target_direction(world_position, _desired_firing_direction(world_position))
 	var horizontal_direction := Vector2(direction.x, direction.z)
 	var horizontal_target := Vector2(target_direction.x, target_direction.z)
 	if horizontal_direction.is_zero_approx() or horizontal_target.is_zero_approx():

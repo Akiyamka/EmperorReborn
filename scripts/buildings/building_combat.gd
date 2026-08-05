@@ -228,8 +228,9 @@ func _advance_engagement(delta: float) -> void:
 		if not _fire_controller.is_active():
 			turret.recenter(delta)
 		return
-	var aimed := bool(turret.aim_at(target_position, delta))
-	if _owner.config_id == &"ATRocketTurret":
+	var is_group_yaw_turret: bool = _owner.config_id == &"ATRocketTurret"
+	var aimed := bool(turret.aim_at(target_position, delta, is_group_yaw_turret))
+	if is_group_yaw_turret:
 		aimed = bool(turret.is_group_yaw_aimed_at(target_position))
 	if not aimed or _fire_controller.is_active():
 		return
