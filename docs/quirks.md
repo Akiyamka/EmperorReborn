@@ -185,6 +185,68 @@ duplicate of the real barrel sitting near the mount point in every clip.
 broken geometry. The node, its transform, and the `::1gun#`/`>>1gun#`
 attachment markers are kept so the `Fire_1` muzzle FX still anchors correctly.
 
+### Howitzer_B has no Speed — the undeployed Kobra detonated its own shell at the muzzle
+
+**Observed data:** `[HOWITZER_B]` in `Rules.txt` is headed `//not used`, spells
+out `MaxRange = 8`, `Damage = 300`, `BlastRadius = 64`,
+`FriendlyDamageAmount = 50`, and carries its `Trajectory = true` line commented
+out. It has no `Speed` at all. Yet the section is used: `[ORKobraUndeployedGun]`
+(`//fixed weapon, can't move it`) fires it, with the explicit comment
+`//this must not be a trajectory bullet`. It is the only bullet of the 72 with
+no `Speed`, no `Trajectory` and a non-zero `MaxRange` — every other speedless
+bullet is either conceptual (`Speed = -1`, 19 of them), a trajectory shell, or
+a `MaxRange = 0` "blow up immediately" bomb.
+
+**Original-engine quirk:** The three delivery kinds are distinguished by
+`Speed`/`Trajectory`, and `Howitzer_B` matches none of them. A section marked
+"not used" was never balanced against a live engine, so the missing `Speed`
+went unnoticed in the source data; the shipping Kobra's travel-mode gun was
+presumably never observed firing.
+
+**OpenEBfD compatibility decision:** `CombatProjectile.launch()` reads
+`speed() <= 0.0` as "arrives instantly, at the muzzle" — correct for the
+`MaxRange = 0` bombs, but for `Howitzer_B` it meant the undeployed Kobra
+detonated a 64-unit blast at its own barrel tip and took 50% friendly damage
+from it. `tools/generate_unit_definitions.py` supplies the missing value
+through `BULLET_SPEED_OVERRIDES`: `Howitzer_B` gets `28`, the direct-fire tank
+shell speed of `HEAT_B`/`Rocket_B`, which share its `shell.xaf` projectile.
+That keeps the turret comment's requirement (still not a trajectory bullet)
+and leaves `rules.db` faithful to `Rules.txt`.
+
+### The shell's propulsion flare is authored, then switched off by its own model
+
+**Observed data:** `shell.xbf` — the projectile model shared by both Kobra
+shells, the Minotaurus and nine other bullets — contains a helper object
+`?flashl02` holding two meshes of rocket-exhaust geometry. The model's FX
+timeline (one frame long) carries exactly two events: a type 3 that starts
+particle bank `563844F0#23` (texture `!%FFlash`, 5 texture frames, size 0.125
+world units, no gravity) on attachment `shell~~0`, and a type 1 naming
+`?flashl02`. There is no type 2 for it anywhere.
+
+**Original-engine quirk:** The FX event types encode visibility as a pair —
+type 1 hides the named object, type 2 shows it. The muzzle-flash helpers prove
+the direction: `AT_Kindjal`'s, `OR_Mortar`'s and `IM_Sardaukar`'s `?bigflash1`
+each blink for one to five frames per shot, always from a type 2 to the
+following type 1, and every sequence ends on a type 1. Across all 948 FX-bearing
+XBFs the two types are paired this way (1771 type 1, 1169 type 2), and
+`shell.xbf`'s `?flashl02` is the single `?`-prefixed object in the whole set
+whose only event is a lone type 1 — geometry that ships with the model and is
+switched off for good on frame 0. The shot the player sees is a dark casing,
+plus a brief `!%FFlash` puff at the muzzle from the bank that starts on the
+same frame. User-confirmed against the reference game: no continuous flare.
+
+**OpenEBfD compatibility decision:** `CombatProjectile._hide_switched_off_fx_objects`
+reads the instantiated model's own `xbf_fx_events` and hides every object that
+receives a type 1 and no type 2 at all, matching by the `original_name` meta.
+This replaced a `NO_PROPULSION_FLASH_BULLETS` allowlist that named
+`KobraHowitzer_B` alone and therefore left the flare burning on `Howitzer_B`
+and `StraightBomb`, the other two bullets that visibly fly this model. Objects
+the model does blink stay untouched, under the animation's control. The
+`!%FFlash` launch puff is authored data that runtime does not emit yet: bank
+playback exists for turrets (`combat_turret_fx.gd`) and locomotion, not for
+projectile models. See docs/open_questions.md, "Projectile models author their
+own FX bank, and nothing emits it", for why its duration is not yet settled.
+
 ### Bullets have no lifetime field — MaxRange serves as both range and budget
 
 **Observed data:** The `Bullets` section of `Rules.txt` carries `MaxRange`,

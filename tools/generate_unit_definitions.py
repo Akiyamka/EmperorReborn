@@ -69,6 +69,17 @@ BURST_CONFIGS = {
 HOMING_FLIGHT_RANGE_SCALE = 1.5
 # Per-bullet exceptions to HOMING_FLIGHT_RANGE_SCALE, keyed by bullet name.
 FLIGHT_RANGE_SCALE_OVERRIDES: dict[str, float] = {}
+# Rules.txt Speed for bullets whose own section leaves it out, keyed by bullet
+# name. A section with no Speed and no Trajectory describes neither a flying
+# shot nor a conceptual (Speed=-1) instant one, so the projectile has no way to
+# leave the muzzle. See docs/quirks.md "Howitzer_B has no Speed".
+BULLET_SPEED_OVERRIDES: dict[str, float] = {
+    # ORKobraUndeployedGun's fixed forward gun, whose section is marked
+    # "//not used" and whose Trajectory line is commented out. Direct-fire
+    # tank shell speed, shared by HEAT_B/Rocket_B, which use the same
+    # shell.xaf projectile.
+    "Howitzer_B": 28.0,
+}
 # IMADVSardaukar has no deploy ability; its knife is range-selected melee, not a
 # deployed-mode weapon. See docs/quirks.md "Advanced Sardaukar knife is flagged
 # as a deployed-only weapon".
@@ -633,6 +644,10 @@ def flight_range_scale_for(row: sqlite3.Row) -> float:
     return HOMING_FLIGHT_RANGE_SCALE if row["homing"] else 1.0
 
 
+def speed_for(row: sqlite3.Row) -> float:
+    return BULLET_SPEED_OVERRIDES.get(str(row["name"]), float(row["speed"] or 0.0))
+
+
 def bullet_text(row: sqlite3.Row, effects: list[str], projectile_path: str,
                 impact_paths: dict[str, str], hit_sound_paths: list[str],
                 hit_sound_volume: int) -> str:
@@ -647,7 +662,7 @@ def bullet_text(row: sqlite3.Row, effects: list[str], projectile_path: str,
             [f"flight_range_scale = {flight_range_scale:.6g}"]
             if flight_range_scale != 1.0 else []
         ),
-        f"speed = {float(row['speed'] or 0.0):.6g}",
+        f"speed = {speed_for(row):.6g}",
         f"blast_radius = {float(row['blast_radius'] or 0.0):.6g}",
         f"friendly_damage_amount = {float(row['friendly_damage_amount'] or 0.0):.6g}",
         f"reduce_damage_with_distance = {bool_text(row['reduce_damage_with_distance'] != 0)}",

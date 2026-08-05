@@ -102,6 +102,48 @@ Parameters 12 and 13 remain undecoded. They are not the acceleration a bank
 uses in place of gravity: across the original content they appear both with and
 without a gravity, so nothing about their meaning is established.
 
+## Projectile models author their own FX bank, and nothing emits it
+
+`shell.xbf` — the projectile model shared by both Kobra shells, the Minotaurus
+and nine other bullets — carries a one-bank, one-frame FX timeline of its own:
+
+| Field | Value |
+| --- | --- |
+| Bank id / texture | `563844F0#23` / `!%FFlash`, 5 texture frames |
+| Attachment | `shell~~0`, the shell body itself |
+| Events | type 3 (start) on frame 0. **No type 4 stop anywhere** |
+| Word 01 particles per burst | 2 |
+| Word 02 lifetime | 10 updates (0.5 s at 20 Hz) |
+| Word 03 cone half-angle | 20° |
+| Word 04 speed | 0.11 source units per update |
+| Word 05 gravity | 0 |
+| Word 06 size | 2 source units (0.125 world) |
+| Word 10 updates between bursts | 1 |
+
+Bank playback exists for turrets (`combat_turret_fx.gd`) and locomotion, both
+of which read `xbf_fx_banks` off a model root. `CombatProjectile` reads the
+model's `xbf_fx_events` only to hide switched-off helper geometry (see
+docs/quirks.md, "The shell's propulsion flare is authored, then switched off by
+its own model"); it never emits a bank. So this puff does not exist in game
+today.
+
+This is the likely source of the brief flare a player remembers at the muzzle
+as the shell leaves the barrel — user-recalled from the reference game, where
+the flare is *not* continuous. What is not established is how long it emits.
+Every characterized turret bank brackets its emission between a type-3 start
+and a type-4 stop, and the casing counts in docs/mechanics/combat.md are
+derived from the frames strictly between them. This bank has no stop and its
+whole timeline is one frame long, so the burst count has no authored bound.
+Word 10 (updates between bursts) is the low-confidence parameter in the table
+above, which is exactly the one that would decide the answer.
+
+Two readings to weigh before implementing: a single burst on launch (the
+one-frame timeline taken literally), or continuous emission for the shell's
+whole flight (the missing stop taken literally), which would read as a smoke
+trail and collide with the separate rules-driven `MissileTrail` that
+`KobraHowitzer_B` already authors. Compare against the original game before
+choosing; deliberately left unimplemented.
+
 ## Animated FX texture rate
 
 FX event record type 6 (`object`, `texture.tga`) is the authored flipbook: the

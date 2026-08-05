@@ -39,7 +39,6 @@ const HOMING_PROJECTILE_SIZE := 0.16
 const TRAJECTORY_PROJECTILE_SIZE := 0.18
 const MissileTrailScript := preload("res://scripts/combat/fx/missile_trail.gd")
 const LaserBeamScript := preload("res://scripts/combat/fx/laser_beam.gd")
-const NO_PROPULSION_FLASH_BULLETS: Array[StringName] = [&"KobraHowitzer_B"]
 
 var bullet
 var _damage_scale := 1.0
@@ -194,8 +193,7 @@ func _create_visual() -> void:
 		if authored_visual != null:
 			authored_visual.name = "Visual"
 			add_child(authored_visual)
-			if bullet.id() in NO_PROPULSION_FLASH_BULLETS:
-				_hide_authored_propulsion_flash(authored_visual)
+			_hide_switched_off_fx_objects(authored_visual)
 			return
 	# Model-authored particle banks provide the visible gas/flame stream for
 	# continuous delivery. Do not expose the missing projectile mesh as a
@@ -230,14 +228,48 @@ func _create_visual() -> void:
 	add_child(visual)
 
 
-func _hide_authored_propulsion_flash(node: Node) -> void:
-	# shell.xbf contains `_flashl02`, a gameplay-controlled helper mesh. The
-	# original Minotaurus shot renders as a dark shell with a MissileTrail, not
-	# as a rocket with this helper burning continuously.
-	if node is Node3D and String(node.name).to_lower().contains("flashl"):
+## Switches off the helper objects the projectile's own model never shows.
+##
+## The XBF FX timeline carries visibility as paired events: type 1 hides the
+## named object, type 2 shows it. `?bigflash1` on AT_Kindjal, OR_Mortar and
+## IM_Sardaukar is the proof - each blinks for one to five frames per shot, from
+## a type 2 to the following type 1, and every sequence ends hidden.
+##
+## `shell.xbf`'s `?flashl02` propulsion flare receives a lone type 1 on frame 0
+## and no type 2 anywhere: authored, then switched off for good. That is why the
+## original shell renders as a dark casing rather than a burning rocket. Only
+## objects with no type 2 at all are hidden here, so anything the model does
+## blink stays under the animation's control. See docs/quirks.md.
+func _hide_switched_off_fx_objects(visual_root: Node3D) -> void:
+	var hidden: Array[String] = []
+	var shown: Array[String] = []
+	for event: Variant in visual_root.get_meta(&"xbf_fx_events", []):
+		var record := event as Dictionary
+		if record == null:
+			continue
+		var strings: Array = record.get("strings", [])
+		if strings.is_empty():
+			continue
+		var object_name := String(strings[0])
+		match int(record.get("type", 0)):
+			1:
+				if object_name not in hidden:
+					hidden.append(object_name)
+			2:
+				if object_name not in shown:
+					shown.append(object_name)
+	for object_name in hidden:
+		if object_name in shown:
+			continue
+		_hide_fx_object(visual_root, object_name)
+
+
+func _hide_fx_object(node: Node, object_name: String) -> void:
+	if node is Node3D and String(node.get_meta(&"original_name", "")) == object_name:
 		(node as Node3D).visible = false
+		return
 	for child in node.get_children():
-		_hide_authored_propulsion_flash(child)
+		_hide_fx_object(child, object_name)
 
 
 func advance(delta: float) -> void:

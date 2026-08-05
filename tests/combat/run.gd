@@ -256,6 +256,10 @@ func _initialize() -> void:
 		_test_laser_hitscan_visual
 	)
 	_run_case("non-homing bullets keep the sampled aim point", _test_linear_projectile_no_lead)
+	_run_case(
+		"the undeployed Kobra's shell leaves its muzzle",
+		_test_undeployed_kobra_shell_leaves_the_muzzle
+	)
 	_run_case("attack-ground missiles descend to the sampled point", _test_attack_ground_missile)
 	_run_case("homing respects delay, turn rate and target lifetime", _test_homing_projectile)
 	_run_case(
@@ -984,6 +988,60 @@ func _test_linear_projectile_no_lead() -> void:
 	projectile.advance(0.25)
 	_expect(projectile.finish_reason == &"impact_ground", "a sidestepping target must escape a non-homing shot")
 	_expect(is_zero_approx(target.damage_taken), "a missed non-homing shot must not damage its former target")
+	projectile.free()
+
+
+func _test_undeployed_kobra_shell_leaves_the_muzzle() -> void:
+	# Rules.txt leaves Howitzer_B without a Speed, which made the shell resolve
+	# at its own muzzle: the undeployed Kobra blew a 64-unit blast up against its
+	# own barrel and took the friendly-fire share of it. See docs/quirks.md.
+	var shell_config: Resource = _combat_catalog.bullet(&"Howitzer_B")
+	var shell = CombatBulletScript.new(
+		shell_config,
+		_combat_catalog.warhead(shell_config.warhead_id),
+		load(String(shell_config.projectile_scene_path))
+	)
+	_expect(
+		shell.speed() > 0.0 and not shell.has_trajectory() and not shell.is_hitscan(),
+		"the undeployed Kobra's gun must fire a direct shot that actually travels"
+	)
+	var target := FakeCombatTarget.new(&"Heavy")
+	target.position = Vector3(0.0, 0.0, -7.0)
+	var launch_position := Vector3(0.0, 1.0, 0.0)
+	var projectile = CombatProjectileScript.new()
+	root.add_child(projectile)
+	_expect(
+		projectile.launch(
+			shell,
+			_emission(launch_position, launch_position.direction_to(target.position)),
+			target
+		),
+		"Howitzer_B must launch at a target seven units away, well inside its eight tiles"
+	)
+	_expect(
+		projectile.state == CombatProjectileScript.State.FLYING,
+		"the shell must be in flight after launch, not already detonated at the muzzle"
+	)
+	projectile.advance(0.1)
+	_expect(
+		projectile.state == CombatProjectileScript.State.FLYING
+		and projectile.global_position.distance_to(launch_position) > 2.0,
+		"a 28-unit/s shell must have cleared the firing Kobra after a tenth of a second"
+	)
+	# Both Kobra shells share shell.xaf, whose `?flashl02` the model itself
+	# switches off on frame 0 and never shows again.
+	var visual := projectile.get_node_or_null("Visual") as Node3D
+	var source_flash := visual.find_child("*flashl*", true, false) as Node3D \
+		if visual != null else null
+	_expect(
+		source_flash != null and not source_flash.visible,
+		"the travel-mode shell must not burn its helper flash as rocket exhaust either"
+	)
+	projectile.advance(0.5)
+	_expect(
+		projectile.finish_reason == &"impact_target" and target.damage_taken > 0.0,
+		"the shell must reach and damage the target it was fired at"
+	)
 	projectile.free()
 
 

@@ -193,7 +193,14 @@ in `xbf_animation_entries`. Those range entries use the final baked animation
 name, after model-specific conversion repairs, while `source_name` preserves
 the original XBF label. Consequently every authored bank follows a repaired
 clip name without a corresponding runtime workaround. Undecoded words and the
-raw event block remain available as metadata as well. Bank parameter 05 is
+raw event block remain available as metadata as well. Alongside the type-3/4
+bank start/stop pair, event types 1 and 2 carry object visibility: type 1 hides
+the object named in its single string, type 2 shows it. The `?bigflash1` muzzle
+helpers of `AT_Kindjal`, `OR_Mortar` and `IM_Sardaukar` establish the direction
+— each blinks for one to five frames per shot, from a type 2 to the following
+type 1, and every sequence ends hidden. `CombatProjectile` uses this to switch
+off helper geometry that a projectile model never shows (see docs/quirks.md,
+"The shell's propulsion flare is authored, then switched off by its own model"). Bank parameter 05 is
 signed gravity per source update squared, while parameter 06 is particle size
 in source-model coordinates. Thus the `!%shel` values 10 (Minotaurus), 6
 (Trike), 4 (APC), and 3 (light infantry and Sniper) become 0.625, 0.375, 0.25,
