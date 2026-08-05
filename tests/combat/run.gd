@@ -1172,7 +1172,7 @@ func _test_deployed_mortar_high_arc() -> void:
 	_expect(mortar.is_deployed(), "the deploy call must land the Mortar in DEPLOYED")
 	mortar._process(1.0 / 60.0)
 
-	var active_turrets: Array = mortar._active_turrets()
+	var active_turrets: Array = mortar.combat()._active_turrets()
 	_expect(
 		active_turrets.size() == 1
 			and active_turrets[0].config.config_id == &"ORMortarInfBigGun",
@@ -2656,8 +2656,8 @@ func _test_fire_while_moving_capability() -> void:
 	mongoose.move_to(mongoose.global_position + forward * 20.0)
 	_expect(
 		not mongoose.has_attack_order()
-		and mongoose._weapon_targets.has(0)
-		and mongoose._moving_fire_weapons.has(0),
+		and mongoose.combat()._weapon_targets.has(0)
+		and mongoose.combat()._moving_fire_weapons.has(0),
 		"Move must replace pursuit and enable autonomous fire for its movable turret"
 	)
 	for frame in 180:
@@ -2683,7 +2683,7 @@ func _test_fire_while_moving_capability() -> void:
 	for frame in 180:
 		mongoose._process(1.0 / 60.0)
 		mongoose._physics_process(1.0 / 60.0)
-		if mongoose._weapon_fire_sequences.is_empty():
+		if mongoose.combat()._weapon_fire_sequences.is_empty():
 			break
 	var out_of_range_yaw := absf(
 		mongoose.combat_turrets[0].current_yaw_degrees()
@@ -2760,7 +2760,7 @@ func _test_blocking_fire_move_cancel() -> void:
 	)
 	infantry.move_to(infantry.global_position + Vector3.RIGHT * 10.0)
 	_expect(
-		infantry._weapon_fire_sequences.is_empty(),
+		infantry.combat()._weapon_fire_sequences.is_empty(),
 		"a movement order must cancel the blocking Fire sequence"
 	)
 	_expect(
@@ -2789,13 +2789,13 @@ func _test_independent_side_turrets() -> void:
 	var second_target := Vector3(second_emission["position"]) \
 		+ Vector3(second_emission["direction"]).normalized() * 5.0
 	_expect(
-		pose_flame._start_authored_fire_sequence(first_turret, first_target),
+		pose_flame.combat()._start_authored_fire_sequence(first_turret, first_target),
 		"the first side turret must start its authored sequence"
 	)
 	first_turret.aim_at(first_target, 10.0)
 	var first_direction_before: Vector3 = first_turret.peek_emission()["direction"]
 	_expect(
-		pose_flame._start_authored_fire_sequence(second_turret, second_target),
+		pose_flame.combat()._start_authored_fire_sequence(second_turret, second_target),
 		"the second side turret must start while the first sequence is active"
 	)
 	var first_direction_after: Vector3 = first_turret.peek_emission()["direction"]
@@ -3121,7 +3121,7 @@ func _test_unit_attack_order() -> void:
 	var mongoose_player := mongoose.get_node("VisualRoot").find_child(
 		"AnimationPlayer", true, false
 	) as AnimationPlayer
-	var mongoose_fire_overlay := mongoose._fire_overlay.player_for(0) \
+	var mongoose_fire_overlay := mongoose.combat()._fire_overlay.player_for(0) \
 		as AnimationPlayer
 	_expect(
 		mongoose_player != null
@@ -3392,10 +3392,10 @@ func _test_launcher_fire_sequences() -> void:
 			var player := binding["player"] as AnimationPlayer
 			var animation_name := StringName(binding["name"])
 			var animation := player.get_animation(animation_name)
-			var shot_times: Array[float] = launcher._authored_fire_shot_times(
+			var shot_times: Array[float] = launcher.combat()._authored_fire_shot_times(
 				player, animation, turret, animation_name
 			)
-			var source_times: Array[float] = launcher._xbf_fire_shot_times(
+			var source_times: Array[float] = launcher.combat()._xbf_fire_shot_times(
 				animation_name, animation, turret
 			)
 			var configured_count := int(turret.firing_config.burst_shot_count)
@@ -3459,7 +3459,7 @@ func _test_continuous_flame_sequences() -> void:
 			var player := binding.get("player") as AnimationPlayer
 			var animation_name := StringName(binding.get("name", &""))
 			var animation := player.get_animation(animation_name) if player != null else null
-			var shot_times: Array[float] = unit._authored_fire_shot_times(
+			var shot_times: Array[float] = unit.combat()._authored_fire_shot_times(
 				player, animation, turret, animation_name
 			) if animation != null else []
 			_expect(
@@ -3492,7 +3492,7 @@ func _test_xbf_fire_event_timing() -> void:
 	) as AnimationPlayer
 	var animation := player.get_animation(&"Fire_0")
 	var turret = trooper.combat_turrets[0]
-	var shot_times: Array[float] = trooper._authored_fire_shot_times(
+	var shot_times: Array[float] = trooper.combat()._authored_fire_shot_times(
 		player, animation, turret, &"Fire_0"
 	)
 	_expect(
@@ -3512,7 +3512,7 @@ func _test_xbf_fire_event_timing() -> void:
 	)
 	_expect(trooper.command_attack(target), "ORAATrooper must accept an in-range target")
 	_expect(
-		trooper._start_authored_fire_sequence(turret),
+		trooper.combat()._start_authored_fire_sequence(turret),
 		"ORAATrooper must start its authored Fire_0 sequence"
 	)
 	trooper._process(0.59)
@@ -4348,7 +4348,7 @@ func _test_kindjal_deployed_fire() -> void:
 	kindjal.finish_deployment(true)
 	_expect(kindjal.is_deployed(), "the deploy call must land the Kindjal in DEPLOYED")
 
-	var active_turrets: Array = kindjal._active_turrets()
+	var active_turrets: Array = kindjal.combat()._active_turrets()
 	_expect(
 		active_turrets.size() == 1 and active_turrets[0].config.config_id == &"ATKindjalBigGun",
 		"a deployed Kindjal must expose only its deployed turret"
@@ -4442,13 +4442,13 @@ func _test_deployed_fire_completion_preserves_hidden_flash() -> void:
 		player.play(&"Deployed_Fire")
 		player.advance(animation.length)
 		var hidden_end_scale := flash.scale
-		unit._weapon_fire_sequences[1] = {
+		unit.combat()._weapon_fire_sequences[1] = {
 			"player": player,
 			"turret": null,
 			"blocking": true,
 			"shots_emitted": 0,
 		}
-		unit._finish_fire_sequence_for(1)
+		unit.combat()._finish_fire_sequence_for(1)
 		_expect(
 			flash.scale.is_equal_approx(hidden_end_scale),
 			(
@@ -4466,7 +4466,7 @@ func _test_kobra_deployed_hull_frozen() -> void:
 	kindjal.replace_visual_scene(ATKindjalModelScene)
 	_expect(kindjal.deploy(), "Kindjal must accept the deploy command")
 	kindjal.finish_deployment(true)
-	var kindjal_turret = kindjal._active_turrets()[0]
+	var kindjal_turret = kindjal.combat()._active_turrets()[0]
 	_expect(
 		kindjal_turret.requires_hull_turn(),
 		"a deployed Kindjal's fixed gun must require hull-assist aiming"
@@ -4481,7 +4481,7 @@ func _test_kobra_deployed_hull_frozen() -> void:
 	kobra.finish_deployment(true)
 	_expect(kobra.is_deployed(), "the deploy call must land the Kobra in DEPLOYED")
 
-	var active_turrets: Array = kobra._active_turrets()
+	var active_turrets: Array = kobra.combat()._active_turrets()
 	_expect(
 		active_turrets.size() == 1 and active_turrets[0].config.config_id == &"ORKobraDeployedGun",
 		"a deployed Kobra must expose only its deployed turret"
@@ -4500,7 +4500,7 @@ func _test_kobra_deployed_range_acquisition() -> void:
 	kobra.replace_visual_scene(ORKobraModelScene)
 	_expect(kobra.deploy(), "Kobra must accept the deploy command")
 	kobra.finish_deployment(true)
-	var turret = kobra._active_turrets()[0]
+	var turret = kobra.combat()._active_turrets()[0]
 	var emission: Dictionary = turret.peek_emission()
 	var forward := Vector3(emission["direction"])
 	forward.y = 0.0
@@ -4562,7 +4562,7 @@ func _test_sardaukar_not_combat_deployable() -> void:
 	root.add_child(sardaukar)
 
 	_expect(
-		not sardaukar._is_combat_deployable(),
+		not sardaukar.combat()._is_combat_deployable(),
 		"IMADVSardaukar must not be combat-deployable despite its knife/gun turret pair"
 	)
 	_expect(sardaukar.combat_turrets.size() == 2, "IMADVSardaukar must configure both its gun and knife turrets")
@@ -4582,7 +4582,7 @@ func _test_kobra_travel_fire_variants() -> void:
 	kobra.replace_visual_scene(ORKobraModelScene)
 	_expect(not kobra.is_deployed(), "a fresh Kobra must start in travel mode")
 
-	var travel_turret = kobra._active_turrets()[0]
+	var travel_turret = kobra.combat()._active_turrets()[0]
 	_expect(
 		travel_turret.config.config_id == &"ORKobraUndeployedGun",
 		"travel mode must expose only the travel turret"

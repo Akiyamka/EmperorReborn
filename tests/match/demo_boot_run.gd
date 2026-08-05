@@ -1108,7 +1108,7 @@ func _test_real_forced_friendly_attack() -> void:
 	attacker.weapon_fired.connect(func(projectiles: Array, fired_target: Variant, weapon_index: int) -> void:
 		if fired_target == target:
 			fired_projectiles.append_array(projectiles)
-			var fire_state: Dictionary = attacker._weapon_fire_sequences.get(
+			var fire_state: Dictionary = attacker.combat()._weapon_fire_sequences.get(
 				weapon_index, {}
 			)
 			var player := fire_state.get("player") as AnimationPlayer

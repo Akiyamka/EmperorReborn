@@ -562,7 +562,7 @@ func _test_combat_deploy_toggle() -> void:
 
 func _active_turret_ids(unit: Unit) -> Array[StringName]:
 	var ids: Array[StringName] = []
-	for turret in unit._active_turrets():
+	for turret in unit.combat()._active_turrets():
 		ids.append(turret.config.config_id)
 	return ids
 
