@@ -645,7 +645,7 @@ func _authored_fire_shot_times(
 		animation: Animation,
 		turret,
 		animation_name: StringName = &""
-	) -> Array[float]:
+	) -> Array[Dictionary]:
 	## Test-only shim: tests/combat/run.gd calls this by name. Not architecture.
 	return AuthoredFireControllerScript.authored_fire_shot_times(
 		player, animation, turret, _owner.visual_root, animation_name
@@ -654,7 +654,7 @@ func _authored_fire_shot_times(
 
 func _xbf_fire_shot_times(
 	animation_name: StringName, animation: Animation, turret
-	) -> Array[float]:
+	) -> Array[Dictionary]:
 	## Test-only shim: tests/combat/run.gd calls this by name. Not architecture.
 	return AuthoredFireControllerScript.xbf_fire_shot_times(
 		animation_name, animation, turret, _owner.visual_root

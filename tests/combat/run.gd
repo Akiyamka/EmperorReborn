@@ -376,6 +376,11 @@ func _initialize() -> void:
 		"building StatePlayer leaves visible turret aiming to the combat servo",
 		_test_defensive_building_visible_aim
 	)
+	_run_case(
+		"ATRocketTurret fires each authored shot from the muzzle its animation "
+			+ "actually opens, not a plain round-robin",
+		_test_atrocket_turret_muzzle_matches_authored_animation
+	)
 	await _run_async_case(
 		"Ordos popup turrets visibly deploy, hold, and undeploy",
 		_test_ordos_popup_turret_animations
@@ -3450,10 +3455,10 @@ func _test_launcher_fire_sequences() -> void:
 			var player := binding["player"] as AnimationPlayer
 			var animation_name := StringName(binding["name"])
 			var animation := player.get_animation(animation_name)
-			var shot_times: Array[float] = launcher.combat()._authored_fire_shot_times(
+			var shot_times: Array[Dictionary] = launcher.combat()._authored_fire_shot_times(
 				player, animation, turret, animation_name
 			)
-			var source_times: Array[float] = launcher.combat()._xbf_fire_shot_times(
+			var source_times: Array[Dictionary] = launcher.combat()._xbf_fire_shot_times(
 				animation_name, animation, turret
 			)
 			var configured_count := int(turret.firing_config.burst_shot_count)
@@ -3479,7 +3484,7 @@ func _test_launcher_fire_sequences() -> void:
 			elif shot_times.size() >= 2:
 				_expect(
 					is_equal_approx(
-						shot_times[1] - shot_times[0],
+						float(shot_times[1]["time"]) - float(shot_times[0]["time"]),
 						float(turret.firing_config.burst_interval_ticks) \
 							/ UnitScript.RULE_COMBAT_TICKS_PER_SECOND
 					),
@@ -3488,11 +3493,19 @@ func _test_launcher_fire_sequences() -> void:
 					]
 				)
 			_expect(
-				shot_times.back() <= animation.length,
+				float(shot_times.back()["time"]) <= animation.length,
 				"%s weapon %d must complete its burst inside Fire_0" % [
 					definition[0], turret.weapon_index()
 				]
 			)
+			for shot: Dictionary in shot_times:
+				var muzzle := int(shot.get("muzzle", -1))
+				_expect(
+					muzzle == -1 or (muzzle >= 0 and muzzle < turret.muzzle_count()),
+					"%s weapon %d must only assign a shot to a real muzzle index" % [
+						definition[0], turret.weapon_index()
+					]
+				)
 		launcher.free()
 
 
@@ -3517,7 +3530,7 @@ func _test_continuous_flame_sequences() -> void:
 			var player := binding.get("player") as AnimationPlayer
 			var animation_name := StringName(binding.get("name", &""))
 			var animation := player.get_animation(animation_name) if player != null else null
-			var shot_times: Array[float] = unit.combat()._authored_fire_shot_times(
+			var shot_times: Array[Dictionary] = unit.combat()._authored_fire_shot_times(
 				player, animation, turret, animation_name
 			) if animation != null else []
 			_expect(
@@ -3531,7 +3544,8 @@ func _test_continuous_flame_sequences() -> void:
 			for shot_index in range(1, shot_times.size()):
 				_expect(
 					is_equal_approx(
-						shot_times[shot_index] - shot_times[shot_index - 1],
+						float(shot_times[shot_index]["time"])
+							- float(shot_times[shot_index - 1]["time"]),
 						1.0 / UnitScript.BAKED_MODEL_FRAMES_PER_SECOND
 					),
 					"%s weapon %d continuous pulses must retain XBF frame cadence"
@@ -3550,11 +3564,12 @@ func _test_xbf_fire_event_timing() -> void:
 	) as AnimationPlayer
 	var animation := player.get_animation(&"Fire_0")
 	var turret = trooper.combat_turrets[0]
-	var shot_times: Array[float] = trooper.combat()._authored_fire_shot_times(
+	var shot_times: Array[Dictionary] = trooper.combat()._authored_fire_shot_times(
 		player, animation, turret, &"Fire_0"
 	)
 	_expect(
-		shot_times.size() == 1 and is_equal_approx(shot_times[0], 15.0 / 20.0),
+		shot_times.size() == 1
+			and is_equal_approx(float(shot_times[0]["time"]), 15.0 / 20.0),
 		"ORAATrooper must convert its absolute frame-301 type-10 event "
 			+ "to frame 15 of the Fire_0 clip"
 	)
@@ -4119,6 +4134,96 @@ func _test_defensive_building_visible_aim() -> void:
 	building.cancel_attack_order()
 	building.free()
 	await process_frame
+
+
+## Regression test for a reported bug: ATRocketTurret's four >>N muzzle
+## markers are numbered by export order, not by which barrel the baked Fire_0
+## animation actually opens at a given moment (see AuthoredFireController's
+## type-10 event `value` handling). A plain round-robin over emission_points()
+## fires the markers in numeric order — two "top" barrels, then two "bottom"
+## barrels — even though the animation visibly recoils a "left" pair, then a
+## "right" pair. Each projectile must spawn from the muzzle the authored shot
+## schedule actually names, not from the round-robin's own counter.
+func _test_atrocket_turret_muzzle_matches_authored_animation() -> void:
+	var scene := load(
+		"res://assets/converted/buildings/ATRocketTurret/ATRocketTurret.scn"
+	) as PackedScene
+	var building := scene.instantiate() as Building
+	building.owner_player_id = 1
+	root.add_child(building)
+	var turret = building.combat_turrets[0]
+	var controller = building._authored_fire_controller
+	var binding: Dictionary = controller._fire_animation_binding()
+	_expect(
+		not binding.is_empty(), "ATRocketTurret must have an authored Fire clip"
+	)
+	if binding.is_empty():
+		building.free()
+		return
+	var player: AnimationPlayer = binding["player"]
+	var animation_name: StringName = binding["name"]
+	var animation: Animation = player.get_animation(animation_name)
+	var shot_times: Array[Dictionary] = controller._authored_fire_shot_times(
+		player, animation, animation_name
+	)
+	_expect(
+		shot_times.size() == turret.muzzle_count(),
+		"ATRocketTurret must schedule one shot per muzzle marker"
+	)
+	var known_muzzles := shot_times.filter(func(shot: Dictionary) -> bool:
+		return int(shot.get("muzzle", -1)) >= 0
+	)
+	_expect(
+		known_muzzles.size() == shot_times.size(),
+		"ATRocketTurret's authored Fire_0 clip must name a real muzzle for every shot"
+	)
+	var initial_emission: Dictionary = turret.peek_emission()
+	var direction: Vector3 = initial_emission.get("direction", Vector3.BACK)
+	var target_position := Vector3(initial_emission["position"]) \
+		+ direction.normalized() * 5.0
+	var target := PhysicsCombatTarget.new(target_position)
+	target.owner_player_id = 2
+	target.add_to_group(&"units")
+	root.add_child(target)
+	var fired: Array = []
+	# The muzzle markers themselves animate (barrel recoil), so their world
+	# position at fire time differs from their rest pose. Read which physical
+	# muzzle index the turret actually used for each shot from its own
+	# last_emissions() right as weapon_fired reports it, instead of comparing
+	# spawn positions against a stale pre-animation snapshot.
+	var fired_muzzles: Array[int] = []
+	building.weapon_fired.connect(
+		func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+			fired.append_array(projectiles)
+			for emission: Dictionary in turret.last_emissions():
+				fired_muzzles.append(int(emission.get("index", -1)))
+	)
+	for frame in 900:
+		building._process(1.0 / 60.0)
+		if fired.size() >= shot_times.size():
+			break
+	_expect(
+		fired.size() == shot_times.size(),
+		"ATRocketTurret must fire exactly one projectile per scheduled authored shot"
+	)
+	for shot_index in mini(fired_muzzles.size(), shot_times.size()):
+		var expected_muzzle := int(shot_times[shot_index].get("muzzle", -1))
+		if expected_muzzle < 0:
+			continue
+		_expect(
+			fired_muzzles[shot_index] == expected_muzzle,
+			(
+				"ATRocketTurret shot %d must fire from the authored muzzle %d "
+				+ "its Fire_0 clip names (fired from %d instead), not the "
+				+ "round-robin's own muzzle"
+			) % [shot_index, expected_muzzle, fired_muzzles[shot_index]]
+		)
+
+	for projectile in fired:
+		if is_instance_valid(projectile) and not projectile.is_queued_for_deletion():
+			projectile.free()
+	target.free()
+	building.free()
 
 
 func _test_ordos_popup_turret_animations() -> void:

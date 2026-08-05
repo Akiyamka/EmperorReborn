@@ -38,6 +38,12 @@ var require_aim := true
 var committed_sequence := false
 ## Multiplies the payload's damage. Veterancy and per-sequence falloff use it.
 var damage_scale := 1.0
+## Which authored muzzle marker (emission_points() index) this shot must fire
+## from, or -1 to let the turret's own round-robin choose. Set for shots whose
+## timing and physical barrel both come from an authored Fire clip, so the
+## visible barrel recoil and the spawned projectile agree on which muzzle
+## fired.
+var muzzle_index := -1
 
 
 ## An ordinary shot: every gate applies.
@@ -59,11 +65,12 @@ static func at(
 ## the timing, the aim and the reload, so all three gates belong to the sequence
 ## rather than to this call.
 static func authored(
-	fire_target: Variant, fire_source: Object, scale := 1.0
+	fire_target: Variant, fire_source: Object, scale := 1.0, muzzle := -1
 ) -> FireRequest:
 	var request := at(fire_target, fire_source)
 	request.begin_reload_after_shot = false
 	request.require_aim = false
 	request.committed_sequence = true
 	request.damage_scale = scale
+	request.muzzle_index = muzzle
 	return request

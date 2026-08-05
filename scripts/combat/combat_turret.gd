@@ -647,6 +647,18 @@ func peek_emission() -> Dictionary:
 	return points[_next_muzzle_index % points.size()]
 
 
+## Same as peek_emission(), except an authored shot with a known muzzle_index
+## (see FireRequest) previews that specific muzzle instead of the round-robin
+## next one, so range/aim checks agree with the muzzle try_fire() will use.
+func preview_emission_for(muzzle_index: int) -> Dictionary:
+	if muzzle_index < 0 or maxi(int(firing_config.bullet_count), 1) != 1:
+		return peek_emission()
+	var points := emission_points()
+	if muzzle_index >= points.size():
+		return peek_emission()
+	return points[muzzle_index]
+
+
 func next_emission() -> Dictionary:
 	var points := emission_points()
 	if points.is_empty():
@@ -801,7 +813,8 @@ func muzzle_origin() -> Vector3:
 
 
 func try_fire(
-		begin_reload_after_shot := true, committed_sequence := false, damage_scale := 1.0
+		begin_reload_after_shot := true, committed_sequence := false, damage_scale := 1.0,
+		muzzle_index := -1
 	) -> Array:
 	var result: Array = []
 	if not is_configured() or (not committed_sequence and not is_ready()):
@@ -809,10 +822,21 @@ func try_fire(
 
 	_last_emissions.clear()
 	var bullet_count := maxi(int(firing_config.bullet_count), 1)
+	# An authored Fire clip's shot event already names the physical muzzle
+	# whose bone peaks at that time (see AuthoredFireController). Only a
+	# single-bullet shot can honor that muzzle unambiguously; bullet_count > 1
+	# turrets keep the plain round-robin, since a burst of many bullets aimed
+	# at one authored muzzle has no equivalent authored assignment for the rest.
+	var forced_points: Array[Dictionary] = []
+	if muzzle_index >= 0 and bullet_count == 1:
+		forced_points = emission_points()
 	for index in bullet_count:
 		var payload = ShotPayloadScript.new(_definition_view(), damage_scale)
 		result.append(payload)
-		_last_emissions.append(next_emission())
+		var emission := next_emission()
+		if not forced_points.is_empty() and muzzle_index < forced_points.size():
+			emission = forced_points[muzzle_index]
+		_last_emissions.append(emission)
 	if begin_reload_after_shot:
 		begin_reload()
 	return result
@@ -829,7 +853,7 @@ func try_fire_at(request: FireRequest) -> Array:
 	or (not request.committed_sequence and not is_ready()):
 		return result
 	var target_position := _bullet_target_position(target_or_position)
-	var preview_emission := peek_emission()
+	var preview_emission := preview_emission_for(request.muzzle_index)
 	if not target_position.is_finite() or preview_emission.is_empty():
 		return result
 	if request.require_aim and not is_aimed_at(target_position + aim_offset):
@@ -873,7 +897,8 @@ func try_fire_at(request: FireRequest) -> Array:
 			target_position + aim_offset
 		)
 	var payloads := try_fire(
-		request.begin_reload_after_shot, request.committed_sequence, request.damage_scale
+		request.begin_reload_after_shot, request.committed_sequence, request.damage_scale,
+		request.muzzle_index
 	)
 	for index in payloads.size():
 		var projectile = CombatProjectileScript.new()

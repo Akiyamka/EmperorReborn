@@ -26,7 +26,7 @@ static func authored_fire_shot_times(
 	turret,
 	model_root: Node,
 	animation_name: StringName = &""
-	) -> Array[float]:
+	) -> Array[Dictionary]:
 	if animation_name.is_empty():
 		for candidate_name: StringName in player.get_animation_list():
 			if player.get_animation(candidate_name) == animation:
@@ -45,7 +45,7 @@ static func xbf_fire_shot_times(
 	animation: Animation,
 	turret,
 	model_root: Node
-	) -> Array[float]:
+	) -> Array[Dictionary]:
 	var controller := AuthoredFireController.new()
 	controller._turret = turret
 	controller._model_root = model_root as Node3D
@@ -59,7 +59,7 @@ func start_sequence(
 	player: AnimationPlayer,
 	animation_name: StringName,
 	animation: Animation,
-	shot_times: Array[float],
+	shot_times: Array[Dictionary],
 	blocking: bool,
 	reload_after_animation: bool,
 	restore_aim_poses: Callable = Callable()
@@ -125,13 +125,17 @@ func advance_sequences(
 			damage_scale = 1.0 / float(shot_times.size())
 		while (
 			next_shot < shot_times.size()
-			and float(shot_times[next_shot]) <= elapsed + FIRE_EVENT_EPSILON
+			and float((shot_times[next_shot] as Dictionary)["time"])
+				<= elapsed + FIRE_EVENT_EPSILON
 		):
+			var shot: Dictionary = shot_times[next_shot]
 			next_shot += 1
 			if target == null:
 				continue
 			var projectiles: Array = turret.try_fire_at(
-				FireRequestScript.authored(target, source, damage_scale)
+				FireRequestScript.authored(
+					target, source, damage_scale, int(shot.get("muzzle", -1))
+				)
 			)
 			if projectiles.is_empty():
 				continue
@@ -341,15 +345,15 @@ func _authored_fire_shot_times(
 	player: AnimationPlayer,
 	animation: Animation,
 	animation_name: StringName
-	) -> Array[float]:
+	) -> Array[Dictionary]:
 	var xbf_events := _xbf_fire_shot_times(animation_name, animation)
 	if not xbf_events.is_empty():
 		return xbf_events
 	var configured_burst := _configured_burst_shot_times(animation)
 	if not configured_burst.is_empty():
 		return configured_burst
-	var fallback: Array[float] = [
-		minf(1.0 / BAKED_MODEL_FRAMES_PER_SECOND, animation.length)
+	var fallback: Array[Dictionary] = [
+		{"time": minf(1.0 / BAKED_MODEL_FRAMES_PER_SECOND, animation.length), "muzzle": -1}
 	]
 	if _turret.muzzle_count() <= 1:
 		return fallback
@@ -395,15 +399,20 @@ func _authored_fire_shot_times(
 	events.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return float(a["time"]) < float(b["time"])
 	)
-	var result: Array[float] = []
-	for event in events:
-		result.append(float(event["time"]))
-	return result
+	return events
 
 
+## Every type-10 launch event an authored Fire clip's XBF data carries names
+## the physical muzzle (its `value` payload) whose bone actually peaks at that
+## frame -- the visible barrel order the animation shows, which need not match
+## the muzzle markers' plain numeric >>N naming. Validated against the bound
+## turret's own muzzle_count() before trusting it, since `value` is not
+## documented and other event categories (e.g. locomotion footstep events)
+## reuse the same field for unrelated data; an out-of-range value anywhere in
+## the clip discards muzzle info for the whole result rather than guessing.
 func _xbf_fire_shot_times(
 	animation_name: StringName, animation: Animation
-	) -> Array[float]:
+	) -> Array[Dictionary]:
 	if animation_name.is_empty() or _model_root == null:
 		return []
 	var motion_root := find_xbf_motion_root(_model_root)
@@ -427,31 +436,43 @@ func _xbf_fire_shot_times(
 	var end_frame := int(source_entry.get("end_frame", -1))
 	if start_frame < 0 or end_frame < start_frame:
 		return []
-	var result: Array[float] = []
+	var muzzle_count: int = _turret.muzzle_count()
+	var muzzles_trustworthy := true
+	var result: Array[Dictionary] = []
 	for event_value: Variant in motion_root.get_meta("xbf_fx_events", []):
 		var event := event_value as Dictionary
 		var frame := int(event.get("frame", -1))
 		if int(event.get("type", -1)) == 10 \
 		and frame >= start_frame and frame <= end_frame:
-			result.append(clampf(
-				float(frame - start_frame) / BAKED_MODEL_FRAMES_PER_SECOND,
-				0.0,
-				animation.length
-			))
+			var muzzle := int(event.get("value", -1))
+			if muzzle < 0 or muzzle >= muzzle_count:
+				muzzles_trustworthy = false
+			result.append({
+				"time": clampf(
+					float(frame - start_frame) / BAKED_MODEL_FRAMES_PER_SECOND,
+					0.0,
+					animation.length
+				),
+				"muzzle": muzzle,
+			})
+	if not muzzles_trustworthy:
+		for shot in result:
+			shot["muzzle"] = -1
 	if (
 		result.size() == 1
 		and _turret.bullet_config != null
 		and bool(_turret.bullet_config.continuous)
 	):
 		var first_shot_frame := int(round(
-			result[0] * BAKED_MODEL_FRAMES_PER_SECOND
+			float(result[0]["time"]) * BAKED_MODEL_FRAMES_PER_SECOND
 		)) + start_frame
 		var continuous_result := _xbf_continuous_fire_shot_times(
 			motion_root,
 			start_frame,
 			end_frame,
 			animation.length,
-			first_shot_frame
+			first_shot_frame,
+			int(result[0]["muzzle"])
 		)
 		if continuous_result.size() > 1:
 			return continuous_result
@@ -469,8 +490,9 @@ func _xbf_continuous_fire_shot_times(
 	clip_start: int,
 	clip_end: int,
 	animation_length: float,
-	first_shot_frame: int
-	) -> Array[float]:
+	first_shot_frame: int,
+	muzzle: int
+	) -> Array[Dictionary]:
 	var stream_stop_frame := first_shot_frame + 1
 	var events := motion_root.get_meta("xbf_fx_events", []) as Array
 	for start_value: Variant in events:
@@ -500,19 +522,22 @@ func _xbf_continuous_fire_shot_times(
 			if stop_frame > first_shot_frame and stop_frame <= clip_end:
 				stream_stop_frame = maxi(stream_stop_frame, stop_frame)
 				break
-	var result: Array[float] = []
+	var result: Array[Dictionary] = []
 	for frame in range(first_shot_frame, stream_stop_frame):
-		result.append(clampf(
-			float(frame - clip_start) / BAKED_MODEL_FRAMES_PER_SECOND,
-			0.0,
-			animation_length
-		))
+		result.append({
+			"time": clampf(
+				float(frame - clip_start) / BAKED_MODEL_FRAMES_PER_SECOND,
+				0.0,
+				animation_length
+			),
+			"muzzle": muzzle,
+		})
 	return result
 
 
 func _configured_burst_shot_times(
 	animation: Animation
-	) -> Array[float]:
+	) -> Array[Dictionary]:
 	if _turret.firing_config == null:
 		return []
 	var count := int(_turret.firing_config.burst_shot_count)
@@ -524,12 +549,15 @@ func _configured_burst_shot_times(
 	var interval_seconds := maxf(
 		float(_turret.firing_config.burst_interval_ticks), 0.0
 	) / RULE_COMBAT_TICKS_PER_SECOND
-	var result: Array[float] = []
+	var result: Array[Dictionary] = []
 	for index in count:
-		result.append(minf(
-			first_shot_time + float(index) * interval_seconds,
-			animation.length
-		))
+		result.append({
+			"time": minf(
+				first_shot_time + float(index) * interval_seconds,
+				animation.length
+			),
+			"muzzle": -1,
+		})
 	return result
 
 

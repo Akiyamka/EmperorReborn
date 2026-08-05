@@ -76,6 +76,20 @@ Other weapon properties on a unit:
   inside the clip follow the animated barrel
   recoils: the Minotaurus emits four sequential shells from its four muzzles
   during one 31-frame `Fire 0` clip while its reload timer is already advancing.
+  A type-10 launch event's `value` payload names which physical `>>N` muzzle
+  fires it — the barrel order the animation visibly opens, which is not
+  guaranteed to match the muzzles' own ascending numeric names. ATRocketTurret
+  is the clearest case: its Fire_0 clip visibly recoils a left pair of barrels,
+  then a right pair, while the `>>N` markers are numbered top-then-bottom.
+  `AuthoredFireController` reads `value` and threads the named muzzle through
+  `FireRequest.muzzle_index` so `CombatTurret.try_fire`/`try_fire_at` fire (and
+  flash) that exact muzzle instead of the plain round-robin
+  `next_emission()` would otherwise pick; the override only applies to
+  single-bullet shots (`bullet_count == 1`), and any turret whose `value`
+  payload falls outside its own `muzzle_count()` range is treated as
+  untrustworthy and left on the round-robin, since the field is undocumented
+  and is reused for unrelated data by other XBF event categories (e.g.
+  locomotion footstep events).
   A `Continuous` bullet uses its single type-10 launch as the first damage
   pulse, then repeats at the source-frame cadence until the matching authored
   muzzle-stream banks stop. Thus the Harkonnen Flamer and Flame Tank deliver a
