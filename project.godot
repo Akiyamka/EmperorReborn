@@ -25,23 +25,22 @@ config/icon="res://icon.svg"
 Players="*res://scripts/players/player_roster.gd"
 Cursors="*res://scripts/ui/cursor_manager.gd"
 
+[debug]
+
+gdscript/warnings/unused_variable=2
+gdscript/warnings/unused_local_constant=2
+gdscript/warnings/unused_private_class_variable=2
+gdscript/warnings/unused_parameter=2
+gdscript/warnings/unused_signal=2
+gdscript/warnings/shadowed_variable=2
+gdscript/warnings/static_called_on_instance=2
+
 [display]
 
 window/size/viewport_width=1650
 window/size/viewport_height=1080
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-
-[debug]
-
-gdscript/warnings/enable=true
-gdscript/warnings/unused_private_class_variable=2
-gdscript/warnings/unused_parameter=2
-gdscript/warnings/unused_variable=2
-gdscript/warnings/unused_signal=2
-gdscript/warnings/unused_local_constant=2
-gdscript/warnings/static_called_on_instance=2
-gdscript/warnings/shadowed_variable=2
 
 [rendering]
 
