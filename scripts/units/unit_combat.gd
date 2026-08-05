@@ -374,7 +374,11 @@ func _advance_turret_engagement(
 	# matching the original engine's roughly symmetric on/off cadence, e.g.
 	# the Flame Tank's ~2.4s burst followed by a ~2.4s reload) rather than
 	# waiting out the full ReloadCount between each short clip, which would
-	# otherwise turn a sustained flame into one brief puff per cooldown.
+	# otherwise turn a sustained flame into one brief puff per cooldown. This
+	# only applies when the authored clip actually encodes more than one shot
+	# event (a real sustained stream); a `Continuous` bullet whose clip fires
+	# once (e.g. the Sonic Tank's single boom) fires and reloads like any
+	# ordinary weapon instead of replaying that one shot on a loop.
 	var is_continuous: bool = bool(turret.is_continuous_bullet())
 	var starting_new_burst := false
 	var ready_to_restart: bool
@@ -385,7 +389,9 @@ func _advance_turret_engagement(
 		starting_new_burst = is_continuous and ready_to_restart
 	if ready_to_restart and _start_authored_fire_sequence(turret, target):
 		if starting_new_burst:
-			turret.begin_continuous_burst()
+			turret.begin_continuous_burst(
+				_fire_sequence_has_multiple_shots(turret.weapon_index())
+			)
 		return true
 	var projectiles: Array = turret.try_fire_at(FireRequestScript.at(target, _owner))
 	if not projectiles.is_empty():
@@ -447,6 +453,19 @@ func _weak_target(state: Variant) -> Variant:
 		return null
 	var target_ref: WeakRef = (state as Dictionary).get("ref") as WeakRef
 	return target_ref.get_ref() if target_ref != null else null
+
+
+## Only a genuine sustained-stream clip (multiple authored shot events, e.g.
+## the Flame Tank's held trigger) should replay back-to-back for a burst
+## window; a `Continuous` bullet whose clip only fires once has nothing to
+## gain from restarting the same shot, so it should reload like any other
+## weapon. See `_advance_turret_engagement`.
+func _fire_sequence_has_multiple_shots(weapon_index: int) -> bool:
+	var state: Variant = _weapon_fire_sequences.get(weapon_index)
+	if not state is Dictionary:
+		return false
+	var shot_times: Variant = (state as Dictionary).get("shot_times", [])
+	return shot_times is Array and shot_times.size() > 1
 
 
 func _start_authored_fire_sequence(turret, attack_target: Variant = null) -> bool:

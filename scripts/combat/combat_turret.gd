@@ -685,12 +685,18 @@ func continuous_burst_active() -> bool:
 	return continuous_burst_ticks_remaining > 0.0
 
 
-## Starts (or keeps alive) a continuous weapon's burst window, sized to the
-## same `ReloadCount` budget used for the cooldown that follows it — matching
-## the original engine's roughly symmetric on/off cadence for stream weapons
-## (e.g. the Flame Tank's ~2.4s burst followed by a ~2.4s reload).
-func begin_continuous_burst() -> void:
-	continuous_burst_ticks_remaining = reload_count()
+## Starts a fresh firing cycle for a `Continuous` bullet: always re-arms the
+## once-per-cycle fire sound, and — only when `sustain_window` is true, i.e.
+## the authored clip has more than one shot event (see
+## `_fire_sequence_has_multiple_shots` in unit_combat.gd) — opens the replay
+## burst window, sized to the same `ReloadCount` budget used for the cooldown
+## that follows it, matching the original engine's roughly symmetric on/off
+## cadence for stream weapons (e.g. the Flame Tank's ~2.4s burst followed by a
+## ~2.4s reload). A single-shot `Continuous` bullet (the Sonic Tank's boom)
+## leaves the window closed and just fires and reloads normally.
+func begin_continuous_burst(sustain_window: bool = true) -> void:
+	if sustain_window:
+		continuous_burst_ticks_remaining = reload_count()
 	_continuous_fire_sound_pending = true
 
 

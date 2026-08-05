@@ -251,6 +251,11 @@ func try_start(target: Variant) -> bool:
 	var animation := player.get_animation(animation_name)
 	if animation == null or animation.length <= 0.0:
 		return false
+	# See `_fire_sequence_has_multiple_shots` in unit_combat.gd: only a clip
+	# with more than one authored shot event is a genuine sustained stream
+	# worth replaying for a burst window; a single-shot `Continuous` bullet
+	# just fires and reloads normally.
+	var shot_times := _authored_fire_shot_times(player, animation, animation_name)
 	var started := start_sequence(
 		_sequences,
 		_turret,
@@ -258,14 +263,14 @@ func try_start(target: Variant) -> bool:
 		player,
 		animation_name,
 		animation,
-		_authored_fire_shot_times(player, animation, animation_name),
+		shot_times,
 		false,
 		false
 	)
 	if not started:
 		return false
 	if starting_new_burst:
-		_turret.begin_continuous_burst()
+		_turret.begin_continuous_burst(shot_times.size() > 1)
 	return true
 
 

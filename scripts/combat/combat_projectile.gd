@@ -37,6 +37,10 @@ const MAX_PIERCING_COLLISIONS_PER_STEP := 64
 const DIRECT_PROJECTILE_SIZE := 0.12
 const HOMING_PROJECTILE_SIZE := 0.16
 const TRAJECTORY_PROJECTILE_SIZE := 0.18
+## Half-width of a piercing bullet's hit sweep, in world units (1 tile = 2
+## world units, see `CombatBullet.RULE_TILE_WORLD_SPAN`). Sized to comfortably
+## catch units standing side by side along the Sonic Tank's wave path.
+const PIERCING_SWEEP_RADIUS := 1.4
 const MissileTrailScript := preload("res://scripts/combat/fx/missile_trail.gd")
 const LaserBeamScript := preload("res://scripts/combat/fx/laser_beam.gd")
 
@@ -665,6 +669,8 @@ func _queue_free_finished() -> void:
 
 
 func _collisions_between(from: Vector3, to: Vector3) -> Array[Dictionary]:
+	if bullet != null and bullet.is_piercing():
+		return _swept_collisions_between(from, to, PIERCING_SWEEP_RADIUS)
 	var result: Array[Dictionary] = []
 	if from.is_equal_approx(to) or not is_inside_tree() or get_world_3d() == null:
 		return result
@@ -686,6 +692,51 @@ func _collisions_between(from: Vector3, to: Vector3) -> Array[Dictionary]:
 			continue
 		result.append(hit)
 		excludes.append(rid)
+	return result
+
+
+## A zero-width ray only ever catches whatever stands exactly on the aim
+## line, which reads as a thin beam for a weapon whose original wave is
+## meant to wash over everything standing near its path. Piercing bullets
+## (the Sonic Tank's wave) instead sweep a capsule the width of the travel
+## segment, so units beside the line take the hit too.
+func _swept_collisions_between(from: Vector3, to: Vector3, radius: float) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if from.is_equal_approx(to) or not is_inside_tree() or get_world_3d() == null:
+		return result
+	var segment := to - from
+	var length := segment.length()
+	if length <= 0.0:
+		return result
+	var axis := segment / length
+	var shape := CapsuleShape3D.new()
+	shape.radius = radius
+	shape.height = length
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = shape
+	query.transform = Transform3D(Basis(Quaternion(Vector3.UP, axis)), (from + to) * 0.5)
+	query.collision_mask = COMBAT_COLLISION_MASK
+	query.collide_with_areas = true
+	query.collide_with_bodies = true
+	query.exclude = _excluded_rids.duplicate()
+	var hits := get_world_3d().direct_space_state.intersect_shape(
+		query, MAX_PIERCING_COLLISIONS_PER_STEP
+	)
+	for hit in hits:
+		var collider := hit.get("collider") as CollisionObject3D
+		if collider == null or collider.get_meta("combat_ignore", false):
+			continue
+		var entity := CombatTargetScript.entity_of(collider)
+		var position: Vector3 = CombatTargetScript.position_of(entity, from) \
+			if entity != null else collider.global_position
+		result.append({
+			"collider": collider,
+			"rid": hit.get("rid", RID()),
+			"position": position,
+		})
+	result.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return from.distance_squared_to(a["position"]) < from.distance_squared_to(b["position"])
+	)
 	return result
 
 
