@@ -9,8 +9,8 @@ extends RefCounted
 ## they finished construction, whether they were upgraded. BuildingController
 ## gates the building grid on it; UnitRosterController gates the unit grid.
 ## Recomputing unconditionally instead costs an O(ids x buildings) scan per
-## frame, which is milliseconds once a base is standing (see the frame-time
-## section of docs/architecture/scripts-refactor-plan.md).
+## frame, which is milliseconds once a base is standing -- `make godot-perf`
+## measures it.
 ##
 ## The tracker only reports staleness. What availability *is* stays with each
 ## grid, which knows its own definitions and its own player.

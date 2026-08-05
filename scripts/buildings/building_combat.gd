@@ -56,10 +56,10 @@ func after_authored_advance() -> void:
 	restore_popup_hold_pose()
 
 
-## Lifecycle protocol (docs/architecture/scripts-refactor-plan.md, "Lifecycle-
-## протокол для модулей, владеющих ссылками на модель"). _transition_player is
-## a cached reference into the owner's model subtree, so it must be droppable
-## without waiting for the module itself to die. Both entry points below are
+## Lifecycle protocol, required of every module that caches a reference into the
+## owner's model subtree: detach_model() drops those references and dispose()
+## drops the rest. _transition_player is such a reference, so it must be
+## droppable without waiting for the module itself to die. Both entry points are
 ## idempotent: bind_model() detaches before it re-attaches, and the facade's
 ## _exit_tree() can run after a detach has already happened.
 func detach_model() -> void:
