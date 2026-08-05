@@ -53,3 +53,16 @@ extends Resource
 @export var damage_to_tile: float
 @export_file("*.scn", "*.tscn") var projectile_scene_path: String
 @export var impact_scene_paths: Dictionary = {}
+## Positional impact sound(s) for this bullet, resolved at convert time from a
+## documented SFX event alias (there is no generic "hit sound" concept in the
+## original data, only per-weapon splat/impact hooks for a handful of
+## non-explosive bullets). Empty for the common case of an explosive warhead,
+## which already gets its sound from the explosion/death sound systems. One is
+## picked at random per impact via DeathSoundPlayer.play_pool(). See
+## docs/quirks.md.
+@export var hit_sound_paths: Array[String] = []
+## Authored SFX `Volume` (0-100) for the resolved hit sound event, applied as
+## linear gain by DeathSoundPlayer.play_pool(). See
+## TurretDefinition.fire_sound_volume for why this isn't left at an unscaled
+## 100. Defaults to 100 when the source omitted it.
+@export var hit_sound_volume: float = 100.0

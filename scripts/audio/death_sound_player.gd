@@ -97,7 +97,16 @@ func play_stream(stream: AudioStream) -> void:
 ## Unit._begin_death_sequence) — contrast with DeathCorpse's own
 ## _pending_sounds tracking, which callers that DO need to wait on a layer
 ## should use instead.
-static func play_pool(parent: Node, world_position: Vector3, paths: Array) -> void:
+##
+## `volume` is the original SFX event's authored `Volume` (0-100), applied as
+## linear gain — samples were mixed down from that value in the original
+## engine, and playing them all back unscaled at 100 clips or sounds harsh on
+## ones authored hot and quiet (e.g. TurretDefinition.fire_sound_volume).
+## Defaults to 100 (unscaled) for callers (explosion/death pools) that have
+## no per-sample volume of their own.
+static func play_pool(
+	parent: Node, world_position: Vector3, paths: Array, volume: float = 100.0
+) -> void:
 	if paths.is_empty() or parent == null or not parent.is_inside_tree():
 		return
 	var path: String = paths[randi() % paths.size()]
@@ -109,4 +118,5 @@ static func play_pool(parent: Node, world_position: Vector3, paths: Array) -> vo
 	player.global_position = world_position
 	player.finished.connect(player.queue_free)
 	player.stream = stream
+	player.volume_db = linear_to_db(clampf(volume / 100.0, 0.0001, 1.0))
 	player.play()

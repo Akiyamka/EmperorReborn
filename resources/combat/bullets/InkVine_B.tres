@@ -48,3 +48,5 @@ explosion_effect_ids = [&"InkVineExplosion"]
 damage_to_tile = 30
 projectile_scene_path = "res://assets/converted/projectiles/inkvinebullet/inkvinebullet.scn"
 impact_scene_paths = {&"InkVineExplosion": "res://assets/converted/impact_effects/inkvinesplat/inkvinesplat.scn"}
+hit_sound_paths = ["res://assets/converted/audio/sfx/hk_inkvine_hit_1.wav"]
+hit_sound_volume = 80

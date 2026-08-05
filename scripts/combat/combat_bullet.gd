@@ -100,6 +100,14 @@ func explosion_visual_scene(effect_id: StringName) -> PackedScene:
 	return impact_visual_scenes.get(effect_id) as PackedScene
 
 
+func hit_sound_paths() -> Array:
+	return config.hit_sound_paths if config != null and "hit_sound_paths" in config else []
+
+
+func hit_sound_volume() -> float:
+	return config.hit_sound_volume if config != null and "hit_sound_volume" in config else 100.0
+
+
 func damage_to_tile() -> float:
 	return maxf(float(config.damage_to_tile), 0.0) if config != null else 0.0
 

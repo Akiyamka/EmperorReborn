@@ -5,6 +5,7 @@ const CombatImpactResolverScript := preload("res://scripts/combat/combat_impact_
 const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
 const CombatGroundDecalScript := preload("res://scripts/combat/combat_ground_decal.gd")
 const CombatLingerEffectScript := preload("res://scripts/combat/combat_linger_effect.gd")
+const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
 
 ## A physical, world-space delivery instance for one CombatBullet payload.
 ## CombatBullet remains the immutable typed-definition view; this node owns flight,
@@ -525,6 +526,7 @@ func _resolve_impact(direct_target: Object, world_position: Vector3) -> void:
 	_spawn_explosion_visuals(world_position)
 	_spawn_ground_decal(direct_target, world_position)
 	_spawn_linger_effect(direct_target, world_position)
+	_spawn_hit_sound(world_position)
 
 
 func _spawn_linger_effect(
@@ -556,6 +558,14 @@ func _spawn_explosion_visuals(world_position: Vector3) -> void:
 		get_parent().add_child(effect)
 		if not effect.configure(effect_id, scene, world_position):
 			effect.free()
+
+
+func _spawn_hit_sound(world_position: Vector3) -> void:
+	if bullet == null or get_parent() == null or not get_parent().is_inside_tree():
+		return
+	DeathSoundPlayerScript.play_pool(
+		get_parent(), world_position, bullet.hit_sound_paths(), bullet.hit_sound_volume()
+	)
 
 
 func _spawn_ground_decal(direct_target: Object, world_position: Vector3) -> void:

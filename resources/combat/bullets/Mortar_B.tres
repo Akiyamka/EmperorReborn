@@ -48,3 +48,5 @@ explosion_effect_ids = [&"ShellHit"]
 damage_to_tile = 30
 projectile_scene_path = "res://assets/converted/projectiles/mortarshell/mortarshell.scn"
 impact_scene_paths = {&"ShellHit": "res://assets/converted/impact_effects/shellhit/shellhit.scn"}
+hit_sound_paths = ["res://assets/converted/audio/sfx/shell_dud_1.wav"]
+hit_sound_volume = 60

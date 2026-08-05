@@ -10,6 +10,7 @@ next_joint_id = &""
 reload_count = 100
 muzzle_flash_id = &"GUPlasmaFlash"
 muzzle_flash_scene_path = "res://assets/converted/muzzle_flashes/guplasmaflash/guplasmaflash.scn"
+fire_sound_paths = []
 yaw_speed = 10
 pitch_speed = 10
 acceptable_yaw = 1

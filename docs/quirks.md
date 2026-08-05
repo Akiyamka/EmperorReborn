@@ -105,6 +105,32 @@ and FX timing remain unchanged. As a general safety invariant, any other
 non-finite source transform holds the preceding valid pose instead of being
 serialized into a converted scene.
 
+### Six source models store non-finite static object matrices
+
+**Observed data:** A sweep of all 1271 source XBFs finds six files whose
+objects store `NaN`/`Inf` static matrices while their animation timelines are
+authored normally: `IM_ADVSardaukar_H0` (`gun`, `Visorlight`, `blade` — all
+828 frames finite), `HK_Flamer_H0` (see above), `HK_gunturret_h3` (twelve
+objects, including every barrel), `HK_barracks_H3` (`HKBarracks11%`),
+`hk_palace_h3` (`pannel 06`, `Box06`) and `hk_starport_H3` (`Box12`,
+`hk_sp_footplate2`).
+
+**Original-engine quirk:** The original engine drove these objects purely
+from animation and never rendered the stored static pose, so the corrupt
+matrices were invisible there. Godot does render it: a converted scene
+instantiated in the editor pushes the rest pose to the renderer before any
+clip plays, and every `NaN` node makes `instance_set_transform` fail with
+`Condition "!v.is_finite()" is true` on each redraw. Playing the scene hides
+the defect, because autoplay overwrites the pose before the first frame.
+
+**OpenEBfD compatibility decision:** `ModelBakeBuilder` treats a non-finite
+static matrix as unusable data and takes the same path as the per-file
+`STATIC_TRANSFORM_ANIMATION_FALLBACKS` table: the first finite animation
+frame becomes the node's static pose, sanitized into a valid basis, falling
+back to identity when the object has no finite frame at all. No per-file
+entry is needed for this class of defect; the table now only covers matrices
+that are finite but too distorted to be a valid basis.
+
 ## Units
 
 ### Advanced Sardaukar knife is flagged as a deployed-only weapon
@@ -381,6 +407,143 @@ Same `ExplosionTierPools` direct-WAV pool the vehicle size tiers use
 plays immediately alongside its per-cause scream — infantry has no separate
 VFX-spawn call site to time against the way vehicles do, and the user
 confirmed no artificial delay/sync attempt is wanted here.
+
+### Turret fire sounds and bullet hit sounds: resolved by name match, not invented
+
+**Observed data:** Unlike death/explosion sounds, the original SFX files have
+no generic "weapon fire" or "bullet hit" event category. A turret's shot
+sound is just whichever SFX section happens to share (or nearly share) its
+name, and a bullet's impact sound almost never exists at all — explosive
+warheads rely entirely on the explosion/death sound systems, which this
+feature does not touch.
+
+**Resolution rule (`tools/generate_unit_definitions.py`, `parse_sfx_sections()`
++ `fire_sound_paths_for()`/`hit_sound_paths_for()`):** For each turret,
+look up an SFX section whose name case-insensitively equals the turret's
+`config_id` (e.g. `ORDeviatorGun` → `[ORDeviatorGun]` → `DeviatorAttack.wav`,
+confirmed against the user's own reference case). This resolved 38 of 70
+turrets automatically, including case-only mismatches the original manual
+survey missed (e.g. turret id `ATAPCGun` against section `[AtApcGun]`).
+
+An exact name match is not always the *correct* section, though:
+`[TLLeechGun]` (`leech_suck_1..4`) turned out to be the Leech's
+vehicle-drain/capture sound, not its weapon fire — the real fire hook is two
+sections earlier in `GeneralSFX.txt`, `[SpittingSpore]` ("the projectile
+fired by TL Leech"), so `TLLeechGun` is overridden despite the tempting
+name-only match. In-game user testing (not just source-comment survey) is
+what caught this; a further audit of every auto-matched turret against
+in-game playback is still open.
+
+14 more turrets were resolved by hand via `TURRET_FIRE_SOUND_SECTION_OVERRIDES`,
+each backed by an explicit `;dko` source comment or an unambiguous
+bullet/sample-name correspondence: `ORKobraDeployedGun`/`ORKobraUndeployedGun`,
+`ORLaserTankBase`, `IMADVSardaukarGun`, `IMSardaukarGun`, `ORAPCBase`,
+`HKAssaultTankBase`, `HKBuzzsawLeft`/`HKBuzzsawRight`, `HKInkVineGun`,
+`TLLeechGun` (above), `ATADPGun` (`[atheavymg-shortburst]`, explicitly
+commented "this is the ADP fire gun sound" despite firing the oddly-named
+`mongoose_rocket_1` sample), `HKADPGun` (`[hkheavymg-longburst]`,
+`adp_gun_1`/`adp_gun_2` — distinct from `HKGunshipGun`'s own
+`[HKGunshipGun]` → `hk_adp_gun_1`; the two "ADP"-ish names must not be
+conflated, they are different weapons), and `HKFlameTankLeft`/`Right`
+(no dedicated section exists; reuses `HKFlameTowerBase`'s large-flame sample
+as the closest weapon-category match rather than staying silent), for 52
+resolved turrets total. Of the remaining 18 empty: 7 (`ATAPCBase`,
+`ATMinotaurusBase`, `ATRocketTurretBase`, `HKGunTurretBase`,
+`IXProjectorTurretBase`, `ORGasTurretBase`, `SpotlightBase`) never actually
+fire — they chain via `next_joint_id` into an already-resolved `...Gun`, and
+only the last joint in a chain is read at runtime
+(`CombatTurret._last_firing_joint`), so their own empty `fire_sound_paths` is
+inert, not a gap; `SpotlightGun` is a light with no `bullet_id` at all. The
+remaining 10 fire an actual weapon but have no identifiable source sound
+(`ATPillboxGun`, `GUMegaTurretBase`/`GUMegaTurretGun`,
+`IXMegaTurretBase`/`IXMegaTurretGun`, `GUNIAPGun`,
+`TLTurretBase`/`TLTurretGun`, `SurfaceWormGun`, `WormRiderGun`) and are left
+with empty `fire_sound_paths` rather than guessed.
+
+**Continuous (stream) weapons must gate playback to once per burst.** A
+stream weapon (flamethrower, gas jet) replays its short authored Fire clip
+back-to-back for the whole burst window (`unit_combat.gd`'s
+`_advance_engaged_turret`, `is_continuous` branch) rather than firing once —
+`try_fire_at()` is therefore called many times per burst. Playing
+`fire_sound_paths` on every one of those calls layered the same one-shot
+sample dozens of times over a single flamer/gas burst (reported for
+`ORChemicalGun`/`HKFlamerGun`). Fixed with a per-turret
+`_continuous_fire_sound_pending` flag, set by `begin_continuous_burst()`
+(called exactly once per fresh burst) and consumed by the first
+`try_fire_at()` afterwards; non-continuous weapons are unaffected.
+
+Bullet hit sounds use the same section-name machinery but, per the above, are
+opt-in only: `BULLET_HIT_SOUND_SECTION_OVERRIDES` has exactly one entry,
+`InkVine_B` → `[InkvineSplat]` (`hk_inkvine_hit_1.wav`), the one clearly
+documented non-explosive impact sound (`;InkvineSplat - as HK Inkvine
+projectile splats onto ground`) in the source data. No other bullet's impact
+was invented a sound.
+
+**A parsing gotcha found along the way:** `ImportedSfx.txt` redefines
+`[INKVINESPLAT]` with only a `$InkvineSplat` (localized, unconverted) sample,
+and sorts after `HarkonnenSFX.txt` in the casefold-sorted file order this
+tool (and `generate_voice_feedback.py`) uses — the same shadowing pattern as
+"ImportedSfx.txt shadows several death hooks" above. `parse_sfx_sections()`
+handles this generically instead of via a per-id whitelist: a redefinition
+that resolves to zero real (non-`$`) samples never overwrites an earlier
+definition that had some, for every section, not just a hand-picked set.
+
+**OpenEBfD compatibility decision:** Resolved at convert time into
+`TurretDefinition.fire_sound_paths` / `BulletDefinition.hit_sound_paths`
+arrays, baked into the `.tres` files like `muzzle_flash_scene_path` and
+`impact_scene_paths` — not a runtime fallback. Playback reuses
+`DeathSoundPlayer.play_pool()` (`scripts/combat/combat_turret.gd`'s
+`try_fire_at()` for shots, `scripts/combat/combat_projectile.gd`'s
+`_resolve_impact()` for hits) rather than a new player class.
+
+**Authored `Volume` must be applied, not just the samples.** The resolved
+section's `Volume=` (0-100) is also baked in
+(`fire_sound_volume`/`hit_sound_volume`, default 100 when the source omitted
+it) and applied by `play_pool()` as linear gain. Skipping this was a real bug,
+not a nicety: `ornithopter_rocket_2.wav` (used by `ATOrnithopterGun`,
+`HKGunshipGun`, `HKDevastatorMissile`, `HKMissileTankBarrage`) is a hot
+recording peaking at ~99% of full scale, authored at `Volume=60` in
+`[atrocketlaunch]` — playing it back unscaled at 100 was reported as "loud and
+harsh" in-game. `ExplosionTierPools`/death-sound callers are unaffected: they
+pass no volume and default to the previous unscaled-100 behavior.
+
+**A section-name match is not always the correct section.** Two turrets
+picked up the wrong sound despite the name-match/override logic finding
+*something* plausible, caught only by in-game listening, not by the source
+comments alone: `TLLeechGun`'s exact-name match (`leech_suck_*`, actually the
+vehicle drain/capture sound) instead of `[SpittingSpore]` (the real weapon
+fire), and `ATOrnithopterGun`'s exact-name match (`ORNITHOPTER_ROCKET_1`)
+instead of the explicitly-commented `[atrocketlaunch]`
+(`ornithopter_rocket_2`). Both are now `TURRET_FIRE_SOUND_SECTION_OVERRIDES`
+entries. This means the full auto-matched set (see above) has not all been
+individually verified in-game and may hide further cases like these two.
+
+**Generic kinetic-impact sound (`shell_dud_1.wav`).** A broad, user-requested
+rule: `[ShellDetonation]`'s `shell_dud_1.wav` — "as shell hits ground (not a
+full on explosion)" — plays as the sound accompaniment for a bullet's own
+explosion *visual* effect, matching the source data where `[RocketDetonation]`
+resolves to the identical sample for rockets. First attempt was a hand-picked
+bullet list gated on caliber (shell/rocket in, machine-gun out); user then
+corrected it further (MG bullets still slipped through as "a normal bullet
+shouldn't have this") and asked for the real rule: tie playback to whether an
+explosion effect actually exists at the point of impact, not to a hand-sorted
+weapon category.
+
+`EXPLOSIVE_IMPACT_EFFECT_IDS = {"ShellHit", "MissileHit"}` implements that:
+`assets/converted/impact_effects/{shellhit,missilehit}/*.scn` both contain a
+"_bigbing_"-named mesh (a real explosion burst with "_bing1..4" debris
+pieces), while `mghit.scn` (`_flashtest_0`) and `sniperhit.scn` (whose
+original XBF node is literally named `_MGHit_0` — sniper impacts reuse the MG
+hit visual verbatim) are flash-only, no explosion. `hit_sound_paths_for()`
+plays the sound whenever any of a bullet's own `explosion_effect_ids` is in
+that set, excluding only lasers (`is_laser`), continuous streams (no discrete
+impact moment), and the Inkvine catapult (keeps its own `InkvineSplat`
+override). This is deliberately effect-driven rather than a per-bullet list:
+`DevPlasma_B` (Devastator's plasma bolt) and the two Mega Turret plasma bolts
+turned out to carry a real `ShellHit` explosion effect despite reading as
+"energy, not kinetic" by name, and now correctly get the sound too — the
+previous hand-picked list had excluded them on a guess that the effect data
+contradicts.
 
 ## Building models
 

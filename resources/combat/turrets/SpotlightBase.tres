@@ -10,6 +10,7 @@ next_joint_id = &"HKGunTurretGun"
 reload_count = 100
 muzzle_flash_id = &""
 muzzle_flash_scene_path = ""
+fire_sound_paths = []
 yaw_speed = 4
 pitch_speed = 0
 acceptable_yaw = 1

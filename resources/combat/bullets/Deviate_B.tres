@@ -48,3 +48,4 @@ explosion_effect_ids = [&"DeviateHit"]
 damage_to_tile = 30
 projectile_scene_path = "res://assets/converted/projectiles/gasrocket/gasrocket.scn"
 impact_scene_paths = {&"DeviateHit": "res://assets/converted/impact_effects/deviatehit/deviatehit.scn"}
+hit_sound_paths = []

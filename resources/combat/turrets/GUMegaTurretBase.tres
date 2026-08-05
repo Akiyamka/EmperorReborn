@@ -10,6 +10,7 @@ next_joint_id = &"GUMegaTurretGun"
 reload_count = 100
 muzzle_flash_id = &"GUPlasmaFlash"
 muzzle_flash_scene_path = "res://assets/converted/muzzle_flashes/guplasmaflash/guplasmaflash.scn"
+fire_sound_paths = []
 yaw_speed = 6
 pitch_speed = 0
 acceptable_yaw = 1

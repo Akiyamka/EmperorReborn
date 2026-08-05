@@ -10,6 +10,7 @@ const CombatLineOfFireScript := preload("res://scripts/combat/combat_line_of_fir
 const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
 const CombatTurretFxScript := preload("res://scripts/combat/turret/combat_turret_fx.gd")
 const ShotPayloadScript := preload("res://scripts/combat/shot_payload.gd")
+const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
 
 ## Test-visible presentation constants retained as compatibility aliases.
 const LASER_MUZZLE_VISUAL_SCALE := CombatTurretFxScript.LASER_MUZZLE_VISUAL_SCALE
@@ -53,9 +54,18 @@ var projectile_visual_scene: PackedScene
 var impact_visual_scenes: Dictionary = {}
 var muzzle_flash_id: StringName = &""
 var muzzle_flash_scene: PackedScene
+var fire_sound_paths: Array = []
+var fire_sound_volume := 100.0
 var joint_configs: Array[Resource] = []
 var reload_ticks_remaining := 0.0
 var continuous_burst_ticks_remaining := 0.0
+## A continuous (stream) weapon replays its short authored Fire clip
+## back-to-back for the whole burst window (see `begin_continuous_burst`),
+## calling `try_fire_at` once per replay. Playing `fire_sound_paths` on every
+## one of those calls layers the same one-shot sample dozens of times over a
+## single flame/gas burst. This gates it to once per burst instead: set when
+## a fresh burst starts, consumed by the first `try_fire_at` afterwards.
+var _continuous_fire_sound_pending := true
 var bullet_gravity := 1.0
 var _definition_bullet
 
@@ -104,6 +114,9 @@ func configure(turret_id: StringName) -> bool:
 	impact_visual_scenes.clear()
 	muzzle_flash_id = &""
 	muzzle_flash_scene = null
+	fire_sound_paths = []
+	fire_sound_volume = 100.0
+	_continuous_fire_sound_pending = true
 	reload_ticks_remaining = 0.0
 	bullet_gravity = 1.0
 	if firing_config == null:
@@ -128,6 +141,8 @@ func configure(turret_id: StringName) -> bool:
 	muzzle_flash_id = firing_config.muzzle_flash_id
 	if muzzle_flash_id != &"":
 		muzzle_flash_scene = _definition_catalog.scene(firing_config.muzzle_flash_scene_path)
+	fire_sound_paths = firing_config.fire_sound_paths
+	fire_sound_volume = firing_config.fire_sound_volume
 
 	var warhead_id: StringName = bullet_config.warhead_id
 	if warhead_id != &"":
@@ -676,6 +691,7 @@ func continuous_burst_active() -> bool:
 ## (e.g. the Flame Tank's ~2.4s burst followed by a ~2.4s reload).
 func begin_continuous_burst() -> void:
 	continuous_burst_ticks_remaining = reload_count()
+	_continuous_fire_sound_pending = true
 
 
 func advance_ticks(ticks: float) -> void:
@@ -891,6 +907,15 @@ func try_fire_at(request: FireRequest) -> Array:
 			if not preview_bullet.is_continuous():
 				_fx.spawn_shot_light(parent, effect_emission)
 			_fx.spawn_auxiliary_muzzle_effects(parent, effect_emission)
+		var should_play_fire_sound := true
+		if preview_bullet.is_continuous():
+			should_play_fire_sound = _continuous_fire_sound_pending
+			_continuous_fire_sound_pending = false
+		if should_play_fire_sound:
+			DeathSoundPlayerScript.play_pool(
+				parent, Vector3(effect_emission["position"]), fire_sound_paths,
+				fire_sound_volume
+			)
 		result.append(projectile)
 	return result
 

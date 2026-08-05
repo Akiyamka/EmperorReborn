@@ -47,3 +47,4 @@ explosion_type_id = &"Mghit"
 explosion_effect_ids = [&"Mghit"]
 projectile_scene_path = ""
 impact_scene_paths = {&"Mghit": "res://assets/converted/impact_effects/mghit/mghit.scn"}
+hit_sound_paths = []

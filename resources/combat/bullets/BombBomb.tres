@@ -48,3 +48,4 @@ explosion_effect_ids = [&"DHBigExplosion"]
 damage_to_tile = 100
 projectile_scene_path = ""
 impact_scene_paths = {&"DHBigExplosion": "res://assets/converted/impact_effects/dhbigexplosion/dhbigexplosion.scn"}
+hit_sound_paths = []

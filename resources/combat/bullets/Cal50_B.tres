@@ -47,3 +47,4 @@ explosion_type_id = &"SniperHit"
 explosion_effect_ids = [&"SniperHit"]
 projectile_scene_path = ""
 impact_scene_paths = {&"SniperHit": "res://assets/converted/impact_effects/sniperhit/sniperhit.scn"}
+hit_sound_paths = []

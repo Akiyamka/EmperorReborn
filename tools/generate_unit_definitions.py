@@ -45,6 +45,10 @@ BUILDING_SCENE_DIR = ROOT / "scenes/buildings"
 CONVERTED_BUILDING_DIR = ROOT / "assets/converted/buildings"
 GAME_SETTINGS_PATH = ROOT / "resources/rules/game_settings.tres"
 SPICE_DEFINITION_PATH = ROOT / "resources/world/spice_mound.tres"
+SFX_SOURCE_DIR = ROOT / "assets/raw_original_content/SFX"
+SFX_WAV_DIR = ROOT / "assets/converted/audio/sfx"
+SFX_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:;.*)?$")
+SFX_PROPERTY_RE = re.compile(r"^\s*([^=;]+?)\s*=\s*(.*?)\s*$")
 CONFIG_RE = re.compile(r'^config_id = &"([^"]+)"$', re.MULTILINE)
 MODEL_RE = re.compile(r'path="(res://assets/converted/models/[^"]+\.(?:scn|tscn))"')
 BURST_CONFIGS = {
@@ -72,6 +76,115 @@ TURRET_DEPLOY_GATE_OVERRIDES = {
     "IMADVSardaukarKnife": {"disabled_when_undeployed": False},
     "IMADVSardaukarGun": {"disabled_when_deployed": False},
 }
+# Turret config_id -> original SFX section name, for the turrets whose fire
+# sound cannot be found by an exact (case-insensitive) match of the section
+# name against their own config_id. Each entry is backed by an explicit
+# source-file comment or an unambiguous bullet/sample-name correspondence
+# checked by hand; turrets with no such evidence are left with no fire sound
+# rather than guessed. See docs/quirks.md.
+TURRET_FIRE_SOUND_SECTION_OVERRIDES: dict[str, str] = {
+    # ORDOSSFX.TXT: "[KobraAttack] ;dko kobra fires big weapon <good>". Both
+    # the deployed (howitzer) and undeployed Kobra joints fire this weapon.
+    "ORKobraDeployedGun": "KobraAttack",
+    "ORKobraUndeployedGun": "KobraAttack",
+    # ORDOSSFX.TXT: "[orlaser1] ;dko <good> This is being called for the
+    # laser tank as well as the IM Elite Sardukar 4/12/01". ORLaserTankBase
+    # fires directly (bullet Laser_B, no next_joint_id); IMADVSardaukarGun's
+    # bullet is InfLaser_B, matching "the IM Elite Sardukar" in the comment.
+    "ORLaserTankBase": "orlaser1",
+    "IMADVSardaukarGun": "orlaser1",
+    # HarkonnenSFX.txt / GeneralSFX.txt / AtreidesSFX.txt all define
+    # [saheavymg-longburst1|2] and [MedMG-Longburst] with the identical
+    # `Sounds = sardukar_mgun_1 sardukar_mgun_2`, the only "sa"/"Sardukar"
+    # prefixed weapon-fire samples in the SFX data. IMSardaukarGun (the
+    # regular, non-Elite Sardaukar's HMG_B gun) is the only unresolved
+    # Sardaukar-armed turret left, so it is the intended target.
+    "IMSardaukarGun": "saheavymg-longburst1",
+    # ORDOSSFX.TXT: "[ORApcGun] ;dko added 4/18/01 suggested new hook be
+    # made. Sounds = APCAttack". ORAPCBase fires directly (bullet
+    # HEATAPC_B, no next_joint_id) so it is this turret's own joint.
+    "ORAPCBase": "ORApcGun",
+    # HarkonnenSFX.txt: "[hkcannonsingleloudshot] ;dko[HarkAssaultTank] also
+    # is used for the HK Gun Turret / dko 5/2/01 let's set this aside for the
+    # hk assault tank only". HKAssaultTankBase fires directly (bullet mm80_B,
+    # no next_joint_id, no separate "...Gun" turret exists for it).
+    "HKAssaultTankBase": "hkcannonsingleloudshot",
+    # HarkonnenSFX.txt: "[hkmedmg-shortburst] ;dko[HarkBuzzsawAttack]". Both
+    # buzzsaw blades are the same weapon (bullet MMG_B) mirrored left/right.
+    "HKBuzzsawLeft": "hkmedmg-shortburst",
+    "HKBuzzsawRight": "hkmedmg-shortburst",
+    # HarkonnenSFX.txt: "[Catapult] Sounds=hk_inkvine_shot_1b" — the Inkvine
+    # launcher's own comment block, right above [InkvineSplat] (its impact
+    # sound, see BULLET_HIT_SOUND_SECTION_OVERRIDES).
+    "HKInkVineGun": "Catapult",
+    # GeneralSFX.txt: "[TLLeechGun] Sounds=leech_suck_1..4" is the vehicle
+    # drain/capture sound, not the weapon fire. The actual fire hook is
+    # documented two sections earlier: "; SpittingSpore is the projectile
+    # fired by TL Leech - sort of organic firing noise", [SpittingSpore]
+    # Sounds = tx_leech_attack_6 tx_leech_attack_7. An exact-name match on
+    # "TLLeechGun" itself picks up the wrong (drain) sound, so it must be
+    # overridden here despite the name looking like a direct hit.
+    "TLLeechGun": "SpittingSpore",
+    # AtreidesSFX.txt: "[atheavymg-shortburst] ;this is the ADP fire gun
+    # sound / Sounds=mongoose_rocket_1" — an explicit source comment
+    # confirming the (otherwise odd-looking, rocket-named) sample is in fact
+    # the Atreides ADP turret's own weapon fire.
+    "ATADPGun": "atheavymg-shortburst",
+    # HarkonnenSFX.txt: "[hkheavymg-longburst] Sounds = adp_gun_1 adp_gun_2"
+    # is the Harkonnen ADP turret's fire hook, distinct from [HKGunshipGun]'s
+    # own "Sounds=hk_adp_gun_1" (a different, gunship-specific sample despite
+    # the similar name) — they must not be conflated.
+    "HKADPGun": "hkheavymg-longburst",
+    # No SFX section documents a dedicated Flame Tank weapon-fire sound (only
+    # its move-loop, [hkflamemovefxstart]). The two other Harkonnen flame
+    # weapons split into "large" (Flame Tower, [HKFlameTowerBase]) and
+    # "medium" (infantry, [HKFlamerGun]) categories; the Flame Tank's turret
+    # (FlameTank_B) is the vehicle-mounted large-format flamer, so it reuses
+    # the Flame Tower's large-flame sample rather than staying silent.
+    "HKFlameTankLeft": "HKFlameTowerBase",
+    "HKFlameTankRight": "HKFlameTowerBase",
+    # AtreidesSFX.txt: the exact-name match, "[ATOrnithopterGun] Sounds =
+    # ORNITHOPTER_ROCKET_1", is not actually the launch sound — that's
+    # "[atrocketlaunch] ;dko ornithopter rocket launch / Sounds=
+    # ornithopter_rocket_2", a separate, explicitly-commented section a few
+    # lines below. User-confirmed in-game.
+    "ATOrnithopterGun": "atrocketlaunch",
+    # User-confirmed in-game: these three rocket-armed turrets should share
+    # the ornithopter rocket launch sample rather than their previous
+    # (per-source-data) sounds.
+    "HKGunshipGun": "atrocketlaunch",
+    "HKDevastatorMissile": "atrocketlaunch",
+    "HKMissileTankBarrage": "atrocketlaunch",
+}
+# Bullet config_id -> original SFX section name, for the rare non-explosive
+# bullets that carry a distinct impact/splat sound in the source SFX files.
+# Most bullets have no entry here: an exploding warhead's impact is already
+# covered by the explosion/death sound systems, and the original data has no
+# generic "bullet hit" concept to fall back on. See docs/quirks.md.
+BULLET_HIT_SOUND_SECTION_OVERRIDES: dict[str, str] = {
+    # HarkonnenSFX.txt: "[InkvineSplat] ;InkvineSplat - as HK Inkvine
+    # projectile splats onto ground. Sounds=hk_inkvine_hit_1".
+    "InkVine_B": "InkvineSplat",
+}
+# GeneralSFX.txt: "[ShellDetonation] ; ShellDet1-3 samples called when a shell
+# impacts off the ground (from an Atreides Minotaurus) - as shell hits ground
+# (not a full on explosion). Sounds=shell_dud_1" and the separate
+# "[RocketDetonation] ; as rocket explodes on ground (not a full on
+# explosion), being called by rocket impacts from the AT Rocket Turret and
+# the Harkonnen Gunship. Sounds=shell_dud_1" — both resolve to the same
+# sample. User-confirmed in-game rule, generalized from a hand-picked bullet
+# list to a data-driven one after the hand-picked version wrongly included
+# machine-gun caliber bullets: a bullet gets this sound exactly when its own
+# resolved impact effect is a real explosion visual, not just a hit flash.
+# `assets/converted/impact_effects/{shellhit,missilehit}/*.scn` both contain
+# a "_bigbing_"-named mesh (an actual explosion burst with "_bing1..4" debris
+# pieces); `mghit.scn`/`sniperhit.scn` do not — mghit's own node is named
+# "_flashtest_0", and sniperhit's original XBF node is literally named
+# "_MGHit_0" (it reuses the machine-gun hit visual verbatim), i.e. neither MG
+# nor sniper fire ever produces a real explosion at impact, only a flash.
+# EXPLOSIVE_IMPACT_EFFECT_IDS records that finding as data instead of
+# re-deriving it from scene contents at generate time. See docs/quirks.md.
+EXPLOSIVE_IMPACT_EFFECT_IDS = frozenset({"ShellHit", "MissileHit"})
 BUILDING_ID_PREFIXES = sorted([
     "GPSFX", "AKIN", "ATIN", "CNIN", "GPIN", "HKIN", "HLIN", "INFR",
     "INGU", "INIM", "INIX", "INTL", "ORIN", "TLIN",
@@ -173,6 +286,107 @@ def building_scene_text(config_id: str, converted_scene_path: str) -> str:
         f"config_id = {string_name(config_id)}",
         "",
     ])
+
+
+def parse_sfx_sections() -> dict[str, tuple[list[str], int]]:
+    """Parse every `[Section]` / `Sounds = ...` / `Volume = ...` block in the
+    original SFX definition files into section name (casefold) -> (ordered
+    list of raw sample names, authored Volume, 0-100, default 100 when
+    absent). Mirrors the section format parsed by
+    generate_voice_feedback.py's parse_sources(), trimmed down to just what
+    fire/hit sound resolution needs: the sample list, with `$`-prefixed
+    (localized, never converted to a real wav) samples dropped.
+
+    A later file redefining a section with only such `$`-prefixed samples
+    does not clobber an earlier definition that had real ones — e.g.
+    HarkonnenSFX.txt's real "[InkvineSplat] Sounds=hk_inkvine_hit_1" must
+    survive ImportedSfx.txt's later, alphabetically-last-wins
+    "[INKVINESPLAT] Sounds = $InkvineSplat" stub. This mirrors
+    SHADOW_PROOF_EVENT_IDS in generate_voice_feedback.py, but applied
+    generically instead of via a hand-picked id whitelist, since this parser
+    has no fixed set of ids to special-case. See docs/quirks.md.
+    """
+    sections: dict[str, tuple[list[str], int]] = {}
+    for path in sorted(SFX_SOURCE_DIR.iterdir(), key=lambda item: item.name.casefold()):
+        if path.suffix.casefold() != ".txt" or path.name.casefold() == "sfx.txt":
+            continue
+        current: str | None = None
+        pending_samples: dict[str, list[str]] = {}
+        pending_volume: dict[str, int] = {}
+        for raw_line in path.read_text(encoding="cp1252").splitlines():
+            if raw_line.lstrip().startswith(";"):
+                continue
+            section = SFX_SECTION_RE.match(raw_line)
+            if section:
+                name = section.group(1).strip()
+                current = name if name.casefold() != "localdefaults" else None
+                if current is not None:
+                    pending_samples.setdefault(current, [])
+                    pending_volume.setdefault(current, 100)
+                continue
+            prop = SFX_PROPERTY_RE.match(raw_line)
+            if prop is None or current is None:
+                continue
+            key = prop.group(1).strip().casefold()
+            value = prop.group(2)
+            semicolon = value.find(";")
+            if semicolon != -1:
+                value = value[:semicolon]
+            if key == "sounds":
+                for token in re.findall(r'"[^"]*"|\S+', value):
+                    sample = token.strip('"')
+                    if sample and not sample.startswith("$"):
+                        pending_samples[current].append(sample)
+            elif key == "volume":
+                try:
+                    pending_volume[current] = int(float(value.strip()))
+                except ValueError:
+                    pass
+        for name, samples in pending_samples.items():
+            key = name.casefold()
+            if key in sections and sections[key][0] and not samples:
+                continue
+            sections[key] = (samples, pending_volume.get(name, 100))
+    return sections
+
+
+def sfx_wav_lookup() -> dict[str, Path]:
+    return {path.stem.casefold(): path for path in SFX_WAV_DIR.glob("*.wav")}
+
+
+def resolve_sfx_paths(samples: list[str], wavs: dict[str, Path]) -> list[str]:
+    paths: list[str] = []
+    for sample in samples:
+        wav = wavs.get(sample.casefold())
+        if wav is None:
+            continue
+        path = "res://" + wav.relative_to(ROOT).as_posix()
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def fire_sound_paths_for(
+    config_id: str, sfx_sections: dict[str, tuple[list[str], int]], wavs: dict[str, Path]
+) -> tuple[list[str], int]:
+    section_name = TURRET_FIRE_SOUND_SECTION_OVERRIDES.get(config_id, config_id)
+    samples, volume = sfx_sections.get(section_name.casefold(), ([], 100))
+    return resolve_sfx_paths(samples, wavs), volume
+
+
+def hit_sound_paths_for(
+    config_id: str, effects: list[str], is_laser: bool, continuous: bool,
+    sfx_sections: dict[str, tuple[list[str], int]], wavs: dict[str, Path]
+) -> tuple[list[str], int]:
+    section_name = BULLET_HIT_SOUND_SECTION_OVERRIDES.get(config_id)
+    if section_name is None and not is_laser and not continuous and any(
+        effect in EXPLOSIVE_IMPACT_EFFECT_IDS for effect in effects
+    ):
+        section_name = "ShellDetonation"
+    if section_name is None:
+        return [], 100
+    samples, volume = sfx_sections.get(section_name.casefold(), ([], 100))
+    return resolve_sfx_paths(samples, wavs), volume
 
 
 def discover_scenes() -> tuple[dict[str, str], dict[str, str]]:
@@ -363,7 +577,9 @@ def art_xaf(connection: sqlite3.Connection, art_name: str | None) -> str:
     return str(row[0] or "") if row else ""
 
 
-def turret_text(row: sqlite3.Row, muzzle_scene_path: str) -> str:
+def turret_text(
+    row: sqlite3.Row, muzzle_scene_path: str, fire_sound_paths: list[str], fire_sound_volume: int
+) -> str:
     properties = [
         f"config_id = {string_name(row['name'])}",
         f"bullet_id = {string_name(row['bullet_name'])}",
@@ -371,6 +587,11 @@ def turret_text(row: sqlite3.Row, muzzle_scene_path: str) -> str:
         f"reload_count = {float(row['reload_count'] or 0.0):.6g}",
         f"muzzle_flash_id = {string_name(row['turret_muzzle_flash'])}",
         f"muzzle_flash_scene_path = {godot_string(muzzle_scene_path)}",
+        f"fire_sound_paths = {string_array_text(fire_sound_paths)}",
+        *(
+            [f"fire_sound_volume = {float(fire_sound_volume):.6g}"]
+            if fire_sound_paths and fire_sound_volume != 100 else []
+        ),
         f"yaw_speed = {float(row['turret_y_rotation_angle'] or 0.0):.6g}",
         f"pitch_speed = {float(row['turret_x_rotation_angle'] or 0.0):.6g}",
         f"acceptable_yaw = {float(row['turret_y_acceptable_aim'] or 1.0):.6g}",
@@ -413,7 +634,8 @@ def flight_range_scale_for(row: sqlite3.Row) -> float:
 
 
 def bullet_text(row: sqlite3.Row, effects: list[str], projectile_path: str,
-                impact_paths: dict[str, str]) -> str:
+                impact_paths: dict[str, str], hit_sound_paths: list[str],
+                hit_sound_volume: int) -> str:
     flight_range_scale = flight_range_scale_for(row)
     properties = [
         f"config_id = {string_name(row['name'])}",
@@ -462,6 +684,11 @@ def bullet_text(row: sqlite3.Row, effects: list[str], projectile_path: str,
         "impact_scene_paths = " + "{" + ", ".join(
             f"{string_name(key)}: {godot_string(impact_paths[key])}" for key in sorted(impact_paths)
         ) + "}",
+        f"hit_sound_paths = {string_array_text(hit_sound_paths)}",
+        *(
+            [f"hit_sound_volume = {float(hit_sound_volume):.6g}"]
+            if hit_sound_paths and hit_sound_volume != 100 else []
+        ),
     ]
     return resource_text("BulletDefinition", "res://scripts/combat/bullet_definition.gd", properties)
 
@@ -598,6 +825,8 @@ def main() -> int:
 
     scene_paths, scene_models = discover_scenes()
     xaf_models = model_paths_by_xaf()
+    sfx_sections = parse_sfx_sections()
+    sfx_wavs = sfx_wav_lookup()
     definition_paths: dict[str, str] = {}
     expected_files: set[Path] = set()
     expected_veterancy: set[Path] = set()
@@ -656,7 +885,10 @@ def main() -> int:
             output = TURRET_DIR / f"{row['name']}.tres"
             turret_paths[str(row["name"])] = "res://" + output.relative_to(ROOT).as_posix()
             muzzle = visual_path(art_xaf(connection, row["turret_muzzle_flash"]), "assets/converted/muzzle_flashes")
-            ok = write_or_check(output, turret_text(row, muzzle), args.check) and ok
+            fire_sounds, fire_volume = fire_sound_paths_for(str(row["name"]), sfx_sections, sfx_wavs)
+            ok = write_or_check(
+                output, turret_text(row, muzzle, fire_sounds, fire_volume), args.check
+            ) and ok
 
         bullet_paths: dict[str, str] = {}
         for row in connection.execute("""
@@ -678,10 +910,14 @@ def main() -> int:
                 effect: path for effect in effects
                 if (path := visual_path(art_xaf(connection, effect), "assets/converted/impact_effects"))
             }
+            hit_sounds, hit_volume = hit_sound_paths_for(
+                str(row["name"]), effects, bool(row["is_laser"]), bool(row["continuous"]),
+                sfx_sections, sfx_wavs,
+            )
             ok = write_or_check(output, bullet_text(
                 row, effects,
                 visual_path(str(row["xaf"] or ""), "assets/converted/projectiles"),
-                impacts,
+                impacts, hit_sounds, hit_volume,
             ), args.check) and ok
 
         warhead_paths: dict[str, str] = {}

@@ -7,6 +7,19 @@ extends Resource
 @export var reload_count: float
 @export var muzzle_flash_id: StringName
 @export_file("*.scn", "*.tscn") var muzzle_flash_scene_path: String
+## Positional shot sound(s), resolved and baked in at convert time from the
+## original SFX event whose section name matches this turret's config_id (or a
+## documented manual alias for turrets with no such section). One is picked at
+## random per shot via DeathSoundPlayer.play_pool(). Empty when no source
+## sound could be identified. See docs/quirks.md.
+@export var fire_sound_paths: Array[String] = []
+## Authored SFX `Volume` (0-100) for the resolved fire sound event, applied as
+## linear gain by DeathSoundPlayer.play_pool(). The original engine mixed
+## every sample down from its own per-event volume; playing all of them back
+## at an unscaled 100 clips or sounds harsh on samples authored hot and quiet
+## (e.g. ornithopter_rocket_2.wav peaks at ~99% of full scale but is authored
+## at Volume=60). Defaults to 100 (unscaled) when the source omitted it.
+@export var fire_sound_volume: float = 100.0
 @export var yaw_speed: float
 @export var minimum_yaw: float = NAN
 @export var maximum_yaw: float = NAN

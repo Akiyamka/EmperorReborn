@@ -10,6 +10,7 @@ next_joint_id = &""
 reload_count = 100
 muzzle_flash_id = &"Muzzle3"
 muzzle_flash_scene_path = "res://assets/converted/muzzle_flashes/muzzle3/muzzle3.scn"
+fire_sound_paths = []
 yaw_speed = 0
 pitch_speed = 4
 acceptable_yaw = 1
