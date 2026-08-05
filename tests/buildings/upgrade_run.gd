@@ -206,9 +206,14 @@ func _test_order_ready_signal(token: int) -> int:
 		ready_orders.append(order)
 	)
 	queue.start(&"AT", "Signal", 0, 0.5)
+	var adopted_order := queue.current_order()
 	queue.tick(1.0, 0)
 	queue.tick(1.0, 0)
 	_expect(ready_orders.size() == 1, "order_ready must fire exactly once even if tick keeps being called")
+	_expect(
+		ready_orders.size() == 1 and ready_orders[0] == adopted_order,
+		"order_ready must retransmit the exact typed order adopted by the shared queue"
+	)
 	return token
 
 

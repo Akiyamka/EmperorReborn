@@ -5,6 +5,7 @@ extends Node3D
 ## Match owns its visibility together with the other F3 debug layers.
 
 const GRID_SHADER := preload("res://scripts/units/navigation/navigation_grid_debug.gdshader")
+const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 const DYNAMIC_BLOCKED_COLOR := Color(1.0, 0.0, 1.0, 0.8)
 const DYNAMIC_NO_STOP_COLOR := Color(1.0, 0.9, 0.1, 0.6)
 
@@ -60,21 +61,21 @@ func _process(_delta: float) -> void:
 
 
 func _dynamic_blocked_texture() -> ImageTexture:
-	var image := Image.create(MapNavigationGrid.NAV_SIZE, MapNavigationGrid.NAV_SIZE, false, Image.FORMAT_RGBA8)
+	var image := Image.create(MapNavigationGridScript.NAV_SIZE, MapNavigationGridScript.NAV_SIZE, false, Image.FORMAT_RGBA8)
 	var blocked: PackedByteArray = _runtime_map.blocked_cells()
 	var no_stop: PackedByteArray = _runtime_map.no_stop_cells()
 	for index in blocked.size():
 		if blocked[index] != 0:
-			image.set_pixel(index % MapNavigationGrid.NAV_SIZE, int(index / MapNavigationGrid.NAV_SIZE), DYNAMIC_BLOCKED_COLOR)
+			image.set_pixel(index % MapNavigationGridScript.NAV_SIZE, int(index / MapNavigationGridScript.NAV_SIZE), DYNAMIC_BLOCKED_COLOR)
 		elif no_stop[index] != 0:
-			image.set_pixel(index % MapNavigationGrid.NAV_SIZE, int(index / MapNavigationGrid.NAV_SIZE), DYNAMIC_NO_STOP_COLOR)
+			image.set_pixel(index % MapNavigationGridScript.NAV_SIZE, int(index / MapNavigationGridScript.NAV_SIZE), DYNAMIC_NO_STOP_COLOR)
 	return ImageTexture.create_from_image(image)
 
 
 func _navigation_type_texture(grid: MapNavigationGrid) -> ImageTexture:
-	var image := Image.create(MapNavigationGrid.NAV_SIZE, MapNavigationGrid.NAV_SIZE, false, Image.FORMAT_RGBA8)
-	for y in MapNavigationGrid.NAV_SIZE:
-		for x in MapNavigationGrid.NAV_SIZE:
+	var image := Image.create(MapNavigationGridScript.NAV_SIZE, MapNavigationGridScript.NAV_SIZE, false, Image.FORMAT_RGBA8)
+	for y in MapNavigationGridScript.NAV_SIZE:
+		for x in MapNavigationGridScript.NAV_SIZE:
 			var cell := Vector2i(x, y)
 			image.set_pixel(x, y, _terrain_color(grid.terrain_at(cell)))
 	return ImageTexture.create_from_image(image)
@@ -82,21 +83,21 @@ func _navigation_type_texture(grid: MapNavigationGrid) -> ImageTexture:
 
 func _terrain_color(terrain_type: int) -> Color:
 	match terrain_type:
-		MapNavigationGrid.TERRAIN_SAND:
+		MapNavigationGridScript.TERRAIN_SAND:
 			return Color(0.92, 0.72, 0.20, 0.26)
-		MapNavigationGrid.TERRAIN_ROCK:
+		MapNavigationGridScript.TERRAIN_ROCK:
 			return Color(0.20, 0.90, 0.28, 0.28)
-		MapNavigationGrid.TERRAIN_CLIFF:
+		MapNavigationGridScript.TERRAIN_CLIFF:
 			return Color(1.00, 0.10, 0.08, 0.48)
-		MapNavigationGrid.TERRAIN_NONBUILDROCK:
+		MapNavigationGridScript.TERRAIN_NONBUILDROCK:
 			return Color(1.00, 0.48, 0.08, 0.34)
-		MapNavigationGrid.TERRAIN_INFANTRYROCK:
+		MapNavigationGridScript.TERRAIN_INFANTRYROCK:
 			return Color(0.05, 0.90, 1.00, 0.42)
-		MapNavigationGrid.TERRAIN_DUSTBOWL:
+		MapNavigationGridScript.TERRAIN_DUSTBOWL:
 			return Color(0.82, 0.18, 1.00, 0.40)
-		MapNavigationGrid.TERRAIN_MAPEDGE:
+		MapNavigationGridScript.TERRAIN_MAPEDGE:
 			return Color(0.06, 0.06, 0.08, 0.62)
-		MapNavigationGrid.TERRAIN_RAMP:
+		MapNavigationGridScript.TERRAIN_RAMP:
 			return Color(0.15, 0.42, 1.00, 0.38)
 		_:
 			return Color(1.00, 0.00, 0.70, 0.55)

@@ -1,6 +1,9 @@
 class_name UnitRosterController
 extends Node
 
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+
 ## docs/mechanics/production.md section 3 "unit production": the roster half
 ## only. The Infantry/Vehicles panel tabs list the units the technology tree
 ## currently unlocks -- primary production building owned, its upgrade
@@ -21,6 +24,9 @@ const BuildingQueueScript := preload("res://scripts/buildings/building_queue.gd"
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+const BuildingAvailabilityTrackerScript := preload(
+	"res://scripts/buildings/building_availability_tracker.gd"
+)
 
 const UNIT_POPULATION_LIMIT := 1000
 const UNIT_QUEUE_CAPACITY := 100
@@ -32,37 +38,73 @@ var max_tech_level: int = TechnologyTreeScript.UNLIMITED_TECH_LEVEL
 var _unit_ids: Array[StringName] = []
 var _unit_definitions: Dictionary = {}
 var _technology_tree: TechnologyTree = TechnologyTreeScript.new()
+## Cached per-id availability, refreshed only when the tracker reports that
+## something the technology tree reads has changed.
 var _unit_availability: Dictionary = {}
+var _availability_tracker := BuildingAvailabilityTrackerScript.new()
 var _production_queues: Dictionary = {}
 ## BuildingQueue owns the unit currently under construction.  The remaining
 ## entries are FIFO orders for that same production-building type; this keeps
 ## the gradual-payment implementation shared with building construction while
 ## allowing the documented 100-unit production queue.
 var _pending_unit_ids: Dictionary = {}
-var _unit_scene_catalog := UnitSceneCatalogScript.new()
-var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _unit_scene_catalog := UnitSceneCatalogScript.shared()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 
 
 func setup(unit_ids: Array[StringName]) -> void:
 	_unit_ids = unit_ids.duplicate()
 	_load_unit_definitions()
+	_availability_tracker.bind(self)
+	_refresh_availability_if_dirty()
 	_refresh_unit_option_states()
 
 
-## Mirrors BuildingController.process()'s availability poll: unit availability
-## depends on which buildings the player currently owns and whether they are
-## upgraded, both of which change as buildings are placed, upgraded, or lost
-## elsewhere on the map.
+func _exit_tree() -> void:
+	_availability_tracker.unbind()
+
+
 func process(_delta: float) -> void:
-	var changed := false
-	for unit_id in _unit_ids:
-		var available := _is_unit_available(unit_id)
-		if available != _unit_availability.get(unit_id, false):
-			_unit_availability[unit_id] = available
-			changed = true
+	var changed := _refresh_availability_if_dirty()
 	changed = _process_unit_orders(_delta) or changed
 	if changed:
 		_refresh_unit_option_states()
+
+
+## Unit availability depends on which buildings the player owns and whether they
+## are upgraded, both of which change as buildings are placed, upgraded, sold or
+## lost elsewhere on the map. It used to be re-derived every frame, which meant
+## an O(unit ids x buildings) TechnologyTree scan per frame -- 3 ms of the frame
+## once a base was standing, the single largest cost in it. The tracker reports
+## when any of those facts actually changed; between changes the cache below
+## answers.
+##
+## Same out-of-tree rule as BuildingController._refresh_availability_if_dirty():
+## outside the tree nothing is available, and that is recomputed unconditionally
+## rather than gated on the flag, so a stale cached "true" cannot outlive the
+## controller's own teardown.
+func _refresh_availability_if_dirty() -> bool:
+	if not is_inside_tree():
+		var no_buildings: Array[Node] = []
+		return _recompute_availability(null, no_buildings)
+	if not _availability_tracker.consume_dirty():
+		return false
+	return _recompute_availability(_local_player(), _availability_tracker.buildings())
+
+
+## One buildings array for the whole roster, not one per unit id -- rebuilding
+## it per id is what made the scan quadratic.
+func _recompute_availability(player, buildings: Array[Node]) -> bool:
+	var changed := false
+	for unit_id in _unit_ids:
+		var config: Resource = _unit_definitions.get(unit_id)
+		var available: bool = config != null and player != null \
+			and _technology_tree.is_available(config, player, buildings, max_tech_level)
+		if available == _unit_availability.get(unit_id, false):
+			continue
+		_unit_availability[unit_id] = available
+		changed = true
+	return changed
 
 
 func handle_unit_intent(unit_id: StringName, button_index: int, quantity := 1) -> bool:
@@ -213,7 +255,7 @@ func _production_building_id(config: Resource) -> StringName:
 func _production_building_for(building_id: StringName, player_id: int) -> Node3D:
 	if building_id == &"" or not is_inside_tree():
 		return null
-	var players = get_node_or_null("/root/Players")
+	var players = AutoloadLookupScript.roster(self)
 	if players != null:
 		var primary = players.primary_building(player_id, String(building_id)) as Node3D
 		if _is_owned_production_building(primary, building_id, player_id):
@@ -231,11 +273,9 @@ func _production_building_for(building_id: StringName, player_id: int) -> Node3D
 
 func _is_owned_production_building(building: Node3D, building_id: StringName, player_id: int) -> bool:
 	return (
-		building != null
-		and is_instance_valid(building)
-		and not building.is_queued_for_deletion()
+		EntityQueryScript.is_live(building)
 		and StringName(String(building.get("config_id"))) == building_id
-		and int(building.get("owner_player_id")) == player_id
+		and EntityQueryScript.is_owned_by(building, player_id)
 		and _is_building_construction_complete(building)
 	)
 
@@ -322,18 +362,13 @@ func _start_next_unit_order(production_building_id: StringName) -> void:
 
 
 func _units_parent(building: Node3D) -> Node:
-	var existing_unit = get_tree().get_first_node_in_group("units")
-	if existing_unit != null and existing_unit.get_parent() != null:
-		return existing_unit.get_parent()
-	var scene_root := get_tree().current_scene
-	var units_root := scene_root.get_node_or_null("Units") if scene_root != null else null
-	return units_root if units_root != null else building.get_parent()
+	return EntityQueryScript.units_parent(get_tree(), building.get_parent())
 
 
 func _owned_unit_count(player_id: int) -> int:
 	var count := 0
 	for node in get_tree().get_nodes_in_group("units"):
-		if int(node.get("owner_player_id")) == player_id:
+		if EntityQueryScript.is_owned_by(node, player_id):
 			count += 1
 	return count
 
@@ -343,11 +378,7 @@ func _default_rally_point(building: Node3D) -> Vector3:
 
 
 func _production_exit_direction(building: Node3D) -> Vector3:
-	if building != null and building.has_method("exit_direction"):
-		return building.call("exit_direction") as Vector3
-	# Production buildings are converted Emperor assets whose authored exit is
-	# local +Z. The fallback keeps that legacy scene contract explicit.
-	return SpatialOrientationScript.world_horizontal_axis(building, Vector3.BACK)
+	return EntityQueryScript.exit_direction(building)
 
 
 func _load_unit_definitions() -> void:
@@ -359,29 +390,16 @@ func _load_unit_definitions() -> void:
 		_unit_definitions[unit_id] = config
 
 
+## Reads the cache _refresh_availability_if_dirty() maintains, the same way the
+## building grid reads BuildingCatalogView.is_available(). Deliberately not a
+## live recompute: this is called once per configured id per option-state
+## refresh, on top of every unit intent.
 func _is_unit_available(unit_id: StringName) -> bool:
-	if not is_inside_tree():
-		return false
-	var config: Resource = _unit_definitions.get(unit_id)
-	if config == null:
-		return false
-	var player = _local_player()
-	if player == null:
-		return false
-	var buildings: Array[Node] = []
-	for building in get_tree().get_nodes_in_group("buildings"):
-		if _is_building_construction_complete(building):
-			buildings.append(building)
-	return _technology_tree.is_available(config, player, buildings, max_tech_level)
+	return bool(_unit_availability.get(unit_id, false))
 
 
 func _is_building_construction_complete(building: Node) -> bool:
-	if building == null or not is_instance_valid(building) or building.is_queued_for_deletion():
-		return false
-	# Compatibility for test doubles and legacy scene nodes that predate the
-	# explicit construction lifecycle: only Building nodes exposing the new
-	# contract can be in an incomplete state.
-	return not building.has_method("is_construction_complete") or bool(building.call("is_construction_complete"))
+	return EntityQueryScript.is_operational(building)
 
 
 func _refresh_unit_option_states() -> void:
@@ -425,7 +443,7 @@ func _unit_tooltip(unit_id: StringName) -> String:
 func _local_player() -> PlayerData:
 	if not is_inside_tree():
 		return null
-	var players = get_node_or_null("/root/Players")
+	var players = AutoloadLookupScript.roster(self)
 	if players == null:
 		return null
 	return players.local_player() as PlayerData

@@ -8,9 +8,16 @@ extends RefCounted
 const GeneratedManifest := preload("res://resources/units/generated_unit_manifest.gd")
 const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 
-var _scene_cache: Dictionary = {}
-var _definition_cache: Dictionary = {}
-var _model_cache: Dictionary = {}
+static var _scene_cache: Dictionary = {}
+static var _definition_cache: Dictionary = {}
+static var _model_cache: Dictionary = {}
+static var _shared_instance: UnitSceneCatalog
+
+
+static func shared() -> UnitSceneCatalog:
+	if _shared_instance == null:
+		_shared_instance = UnitSceneCatalog.new()
+	return _shared_instance
 
 
 func has_scene(config_id: StringName) -> bool:

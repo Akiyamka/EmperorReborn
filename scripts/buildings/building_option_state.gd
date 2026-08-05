@@ -13,6 +13,12 @@ var tooltip: String
 var quantity: int
 
 
+static func availability_state(available: bool, blocked: bool) -> State:
+	if not available:
+		return State.DISABLED
+	return State.BLOCKED if blocked else State.AVAILABLE
+
+
 func _init(
 		option_building_id: StringName,
 		option_state: State,

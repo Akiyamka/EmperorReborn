@@ -1,10 +1,13 @@
 class_name AuthoredFireController
 extends RefCounted
 
+const FireRequestScript := preload("res://scripts/combat/fire_request.gd")
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+
 signal weapon_fired(projectiles: Array, target: Variant, weapon_index: int)
 
 const BAKED_MODEL_FRAMES_PER_SECOND := 20.0
-const RULE_COMBAT_TICKS_PER_SECOND := 25.0
+const RULE_COMBAT_TICKS_PER_SECOND := CombatRulesScript.TICKS_PER_SECOND
 const FIRE_ANIMATION_SPEED_SCALE := (
 	RULE_COMBAT_TICKS_PER_SECOND / BAKED_MODEL_FRAMES_PER_SECOND
 )
@@ -14,7 +17,202 @@ const FIRE_EVENT_EPSILON := 0.0001
 var _source: Object
 var _turret
 var _model_root: Node3D
-var _sequence: Dictionary = {}
+var _sequences: Dictionary = {}
+
+
+static func authored_fire_shot_times(
+	player: AnimationPlayer,
+	animation: Animation,
+	turret,
+	model_root: Node,
+	animation_name: StringName = &""
+	) -> Array[float]:
+	if animation_name.is_empty():
+		for candidate_name: StringName in player.get_animation_list():
+			if player.get_animation(candidate_name) == animation:
+				animation_name = candidate_name
+				break
+	var controller := AuthoredFireController.new()
+	controller._turret = turret
+	controller._model_root = model_root as Node3D
+	return controller._authored_fire_shot_times(
+		player, animation, animation_name
+	)
+
+
+static func xbf_fire_shot_times(
+	animation_name: StringName,
+	animation: Animation,
+	turret,
+	model_root: Node
+	) -> Array[float]:
+	var controller := AuthoredFireController.new()
+	controller._turret = turret
+	controller._model_root = model_root as Node3D
+	return controller._xbf_fire_shot_times(animation_name, animation)
+
+
+func start_sequence(
+	sequences: Dictionary,
+	turret,
+	target: Variant,
+	player: AnimationPlayer,
+	animation_name: StringName,
+	animation: Animation,
+	shot_times: Array[float],
+	blocking: bool,
+	reload_after_animation: bool,
+	restore_aim_poses: Callable = Callable()
+	) -> bool:
+	var weapon_index: int = turret.weapon_index()
+	if sequences.has(weapon_index) or animation == null or animation.length <= 0.0:
+		return false
+	var target_state := _encoded_target(target)
+	if target_state.is_empty():
+		return false
+	sequences[weapon_index] = {
+		"turret": turret,
+		"target": target_state,
+		"player": player,
+		"animation": animation_name,
+		"duration": animation.length,
+		"elapsed": 0.0,
+		"shot_times": shot_times,
+		"next_shot": 0,
+		"shots_emitted": 0,
+		"blocking": blocking,
+	}
+	if not reload_after_animation:
+		turret.begin_reload()
+	if player != null and player.has_animation(animation_name):
+		player.speed_scale = FIRE_ANIMATION_SPEED_SCALE
+		player.stop(true)
+		player.play(animation_name)
+		_apply_animation_start_transforms(player, animation_name)
+		if restore_aim_poses.is_valid():
+			restore_aim_poses.call()
+		else:
+			turret.restore_aim_pose()
+	turret.start_authored_fire_fx(
+		animation_name, null, FIRE_ANIMATION_SPEED_SCALE
+	)
+	return true
+
+
+func advance_sequences(
+	sequences: Dictionary,
+	delta: float,
+	source: Object,
+	reload_after_animation: bool
+	) -> bool:
+	var restore_idle := false
+	for weapon_index: Variant in sequences.keys():
+		if not sequences.has(weapon_index):
+			continue
+		var state: Dictionary = sequences[weapon_index]
+		var elapsed := minf(
+			float(state.get("elapsed", 0.0))
+				+ maxf(delta, 0.0) * FIRE_ANIMATION_SPEED_SCALE,
+			float(state.get("duration", 0.0))
+		)
+		state["elapsed"] = elapsed
+		var shot_times: Array = state.get("shot_times", [])
+		var next_shot := int(state.get("next_shot", 0))
+		var turret = state.get("turret")
+		var target: Variant = _decoded_target(state.get("target", {}))
+		var damage_scale := 1.0
+		if bool(turret.is_continuous_bullet()) and not shot_times.is_empty():
+			damage_scale = 1.0 / float(shot_times.size())
+		while (
+			next_shot < shot_times.size()
+			and float(shot_times[next_shot]) <= elapsed + FIRE_EVENT_EPSILON
+		):
+			next_shot += 1
+			if target == null:
+				continue
+			var projectiles: Array = turret.try_fire_at(
+				FireRequestScript.authored(target, source, damage_scale)
+			)
+			if projectiles.is_empty():
+				continue
+			state["shots_emitted"] = int(state.get("shots_emitted", 0)) \
+				+ projectiles.size()
+			weapon_fired.emit(projectiles, target, int(weapon_index))
+		state["next_shot"] = next_shot
+		sequences[weapon_index] = state
+		if elapsed + FIRE_EVENT_EPSILON >= float(state.get("duration", 0.0)):
+			restore_idle = finish_sequence(
+				sequences, int(weapon_index), reload_after_animation
+			) or restore_idle
+	return restore_idle
+
+
+func finish_sequence(
+	sequences: Dictionary, weapon_index: int, reload_after_animation: bool
+	) -> bool:
+	if not sequences.has(weapon_index):
+		return false
+	var state: Dictionary = sequences[weapon_index]
+	sequences.erase(weapon_index)
+	_stop_sequence(state, reload_after_animation)
+	return bool(state.get("blocking", false))
+
+
+func cancel_sequences(
+	sequences: Dictionary,
+	reload_after_animation: bool,
+	blocking_only := false,
+	commit_reload := true
+	) -> bool:
+	var restore_idle := false
+	for weapon_index: Variant in sequences.keys():
+		var state: Dictionary = sequences[weapon_index]
+		if blocking_only and not bool(state.get("blocking", false)):
+			continue
+		restore_idle = bool(state.get("blocking", false)) or restore_idle
+		_stop_sequence(state, reload_after_animation and commit_reload)
+		sequences.erase(weapon_index)
+	return restore_idle
+
+
+func has_blocking_sequence(sequences: Dictionary) -> bool:
+	for state_value: Variant in sequences.values():
+		if bool((state_value as Dictionary).get("blocking", false)):
+			return true
+	return false
+
+
+func finish_animation(
+	sequences: Dictionary,
+	player: AnimationPlayer,
+	animation_name: StringName,
+	source: Object,
+	reload_after_animation: bool
+	) -> int:
+	for weapon_index: Variant in sequences.keys():
+		var state: Dictionary = sequences[weapon_index]
+		if state.get("player") != player \
+		or StringName(state.get("animation", &"")) != animation_name:
+			continue
+		state["elapsed"] = float(state.get("duration", 0.0))
+		sequences[weapon_index] = state
+		var restore_idle := advance_sequences(
+			sequences, 0.0, source, reload_after_animation
+		)
+		return 2 if restore_idle else 1
+	return 0
+
+
+func _stop_sequence(state: Dictionary, reload_after_animation: bool) -> void:
+	var player_value: Variant = state.get("player")
+	if is_instance_valid(player_value) and player_value is AnimationPlayer:
+		(player_value as AnimationPlayer).stop(true)
+	var turret = state.get("turret")
+	if turret != null:
+		turret.cancel_authored_fire_fx()
+	if reload_after_animation \
+	and int(state.get("shots_emitted", 0)) > 0 and turret != null:
+		turret.begin_reload()
 
 
 func configure(source: Object, turret, model_root: Node3D) -> void:
@@ -25,7 +223,7 @@ func configure(source: Object, turret, model_root: Node3D) -> void:
 
 
 func is_active() -> bool:
-	return not _sequence.is_empty()
+	return not _sequences.is_empty()
 
 
 ## Starts the active model's authored Fire clip and commits all projectile
@@ -48,33 +246,26 @@ func try_start(target: Variant) -> bool:
 		starting_new_burst = is_continuous and ready
 	if not ready:
 		return false
-	var encoded_target := _encoded_target(target)
-	if encoded_target.is_empty():
-		return false
 	var player := binding["player"] as AnimationPlayer
 	var animation_name := StringName(binding["name"])
 	var animation := player.get_animation(animation_name)
 	if animation == null or animation.length <= 0.0:
 		return false
-	_sequence = {
-		"target": encoded_target,
-		"player": player,
-		"animation": animation_name,
-		"duration": animation.length,
-		"elapsed": 0.0,
-		"shot_times": _authored_fire_shot_times(
-			player, animation, animation_name
-		),
-		"next_shot": 0,
-	}
-	_turret.begin_reload()
+	var started := start_sequence(
+		_sequences,
+		_turret,
+		target,
+		player,
+		animation_name,
+		animation,
+		_authored_fire_shot_times(player, animation, animation_name),
+		false,
+		false
+	)
+	if not started:
+		return false
 	if starting_new_burst:
 		_turret.begin_continuous_burst()
-	player.speed_scale = FIRE_ANIMATION_SPEED_SCALE
-	_play_animation_from_start(player, animation_name)
-	_turret.start_authored_fire_fx(
-		animation_name, null, FIRE_ANIMATION_SPEED_SCALE
-	)
 	return true
 
 
@@ -83,65 +274,11 @@ func has_fire_animation() -> bool:
 
 
 func advance(delta: float) -> void:
-	if _sequence.is_empty():
-		return
-	var duration := float(_sequence.get("duration", 0.0))
-	var elapsed := minf(
-		float(_sequence.get("elapsed", 0.0))
-			+ maxf(delta, 0.0) * FIRE_ANIMATION_SPEED_SCALE,
-		duration
-	)
-	_sequence["elapsed"] = elapsed
-	var shot_times: Array = _sequence.get("shot_times", [])
-	var next_shot := int(_sequence.get("next_shot", 0))
-	var target: Variant = _decoded_target(_sequence.get("target", {}))
-	var damage_scale := 1.0
-	if bool(_turret.is_continuous_bullet()) and not shot_times.is_empty():
-		damage_scale = 1.0 / float(shot_times.size())
-	while (
-		next_shot < shot_times.size()
-		and float(shot_times[next_shot]) <= elapsed + FIRE_EVENT_EPSILON
-	):
-		next_shot += 1
-		if target == null:
-			continue
-		var projectiles: Array = _turret.try_fire_at(
-			target,
-			_source,
-			null,
-			Vector3.ZERO,
-			false,
-			false,
-			true,
-			damage_scale
-		)
-		if not projectiles.is_empty():
-			weapon_fired.emit(projectiles, target, _turret.weapon_index())
-	_sequence["next_shot"] = next_shot
-	if elapsed + FIRE_EVENT_EPSILON >= duration:
-		_finish()
+	advance_sequences(_sequences, delta, _source, false)
 
 
 func cancel() -> void:
-	if _sequence.is_empty():
-		return
-	var player := _sequence.get("player") as AnimationPlayer
-	if player != null and is_instance_valid(player):
-		player.stop(true)
-	if _turret != null:
-		_turret.cancel_authored_fire_fx()
-	_sequence.clear()
-
-
-func _finish() -> void:
-	if _sequence.is_empty():
-		return
-	var player := _sequence.get("player") as AnimationPlayer
-	if player != null and is_instance_valid(player):
-		player.stop(true)
-	if _turret != null:
-		_turret.cancel_authored_fire_fx()
-	_sequence.clear()
+	cancel_sequences(_sequences, false)
 
 
 func _fire_animation_binding() -> Dictionary:
@@ -159,16 +296,6 @@ func _fire_animation_binding() -> Dictionary:
 			if player.has_animation(animation_name):
 				return {"player": player, "name": animation_name}
 	return {}
-
-
-func _play_animation_from_start(
-	player: AnimationPlayer, animation_name: StringName
-	) -> void:
-	player.stop(true)
-	player.play(animation_name)
-	_apply_animation_start_transforms(player, animation_name)
-	if _turret != null:
-		_turret.restore_aim_pose()
 
 
 func _apply_animation_start_transforms(
@@ -274,7 +401,7 @@ func _xbf_fire_shot_times(
 	) -> Array[float]:
 	if animation_name.is_empty() or _model_root == null:
 		return []
-	var motion_root := _find_xbf_motion_root(_model_root)
+	var motion_root := find_xbf_motion_root(_model_root)
 	if motion_root == null \
 	or not bool(motion_root.get_meta("xbf_fx_events_complete", false)):
 		return []
@@ -437,11 +564,11 @@ func _transform_difference(a: Transform3D, b: Transform3D) -> float:
 	return result
 
 
-func _find_xbf_motion_root(node: Node) -> Node:
+static func find_xbf_motion_root(node: Node) -> Node:
 	if node.has_meta("xbf_animation_entries") and node.has_meta("xbf_fx_events"):
 		return node
 	for child in node.get_children():
-		var found := _find_xbf_motion_root(child)
+		var found := find_xbf_motion_root(child)
 		if found != null:
 			return found
 	return null

@@ -5,19 +5,26 @@ extends RefCounted
 ## only supplies the armour percentage; Bullet owns damage, radius, falloff,
 ## friendly-fire and special-effect fields.
 
-const COMBAT_COLLISION_MASK := 3
+const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+const COMBAT_COLLISION_MASK := CombatRulesScript.COLLISION_MASK
 const MAX_SPLASH_COLLIDERS := 256
-const DEFAULT_TARGET_HIT_RADIUS := 0.25
 
 
 func resolve(
-		bullet,
+		bullet_or_payload,
 		world_context: Node,
 		world_position: Vector3,
 		direct_target: Object = null,
-		source: Object = null
+		source: Object = null,
+		damage_scale := 1.0
 	) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
+	var bullet = bullet_or_payload
+	if bullet_or_payload != null and "definition" in bullet_or_payload:
+		damage_scale = float(bullet_or_payload.damage_scale)
+		bullet = bullet_or_payload.definition
 	if bullet == null or bullet.config == null:
 		return results
 
@@ -43,7 +50,9 @@ func resolve(
 		if not _can_resolve_target(bullet, target):
 			continue
 		var direct := target.get_instance_id() == direct_instance_id
-		var result := _resolve_target(bullet, target, source, world_position, direct)
+		var result := _resolve_target(
+			bullet, target, source, world_position, direct, damage_scale
+		)
 		if not result.is_empty():
 			results.append(result)
 	return results
@@ -54,7 +63,8 @@ func _resolve_target(
 		target: Object,
 		source: Object,
 		world_position: Vector3,
-		direct: bool
+		direct: bool,
+		damage_scale: float
 	) -> Dictionary:
 	var armour_type := StringName(String(target.call("combat_armour_type")))
 	var radius: float = float(bullet.blast_radius_world())
@@ -97,7 +107,7 @@ func _resolve_target(
 	var infection_was_applied := bullet.warhead != null \
 		and bullet.warhead.config == null and &"leech" in applied_effects
 	if not infection_was_applied:
-		damage = bullet.damage_against(armour_type) * total_multiplier
+		damage = bullet.damage_against(armour_type) * damage_scale * total_multiplier
 		if damage > 0.0:
 			target.call("take_damage", damage, bullet.death_category())
 
@@ -132,7 +142,7 @@ func _splash_targets(world_context: Node, world_position: Vector3, radius: float
 	query.collide_with_bodies = true
 	for hit in world.direct_space_state.intersect_shape(query, MAX_SPLASH_COLLIDERS):
 		var collider: Object = hit.get("collider") as Object
-		var entity := _combat_entity(collider)
+		var entity := CombatTargetScript.entity_of(collider)
 		if entity != null and not _contains_object(result, entity):
 			result.append(entity)
 	return result
@@ -180,10 +190,8 @@ func _are_friendly(source: Object, target: Object) -> bool:
 func _owner_player_id(object: Object) -> Variant:
 	if object.has_method("combat_owner_player_id"):
 		return object.call("combat_owner_player_id")
-	for property in object.get_property_list():
-		if StringName(String(property.get("name", ""))) == &"owner_player_id":
-			return object.get("owner_player_id")
-	return null
+	var owner_id := EntityQueryScript.owner_id_of(object)
+	return owner_id if owner_id >= 0 else null
 
 
 func _can_resolve_target(bullet, target: Object) -> bool:
@@ -193,12 +201,11 @@ func _can_resolve_target(bullet, target: Object) -> bool:
 
 
 func _is_valid_target(target: Object) -> bool:
-	return target != null and is_instance_valid(target) \
-		and (not target is Node or not (target as Node).is_queued_for_deletion())
+	return EntityQueryScript.is_live(target)
 
 
 func _target_is_alive(target: Object) -> bool:
-	return not target.has_method("combat_is_alive") or bool(target.call("combat_is_alive"))
+	return CombatTargetScript.is_alive(target)
 
 
 func _surface_distance(target: Object, world_position: Vector3) -> float:
@@ -209,28 +216,11 @@ func _surface_distance(target: Object, world_position: Vector3) -> float:
 
 
 func _object_position(object: Object) -> Vector3:
-	if object.has_method("combat_aim_position"):
-		var value: Variant = object.call("combat_aim_position")
-		if value is Vector3:
-			return value
-	if object is Node3D:
-		return (object as Node3D).global_position
-	return Vector3.INF
+	return CombatTargetScript.position_of(object)
 
 
 func _target_hit_radius(target: Object) -> float:
-	if target.has_method("combat_hit_radius"):
-		return maxf(float(target.call("combat_hit_radius")), DEFAULT_TARGET_HIT_RADIUS)
-	return DEFAULT_TARGET_HIT_RADIUS
-
-
-func _combat_entity(collider: Object) -> Object:
-	var current := collider as Node
-	while current != null:
-		if current.has_method("combat_armour_type"):
-			return current
-		current = current.get_parent()
-	return null
+	return CombatTargetScript.hit_radius(target, CombatRulesScript.DEFAULT_TARGET_HIT_RADIUS)
 
 
 func _contains_object(objects: Array, candidate: Object) -> bool:

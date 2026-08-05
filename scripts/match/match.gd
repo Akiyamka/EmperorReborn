@@ -11,6 +11,9 @@ const BuildingDefinitionCatalogScript := preload("res://scripts/buildings/buildi
 const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
 const NavigationGridDebugScript := preload("res://scripts/units/navigation/navigation_grid_debug.gd")
 const MatchSnapshotScript := preload("res://scripts/match/match_snapshot.gd")
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
 const PLACEMENT_ARROW_SCENE := preload("res://assets/converted/placement/build_arrow.scn")
 const PLACEMENT_BUILDING_SCENE := preload("res://assets/converted/placement/build_building.scn")
 const PLACEMENT_CANT_BUILD_SCENE := preload("res://assets/converted/placement/build_cantbuild.scn")
@@ -49,8 +52,8 @@ var _upgrade_option_ids: Array[StringName] = []
 var _unit_option_ids: Array[StringName] = []
 var _unit_roster_controller: UnitRosterController
 var _sidebar_house_pages: Array[StringName] = []
-var _unit_definition_catalog := UnitSceneCatalogScript.new()
-var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _unit_definition_catalog := UnitSceneCatalogScript.shared()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 var _match_snapshot
 
 
@@ -222,13 +225,7 @@ func _place_on_map() -> void:
 
 
 func _snap_to_ground(point: Vector3) -> Vector3:
-	var query := PhysicsRayQueryParameters3D.create(
-		Vector3(point.x, 200.0, point.z), Vector3(point.x, -200.0, point.z), 1
-	)
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		return Vector3(point.x, 0.0, point.z)
-	return hit["position"]
+	return TerrainProbeScript.snap_to_ground(get_world_3d(), point)
 
 
 func _process(delta: float) -> void:
@@ -354,27 +351,32 @@ func _configure_demo_players() -> void:
 	players.set_relation(LOCAL_PLAYER_ID, ENEMY_PLAYER_ID, PlayerDataScript.Relation.ENEMY)
 
 
-func _local_player_building_option_ids() -> Array[StringName]:
+## The local player's PlayerData, or null when the roster autoload is missing
+## (headless tests) or the match has not been set up yet. Every sidebar option
+## list below gates on it: without a player there is no house to filter by, and
+## falling back to the unfiltered catalog would offer the local side buildings
+## it cannot construct.
+func _local_player():
 	var players = _players()
-	if players == null:
-		return []
+	return players.player(LOCAL_PLAYER_ID) if players != null else null
 
-	var local_player = players.player(LOCAL_PLAYER_ID)
+
+func _local_player_building_option_ids() -> Array[StringName]:
+	var local_player = _local_player()
 	if local_player == null:
 		return []
-
-	return _building_definition_catalog.buildable_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.buildable_ids_for_house(
+		local_player.house_id, local_player.subhouse_ids
+	)
 
 
 func _local_player_house_id() -> StringName:
-	var players = _players()
-	var local_player = players.player(LOCAL_PLAYER_ID) if players != null else null
+	var local_player = _local_player()
 	return local_player.house_id if local_player != null else &""
 
 
 func _local_player_subhouse_ids() -> Array[StringName]:
-	var players = _players()
-	var local_player = players.player(LOCAL_PLAYER_ID) if players != null else null
+	var local_player = _local_player()
 	return local_player.subhouse_ids.duplicate() if local_player != null else []
 
 
@@ -388,10 +390,9 @@ func _refresh_sidebar_house_pages() -> void:
 		return
 	var changed := false
 	for building in buildings_root.get_children():
-		if int(building.get("owner_player_id")) != LOCAL_PLAYER_ID:
+		if not EntityQueryScript.is_owned_by(building, LOCAL_PLAYER_ID):
 			continue
-		if building.has_method("is_construction_complete") \
-		and not bool(building.call("is_construction_complete")):
+		if not EntityQueryScript.is_operational(building):
 			continue
 		var definition := _building_definition_catalog.definition(
 			StringName(String(building.get("config_id")))
@@ -412,40 +413,31 @@ func _refresh_sidebar_house_pages() -> void:
 
 
 func _local_player_wall_building_ids() -> Array[StringName]:
-	var players = _players()
-	if players == null:
-		return []
-
-	var local_player = players.player(LOCAL_PLAYER_ID)
+	var local_player = _local_player()
 	if local_player == null:
 		return []
+	return _building_definition_catalog.wall_ids_for_house(
+		local_player.house_id, local_player.subhouse_ids
+	)
 
-	return _building_definition_catalog.wall_ids_for_house(local_player.house_id, local_player.subhouse_ids)
 
-
+## The producible unit list is house-independent (a factory builds whatever its
+## own rules allow), but the gate stays: with no local player there is no
+## sidebar to populate at all.
 func _local_player_unit_option_ids() -> Array[StringName]:
-	var players = _players()
-	if players == null:
+	if _local_player() == null:
 		return []
-
-	var local_player = players.player(LOCAL_PLAYER_ID)
-	if local_player == null:
-		return []
-
 	return _unit_definition_catalog.producible_unit_ids()
 
 
 func _local_player_upgrade_option_ids() -> Array[StringName]:
-	var players = _players()
-	if players == null:
-		return []
-
-	var local_player = players.player(LOCAL_PLAYER_ID)
+	var local_player = _local_player()
 	if local_player == null:
 		return []
-
-	return _building_definition_catalog.upgrade_ids_for_house(local_player.house_id, local_player.subhouse_ids)
+	return _building_definition_catalog.upgrade_ids_for_house(
+		local_player.house_id, local_player.subhouse_ids
+	)
 
 
 func _players():
-	return get_node_or_null("/root/Players")
+	return AutoloadLookupScript.roster(self)

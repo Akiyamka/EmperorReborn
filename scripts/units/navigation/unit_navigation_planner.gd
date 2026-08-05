@@ -6,6 +6,7 @@ extends RefCounted
 ## cell instead of scanning a (2c+1)^2 window.
 
 const UnitNavigationMapScript := preload("res://scripts/units/navigation/unit_navigation_map.gd")
+const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 
 var _map
 var _profiles: Dictionary = {}
@@ -146,7 +147,7 @@ func _profile(pass_mask: int, clearance_cells: int, allowed_terrain_mask: int) -
 
 func _build_profile(pass_mask: int, clearance_cells: int, allowed_terrain_mask: int) -> Dictionary:
 	var astar := AStarGrid2D.new()
-	astar.region = Rect2i(0, 0, MapNavigationGrid.NAV_SIZE, MapNavigationGrid.NAV_SIZE)
+	astar.region = Rect2i(0, 0, MapNavigationGridScript.NAV_SIZE, MapNavigationGridScript.NAV_SIZE)
 	astar.cell_size = _map.grid.cell_size()
 	astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	astar.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
@@ -190,7 +191,7 @@ func _refresh_profile(profile: Dictionary, pass_mask: int, clearance_cells: int,
 
 
 func _solid_map(pass_mask: int, clearance_cells: int, allowed_terrain_mask: int) -> PackedByteArray:
-	var size := MapNavigationGrid.NAV_SIZE
+	var size := MapNavigationGridScript.NAV_SIZE
 	var total := size * size
 	var static_pass: PackedInt32Array = _map.grid.pass_mask
 	var terrain: PackedInt32Array = _map.grid.terrain_type
@@ -211,7 +212,7 @@ func _solid_map(pass_mask: int, clearance_cells: int, allowed_terrain_mask: int)
 ## only when every cell within `radius` is open. Cells outside the map count as
 ## solid, so clearance keeps units off the border.
 func _erode(solid: PackedByteArray, radius: int) -> PackedByteArray:
-	var size := MapNavigationGrid.NAV_SIZE
+	var size := MapNavigationGridScript.NAV_SIZE
 	var horizontal := PackedByteArray()
 	horizontal.resize(solid.size())
 	for y in size:
@@ -327,7 +328,7 @@ func _nearest_region(
 ## cell reachable diagonally is already reachable through those same two
 ## cardinal neighbours.
 func _compute_regions(solid: PackedByteArray) -> PackedInt32Array:
-	var size := MapNavigationGrid.NAV_SIZE
+	var size := MapNavigationGridScript.NAV_SIZE
 	var total := size * size
 	var region := PackedInt32Array()
 	region.resize(total)
@@ -368,10 +369,10 @@ func _compute_regions(solid: PackedByteArray) -> PackedInt32Array:
 
 
 func _index_of(cell: Vector2i) -> int:
-	if cell.x < 0 or cell.y < 0 or cell.x >= MapNavigationGrid.NAV_SIZE or cell.y >= MapNavigationGrid.NAV_SIZE:
+	if cell.x < 0 or cell.y < 0 or cell.x >= MapNavigationGridScript.NAV_SIZE or cell.y >= MapNavigationGridScript.NAV_SIZE:
 		return -1
-	return cell.y * MapNavigationGrid.NAV_SIZE + cell.x
+	return cell.y * MapNavigationGridScript.NAV_SIZE + cell.x
 
 
 func _cell_of(index: int) -> Vector2i:
-	return Vector2i(index % MapNavigationGrid.NAV_SIZE, int(index / MapNavigationGrid.NAV_SIZE))
+	return Vector2i(index % MapNavigationGridScript.NAV_SIZE, int(index / MapNavigationGridScript.NAV_SIZE))

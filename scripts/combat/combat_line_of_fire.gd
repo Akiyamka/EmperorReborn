@@ -1,6 +1,9 @@
 class_name CombatLineOfFire
 extends RefCounted
 
+const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+
 ## Decides whether a flat-flying shot can reach a point at all. CombatProjectile
 ## sweeps terrain and building colliders while it travels, so a target that sits
 ## inside weapon range but behind a cliff shoulder or a building is unhittable
@@ -11,7 +14,7 @@ extends RefCounted
 ## and a passing vehicle crossing the line must not make an engaged unit
 ## abandon a target it can already hit.
 
-const BLOCKER_COLLISION_MASK := 3
+const BLOCKER_COLLISION_MASK := CombatRulesScript.COLLISION_MASK
 const TERRAIN_COLLISION_LAYER := 1
 ## An attack-ground aim point lies on the terrain surface itself. Stopping the
 ## probe short of it keeps the destination ground from counting as its own
@@ -35,7 +38,7 @@ static func is_clear(
 	var probe_end := from + offset / distance * (distance - TARGET_CLEARANCE_WORLD)
 	var excludes: Array[RID] = []
 	for candidate: Variant in ignored:
-		_collect_collision_rids(candidate as Object, excludes)
+		excludes.append_array(CombatTargetScript.collision_rids(candidate as Object))
 	for index in MAX_PIERCED_COLLIDERS:
 		var query := PhysicsRayQueryParameters3D.create(
 			from, probe_end, BLOCKER_COLLISION_MASK, excludes
@@ -63,24 +66,5 @@ static func _obstructs(collider: Object) -> bool:
 	# Buildings and walls share the entity collision layer with units. The
 	# footprint hull they expose identifies them from combat code without
 	# depending on the buildings module.
-	var entity := _combat_entity(body)
+	var entity := CombatTargetScript.entity_of(body)
 	return entity != null and entity.has_method("combat_hull")
-
-
-static func _combat_entity(collider: Object) -> Object:
-	var current := collider as Node
-	while current != null:
-		if current.has_method("combat_armour_type"):
-			return current
-		current = current.get_parent()
-	return null
-
-
-static func _collect_collision_rids(object: Object, result: Array[RID]) -> void:
-	if object == null or not is_instance_valid(object):
-		return
-	if object is CollisionObject3D:
-		result.append((object as CollisionObject3D).get_rid())
-	if object is Node:
-		for child in (object as Node).get_children():
-			_collect_collision_rids(child, result)

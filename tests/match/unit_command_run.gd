@@ -1,7 +1,7 @@
 extends SceneTree
 
 const UnitCommandControllerScript := preload("res://scripts/match/unit_command_controller.gd")
-const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
 
 var _assertions := 0
@@ -619,7 +619,7 @@ func _test_building_move_undeployment(token: int, local_player) -> int:
 		var request: Dictionary = deployment.undeployment_calls[0]
 		_expect(request["building"] == con_yard, "the undeployment request must retain the selected building")
 		_expect(request["target"] == Vector3(24.0, 0.0, 30.0), "the undeployment request must retain the clicked move target")
-		_expect(request["move_mode"] == UnitNavigationSystemScript.MoveMode.FREE, "the undeployment request must retain the movement mode")
+		_expect(request["move_mode"] == NavConstantsScript.MoveMode.FREE, "the undeployment request must retain the movement mode")
 	_expect(con_yard.rally_points.is_empty(), "a handled Construction Yard move must not become a rally point")
 	_expect(statuses.back() == "ATConYard packing into ATMCV", "the packing status must reach the shared selection label")
 
@@ -881,13 +881,13 @@ func _test_formation_modifier(token: int, local_player) -> int:
 	commands.raycast_hits.append({"position": Vector3(12.0, 0.0, 14.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
 	_expect(navigation.commands.size() == 1, "J plus right click must issue one navigation command")
-	_expect(navigation.commands[0]["mode"] == UnitNavigationSystemScript.MoveMode.FORMATION, "held J must select formation movement")
+	_expect(navigation.commands[0]["mode"] == NavConstantsScript.MoveMode.FORMATION, "held J must select formation movement")
 
 	commands.handle_unhandled_input(_key_event(KEY_J, false))
 	commands.raycast_hits.append({})
 	commands.raycast_hits.append({"position": Vector3(16.0, 0.0, 18.0)})
 	commands.handle_unhandled_input(_mouse_event(MOUSE_BUTTON_RIGHT))
-	_expect(navigation.commands[1]["mode"] == UnitNavigationSystemScript.MoveMode.FREE, "releasing J must restore free movement")
+	_expect(navigation.commands[1]["mode"] == NavConstantsScript.MoveMode.FREE, "releasing J must restore free movement")
 
 	commands.queue_free()
 	unit.queue_free()

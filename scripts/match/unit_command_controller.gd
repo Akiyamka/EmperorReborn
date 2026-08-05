@@ -4,10 +4,13 @@ extends Node
 signal status_changed(status: String)
 
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
-const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
 const CursorManagerScript := preload("res://scripts/ui/cursor_manager.gd")
 const SoundEventPlayerScript := preload("res://scripts/audio/sound_event_player.gd")
 const UnitVoiceCatalogScript := preload("res://scripts/audio/unit_voice_catalog.gd")
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
+const SelectionPartitionScript := preload("res://scripts/match/selection_partition.gd")
 
 var _camera: Camera3D
 var _terrain: MapLoader
@@ -218,9 +221,8 @@ func _is_stop_key(event: InputEventKey) -> bool:
 ## only, so its rally point and production state remain untouched.
 func _stop_selected_entities() -> void:
 	var stopped := 0
-	for entity in _selected_entities:
-		if not is_instance_valid(entity) or not _can_control(entity) \
-		or not entity.has_method("cancel_all_orders"):
+	for entity in _controllable_entities():
+		if not entity.has_method("cancel_all_orders"):
 			continue
 		if bool(entity.call("cancel_all_orders")):
 			stopped += 1
@@ -238,9 +240,8 @@ func _deploy_selected_entities() -> void:
 	if _deployment_controller == null:
 		return
 	var messages: Array[String] = []
-	for entity in _selected_entities:
-		if not is_instance_valid(entity) or not _can_control(entity) \
-		or not entity.is_in_group("units"):
+	for entity in _controllable_entities():
+		if not entity.is_in_group("units"):
 			continue
 		if not _deployment_controller.has_method("can_handle") \
 		or not bool(_deployment_controller.call("can_handle", entity)):
@@ -333,21 +334,14 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 	if _selected_entities.is_empty():
 		return
 
-	var movable_entities: Array[Node] = []
-	var rally_buildings: Array[Node] = []
-	var deploying_entities := 0
-	for entity in _selected_entities:
-		if not _can_control(entity):
-			status_changed.emit("Cannot command this player")
-			return
-		if _is_immobilized_by_deployment(entity):
-			deploying_entities += 1
-			continue
-		if entity.has_method("move_to"):
-			movable_entities.append(entity)
-		elif _can_set_rally_point(entity) or _can_undeploy(entity):
-			rally_buildings.append(entity)
-	if movable_entities.is_empty() and rally_buildings.is_empty():
+	var partition := _partition_selection()
+	if partition.foreign:
+		status_changed.emit("Cannot command this player")
+		return
+	var movable_entities := partition.movable
+	var rally_buildings := partition.rally
+	var deploying_entities := partition.immobilized
+	if partition.is_empty():
 		if deploying_entities > 0:
 			status_changed.emit(
 				"Unit cannot move while deployed" if deploying_entities == 1
@@ -364,9 +358,9 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 		status_changed.emit("Cannot move to %.1f, %.1f" % [target.x, target.z])
 		return
 	var move_mode := (
-		UnitNavigationSystemScript.MoveMode.FORMATION
+		NavConstantsScript.MoveMode.FORMATION
 		if _formation_modifier_down
-		else UnitNavigationSystemScript.MoveMode.FREE
+		else NavConstantsScript.MoveMode.FREE
 	)
 	var ordinary_rally_buildings: Array[Node] = []
 	var undeployment_messages: Array[String] = []
@@ -439,27 +433,11 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 			str(debug.get("source_tile", "?")),
 			str(debug.get("terrain_name", "?")),
 		]
-	var movement_label := ""
-	if not unloading_entities.is_empty():
-		movement_label = "Unloading at %s" % String(target_entity.name)
-		if unloading_entities.size() > 1:
-			movement_label = "Unloading %d harvesters at %s" % [
-				unloading_entities.size(), String(target_entity.name)
-			]
-		if not moving_entities.is_empty():
-			movement_label += " | moving %d other units" % moving_entities.size()
-	elif not harvesting_entities.is_empty():
-		movement_label = "Harvesting spice at %.1f, %.1f" % [target.x, target.z]
-		if harvesting_entities.size() > 1:
-			movement_label = "Harvesting spice with %d units at %.1f, %.1f" % [harvesting_entities.size(), target.x, target.z]
-		if not moving_entities.is_empty():
-			movement_label += " | moving %d other units" % moving_entities.size()
-	else:
-		movement_label = "Moving to %.1f, %.1f" % [target.x, target.z]
-		if moving_entities.size() > 1:
-			movement_label = "Moving %d units to %.1f, %.1f" % [moving_entities.size(), target.x, target.z]
+	var movement_label := _movement_label(
+		target, target_entity, unloading_entities, harvesting_entities, moving_entities
+	)
 	var formation_status := " | formation" \
-		if not moving_entities.is_empty() and move_mode == UnitNavigationSystemScript.MoveMode.FORMATION else ""
+		if not moving_entities.is_empty() and move_mode == NavConstantsScript.MoveMode.FORMATION else ""
 	var deployment_status := " | %d unit(s) cannot move while deployed" % deploying_entities \
 		if deploying_entities > 0 else ""
 	var undeployment_status := " | %s" % " | ".join(undeployment_messages) \
@@ -467,6 +445,70 @@ func _command_move(screen_position: Vector2, target_entity = null) -> void:
 	status_changed.emit("%s%s%s%s%s" % [
 		movement_label, nav_status, formation_status, deployment_status, undeployment_status
 	])
+
+
+## What the order turned out to be. One click can split the selection three
+## ways, so the label names whatever dominates -- unloading, then harvesting,
+## then plain movement -- and counts the rest as "other units".
+func _movement_label(
+	target: Vector3,
+	target_entity,
+	unloading_entities: Array[Node],
+	harvesting_entities: Array[Node],
+	moving_entities: Array[Node]
+) -> String:
+	var others := " | moving %d other units" % moving_entities.size() \
+		if not moving_entities.is_empty() else ""
+	if not unloading_entities.is_empty():
+		var refinery := String(target_entity.name)
+		if unloading_entities.size() > 1:
+			return "Unloading %d harvesters at %s%s" % [
+				unloading_entities.size(), refinery, others
+			]
+		return "Unloading at %s%s" % [refinery, others]
+	if not harvesting_entities.is_empty():
+		if harvesting_entities.size() > 1:
+			return "Harvesting spice with %d units at %.1f, %.1f%s" % [
+				harvesting_entities.size(), target.x, target.z, others
+			]
+		return "Harvesting spice at %.1f, %.1f%s" % [target.x, target.z, others]
+	if moving_entities.size() > 1:
+		return "Moving %d units to %.1f, %.1f" % [moving_entities.size(), target.x, target.z]
+	return "Moving to %.1f, %.1f" % [target.x, target.z]
+
+
+## One classification pass over the selection, shared by the move command and
+## by the two guards that answer whether a move order is possible at all.
+func _partition_selection() -> SelectionPartition:
+	var partition := SelectionPartitionScript.new()
+	for entity in _selected_entities:
+		if not is_instance_valid(entity):
+			continue
+		if not _can_control(entity):
+			partition.foreign = true
+			continue
+		var can_move: bool = entity.has_method("move_to")
+		var can_rally: bool = not can_move \
+			and (_can_set_rally_point(entity) or _can_undeploy(entity))
+		partition.movement_capable = partition.movement_capable or can_move or can_rally
+		if _is_immobilized_by_deployment(entity):
+			partition.immobilized += 1
+			continue
+		if can_move:
+			partition.movable.append(entity)
+		elif can_rally:
+			partition.rally.append(entity)
+	return partition
+
+
+## The selection reduced to what this player may actually command. Seven guards
+## used to open with this same pair of checks inline.
+func _controllable_entities() -> Array[Node]:
+	var result: Array[Node] = []
+	for entity in _selected_entities:
+		if is_instance_valid(entity) and _can_control(entity):
+			result.append(entity)
+	return result
 
 
 func _request_undeployment(entity: Node, target: Vector3, move_mode: int) -> Dictionary:
@@ -635,9 +677,7 @@ func _terrain_command_cursor_at(screen_position: Vector2) -> int:
 
 
 func _can_issue_attack_order(target_or_position: Variant) -> bool:
-	for entity in _selected_entities:
-		if not is_instance_valid(entity) or not _can_control(entity):
-			continue
+	for entity in _controllable_entities():
 		if entity.has_method("is_deploying") and bool(entity.call("is_deploying")):
 			continue
 		if _can_attack(entity, target_or_position):
@@ -671,9 +711,7 @@ func _is_enemy_target(target) -> bool:
 func _can_interact_with(target) -> bool:
 	if target == null or not target.is_in_group("buildings"):
 		return false
-	for entity in _selected_entities:
-		if not is_instance_valid(entity) or not _can_control(entity):
-			continue
+	for entity in _controllable_entities():
 		if entity.has_method("can_unload_at") and entity.has_method("command_unload") \
 		and bool(entity.call("can_unload_at", target)):
 			return true
@@ -695,12 +733,7 @@ func _deployment_cursor_for(entity) -> int:
 	# BuildingPlacement footprint probe below needs the throttle.
 	if _deployment_controller.has_method("is_combat_deploy_candidate") \
 	and bool(_deployment_controller.call("is_combat_deploy_candidate", entity)):
-		return (
-			CursorManagerScript.CursorType.DEPLOY
-			if _deployment_controller.has_method("can_issue_deploy")
-			and bool(_deployment_controller.call("can_issue_deploy", entity))
-			else CursorManagerScript.CursorType.CANT_DEPLOY
-		)
+		return _deploy_cursor_for(entity)
 
 	# A full Construction Yard footprint check is expensive. It is only needed
 	# while the pointer is over the one selected MCV, and its cursor result does
@@ -712,13 +745,21 @@ func _deployment_cursor_for(entity) -> int:
 	or now_msec - _deployment_cursor_last_check_msec >= DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC:
 		_deployment_cursor_entity_id = entity_id
 		_deployment_cursor_last_check_msec = now_msec
-		_deployment_cursor_result = (
-			CursorManagerScript.CursorType.DEPLOY
-			if _deployment_controller.has_method("can_issue_deploy")
-			and bool(_deployment_controller.call("can_issue_deploy", entity))
-			else CursorManagerScript.CursorType.CANT_DEPLOY
-		)
+		_deployment_cursor_result = _deploy_cursor_for(entity)
 	return _deployment_cursor_result
+
+
+## Whether the deployment controller would accept a deploy order right now.
+## Both branches of _deployment_cursor_for() ask this -- the cheap combat check
+## every call, the MCV's footprint probe on a throttle -- and both answer it
+## the same way.
+func _deploy_cursor_for(entity) -> int:
+	return (
+		CursorManagerScript.CursorType.DEPLOY
+		if _deployment_controller.has_method("can_issue_deploy")
+		and bool(_deployment_controller.call("can_issue_deploy", entity))
+		else CursorManagerScript.CursorType.CANT_DEPLOY
+	)
 
 
 func _cursor_time_msec() -> int:
@@ -732,9 +773,7 @@ func _can_gather_at(target: Vector3) -> bool:
 	var target_cell: Vector2i = _terrain.navigation_grid.world_to_grid(target)
 	if not bool(_terrain.spice_layer.call("has_spice", target_cell)):
 		return false
-	for entity in _selected_entities:
-		if not is_instance_valid(entity) or not _can_control(entity):
-			continue
+	for entity in _controllable_entities():
 		if entity.has_method("can_harvest_spice") and entity.has_method("command_harvest") \
 		and bool(entity.call("can_harvest_spice")):
 			return true
@@ -752,40 +791,28 @@ func _is_immobilized_by_deployment(entity: Node) -> bool:
 
 
 func _can_issue_movement_order(target: Vector3) -> bool:
-	var movable_entities: Array[Node] = []
-	var has_rally_building := false
-	for entity in _selected_entities:
-		if not is_instance_valid(entity) or not _can_control(entity):
-			continue
-		if _is_immobilized_by_deployment(entity):
-			continue
-		if entity.has_method("move_to"):
-			movable_entities.append(entity)
-		elif _can_set_rally_point(entity) or _can_undeploy(entity):
-			has_rally_building = true
-	if has_rally_building:
+	var partition := _partition_selection()
+	if not partition.rally.is_empty():
 		return true
-	if movable_entities.is_empty():
+	if partition.movable.is_empty():
 		return false
 	if _navigation != null and _navigation.has_method("can_move_to"):
-		return bool(_navigation.call("can_move_to", movable_entities, target))
+		return bool(_navigation.call("can_move_to", partition.movable, target))
 	return true
 
 
 func _has_rally_point_selection() -> bool:
-	for entity in _selected_entities:
-		if is_instance_valid(entity) and _can_control(entity) and _can_set_rally_point(entity):
+	for entity in _controllable_entities():
+		if _can_set_rally_point(entity):
 			return true
 	return false
 
 
+## Note this ignores deployment: a selected Kindjal that is currently deployed
+## still counts, so the cursor reports "cannot move there" rather than dropping
+## its override and looking like an unrelated selection.
 func _has_movement_or_rally_selection() -> bool:
-	for entity in _selected_entities:
-		if not is_instance_valid(entity) or not _can_control(entity):
-			continue
-		if entity.has_method("move_to") or _can_set_rally_point(entity) or _can_undeploy(entity):
-			return true
-	return false
+	return _partition_selection().movement_capable
 
 
 func _can_undeploy(entity: Node) -> bool:
@@ -825,12 +852,9 @@ func _raycast(screen_position: Vector2, collision_mask: int = 3) -> Dictionary:
 	if _camera == null:
 		return {}
 
-	var ray_origin := _camera.project_ray_origin(screen_position)
-	var ray_end := ray_origin + _camera.project_ray_normal(screen_position) * 1000.0
-	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-	query.collision_mask = collision_mask
-	query.collide_with_areas = false
-	return get_viewport().get_world_3d().direct_space_state.intersect_ray(query)
+	return TerrainProbeScript.screen_pick(
+		_camera, get_viewport().get_world_3d(), screen_position, collision_mask
+	)
 
 
 func _can_control(unit) -> bool:
@@ -866,12 +890,8 @@ func _owner_status(unit) -> String:
 
 
 func _players():
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Players")
+	return AutoloadLookupScript.roster(self)
 
 
 func _cursor_manager() -> Variant:
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Cursors")
+	return AutoloadLookupScript.cursors(self)

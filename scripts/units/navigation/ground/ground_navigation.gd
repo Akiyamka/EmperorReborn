@@ -6,11 +6,42 @@ extends RefCounted
 ## `simplify_path`) that every command handler and the reroute queue call to
 ## (re)plan an agent's route.
 
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
+
 var _facade: Node
+var _runtime_map
+var _planner
+var _avoidance
+var _path_funnel
+var _agents: Dictionary
+var _registry
+var _spatial_hash
+var _path_follower
+var _slot_allocator
 
 
-func setup(facade: Node) -> void:
+func setup(
+	facade: Node,
+	runtime_map,
+	planner,
+	avoidance,
+	path_funnel,
+	agents: Dictionary,
+	registry,
+	spatial_hash,
+	path_follower,
+	slot_allocator
+	) -> void:
 	_facade = facade
+	_runtime_map = runtime_map
+	_planner = planner
+	_avoidance = avoidance
+	_path_funnel = path_funnel
+	_agents = agents
+	_registry = registry
+	_spatial_hash = spatial_hash
+	_path_follower = path_follower
+	_slot_allocator = slot_allocator
 
 
 ## Computes the whole route synchronously: either a clear straight line or a
@@ -31,10 +62,10 @@ func route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void
 		return
 	var stoppable_no_stop_cells: Dictionary = agent.get("allowed_cells", {}).duplicate()
 	if bool(agent.get("no_stop_destination", false)):
-		stoppable_no_stop_cells[_facade.runtime_map.grid.world_to_grid(destination)] = true
-	var start_cell: Vector2i = _facade.runtime_map.grid.world_to_grid(from)
-	var target_cell: Vector2i = _facade.runtime_map.grid.world_to_grid(destination)
-	if not _facade.planner.is_reachable(
+		stoppable_no_stop_cells[_runtime_map.grid.world_to_grid(destination)] = true
+	var start_cell: Vector2i = _runtime_map.grid.world_to_grid(from)
+	var target_cell: Vector2i = _runtime_map.grid.world_to_grid(destination)
+	if not _planner.is_reachable(
 			start_cell, target_cell,
 			int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"]),
 			stoppable_no_stop_cells
@@ -42,9 +73,9 @@ func route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void
 		agent["route_unreachable"] = true
 		return
 	agent["route_unreachable"] = false
-	agent["direct_path"] = _facade._has_clear_line(from, destination, agent)
+	agent["direct_path"] = _path_follower.has_clear_line(from, destination, agent)
 	if not bool(agent["direct_path"]):
-		var raw_path: Array[Vector2i] = _facade.planner.find_path(
+		var raw_path: Array[Vector2i] = _planner.find_path(
 			start_cell, target_cell,
 			int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"]),
 			stoppable_no_stop_cells
@@ -53,9 +84,9 @@ func route_agent(agent: Dictionary, from: Vector3, destination: Vector3) -> void
 		var corridor := PackedInt32Array()
 		corridor.resize(raw_path.size())
 		for index in raw_path.size():
-			corridor[index] = _facade.runtime_map.grid.cell_index(raw_path[index])
+			corridor[index] = _runtime_map.grid.cell_index(raw_path[index])
 		agent["corridor"] = corridor
-		agent["path_points"] = _facade.path_funnel.build(raw_path, agent, from, destination)
+		agent["path_points"] = _path_funnel.build(raw_path, agent, from, destination)
 
 
 ## AStarGrid2D returns every crossed cell. Keeping that raw list made every
@@ -80,10 +111,10 @@ func simplify_path(raw_path: Array[Vector2i], agent: Dictionary) -> Array[Vector
 	var anchor_index := 0
 	while anchor_index < turns.size() - 1:
 		var furthest_visible := anchor_index + 1
-		var from: Vector3 = _facade.runtime_map.grid.grid_to_world(turns[anchor_index])
+		var from: Vector3 = _runtime_map.grid.grid_to_world(turns[anchor_index])
 		for probe_index in range(anchor_index + 2, turns.size()):
-			var to: Vector3 = _facade.runtime_map.grid.grid_to_world(turns[probe_index])
-			if not _facade._has_clear_line(from, to, agent):
+			var to: Vector3 = _runtime_map.grid.grid_to_world(turns[probe_index])
+			if not _path_follower.has_clear_line(from, to, agent):
 				break
 			furthest_visible = probe_index
 		result.append(turns[furthest_visible])
@@ -103,7 +134,7 @@ func path_points_for(agent: Dictionary) -> Array[Vector3]:
 	var path: Array = agent["path"]
 	var result: Array[Vector3] = []
 	for cell in path:
-		result.append(_facade.runtime_map.grid.grid_to_world(cell))
+		result.append(_runtime_map.grid.grid_to_world(cell))
 	return result
 
 
@@ -116,15 +147,15 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 	if float(agent["yield_remaining"]) > 0.0:
 		agent["steering_target"] = unit.global_position \
 			+ (agent["yield_direction"] as Vector3) * maxf(float(agent["radius"]) * 2.0, 2.0)
-		return (agent["yield_direction"] as Vector3) * _facade._unit_speed(unit) * 0.7
+		return (agent["yield_direction"] as Vector3) * _unit_speed(unit) * 0.7
 	var exit_point: Vector3 = agent["exit_point"]
 	if exit_point.is_finite():
 		var exit_offset := exit_point - unit.global_position
 		exit_offset.y = 0.0
-		if exit_offset.length() > maxf(_facade._arrival_radius(unit), float(agent["radius"]) * 0.35):
+		if exit_offset.length() > maxf(_arrival_radius(unit), float(agent["radius"]) * 0.35):
 			agent["steering_target"] = exit_point
 			var exit_speed := _arrival_limited_speed(
-				agent, _facade._unit_speed(unit), exit_offset.length()
+				agent, _unit_speed(unit), exit_offset.length()
 			)
 			return exit_offset.normalized() * exit_speed
 		agent["exit_point"] = Vector3.INF
@@ -136,8 +167,8 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 	var arrival: float = _facade.arrival_tolerance(unit)
 	if offset.length() <= arrival:
 		return Vector3.ZERO
-	var speed: float = _facade._unit_speed(unit)
-	if int(agent["mode"]) == UnitNavigationSystem.MoveMode.FORMATION:
+	var speed: float = _unit_speed(unit)
+	if int(agent["mode"]) == NavConstantsScript.MoveMode.FORMATION:
 		speed = minf(speed, float(agent["group_speed"]))
 	var direction := Vector3.ZERO
 	var final_approach := bool(agent["direct_path"])
@@ -150,12 +181,14 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 		if path_index == 0 and path_points.size() > 1:
 			path_index = 1
 		path_index = clampi(path_index, 0, path_points.size() - 1)
-		path_index = _facade._advanced_path_index(agent, path_points, path_index, unit.global_position, speed)
-		agent["path_index"] = path_index
-		var steering_target: Vector3 = _facade._path_steering_target(
+		path_index = _path_follower.advanced_path_index(
 			agent, path_points, path_index, unit.global_position, speed
 		)
-		steering_target = _facade._path_lane_target(
+		agent["path_index"] = path_index
+		var steering_target: Vector3 = _path_follower.path_steering_target(
+			agent, path_points, path_index, unit.global_position, speed
+		)
+		steering_target = _path_follower.path_lane_target(
 			agent, path_points, path_index, unit.global_position, steering_target, speed
 		)
 		agent["steering_target"] = steering_target
@@ -174,7 +207,7 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 ## fixed navigation tick. Limit only that last step so it lands on the target
 ## instead of crossing it and reversing direction on the following tick.
 func _arrival_limited_speed(agent: Dictionary, speed: float, distance: float) -> float:
-	var limited := minf(speed, distance * UnitNavigationSystem.NAVIGATION_TICK_RATE)
+	var limited := minf(speed, distance * NavConstantsScript.NAVIGATION_TICK_RATE)
 	agent["_arrival_speed_limited"] = limited < speed
 	return limited
 
@@ -196,7 +229,7 @@ func request_yield(unit: Node3D, direction: Vector3) -> void:
 	# Unit.prepare_navigation_order(), so action state machines and the player's
 	# current command remain intact. Commanded agents resume their reserved
 	# destination when the short displacement expires (see tick()).
-	var agent: Dictionary = _facade._agent_for(unit)
+	var agent: Dictionary = _registry.agent_for(_agents, unit)
 	if agent.is_empty() or bool(agent["hold"]) or direction.is_zero_approx():
 		return
 	# A unit already following a route normally clears the queue by itself. The
@@ -204,8 +237,8 @@ func request_yield(unit: Node3D, direction: Vector3) -> void:
 	if is_en_route(agent) and float(agent["yield_remaining"]) <= 0.0:
 		return
 	agent["yield_direction"] = direction
-	agent["yield_remaining"] = UnitNavigationSystem.FRIENDLY_YIELD_SECONDS
-	_facade._agents[unit.get_instance_id()] = agent
+	agent["yield_remaining"] = NavConstantsScript.FRIENDLY_YIELD_SECONDS
+	_agents[unit.get_instance_id()] = agent
 
 
 func is_en_route(agent: Dictionary) -> bool:
@@ -214,7 +247,7 @@ func is_en_route(agent: Dictionary) -> bool:
 	var unit: Node3D = agent["unit"]
 	var offset: Vector3 = (agent["destination"] as Vector3) - unit.global_position
 	offset.y = 0.0
-	return offset.length() > maxf(_facade._arrival_radius(unit), float(agent["radius"]) * 0.35)
+	return offset.length() > maxf(_arrival_radius(unit), float(agent["radius"]) * 0.35)
 
 
 ## Per-agent steering resolution for one navigation tick, in the exact order
@@ -239,12 +272,12 @@ func tick(delta: float, ordered: Array[Dictionary], buckets: Dictionary) -> void
 		agent["_v_pref"] = desired_velocity(agent)
 	for agent in ordered:
 		var unit: Node3D = agent["unit"]
-		var nearby: Array = _facade._nearby_agents(
+		var nearby: Array = _spatial_hash.nearby(
 			unit.global_position,
 			buckets,
 			float(agent["radius"]) + largest_radius
 		)
-		var result: Dictionary = _facade.avoidance.resolve_velocity(
+		var result: Dictionary = _avoidance.resolve_velocity(
 			agent, agent["_v_pref"], delta, nearby, {}
 		)
 		agent["_new_velocity"] = result["velocity"]
@@ -259,7 +292,7 @@ func tick(delta: float, ordered: Array[Dictionary], buckets: Dictionary) -> void
 		var unit: Node3D = agent["unit"]
 		var desired: Vector3 = agent["_v_pref"]
 		var velocity: Vector3 = agent["_new_velocity"]
-		var nearby: Array = _facade._nearby_agents(
+		var nearby: Array = _spatial_hash.nearby(
 			unit.global_position,
 			buckets,
 			float(agent["radius"]) + largest_radius
@@ -291,13 +324,13 @@ func _apply_resolved_velocity(
 	else:
 		agent["blocked_time"] = 0.0
 		agent["reported_enemy"] = false
-	if float(agent["blocked_time"]) >= UnitNavigationSystem.ENEMY_BLOCK_SECONDS and not bool(agent["reported_enemy"]):
+	if float(agent["blocked_time"]) >= NavConstantsScript.ENEMY_BLOCK_SECONDS and not bool(agent["reported_enemy"]):
 		if not enemies.is_empty():
 			agent["reported_enemy"] = true
 			_facade.enemy_blocked.emit(unit, enemies)
 			if unit.has_method("navigation_blocked_by_enemy"):
 				unit.call("navigation_blocked_by_enemy", enemies)
-	if float(agent["blocked_time"]) >= UnitNavigationSystem.FRIENDLY_YIELD_TRIGGER_SECONDS:
+	if float(agent["blocked_time"]) >= NavConstantsScript.FRIENDLY_YIELD_TRIGGER_SECONDS:
 		for friend in friends:
 			request_yield(friend, yield_direction(unit, friend, desired))
 	if float(agent["yield_remaining"]) > 0.0:
@@ -311,7 +344,9 @@ func _apply_resolved_velocity(
 				# An idle unit displaced off a choke point must not return
 				# (it would displace the passer forever); it parks on the
 				# nearest free grid block instead.
-				agent["destination"] = _facade._snapped_parking(agent, unit.global_position + velocity * delta)
+				agent["destination"] = _slot_allocator.snapped_parking(
+					_agents, agent, unit.global_position + velocity * delta
+				)
 				agent["reserved"] = true
 				route_agent(agent, unit.global_position, agent["destination"])
 	# Elastic overlap resolution normally lets overlapping units push each
@@ -319,13 +354,13 @@ func _apply_resolved_velocity(
 	# a harvester unloading on a refinery pad); only the other agent may move
 	# to resolve an overlap with it.
 	var separation: Vector3 = Vector3.ZERO if bool(agent["hold"]) \
-		else _facade.avoidance.separation_velocity(agent, nearby)
+		else _avoidance.separation_velocity(agent, nearby)
 	if not separation.is_zero_approx():
-		var total: Vector3 = (velocity + separation).limit_length(_facade._unit_speed(unit))
+		var total: Vector3 = (velocity + separation).limit_length(_unit_speed(unit))
 		# Separation may cross friends, but it must not turn the already-safe
 		# steering result into motion through an enemy or forbidden terrain.
-		if _facade.avoidance.motion_is_passable(agent, total * delta) \
-		and _facade.avoidance.enemy_sweep_fraction(
+		if _avoidance.motion_is_passable(agent, total * delta) \
+		and _avoidance.enemy_sweep_fraction(
 			agent, total * delta, nearby, resolved_positions
 		) >= 0.999:
 			velocity = total
@@ -333,7 +368,7 @@ func _apply_resolved_velocity(
 			# instead of fighting its way back into the overlap.
 			if int(agent["command_id"]) <= 0 and not bool(agent["hold"]):
 				agent["destination"] = unit.global_position + velocity * delta
-	velocity = _facade.avoidance.stabilize_velocity(
+	velocity = _avoidance.stabilize_velocity(
 		agent, velocity, delta, nearby, resolved_positions
 	)
 	# ORCA already treats the preferred speed as a hard maximum, but elastic
@@ -341,10 +376,22 @@ func _apply_resolved_velocity(
 	# even when a nearby friendly body also pushes this moving unit.
 	if bool(agent.get("_arrival_speed_limited", false)):
 		velocity = velocity.limit_length(desired.length())
-	_facade._agents[unit.get_instance_id()] = agent
+	_agents[unit.get_instance_id()] = agent
 	if unit.has_method("navigation_step"):
 		unit.call("navigation_step", velocity, delta)
 	# Unit may spend this update turning in place when its rules do not allow
 	# simultaneous translation and rotation. Record the actual position so
 	# later swept-disc checks do not reserve movement that never happened.
 	resolved_positions[unit.get_instance_id()] = unit.global_position
+
+
+static func _unit_speed(unit: Node3D) -> float:
+	if unit.has_method("navigation_move_speed"):
+		return maxf(float(unit.call("navigation_move_speed")), 0.0)
+	var value = unit.get("move_speed")
+	return maxf(float(value), 0.0) if value != null else 0.0
+
+
+static func _arrival_radius(unit: Node3D) -> float:
+	var value = unit.get("arrival_radius")
+	return float(value) if value != null else 0.2

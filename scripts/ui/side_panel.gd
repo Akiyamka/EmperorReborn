@@ -21,6 +21,13 @@ const SidebarRosterLayoutScript := preload("res://scripts/ui/sidebar_roster_layo
 ## so exactly one of them is active at a time.
 enum Tab { INFANTRY, VEHICLES, BUILDINGS, UPGRADES, STARPORT }
 
+## The two option families the shared grid can show. Everything a slot does is
+## the same for both; they differ in exactly three things -- where their ids
+## live, where their states live, and whether a disabled option keeps its cell
+## -- so slot handling takes the family as an argument instead of being written
+## out twice.
+enum OptionKind { BUILDING, UPGRADE }
+
 const ART_SIDEBAR_TABS := {
 	"Infantry": Tab.INFANTRY,
 	"Units": Tab.VEHICLES,
@@ -57,8 +64,8 @@ var _icon_paths_by_filename: Dictionary = {}
 var _icon_textures: Dictionary = {}
 var _entity_tabs: Dictionary = {}
 var _pages_by_tab: Dictionary = {}
-var _unit_definition_catalog := UnitSceneCatalogScript.new()
-var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _unit_definition_catalog := UnitSceneCatalogScript.shared()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 var _roster_layout := SidebarRosterLayoutScript.new()
 var _credits_amount := 0
 var _energy_amount := 0
@@ -111,17 +118,18 @@ func _apply_sell_mode() -> void:
 		sell_button.button_pressed = _sell_mode_active
 
 
+## The plain roster: every id kept in the order given, grouped only by the tab
+## its art config names. match.gd uses configure_ordered_roster() instead --
+## this form is what tests/ui/side_panel_pagination_run.gd drives to exercise
+## the grid without the authored layout on top.
 func configure_building_options(building_ids: Array[StringName]) -> void:
-	_building_option_ids = building_ids.duplicate()
-	_building_option_ids_by_tab.clear()
-	_entity_tabs.clear()
+	_reset_building_roster(building_ids)
 	for building_id in _building_option_ids:
 		var tab := _art_tab_for_entity(building_id, Tab.BUILDINGS)
 		var tab_ids: Array = _building_option_ids_by_tab.get(tab, [])
 		tab_ids.append(building_id)
 		_building_option_ids_by_tab[tab] = tab_ids
-	if is_node_ready():
-		_rebuild_queue_grid()
+	_refresh_grid()
 
 
 func configure_ordered_roster(
@@ -134,12 +142,23 @@ func configure_ordered_roster(
 			var unit := _unit_definition_catalog.definition_for(entity_id)
 			return unit if unit != null else _building_definition_catalog.definition(entity_id)
 	)
-	_building_option_ids = candidate_ids.duplicate()
-	_building_option_ids_by_tab.clear()
-	_entity_tabs.clear()
+	_reset_building_roster(candidate_ids)
 	for tab in [Tab.INFANTRY, Tab.VEHICLES, Tab.BUILDINGS]:
 		var tab_ids: Array = ordered_ids_by_tab.get(tab, [])
 		_building_option_ids_by_tab[tab] = tab_ids
+	_refresh_grid()
+
+
+## Both roster setters replace the same three pieces of state and differ only
+## in how they decide which tab each id lands on. The tab memo is dropped along
+## with the roster: a new roster may arrive with a reloaded rules catalog.
+func _reset_building_roster(building_ids: Array[StringName]) -> void:
+	_building_option_ids = building_ids.duplicate()
+	_building_option_ids_by_tab.clear()
+	_entity_tabs.clear()
+
+
+func _refresh_grid() -> void:
 	if is_node_ready():
 		_rebuild_queue_grid()
 
@@ -147,7 +166,7 @@ func configure_ordered_roster(
 func set_building_option_state(option_state: BuildingOptionState) -> void:
 	_building_option_states[option_state.building_id] = option_state
 	if is_node_ready():
-		_apply_building_option_state(option_state)
+		_apply_option_state(OptionKind.BUILDING, option_state)
 
 
 ## Global per-type upgrades (docs/mechanics/production.md section 4). Mirrors
@@ -157,14 +176,13 @@ func set_building_option_state(option_state: BuildingOptionState) -> void:
 ## owned refinery that has a remaining dock state; with none, the slot hides.
 func configure_upgrade_options(upgrade_ids: Array[StringName]) -> void:
 	_upgrade_option_ids = upgrade_ids.duplicate()
-	if is_node_ready():
-		_rebuild_queue_grid()
+	_refresh_grid()
 
 
 func set_upgrade_option_state(option_state: BuildingOptionState) -> void:
 	_upgrade_option_states[option_state.building_id] = option_state
 	if is_node_ready():
-		_apply_upgrade_option_state(option_state)
+		_apply_option_state(OptionKind.UPGRADE, option_state)
 
 
 func _format_resource_amount(amount: int) -> String:
@@ -215,36 +233,19 @@ func get_slot(index: int) -> QueueSlot:
 	return _queue_grid.get_child(index) as QueueSlot
 
 
-func _apply_building_option_state(option_state: BuildingOptionState) -> void:
-	if active_tab != _art_tab_for_entity(option_state.building_id, Tab.BUILDINGS):
-		return
-
-	var slot := _building_slot(option_state.building_id)
+func _apply_option_state(kind: OptionKind, option_state: BuildingOptionState) -> void:
+	var slot := _slot_for(kind, option_state.building_id)
 	if slot == null:
 		return
 
 	# Technology prerequisites remove unavailable options from the panel;
 	# grey icons remain reserved for queue-specific blocking states.
-	# A roster position is an address, not a compact list item.  Keep disabled
-	# slots in GridContainer so later icons cannot slide into their cell.
-	slot.visible = true
-	slot.state = _queue_slot_state(option_state.state)
-	slot.progress = option_state.progress
-	slot.status_text = option_state.status_text
-	slot.quantity = option_state.quantity
-	if not option_state.tooltip.is_empty():
-		slot.tooltip_text = option_state.tooltip
-
-
-func _apply_upgrade_option_state(option_state: BuildingOptionState) -> void:
-	if active_tab != Tab.UPGRADES:
-		return
-
-	var slot := _upgrade_slot(option_state.building_id)
-	if slot == null:
-		return
-
-	slot.visible = option_state.state != BuildingOptionStateScript.State.DISABLED
+	# A building roster position is an address, not a compact list item.  Keep
+	# disabled slots in GridContainer so later icons cannot slide into their
+	# cell.  Upgrades have no authored layout to hold open, so a disabled one
+	# simply stops being offered.
+	slot.visible = kind == OptionKind.BUILDING \
+		or option_state.state != BuildingOptionStateScript.State.DISABLED
 	slot.state = _queue_slot_state(option_state.state)
 	slot.progress = option_state.progress
 	slot.status_text = option_state.status_text
@@ -284,14 +285,10 @@ func _rebuild_queue_grid() -> void:
 		_queue_grid.add_child(slot)
 
 	_clamp_active_page()
-	if active_tab == Tab.UPGRADES:
-		var page_ids := _page_slice(_upgrade_option_ids)
-		for slot_index in page_ids.size():
-			_configure_upgrade_slot(slot_index, page_ids[slot_index])
-	else:
-		var page_ids := _page_slice(_building_ids_for_tab(active_tab))
-		for slot_index in page_ids.size():
-			_configure_building_slot(slot_index, page_ids[slot_index])
+	var kind := _active_option_kind()
+	var page_ids := _page_slice(_option_ids(kind, active_tab))
+	for slot_index in page_ids.size():
+		_configure_slot(kind, slot_index, page_ids[slot_index])
 	_update_page_buttons()
 
 
@@ -305,11 +302,7 @@ func _active_page() -> int:
 
 
 func _active_page_count() -> int:
-	var option_count := (
-		_upgrade_option_ids.size()
-		if active_tab == Tab.UPGRADES
-		else _building_ids_for_tab(active_tab).size()
-	)
+	var option_count := _option_ids(_active_option_kind(), active_tab).size()
 	return maxi(1, ceili(float(option_count) / float(QUEUE_PAGE_SIZE)))
 
 
@@ -328,38 +321,25 @@ func _update_page_buttons() -> void:
 	_page_next.tooltip_text = "Next production page (%d/%d)" % [page + 1, page_count]
 
 
-func _configure_building_slot(
-		slot_index: int, building_id: StringName
-) -> void:
+## Every slot is rebuilt from scratch on a page turn or tab switch, so whatever
+## state the option already had is re-applied here rather than surviving on the
+## old slot.
+##
+## GLOBAL_TYPE upgrade ids are the building type they upgrade, so both families
+## take their icon and tooltip from the same art config.
+func _configure_slot(kind: OptionKind, slot_index: int, option_id: StringName) -> void:
 	var slot := get_slot(slot_index)
 	if slot == null:
 		return
-	var icon_data := _building_icon_data(building_id)
+	var icon_data := _building_icon_data(option_id)
 	if icon_data.size() == 2:
 		slot.icon_colored = icon_data[0] as Texture2D
 		slot.icon_grey = icon_data[1] as Texture2D
 	slot.state = QueueSlot.State.AVAILABLE
-	slot.tooltip_text = String(building_id)
-	var option_state = _building_option_states.get(building_id) as BuildingOptionState
+	slot.tooltip_text = String(option_id)
+	var option_state = _option_states(kind).get(option_id) as BuildingOptionState
 	if option_state != null:
-		_apply_building_option_state(option_state)
-
-
-## GLOBAL_TYPE upgrade ids are the building type they upgrade, so their art
-## config supplies this slot's icon as well.
-func _configure_upgrade_slot(slot_index: int, upgrade_id: StringName) -> void:
-	var slot := get_slot(slot_index)
-	if slot == null:
-		return
-	var icon_data := _building_icon_data(upgrade_id)
-	if icon_data.size() == 2:
-		slot.icon_colored = icon_data[0] as Texture2D
-		slot.icon_grey = icon_data[1] as Texture2D
-	slot.tooltip_text = String(upgrade_id)
-	slot.state = QueueSlot.State.AVAILABLE
-	var option_state = _upgrade_option_states.get(upgrade_id) as BuildingOptionState
-	if option_state != null:
-		_apply_upgrade_option_state(option_state)
+		_apply_option_state(kind, option_state)
 
 
 func _building_icon_data(building_id: StringName) -> Array[Texture2D]:
@@ -409,31 +389,49 @@ func _index_icon_paths() -> void:
 		_icon_paths_by_filename[filename.to_lower()] = ICON_TEXTURE_ROOT.path_join(filename)
 
 
-func _building_slot(building_id: StringName) -> QueueSlot:
-	var tab := _art_tab_for_entity(building_id, Tab.BUILDINGS)
+## The slot an option currently occupies, or null when it is not on screen --
+## because its family is not the active tab, because its tab is not, or because
+## it sits on another page. All three cases mean the same thing to a caller:
+## there is nothing to paint.
+func _slot_for(kind: OptionKind, option_id: StringName) -> QueueSlot:
+	var tab := (
+		Tab.UPGRADES if kind == OptionKind.UPGRADE
+		else _art_tab_for_entity(option_id, Tab.BUILDINGS)
+	)
 	if tab != active_tab:
 		return null
-	var slot_index := _building_ids_for_tab(tab).find(building_id) - _active_page() * QUEUE_PAGE_SIZE
-	return get_slot(slot_index)
+	var ids := _option_ids(kind, tab)
+	return get_slot(ids.find(option_id) - _active_page() * QUEUE_PAGE_SIZE)
 
 
-func _upgrade_slot(upgrade_id: StringName) -> QueueSlot:
-	var slot_index := _upgrade_option_ids.find(upgrade_id) - _active_page() * QUEUE_PAGE_SIZE
-	return get_slot(slot_index)
+## Where a family's ids live: upgrades keep one flat list, buildings and units
+## are split across the art-authored tabs they were sorted into.
+func _option_ids(kind: OptionKind, tab: Tab) -> Array:
+	return _upgrade_option_ids if kind == OptionKind.UPGRADE else _building_ids_for_tab(tab)
+
+
+func _option_states(kind: OptionKind) -> Dictionary:
+	return _upgrade_option_states if kind == OptionKind.UPGRADE else _building_option_states
+
+
+func _active_option_kind() -> OptionKind:
+	return OptionKind.UPGRADE if active_tab == Tab.UPGRADES else OptionKind.BUILDING
 
 
 func _on_slot_pressed(button_index: int, quantity: int, slot_index: int) -> void:
-	if active_tab == Tab.UPGRADES:
-		var paged_index := _active_page() * QUEUE_PAGE_SIZE + slot_index
-		if paged_index < 0 or paged_index >= _upgrade_option_ids.size():
-			return
-		upgrade_intent_pressed.emit(_upgrade_option_ids[paged_index], button_index)
-		return
-	var tab_ids := _building_ids_for_tab(active_tab)
+	var ids := _option_ids(_active_option_kind(), active_tab)
 	var paged_index := _active_page() * QUEUE_PAGE_SIZE + slot_index
-	if paged_index < 0 or paged_index >= tab_ids.size() or StringName(tab_ids[paged_index]) == &"":
+	if paged_index < 0 or paged_index >= ids.size():
 		return
-	building_intent_pressed.emit(tab_ids[paged_index], button_index, quantity)
+	var option_id := StringName(ids[paged_index])
+	if active_tab == Tab.UPGRADES:
+		upgrade_intent_pressed.emit(option_id, button_index)
+		return
+	# The authored building layout keeps empty cells to hold a grouped
+	# duplicate's position; clicking one orders nothing.
+	if option_id == &"":
+		return
+	building_intent_pressed.emit(option_id, button_index, quantity)
 
 
 func _building_ids_for_tab(tab: Tab) -> Array:

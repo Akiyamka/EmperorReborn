@@ -1,6 +1,10 @@
 class_name BuildingPlacement
 extends Node3D
 
+const TerrainProbeScript := preload("res://scripts/world/terrain_probe.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+
 signal building_placed(building: Node3D)
 
 enum PlaceResult {
@@ -15,13 +19,15 @@ enum PlaceResult {
 
 const NAV_CELLS_PER_OCCUPY_CELL := 2
 const CELL_SURFACE_OFFSET := 0.06
-const CELL_EMISSION_ENERGY := 1.8
 const INVALID_ANCHOR := Vector2i(-999999, -999999)
 const QUARTER_TURN_RADIANS := PI * 0.5
 
 const UnitPushAsideScript := preload("res://scripts/buildings/unit_push_aside.gd")
 const BuildRadiusScript := preload("res://scripts/buildings/build_radius.gd")
 const BuildingFootprintScript := preload("res://scripts/buildings/building_footprint.gd")
+const PlacementContextScript := preload("res://scripts/buildings/placement_context.gd")
+const OccupyGridScript := preload("res://scripts/buildings/occupy_grid.gd")
+const PlacementMaterialsScript := preload("res://scripts/buildings/placement_materials.gd")
 
 var _camera: Camera3D
 var _navigation_grid
@@ -50,43 +56,56 @@ var _can_build := false
 var _is_wall_candidate := false
 var _skip_build_radius_check := false
 
-# _occupied_building_nav_cells() answers from map-wide building state, not
-# per-instance state, and the deploy-cursor check throws its BuildingPlacement
-# away every call (once a second per selected MCV) -- a per-instance cache
-# would never survive between checks. Shared static state does, invalidated
-# only when a Building actually enters/exits the tree (see
-# _ensure_occupied_cells_tracking), which is far rarer than the per-second
-# poll that reads it.
-static var _occupied_cells_cache: Dictionary = {}
-static var _occupied_cells_cache_valid := false
-static var _occupied_cells_tracking_started := false
+# _occupied_building_nav_cells() answers from map-wide building state, so this
+# cache used to be `static var` shared by every BuildingPlacement, with
+# SceneTree.node_added/node_removed subscriptions that were never disconnected
+# -- shared mutable state plus a leak, and a source of cross-test coupling in
+# headless runs where the scene is rebuilt. It is per-instance now, and
+# _exit_tree() unsubscribes.
+#
+# The tradeoff that buys, spelled out because the static version existed for a
+# reason: the per-frame consumer (_rebuild_preview_for_anchors, which reads
+# this every frame while a placement preview is live) keeps its cache, because
+# that BuildingPlacement lives for the whole placement session. The one
+# consumer that loses caching is UnitDeploymentController._deployment_candidate,
+# which builds a throwaway BuildingPlacement per call and frees it -- so it now
+# rescans instead of reusing a valid cache. That path is throttled to
+# DEPLOYMENT_CURSOR_CHECK_INTERVAL_MSEC (1000 ms, unit_command_controller.gd)
+# and only runs while the pointer is over a selected MCV, so it is one scan a
+# second, not a per-frame cost.
+var _occupied_cells_cache: Dictionary = {}
+var _occupied_cells_cache_valid := false
+var _occupied_cells_tracking_started := false
 
 
-func setup(
-		placement_camera: Camera3D,
-		navigation_grid,
-		building_parent: Node3D,
-		arrow_scene: PackedScene,
-		building_preview_scene: PackedScene,
-		cant_build_preview_scene: PackedScene,
-		skirt_preview_scene: PackedScene,
-		existing_building_occupy_rows: Callable,
-		existing_building_is_wall: Callable = Callable(),
-		build_radius_provider: Callable = Callable(),
-		placement_owner_player_id_provider: Callable = Callable()
-	) -> void:
-	_camera = placement_camera
-	_navigation_grid = navigation_grid
-	_buildings_root = building_parent
-	_arrow_scene = arrow_scene
-	_building_preview_scene = building_preview_scene
-	_cant_build_preview_scene = cant_build_preview_scene
-	_skirt_preview_scene = skirt_preview_scene
-	_existing_building_occupy_rows = existing_building_occupy_rows
-	_existing_building_is_wall = existing_building_is_wall
-	_build_radius_provider = build_radius_provider
-	_placement_owner_player_id_provider = placement_owner_player_id_provider
+func setup(context: PlacementContextScript) -> void:
+	_camera = context.camera
+	_navigation_grid = context.navigation_grid
+	_buildings_root = context.buildings_root
+	_arrow_scene = context.arrow_scene
+	_building_preview_scene = context.building_preview_scene
+	_cant_build_preview_scene = context.cant_build_preview_scene
+	_skirt_preview_scene = context.skirt_preview_scene
+	_existing_building_occupy_rows = context.existing_building_occupy_rows
+	_existing_building_is_wall = context.existing_building_is_wall
+	_build_radius_provider = context.build_radius_provider
+	_placement_owner_player_id_provider = context.owner_player_id_provider
 	name = "BuildingPlacementPreview"
+	_occupied_cells_cache_valid = false
+
+
+func _exit_tree() -> void:
+	if not _occupied_cells_tracking_started:
+		return
+	var tree := get_tree()
+	if tree != null:
+		if tree.node_added.is_connected(_on_occupied_cells_tracked_node_added):
+			tree.node_added.disconnect(_on_occupied_cells_tracked_node_added)
+		if tree.node_removed.is_connected(_on_occupied_cells_tracked_node_removed):
+			tree.node_removed.disconnect(_on_occupied_cells_tracked_node_removed)
+	_occupied_cells_tracking_started = false
+	_occupied_cells_cache.clear()
+	_occupied_cells_cache_valid = false
 
 
 ## skip_build_radius_check exists for the future MCV deploy flow (docs/mechanics/production.md
@@ -358,41 +377,23 @@ func _rebuild_preview_for_anchors(anchor_cells: Array[Vector2i]) -> void:
 			)
 		)
 		for row_index in _occupy_rows.size():
-			var row := _occupy_rows[row_index]
-			for column_index in row.length():
-				var marker := row.substr(column_index, 1)
-				if _is_empty_occupy_marker(marker):
+			for column_index in _occupy_rows[row_index].length():
+				var cell := _preview_cell_for(
+					anchor_cell, anchor_index, row_index, column_index,
+					occupied_cells, next_preview_cells, within_radius
+				)
+				if not bool(cell.get("has_cell", false)):
 					continue
-
 				has_cells = true
 				anchor_has_cells = true
-				var grid_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
-				var cell_available := (
-					_is_occupy_cell_buildable(grid_cell)
-						and _is_occupy_cell_unoccupied(grid_cell, occupied_cells)
-						and within_radius
-				)
+				var grid_cell: Vector2i = cell["grid_cell"]
+				var cell_available := bool(cell["available"])
 				can_build = can_build and cell_available
 				anchor_can_build = anchor_can_build and cell_available
-
-				var preview_scene := _preview_scene_for_marker(marker, cell_available)
-				if preview_scene == null:
-					continue
-				if next_preview_cells.has(grid_cell):
-					continue
-
-				var entry: Dictionary = _preview_cells_by_grid_cell.get(grid_cell, {})
-				if entry.get("scene") != preview_scene:
-					_release_preview_cell(entry.get("node") as Node3D)
-					entry = _create_preview_cell(
-						grid_cell,
-						preview_scene,
-						"Cell_%d_%d_%d_%s" % [
-							anchor_index, column_index, row_index, marker
-						]
-					)
+				var entry: Dictionary = cell.get("entry", {})
 				if not entry.is_empty():
-					next_preview_cells[grid_cell] = entry
+					if not next_preview_cells.has(grid_cell):
+						next_preview_cells[grid_cell] = entry
 		if anchor_has_cells and anchor_can_build:
 			available_anchor_cells.append(anchor_cell)
 
@@ -408,6 +409,45 @@ func _rebuild_preview_for_anchors(anchor_cells: Array[Vector2i]) -> void:
 		_add_arrow(anchor_cells[0])
 	else:
 		_remove_arrow()
+
+
+func _preview_cell_for(
+		anchor_cell: Vector2i,
+		anchor_index: int,
+		row_index: int,
+		column_index: int,
+		occupied_cells: Dictionary,
+		next_preview_cells: Dictionary,
+		within_radius: bool
+) -> Dictionary:
+	var marker := _occupy_rows[row_index].substr(column_index, 1)
+	if _is_empty_occupy_marker(marker):
+		return {"has_cell": false}
+	var grid_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
+	var available := _is_occupy_cell_buildable(grid_cell) \
+		and _is_occupy_cell_unoccupied(grid_cell, occupied_cells) and within_radius
+	if next_preview_cells.has(grid_cell):
+		return {
+			"has_cell": true,
+			"grid_cell": grid_cell,
+			"available": available,
+			"entry": next_preview_cells[grid_cell],
+		}
+	var preview_scene := _preview_scene_for_marker(marker, available)
+	var entry: Dictionary = _preview_cells_by_grid_cell.get(grid_cell, {})
+	if preview_scene != null and entry.get("scene") != preview_scene:
+		_release_preview_cell(entry.get("node") as Node3D)
+		entry = _create_preview_cell(
+			grid_cell,
+			preview_scene,
+			"Cell_%d_%d_%d_%s" % [anchor_index, column_index, row_index, marker]
+		)
+	return {
+		"has_cell": true,
+		"grid_cell": grid_cell,
+		"available": available,
+		"entry": entry if preview_scene != null else {},
+	}
 
 
 func _create_preview_cell(
@@ -459,7 +499,7 @@ func _existing_building_footprints() -> Array:
 			continue
 		if not _placement_owner_player_id_provider.is_null():
 			var player_id := int(_placement_owner_player_id_provider.call())
-			if int(building.get("owner_player_id")) != player_id:
+			if not EntityQueryScript.is_owned_by(building, player_id):
 				continue
 		var occupy_rows: Array[String] = []
 		if not _existing_building_occupy_rows.is_null():
@@ -481,17 +521,7 @@ func _existing_building_footprints() -> Array:
 
 
 func _occupy_rows_nav_cells(anchor_cell: Vector2i, occupy_rows: Array[String]) -> Array[Vector2i]:
-	var cells: Array[Vector2i] = []
-	for row_index in occupy_rows.size():
-		var row := occupy_rows[row_index]
-		for column_index in row.length():
-			if _is_empty_occupy_marker(row.substr(column_index, 1)):
-				continue
-			var occupy_cell := anchor_cell + _occupy_offset_to_nav_cell(column_index, row_index)
-			for y in NAV_CELLS_PER_OCCUPY_CELL:
-				for x in NAV_CELLS_PER_OCCUPY_CELL:
-					cells.append(occupy_cell + Vector2i(x, y))
-	return cells
+	return OccupyGridScript.nav_cells(anchor_cell, occupy_rows, NAV_CELLS_PER_OCCUPY_CELL)
 
 
 func _clear() -> void:
@@ -581,9 +611,7 @@ func _rotate_occupy_rows_counterclockwise(rows: Array[String]) -> Array[String]:
 	var rotated: Array[String] = []
 	if rows.is_empty():
 		return rotated
-	var width := 0
-	for row in rows:
-		width = maxi(width, row.length())
+	var width := OccupyGridScript.width(rows)
 	for new_row_index in width:
 		var new_row := ""
 		var source_column := width - 1 - new_row_index
@@ -595,112 +623,11 @@ func _rotate_occupy_rows_counterclockwise(rows: Array[String]) -> Array[String]:
 
 
 func _configure_arrow_visuals(node: Node) -> void:
-	if node is MeshInstance3D:
-		var mesh_instance := node as MeshInstance3D
-		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_restore_arrow_fill_materials(mesh_instance)
-	for child in node.get_children():
-		_configure_arrow_visuals(child)
-
-
-func _restore_arrow_fill_materials(mesh_instance: MeshInstance3D) -> void:
-	if mesh_instance.mesh == null:
-		return
-	for surface_index in mesh_instance.mesh.get_surface_count():
-		var material := _surface_material(mesh_instance, surface_index)
-		var surface_name := String(mesh_instance.mesh.surface_get_name(surface_index)).to_lower()
-		if surface_name == "white.tga" or _is_fully_transparent_albedo_material(material):
-			var fill_material := StandardMaterial3D.new()
-			fill_material.albedo_color = Color.WHITE
-			fill_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			fill_material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
-			fill_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-			fill_material.disable_receive_shadows = true
-			fill_material.emission_enabled = true
-			fill_material.emission = Color.WHITE
-			fill_material.emission_energy_multiplier = CELL_EMISSION_ENERGY
-			mesh_instance.set_surface_override_material(surface_index, fill_material)
-		elif material == null:
-			mesh_instance.set_surface_override_material(surface_index, _placement_fallback_material())
-
-
-func _is_fully_transparent_albedo_material(material: Material) -> bool:
-	if not (material is BaseMaterial3D):
-		return false
-	var base_material := material as BaseMaterial3D
-	if base_material.albedo_texture == null:
-		return false
-	var image := base_material.albedo_texture.get_image()
-	if image == null:
-		return false
-	for y in image.get_height():
-		for x in image.get_width():
-			if image.get_pixel(x, y).a > 0.0:
-				return false
-	return true
+	PlacementMaterialsScript.configure_arrow(node)
 
 
 func _configure_preview_visuals(node: Node) -> void:
-	if node is MeshInstance3D:
-		var mesh_instance := node as MeshInstance3D
-		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_configure_preview_materials(mesh_instance)
-	for child in node.get_children():
-		_configure_preview_visuals(child)
-
-
-func _configure_preview_materials(mesh_instance: MeshInstance3D) -> void:
-	if mesh_instance.mesh == null:
-		return
-	var source_material: Material
-	if mesh_instance.mesh.get_surface_count() > 0:
-		source_material = _surface_material(mesh_instance, 0)
-	var preview_material := _placement_blend_material(source_material)
-	if preview_material == null:
-		preview_material = _placement_fallback_material()
-	# Placement cells use one visual surface. Keeping a non-null mesh-wide
-	# override also avoids exposing a transient/null surface RID to GLES3 while
-	# a long wall preview adds many MeshInstance3D nodes in the same frame.
-	mesh_instance.material_override = preview_material
-
-
-func _surface_material(mesh_instance: MeshInstance3D, surface_index: int) -> Material:
-	var override_material := mesh_instance.get_surface_override_material(surface_index)
-	if override_material != null:
-		return override_material
-	return mesh_instance.mesh.surface_get_material(surface_index)
-
-
-func _placement_blend_material(source_material: Material) -> Material:
-	if source_material == null:
-		return null
-	var material := source_material.duplicate() as Material
-	if material is BaseMaterial3D:
-		var base_material := material as BaseMaterial3D
-		base_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-		base_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		base_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		base_material.disable_receive_shadows = true
-		base_material.emission_enabled = true
-		base_material.emission = base_material.albedo_color
-		base_material.emission_energy_multiplier = CELL_EMISSION_ENERGY
-		if base_material.albedo_texture != null:
-			base_material.emission_texture = base_material.albedo_texture
-	return material
-
-
-func _placement_fallback_material() -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(1.0, 1.0, 1.0, 0.45)
-	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.disable_receive_shadows = true
-	material.emission_enabled = true
-	material.emission = Color.WHITE
-	material.emission_energy_multiplier = CELL_EMISSION_ENERGY
-	return material
-
+	PlacementMaterialsScript.configure_preview(node)
 
 func _anchor_for_hover_cell(hover_cell: Vector2i) -> Vector2i:
 	var footprint_size := _occupy_size()
@@ -712,10 +639,7 @@ func _anchor_for_hover_cell(hover_cell: Vector2i) -> Vector2i:
 
 
 func _occupy_size() -> Vector2i:
-	var width := 0
-	for row in _occupy_rows:
-		width = maxi(width, row.length())
-	return Vector2i(width, _occupy_rows.size())
+	return OccupyGridScript.size(_occupy_rows)
 
 
 func _world_center(anchor_cell: Vector2i) -> Vector3:
@@ -733,22 +657,17 @@ func _nav_size() -> Vector2i:
 
 
 func _occupy_offset_to_nav_cell(column_index: int, row_index: int) -> Vector2i:
-	return Vector2i(
-		column_index * NAV_CELLS_PER_OCCUPY_CELL, row_index * NAV_CELLS_PER_OCCUPY_CELL
+	return OccupyGridScript.occupy_cell_to_nav_cell(
+		Vector2i(column_index, row_index), NAV_CELLS_PER_OCCUPY_CELL
 	)
 
 
 func _nav_cell_to_occupy_cell(nav_cell: Vector2i) -> Vector2i:
-	return Vector2i(
-		int(floor(float(nav_cell.x) / float(NAV_CELLS_PER_OCCUPY_CELL))),
-		int(floor(float(nav_cell.y) / float(NAV_CELLS_PER_OCCUPY_CELL)))
-	)
+	return OccupyGridScript.nav_cell_to_occupy_cell(nav_cell, NAV_CELLS_PER_OCCUPY_CELL)
 
 
 func _occupy_cell_to_nav_cell(occupy_cell: Vector2i) -> Vector2i:
-	return Vector2i(
-		occupy_cell.x * NAV_CELLS_PER_OCCUPY_CELL, occupy_cell.y * NAV_CELLS_PER_OCCUPY_CELL
-	)
+	return OccupyGridScript.occupy_cell_to_nav_cell(occupy_cell, NAV_CELLS_PER_OCCUPY_CELL)
 
 
 func _occupy_cell_world_center(nav_cell: Vector2i) -> Vector3:
@@ -814,27 +733,27 @@ func _scan_occupied_building_nav_cells() -> Dictionary:
 	return cells
 
 
-## Connected once per process (guarded by _occupied_cells_tracking_started).
+## Connected once per placement instance (guarded by tracking_started).
 ## Building's own group membership is only set inside its _ready(), which
 ## SceneTree.node_added fires before -- checking `is Building` instead of the
 ## group sidesteps that ordering gap for both enter and exit.
-static func _ensure_occupied_cells_tracking() -> void:
+func _ensure_occupied_cells_tracking() -> void:
 	if _occupied_cells_tracking_started:
 		return
 	_occupied_cells_tracking_started = true
-	var tree := Engine.get_main_loop() as SceneTree
+	var tree := get_tree()
 	if tree == null:
 		return
 	tree.node_added.connect(_on_occupied_cells_tracked_node_added)
 	tree.node_removed.connect(_on_occupied_cells_tracked_node_removed)
 
 
-static func _on_occupied_cells_tracked_node_added(node: Node) -> void:
+func _on_occupied_cells_tracked_node_added(node: Node) -> void:
 	if node is Building:
 		_occupied_cells_cache_valid = false
 
 
-static func _on_occupied_cells_tracked_node_removed(node: Node) -> void:
+func _on_occupied_cells_tracked_node_removed(node: Node) -> void:
 	if node is Building:
 		_occupied_cells_cache_valid = false
 
@@ -853,7 +772,7 @@ func _preview_scene_for_marker(marker: String, buildable: bool) -> PackedScene:
 
 
 func _is_empty_occupy_marker(marker: String) -> bool:
-	return marker.is_empty() or marker == " " or marker == "." or marker == "_" or marker.to_lower() == "n"
+	return OccupyGridScript.is_empty_marker(marker)
 
 
 func _has_occupy_cells(occupy_rows: Array[String]) -> bool:
@@ -867,36 +786,23 @@ func _has_occupy_cells(occupy_rows: Array[String]) -> bool:
 func _raycast(screen_position: Vector2, collision_mask: int) -> Dictionary:
 	if _camera == null or not is_inside_tree():
 		return {}
-	var ray_origin := _camera.project_ray_origin(screen_position)
-	var ray_end := ray_origin + _camera.project_ray_normal(screen_position) * 1000.0
-	var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-	query.collision_mask = collision_mask
-	query.collide_with_areas = false
-	return get_world_3d().direct_space_state.intersect_ray(query)
+	return TerrainProbeScript.screen_pick(_camera, get_world_3d(), screen_position, collision_mask)
 
 
 func _snap_to_ground(point: Vector3) -> Vector3:
 	if not is_inside_tree():
 		return Vector3(point.x, 0.0, point.z)
-	var query := PhysicsRayQueryParameters3D.create(
-		Vector3(point.x, 200.0, point.z), Vector3(point.x, -200.0, point.z), 1
-	)
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		return Vector3(point.x, 0.0, point.z)
-	return hit["position"]
+	return TerrainProbeScript.snap_to_ground(get_world_3d(), point)
 
 
 func _play_placed_building_animation(building: Node3D) -> void:
 	_begin_building_construction(building)
 	_set_building_invulnerable(building, true)
-	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(&"construct"):
-		var construct_animation := player.get_animation(&"construct")
-		if construct_animation != null:
-			construct_animation.loop_mode = Animation.LOOP_NONE
-		player.animation_finished.connect(_on_placed_building_animation_finished.bind(building), CONNECT_ONE_SHOT)
-		_play_building_state(building, &"construct")
+	if AuthoredModelScript.play_one_shot(
+		building,
+		&"construct",
+		_on_placed_building_animation_finished.bind(building)
+	):
 		return
 	# No construct clip means the building pops in instantly - there is no
 	# vulnerable transition window to protect, so invulnerability is skipped.
@@ -930,9 +836,4 @@ func _set_building_invulnerable(building: Node3D, value: bool) -> void:
 
 
 func _play_building_state(building: Node3D, state: StringName) -> void:
-	if building.has_method("play_state"):
-		building.call("play_state", state)
-		return
-	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(state):
-		player.play(state)
+	AuthoredModelScript.play_state(building, state)

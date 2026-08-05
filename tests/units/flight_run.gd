@@ -22,12 +22,16 @@ var _current_case := ""
 class FakeFlyingUnit extends Node3D:
 	var airborne := true
 	var last_vertical_offset := 0.0
+	var move_speed := 5.0
 
 	func flight_is_airborne_phase() -> bool:
 		return airborne
 
 	func flight_set_vertical_offset(value: float) -> void:
 		last_vertical_offset = value
+
+	func navigation_move_speed() -> float:
+		return move_speed
 
 
 func _initialize() -> void:
@@ -272,15 +276,12 @@ func _test_cruise_altitude_inertia() -> void:
 
 
 ## Duck-typed stand-in for the facade methods AirNavigation.desired_velocity
-## actually needs (arrival_tolerance/_unit_speed) — deliberately not a real
+## actually needs (arrival_tolerance) — deliberately not a real
 ## UnitNavigationSystem, since the whole point of this test is that the air
 ## pipeline never touches the grid at all.
 class FakeAirFacade extends RefCounted:
 	func arrival_tolerance(_unit: Node3D) -> float:
 		return 0.2
-
-	func _unit_speed(_unit: Node3D) -> float:
-		return 5.0
 
 
 func _test_buildings_ignored_at_cruise() -> void:

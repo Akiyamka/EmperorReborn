@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Rules.txt/ArtIni.txt -> SQLite импортёр (Emperor: Battle for Dune).
+Rules.txt/ArtIni.txt -> SQLite importer (Emperor: Battle for Dune).
 
-Использование:
+Usage:
     python3 parse_rules.py Rules.txt schema.sql rules.db [ArtIni.txt]
 
-Логика построена на разборе, зафиксированном в переписке при проектировании
-схемы:
-  - секции-списки ([BuildingTypes], [UnitTypes], ...) объявляют, каким
-    сущностям принадлежит категория; сами данные лежат в одноимённых
-    секциях дальше по файлу;
-  - составные/повторяющиеся поля (Terrain, Armour, ViewRange, Occupy,
-    DeployTile/DeployAngle, VeterancyLevel, TurretAttach у юнитов,
-    ExplosionType, Resource, PrimaryBuilding/SecondaryBuilding) не льются
-    в обычные колонки, а разбираются отдельными функциями;
-  - всё, что не покрыто явной колонкой, уходит в custom_fields, а не
-    теряется молча.
+The logic follows the parse that was pinned down while the schema was being
+designed:
+  - list sections ([BuildingTypes], [UnitTypes], ...) declare which entities
+    a category owns; the data itself lives in identically named sections
+    further down the file;
+  - composite/repeating fields (Terrain, Armour, ViewRange, Occupy,
+    DeployTile/DeployAngle, VeterancyLevel, TurretAttach on units,
+    ExplosionType, Resource, PrimaryBuilding/SecondaryBuilding) are not
+    poured into ordinary columns but parsed by dedicated functions;
+  - anything not covered by an explicit column ends up in custom_fields
+    instead of being lost silently.
 """
 
 import re
@@ -24,13 +24,13 @@ import sys
 from collections import defaultdict, OrderedDict
 
 # =============================================================================
-# 1. НИЗКОУРОВНЕВЫЙ РАЗБОР: комментарии, секции
+# 1. LOW-LEVEL PARSING: comments, sections
 # =============================================================================
 
 def strip_comment(line: str) -> str:
-    """Комментарии в файле в основном // до конца строки, но в 4 строках
-    (GPSFXLavasmoke и похожие) встречается опечатка '\\\\' вместо '//' —
-    режем по обоим маркерам, берём то, что раньше."""
+    """Comments in the file are mostly // up to the end of the line, but on
+    4 lines (GPSFXLavasmoke and similar) there is a '\\\\' typo instead of
+    '//' — cut on both markers and take whichever comes first."""
     idx = len(line)
     p1 = line.find('//')
     if p1 != -1:
@@ -42,9 +42,9 @@ def strip_comment(line: str) -> str:
 
 
 def strip_slash_comment(line: str) -> str:
-    """ArtIni.txt использует Windows-пути с '\\\\', поэтому для него нельзя
-    применять strip_comment() из Rules.txt: там '\\\\' считается исторической
-    опечаткой комментария. Здесь режем только обычные //."""
+    """ArtIni.txt uses Windows paths containing '\\\\', so strip_comment()
+    from Rules.txt must not be applied to it: there '\\\\' is treated as a
+    historical comment typo. Here we cut only ordinary //."""
     idx = line.find('//')
     if idx != -1:
         line = line[:idx]
@@ -55,7 +55,7 @@ SECTION_RE = re.compile(r'^\s*\[([^\]]+)\]')
 
 
 def split_sections(path: str):
-    """Возвращает список (name, start_line, body), body = [(line_no, text), ...]."""
+    """Returns a list of (name, start_line, body), body = [(line_no, text), ...]."""
     with open(path, encoding='latin1') as f:
         raw_lines = f.read().splitlines()
 
@@ -81,10 +81,10 @@ def split_sections(path: str):
 
 
 def classify_sections(sections):
-    """list_secs — секции-перечни (без '='), data_secs — секции с key=value.
-    Секция считается данными, если хоть одна строка содержит '='."""
+    """list_secs are the enumeration sections (no '='), data_secs the
+    key=value ones. A section counts as data if any line contains '='."""
     list_secs = []
-    data_secs = defaultdict(list)  # name -> [(start_line, body), ...] (возможны дубли)
+    data_secs = defaultdict(list)  # name -> [(start_line, body), ...] (duplicates possible)
     for name, start, body in sections:
         has_eq = any('=' in text for _, text in body)
         if has_eq:
@@ -95,13 +95,13 @@ def classify_sections(sections):
 
 
 def build_data_secs_lower(data_secs):
-    """Обратный индекс: имя(lower) -> точное имя ключа в data_secs.
-    Нужен, потому что 14 сущностей в файле объявлены в [XxxTypes]-списке
-    одним регистром, а тело секции написано другим (Cal50_B в объявлении,
-    но [cal50_B] как заголовок секции; IMTANK vs [IMTank]; ATPillbox vs
-    [ATPillBox] и т.п.) — обнаружено при сверке импортированных данных:
-    эти 14 сущностей молча оставались пустыми (только id+name), потому что
-    exact-match словарь data_secs их не находил."""
+    """Reverse index: name(lower) -> the exact key name in data_secs.
+    Needed because 14 entities in the file are declared in the [XxxTypes]
+    list with one casing while the section body uses another (Cal50_B in the
+    declaration but [cal50_B] as the section header; IMTANK vs [IMTank];
+    ATPillbox vs [ATPillBox], and so on) — found while checking the imported
+    data: those 14 entities silently stayed empty (id+name only) because the
+    exact-match data_secs dict never found them."""
     result = {}
     for key in data_secs:
         result.setdefault(key.lower(), key)
@@ -109,7 +109,7 @@ def build_data_secs_lower(data_secs):
 
 
 def get_data_section(data_secs, data_secs_lower, name):
-    """Точный поиск, а при промахе — регистронезависимый fallback."""
+    """Exact lookup, with a case-insensitive fallback on a miss."""
     occs = data_secs.get(name)
     if occs:
         return occs
@@ -143,9 +143,9 @@ CATEGORY_PRIORITY = [
 
 
 def build_membership(list_secs):
-    """membership: имя(lower) -> set категорий, где оно объявлено.
-    order: категория -> список имён в порядке первого появления (дедуп по lower).
-    first_line: категория -> {имя(lower): номер строки первого появления}."""
+    """membership: name(lower) -> set of categories where it is declared.
+    order: category -> names in order of first appearance (deduped by lower).
+    first_line: category -> {name(lower): line number of first appearance}."""
     membership = defaultdict(set)
     order = defaultdict(list)
     seen = defaultdict(set)
@@ -177,7 +177,7 @@ def category_of(name, membership):
 
 
 # =============================================================================
-# 2. ТИПОВЫЕ КОНВЕРТЕРЫ
+# 2. TYPE CONVERTERS
 # =============================================================================
 
 def to_bool(v):
@@ -211,21 +211,22 @@ def to_text(v):
 CONVERTERS = {'bool': to_bool, 'int': to_int, 'float': to_float, 'text': to_text}
 
 # =============================================================================
-# 3. ПОЛЯ, ОБРАБАТЫВАЕМЫЕ СПЕЦИАЛЬНО (не через обычный column-map)
+# 3. FIELDS HANDLED SPECIALLY (not through the ordinary column map)
 # =============================================================================
 
 SPECIAL_KEYS = {
     'terrain', 'armour', 'viewrange', 'primarybuilding',
     'secondarybuilding', 'resource', 'occupy', 'deploytile', 'deployangle',
     'veterancylevel', 'explosiontype',
-    # 'turretattach' сюда НЕ входит: для юнитов уже явно потребляется
-    # (used.add) отдельным кодом до apply_fields из-за множественности
-    # (см. unit_turrets), а для зданий (одиночное значение) должно
-    # резолвиться штатно через BUILDING_RELATION в apply_fields. Раньше
-    # 'turretattach' был в этом множестве, и apply_fields безусловно
-    # пропускал его для ЛЮБОЙ сущности до проверки relation_map — из-за
-    # этого TurretAttach у зданий (HKFlameTurret и ещё 8) терялся молча,
-    # не попадая даже в custom_fields. Обнаружено проверкой на живой базе.
+    # 'turretattach' is deliberately NOT here: on units it is already
+    # consumed explicitly (used.add) by separate code before apply_fields
+    # because it can hold several values (see unit_turrets), while on
+    # buildings (a single value) it must resolve normally through
+    # BUILDING_RELATION inside apply_fields. 'turretattach' used to be in this
+    # set, and apply_fields skipped it unconditionally for ANY entity before
+    # checking relation_map — which silently lost TurretAttach on buildings
+    # (HKFlameTurret and 8 more), not even reaching custom_fields. Found by
+    # checking a live database.
 }
 
 VETERANCY_FIELD_MAP = {
@@ -239,9 +240,9 @@ VETERANCY_FIELD_MAP = {
     'stealthedwhenstill': ('stealthed_when_still', 'bool'),
 }
 
-# Building-роли (Factory/Wall/Refinery/Barracks/Hanger/Dockable/Outpost/
-# Starport/PopupTurret) — независимая от building_group_id ось
-# классификации (см. building_roles в schema.sql).
+# Building roles (Factory/Wall/Refinery/Barracks/Hanger/Dockable/Outpost/
+# Starport/PopupTurret) are a classification axis independent of
+# building_group_id (see building_roles in schema.sql).
 ROLE_CANONICAL = {
     'wall': 'Wall',
     'barracks': 'Barracks',
@@ -256,10 +257,10 @@ ROLE_CANONICAL = {
 }
 
 # =============================================================================
-# 4. КОЛОНОЧНЫЕ КАРТЫ ПО КАТЕГОРИЯМ
-#    lower(ключ_в_Rules.txt) -> (колонка_в_таблице, тип)
-#    Только скалярные поля. Реляционные (нужен резолв имени в id) — в
-#    отдельных RELATION_MAP.
+# 4. PER-CATEGORY COLUMN MAPS
+#    lower(key_in_Rules.txt) -> (table_column, type)
+#    Scalar fields only. Relational ones (which need a name -> id resolve)
+#    live in the separate RELATION_MAPs.
 # =============================================================================
 
 UNIT_SCALAR = {
@@ -319,7 +320,7 @@ UNIT_SCALAR = {
     'shieldhealth': ('shield_health', 'float'),
 }
 
-# relation-поля: ключ -> (колонка, справочник для резолва)
+# relation fields: key -> (column, lookup table used to resolve it)
 UNIT_RELATION = {
     'house': ('house_id', 'houses'),
     'unitgroup': ('unit_group_id', 'unit_groups'),
@@ -359,7 +360,7 @@ BUILDING_SCALAR = {
     'excludefromcampaignlose': ('exclude_from_campaign_lose', 'bool'),
     'countsforstats': ('counts_for_stats', 'bool'),
     'getsheightadvantage': ('gets_height_advantage', 'bool'),
-    'objecttypewhengone': ('object_type_when_gone', 'text'),  # полиморфное, без резолва
+    'objecttypewhengone': ('object_type_when_gone', 'text'),  # polymorphic, not resolved
     'upgradedprimaryrequired': ('upgraded_primary_required', 'bool'),
     'disablewithlowpower': ('disable_with_low_power', 'bool'),
     'disableifnospiceonmap': ('disable_if_no_spice_on_map', 'bool'),
@@ -371,13 +372,13 @@ BUILDING_SCALAR = {
 BUILDING_RELATION = {
     'house': ('house_id', 'houses'),
     'group': ('building_group_id', 'building_groups'),
-    'armour': ('armour_type_id', 'armour_types'),  # у зданий Armour всегда одиночное значение
-    'turretattach': ('turret_attach_id', 'turrets'),  # у зданий одиночное (в отличие от юнитов)
+    'armour': ('armour_type_id', 'armour_types'),  # on buildings Armour is always a single value
+    'turretattach': ('turret_attach_id', 'turrets'),  # single value on buildings (unlike units)
     'debris': ('debris_id', 'debris_types'),
     'chaoseffect': ('chaos_effect_id', 'explosion_types'),
     'hawkeffect': ('hawk_effect_id', 'explosion_types'),
     'damageeffect': ('damage_effect_id', 'explosion_types'),
-    'getunitwhenbuilt': ('get_unit_when_built_id', 'units'),  # резолвится вторым проходом
+    'getunitwhenbuilt': ('get_unit_when_built_id', 'units'),  # resolved in a second pass
 }
 
 TURRET_SCALAR = {
@@ -398,7 +399,7 @@ TURRET_SCALAR = {
 
 TURRET_RELATION = {
     'bullet': ('bullet_id', 'bullets'),
-    'turretnextjoint': ('turret_next_joint_id', 'turrets'),  # само-ссылка, резолвится вторым проходом
+    'turretnextjoint': ('turret_next_joint_id', 'turrets'),  # self-reference, resolved in a second pass
 }
 
 BULLET_SCALAR = {
@@ -438,8 +439,8 @@ BULLET_SCALAR = {
     'deviate': ('deviate', 'bool'),
     'beserk': ('beserk', 'bool'),
     'retreat': ('retreat', 'bool'),
-    # DamageFriendly сворачивается в ту же колонку, что и FriendlyDamageAmount
-    # (см. schema.sql) — обрабатывается отдельно перед общим циклом.
+    # DamageFriendly collapses into the same column as FriendlyDamageAmount
+    # (see schema.sql) — it is handled separately before the main loop.
 }
 
 BULLET_RELATION = {
@@ -467,7 +468,7 @@ SPLAT_SCALAR = {
     'size': ('size', 'int'),
     'lifespan': ('lifespan', 'int'),
     'homingdelay': ('homing_delay', 'float'),
-    'resource': ('resource', 'text'),  # у сплэтов Resource — единичная ссылка на пулю, оставляем как есть текстом
+    'resource': ('resource', 'text'),  # on splats Resource is a single bullet reference, kept as raw text
     'damage': ('damage', 'float'),
 }
 
@@ -606,11 +607,11 @@ ART_NAME_ALIASES = {
 }
 
 # =============================================================================
-# 5. РЕЗОЛВЕРЫ ИМЁН -> ID (заполняются по мере вставки)
+# 5. NAME -> ID RESOLVERS (filled in as rows are inserted)
 # =============================================================================
 
 class NameRegistry:
-    """id-кэши по каждому справочнику/таблице сущностей, ключ — lower(name)."""
+    """id caches per lookup/entity table, keyed by lower(name)."""
     def __init__(self):
         self.tables = defaultdict(dict)  # table -> {name.lower(): id}
 
@@ -624,7 +625,7 @@ class NameRegistry:
 
 
 # =============================================================================
-# 6. СОСТАВНЫЕ ПОЛЯ — РАЗБОР ЗНАЧЕНИЙ
+# 6. COMPOSITE FIELDS — VALUE PARSING
 # =============================================================================
 
 COORD_PAIR_RE = re.compile(r'(-?\d+)\s*,\s*(-?\d+)')
@@ -661,10 +662,10 @@ def parse_name_list(value):
 
 
 def parse_deploy_points(body, used_line_indices):
-    """Ищет все DeployTile (и опционально следующую за ней DeployAngle) в
-    body (список (line_no, text)). Возвращает список (tile_x, tile_y, angle).
-    used_line_indices — set индексов строк body, уже потреблённых (чтобы не
-    отдать DeployAngle повторно в general/overflow обработку)."""
+    """Finds every DeployTile (and the optional DeployAngle following it) in
+    body (a list of (line_no, text)). Returns a list of (tile_x, tile_y, angle).
+    used_line_indices is the set of already consumed body line indices (so that
+    DeployAngle is not handed to general/overflow processing a second time)."""
     points = []
     n = len(body)
     for i, (line_no, text) in enumerate(body):
@@ -688,7 +689,7 @@ def parse_deploy_points(body, used_line_indices):
 
 
 def parse_veterancy_blocks(body, used_line_indices):
-    """Возвращает список dict-ов по одному на VeterancyLevel-блок:
+    """Returns a list of dicts, one per VeterancyLevel block:
     {'score': int, <column>: value, ...}"""
     blocks = []
     n = len(body)
@@ -732,8 +733,8 @@ def parse_occupy_rows(body, used_line_indices):
 
 
 def parse_explosion_types_multi(body, used_line_indices):
-    """Возвращает упорядоченный список имён ExplosionType (может быть >1
-    с РАЗНЫМИ значениями — подтверждено на DevPlasma_B)."""
+    """Returns the ordered list of ExplosionType names (there may be more
+    than one, with DIFFERENT values — confirmed on DevPlasma_B)."""
     names = []
     for i, (line_no, text) in enumerate(body):
         if i in used_line_indices:
@@ -781,9 +782,9 @@ def split_art_args(arg_text):
 
 
 def parse_art_ini(path):
-    """Возвращает (globals, sections), где globals — вызовы до первой
-    [Section], sections — список (name, start_line, body). body содержит
-    ('field', line_no, key, value) и ('flag', line_no, key, None)."""
+    """Returns (globals, sections), where globals are the calls before the
+    first [Section] and sections is a list of (name, start_line, body). body
+    holds ('field', line_no, key, value) and ('flag', line_no, key, None)."""
     with open(path, encoding='latin1') as f:
         raw_lines = f.read().splitlines()
 
@@ -826,14 +827,14 @@ def parse_art_ini(path):
 
 
 # =============================================================================
-# 7. ПРИМЕНЕНИЕ ПОЛЕЙ К СТРОКЕ + OVERFLOW
+# 7. APPLYING FIELDS TO A ROW + OVERFLOW
 # =============================================================================
 
 def apply_fields(body, used_line_indices, scalar_map, relation_map, registry,
                   entity_type, row, overflow, source_line_key='source_line'):
-    """Проходит по body, заполняет row по scalar_map/relation_map, а всё
-    незнакомое (и не входящее в SPECIAL_KEYS, которые обрабатываются
-    отдельно до/после вызова этой функции) складывает в overflow."""
+    """Walks body, fills row from scalar_map/relation_map, and puts
+    everything unknown (and not in SPECIAL_KEYS, which is handled separately
+    before/after this function is called) into overflow."""
     for i, (line_no, text) in enumerate(body):
         if i in used_line_indices:
             continue
@@ -845,7 +846,7 @@ def apply_fields(body, used_line_indices, scalar_map, relation_map, registry,
         v = v.strip()
 
         if k_low in SPECIAL_KEYS:
-            continue  # обрабатывается отдельными функциями снаружи
+            continue  # handled by dedicated functions on the outside
 
         if k_low in scalar_map:
             column, kind = scalar_map[k_low]
@@ -855,11 +856,11 @@ def apply_fields(body, used_line_indices, scalar_map, relation_map, registry,
 
         if k_low in relation_map:
             column, target_table = relation_map[k_low]
-            row[column] = ('__RESOLVE__', target_table, v)  # резолвится позже (может быть forward-ref)
+            row[column] = ('__RESOLVE__', target_table, v)  # resolved later (may be a forward ref)
             used_line_indices.add(i)
             continue
 
-        # неизвестное поле -> overflow, ничего не теряем
+        # unknown field -> overflow, nothing gets lost
         overflow.append((entity_type, k_raw, v, line_no))
         used_line_indices.add(i)
 
@@ -940,7 +941,7 @@ def import_art_ini(cur, reg, art_path):
 
 
 # =============================================================================
-# 8. ГЛАВНЫЙ ИМПОРТ
+# 8. MAIN IMPORT
 # =============================================================================
 
 def main(rules_path, schema_path, db_path, art_ini_path=None):
@@ -950,7 +951,7 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
     membership, order, first_line = build_membership(list_secs)
 
     conn = sqlite3.connect(db_path)
-    conn.execute('PRAGMA foreign_keys = OFF')  # включим и проверим в конце
+    conn.execute('PRAGMA foreign_keys = OFF')  # turned back on and checked at the end
     conn.executescript(open(schema_path, encoding='utf-8').read())
     cur = conn.cursor()
 
@@ -958,11 +959,11 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
     overflow = []  # (entity_type, key, value, source_line) -> custom_fields
     resource_links = []  # (entity_type, entity_id, seq, target_name, source_line)
     explosion_links = []  # (entity_type, entity_id, seq, explosion_name)
-    deferred_fk = []  # (table, id, column, target_table, name) -> UPDATE вторым проходом
+    deferred_fk = []  # (table, id, column, target_table, name) -> UPDATE in a second pass
     art_report = None
 
     def resolve_or_defer(table, id_, column, target_table, raw):
-        """raw может быть либо готовым значением, либо ('__RESOLVE__', target_table, name)."""
+        """raw is either a ready value or ('__RESOLVE__', target_table, name)."""
         if isinstance(raw, tuple) and raw and raw[0] == '__RESOLVE__':
             _, tt, name = raw
             resolved = reg.resolve(tt, name)
@@ -978,7 +979,7 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
         return None
 
     # -------------------------------------------------------------------
-    # 8.1 Справочники: terrain_types, armour_types, explosion_types,
+    # 8.1 Lookup tables: terrain_types, armour_types, explosion_types,
     #     building_groups, unit_groups, houses
     # -------------------------------------------------------------------
 
@@ -1010,8 +1011,8 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
         cur.execute('INSERT INTO building_roles (id, name) VALUES (?,?)', (idx, rname))
         reg.register('building_roles', rname, idx)
 
-    # explosion_configs (DamageToTile/FaceCamera) для тех explosion-имён,
-    # у которых есть собственное тело секции
+    # explosion_configs (DamageToTile/FaceCamera) for those explosion names
+    # that have a section body of their own
     for idx, ename in enumerate(order.get('ExplosionTypes', [])):
         occs = get_all_data_sections_casefold(data_secs, ename)
         if not occs:
@@ -1036,7 +1037,7 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
                 'INSERT INTO explosion_configs (explosion_type_id, damage_to_tile, face_camera) VALUES (?,?,?)',
                 (eid, row.get('damage_to_tile'), row.get('face_camera')))
 
-    # houses: сначала все имена (для sub_house резолва), потом данные
+    # houses: all the names first (for the sub_house resolve), then the data
     house_names = order.get('HouseTypes', [])
     for idx, hname in enumerate(house_names):
         cur.execute('INSERT INTO houses (id, name, sort_order) VALUES (?,?,?)', (idx, hname, idx))
@@ -1123,7 +1124,7 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
         used = set()
         row = {}
 
-        # DamageFriendly -> friendly_damage_amount (0/100), если FriendlyDamageAmount не задан отдельно
+        # DamageFriendly -> friendly_damage_amount (0/100) unless FriendlyDamageAmount is set separately
         for i, (line_no, text) in enumerate(body):
             if '=' not in text:
                 continue
@@ -1185,8 +1186,8 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
     conn.commit()
 
     # -------------------------------------------------------------------
-    # 8.6 Buildings (без get_unit_when_built/object_type_when_gone на юниты —
-    #      те резолвятся после загрузки units)
+    # 8.6 Buildings (without get_unit_when_built/object_type_when_gone
+    #      pointing at units — those resolve after units are loaded)
     # -------------------------------------------------------------------
 
     building_names = order.get('BuildingTypes', [])
@@ -1317,9 +1318,9 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
 
     conn.commit()
 
-    # building_requires_primary/secondary — резолвим после того, как ВСЕ
-    # здания вставлены (значения ссылаются на здания, которые могут идти
-    # позже по файлу)
+    # building_requires_primary/secondary — resolved once ALL buildings are
+    # inserted (the values reference buildings that may appear later in the
+    # file)
     for bid, names in building_primary.items():
         for target in names:
             tid = reg.resolve('buildings', target)
@@ -1434,7 +1435,7 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
     conn.commit()
 
     # unit_turrets/unit_terrain/unit_primary/unit_secondary/unit_veterancy —
-    # после вставки units и buildings (могут ссылаться вперёд по файлу)
+    # after units and buildings are inserted (they may reference forward in the file)
     for uid, tnames in unit_turrets.items():
         for seq, tname in enumerate(tnames):
             tid = reg.resolve('turrets', tname)
@@ -1579,7 +1580,7 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
     conn.commit()
 
     # -------------------------------------------------------------------
-    # 8.10 Отложенные FK (buildings.get_unit_when_built_id и подобные forward-refs)
+    # 8.10 Deferred FKs (buildings.get_unit_when_built_id and similar forward refs)
     # -------------------------------------------------------------------
 
     for table, id_, column, target_table, name in deferred_fk:
@@ -1591,7 +1592,7 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
     conn.commit()
 
     # -------------------------------------------------------------------
-    # 8.11 ArtIni.txt (опционально): визуальные ресурсы и глобальные UI настройки
+    # 8.11 ArtIni.txt (optional): visual resources and global UI settings
     # -------------------------------------------------------------------
 
     if art_ini_path:
@@ -1629,26 +1630,26 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
                         (entity_type, eid, seq, exp_id))
 
     for entity_type, key, value, source_line in overflow:
-        # overflow, собранный до вставки строки (entity_name неизвестен по id) —
-        # прикрепляем как entity_id=NULL заменяется на -1, чтобы не терять
-        # данные (в паре warhead/explosion_config entity_id не всегда резолвится
-        # по имени напрямую в этой точке).
+        # overflow collected before the row was inserted (entity_name is not
+        # known by id) — attached with entity_id=NULL replaced by -1 so that no
+        # data is lost (for the warhead/explosion_config pair entity_id does not
+        # always resolve by name directly at this point).
         cur.execute('INSERT INTO custom_fields (entity_type, entity_id, key, value, source_line) '
                     'VALUES (?, -1, ?, ?, ?)', (entity_type, key, value, source_line))
 
     conn.commit()
 
     # -------------------------------------------------------------------
-    # 8.12 Финальная проверка целостности
+    # 8.12 Final integrity check
     # -------------------------------------------------------------------
 
     conn.execute('PRAGMA foreign_keys = ON')
     fk_issues = conn.execute('PRAGMA foreign_key_check').fetchall()
 
-    print(f'Секций всего: {len(sections)}')
-    print(f'  списков-категорий: {len(list_secs)}')
-    print(f'  секций с данными: {len(data_secs)}')
-    print(f'Импортировано: units={len(unit_names)}, buildings={len(building_names)}, '
+    print(f'Sections total: {len(sections)}')
+    print(f'  category lists: {len(list_secs)}')
+    print(f'  data sections: {len(data_secs)}')
+    print(f'Imported: units={len(unit_names)}, buildings={len(building_names)}, '
           f'turrets={len(turret_names)}, bullets={len(bullet_names)}, '
           f'warheads={len(order.get("WarheadTypes", []))}, crates={len(crate_names)}, '
           f'splats={len(splat_names)}, spice_mounds={len(spice_names)}')
@@ -1662,7 +1663,7 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
             preview = ', '.join(f'{name}@{line}' for line, name in art_report['unmatched'][:10])
             suffix = '...' if len(art_report['unmatched']) > 10 else ''
             print(f'  unmatched preview: {preview}{suffix}')
-    print(f'Нерезолвленные forward-ссылки, ушедшие в custom_fields: '
+    print(f'Unresolved forward references sent to custom_fields: '
           f'{sum(1 for e,k,v,l in overflow if k.endswith("(unresolved)"))}')
     print(f'FK issues: {fk_issues if fk_issues else "none"}')
 
@@ -1671,6 +1672,6 @@ def main(rules_path, schema_path, db_path, art_ini_path=None):
 
 if __name__ == '__main__':
     if len(sys.argv) not in (4, 5):
-        print('Использование: python3 parse_rules.py Rules.txt schema.sql rules.db [ArtIni.txt]')
+        print('Usage: python3 parse_rules.py Rules.txt schema.sql rules.db [ArtIni.txt]')
         sys.exit(1)
     main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) == 5 else None)

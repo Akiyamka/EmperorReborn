@@ -4,6 +4,7 @@ const BakedMapDataScript := preload("res://scripts/world/map/baked_map_data.gd")
 const MapLoaderScript := preload("res://scripts/world/map/map_loader.gd")
 const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 const MapSpiceLayerScript := preload("res://scripts/world/map/map_spice_layer.gd")
+const MapSpiceHazardScript := preload("res://scripts/world/map/map_spice_hazard.gd")
 const SpiceMoundDefinitionScript := preload("res://scripts/world/map/spice_mound_definition.gd")
 const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 const SpiceMoundScene := preload("res://scenes/world/spice_mound.tscn")
@@ -283,16 +284,16 @@ func _test_spice_mound_staged_passable_sand_spread(token: int) -> int:
 	config.blast_radius = 3.0
 	config.spice_capacity = 800
 	config.build_time_ticks = 6
-	_expect(is_equal_approx(layer.call("_spread_interval_seconds", config), 0.3), "spice rings must advance three times slower than the Rules BuildTime interval")
-	var spread: Dictionary = layer.call("_create_spice_spread_job", center, config)
-	_expect(spread.get("stage_count") == 3 and (spread.get("cells", []) as Array).size() == 4, "BlastRadius must produce one outward ring per tile and select only eligible cells")
-	var early_spread: Dictionary = layer.call("_create_spice_spread_job", center, config, 0.5)
+	_expect(is_equal_approx(layer.spread().interval_seconds(config), 0.3), "spice rings must advance three times slower than the Rules BuildTime interval")
+	var job: Dictionary = layer.spread().create_job(center, config)
+	_expect(job.get("stage_count") == 3 and (job.get("cells", []) as Array).size() == 4, "BlastRadius must produce one outward ring per tile and select only eligible cells")
+	var early_job: Dictionary = layer.spread().create_job(center, config, 0.5)
 	var early_spice_total := 0
-	for entry: Dictionary in early_spread.get("cells", []):
+	for entry: Dictionary in early_job.get("cells", []):
 		early_spice_total += int(entry.get("amount", 0))
 	_expect(early_spice_total == 400, "activation halfway through a mound cycle must spread half of its full spice capacity")
-	_expect(MapSpiceLayerScript.SPICE_HAZARD_DURATION_SECONDS == 10.0 and MapSpiceLayerScript.SPICE_HAZARD_TICK_COUNT == 40, "the damaging visual hazard must remain active for ten seconds at four checks per second")
-	_expect(is_equal_approx(layer.call("_spice_hazard_damage_per_second"), 10.0), "the hazard damage rate must use SpicePuff Damage from the rules catalog")
+	_expect(MapSpiceHazardScript.DURATION_SECONDS == 10.0 and MapSpiceHazardScript.TICK_COUNT == 40, "the damaging visual hazard must remain active for ten seconds at four checks per second")
+	_expect(is_equal_approx(layer.hazard().damage_per_second(), 10.0), "the hazard damage rate must use SpicePuff Damage from the rules catalog")
 
 	var infantry := HazardUnit.new()
 	infantry.unit_definition = UnitDefinitionScript.new()
@@ -309,17 +310,17 @@ func _test_spice_mound_staged_passable_sand_spread(token: int) -> int:
 	root.add_child(vehicle)
 	root.add_child(outside_infantry)
 	var hazard_cells := {center: true, center + Vector2i.RIGHT: true, center + Vector2i(2, 0): true, center + Vector2i(3, 0): true}
-	_expect(layer.call("_damage_infantry_in_cells", hazard_cells, 10.0, [infantry, vehicle, outside_infantry]) == 1, "a hazard tick must target only infantry inside the spice-spread cells")
+	_expect(layer.hazard().damage_infantry_in_cells(hazard_cells, 10.0, [infantry, vehicle, outside_infantry]) == 1, "a hazard tick must target only infantry inside the spice-spread cells")
 	_expect(infantry.damage_taken == 10.0 and vehicle.damage_taken == 0.0 and outside_infantry.damage_taken == 0.0, "hazard damage must exclude vehicles and infantry outside BlastRadius")
 	infantry.free()
 	vehicle.free()
 	outside_infantry.free()
 
-	_expect(layer.call("_apply_spice_spread_stage", spread, 1) == 2, "the first stage must populate only the center and first-radius ring")
+	_expect(layer.spread().apply_stage(job, 1) == 2, "the first stage must populate only the center and first-radius ring")
 	_expect(layer.spice_at(center) == 200 and layer.spice_at(center + Vector2i.RIGHT) == 200, "the first ring must receive its distributed mound capacity")
 	_expect(layer.spice_at(center + Vector2i(2, 0)) == 0 and layer.spice_at(center + Vector2i(3, 0)) == 0, "outer rings must remain empty before their stages")
-	_expect(layer.call("_apply_spice_spread_stage", spread, 2) == 1 and layer.spice_at(center + Vector2i(2, 0)) == 200, "the second stage must extend the field to radius two")
-	_expect(layer.call("_apply_spice_spread_stage", spread, 3) == 1 and layer.spice_at(center + Vector2i(3, 0)) == 200, "the final stage must reach BlastRadius")
+	_expect(layer.spread().apply_stage(job, 2) == 1 and layer.spice_at(center + Vector2i(2, 0)) == 200, "the second stage must extend the field to radius two")
+	_expect(layer.spread().apply_stage(job, 3) == 1 and layer.spice_at(center + Vector2i(3, 0)) == 200, "the final stage must reach BlastRadius")
 	_expect(layer.spice_at(passable_rock) == 0, "passable rock must not receive spice")
 	_expect(layer.spice_at(impassable_sand) == 0, "impassable sand must not receive spice")
 	_expect(layer.spice_at(beyond_radius) == 0, "passable sand beyond BlastRadius must not receive spice")

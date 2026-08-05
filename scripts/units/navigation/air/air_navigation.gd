@@ -6,6 +6,8 @@ extends RefCounted
 ## planner do not exist here; group orders only get a simple spread offset so
 ## several flyers sent to the same point do not stack on the same cell.
 
+const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
+
 ## Air-air vertical avoidance: fixed altitude offset (world units) each side of
 ## a converging pair of flying agents takes to fly over/under the other. The
 ## flight controller blends the agent's actual altitude toward this target
@@ -22,10 +24,27 @@ const GROUP_SPREAD_SPACING := 3.0
 ## only implements the couple of methods this module actually calls, to prove
 ## the air pipeline has no grid dependency at all.
 var _facade
+var _runtime_map
+var _avoidance
+var _agents: Dictionary
+var _spatial_hash
+var _slot_allocator
 
 
-func setup(facade) -> void:
+func setup(
+	facade,
+	runtime_map = null,
+	avoidance = null,
+	agents: Dictionary = {},
+	spatial_hash = null,
+	slot_allocator = null
+	) -> void:
 	_facade = facade
+	_runtime_map = runtime_map
+	_avoidance = avoidance
+	_agents = agents
+	_spatial_hash = spatial_hash
+	_slot_allocator = slot_allocator
 
 
 ## Per-order entry point: every command path (command_move's air branch today;
@@ -41,7 +60,7 @@ func route_agent(agent: Dictionary, _from: Vector3, destination: Vector3) -> voi
 
 
 func clamp_to_bounds(world_position: Vector3) -> Vector3:
-	var grid = _facade.runtime_map.grid
+	var grid = _runtime_map.grid
 	if grid == null:
 		return world_position
 	var bounds: AABB = grid.world_bounds
@@ -54,7 +73,7 @@ func clamp_to_bounds(world_position: Vector3) -> Vector3:
 
 
 func in_bounds(world_position: Vector3) -> bool:
-	var grid = _facade.runtime_map.grid
+	var grid = _runtime_map.grid
 	if grid == null:
 		return false
 	var bounds: AABB = grid.world_bounds
@@ -73,7 +92,7 @@ func target_assignments(agents: Dictionary, units: Array[Node3D], world_target: 
 	for index in units.size():
 		var unit := units[index]
 		var agent: Dictionary = agents[unit.get_instance_id()]
-		var offset: Vector2i = _facade._crowd_offset(index)
+		var offset: Vector2i = _slot_allocator.crowd_offset(index)
 		var position := world_target + Vector3(float(offset.x), 0.0, float(offset.y)) * GROUP_SPREAD_SPACING
 		position = clamp_to_bounds(position)
 		position.y = world_target.y
@@ -97,7 +116,7 @@ func desired_velocity(agent: Dictionary) -> Vector3:
 	offset.y = 0.0
 	if offset.length() <= _facade.arrival_tolerance(unit):
 		return Vector3.ZERO
-	return offset.normalized() * _facade._unit_speed(unit)
+	return offset.normalized() * _unit_speed(unit)
 
 
 ## Per-agent steering resolution for one navigation tick, mirroring
@@ -113,7 +132,7 @@ func tick(delta: float, ordered: Array[Dictionary], buckets: Dictionary) -> void
 	for agent in ordered:
 		var unit: Node3D = agent["unit"]
 		var desired := desired_velocity(agent)
-		var nearby: Array = _facade._nearby_agents(
+		var nearby: Array = _spatial_hash.nearby(
 			unit.global_position, buckets, float(agent["radius"]) + largest_radius
 		)
 		var blockers := []
@@ -125,10 +144,10 @@ func tick(delta: float, ordered: Array[Dictionary], buckets: Dictionary) -> void
 		else:
 			_decay_vertical_offset(agent)
 		var velocity := desired
-		var separation: Vector3 = _facade.avoidance.separation_velocity(agent, nearby)
+		var separation: Vector3 = _avoidance.separation_velocity(agent, nearby)
 		if not separation.is_zero_approx():
-			velocity = (velocity + separation).limit_length(_facade._unit_speed(unit))
-		_facade._agents[unit.get_instance_id()] = agent
+			velocity = (velocity + separation).limit_length(_unit_speed(unit))
+		_agents[unit.get_instance_id()] = agent
 		if unit.has_method("navigation_step"):
 			unit.call("navigation_step", velocity, delta)
 
@@ -141,7 +160,7 @@ func _resolve_vertical_conflict(agent: Dictionary, blockers: Array) -> void:
 	var unit: Node3D = agent["unit"]
 	var agent_id := int(agent["id"])
 	for other in blockers:
-		if int(other["pass_mask"]) != MapNavigationGrid.PASS_AIR:
+		if int(other["pass_mask"]) != MapNavigationGridScript.PASS_AIR:
 			continue
 		var offset := VERTICAL_SEPARATION_OFFSET if agent_id < int(other["id"]) else -VERTICAL_SEPARATION_OFFSET
 		if unit.has_method("flight_set_vertical_offset"):
@@ -154,3 +173,10 @@ func _decay_vertical_offset(agent: Dictionary) -> void:
 	var unit: Node3D = agent["unit"]
 	if unit != null and unit.has_method("flight_set_vertical_offset"):
 		unit.call("flight_set_vertical_offset", 0.0)
+
+
+static func _unit_speed(unit: Node3D) -> float:
+	if unit.has_method("navigation_move_speed"):
+		return maxf(float(unit.call("navigation_move_speed")), 0.0)
+	var value = unit.get("move_speed")
+	return maxf(float(value), 0.0) if value != null else 0.0

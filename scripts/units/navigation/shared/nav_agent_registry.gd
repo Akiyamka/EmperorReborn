@@ -1,5 +1,9 @@
 class_name NavAgentRegistry
 extends RefCounted
+
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
+const MapNavigationGridScript := preload("res://scripts/world/map/map_navigation_grid.gd")
 ## Owns navigation agent creation/removal, movement-profile derivation, and the
 ## per-tick pruning/ordering of the agent set. `_agents` itself remains a
 ## Dictionary owned by the facade (`UnitNavigationSystem._agents`); GDScript
@@ -12,11 +16,17 @@ extends RefCounted
 enum Domain { GROUND, AIR }
 
 var _facade: Node
+var _runtime_map
+var _planner
+var _avoidance
 var _next_agent_id := 1
 
 
-func setup(facade: Node) -> void:
+func setup(facade: Node, runtime_map, planner, avoidance) -> void:
 	_facade = facade
+	_runtime_map = runtime_map
+	_planner = planner
+	_avoidance = avoidance
 	_next_agent_id = 1
 
 
@@ -49,7 +59,7 @@ func register_unit(agents: Dictionary, unit: Node3D, debug_enabled: bool) -> int
 		"path_points": [] as Array[Vector3],
 		"destination": unit.global_position,
 		"command_id": 0,
-		"mode": UnitNavigationSystem.MoveMode.FREE,
+		"mode": NavConstantsScript.MoveMode.FREE,
 		"group_speed": INF,
 		"hold": false,
 		"blocked_time": 0.0,
@@ -93,9 +103,9 @@ func register_unit(agents: Dictionary, unit: Node3D, debug_enabled: bool) -> int
 	# (airborne: its own straight-line air pipeline; grounded: a stationary
 	# hold-obstacle that never plans a route) — prewarming one for it would
 	# just be a wasted grid bake.
-	if int(profile["pass_mask"]) != MapNavigationGrid.PASS_AIR:
-		_facade.planner.prewarm(int(profile["pass_mask"]), int(profile["clearance"]), int(profile["terrain_mask"]))
-		_facade.avoidance.prewarm(int(profile["pass_mask"]), int(profile["terrain_mask"]))
+	if int(profile["pass_mask"]) != MapNavigationGridScript.PASS_AIR:
+		_planner.prewarm(int(profile["pass_mask"]), int(profile["clearance"]), int(profile["terrain_mask"]))
+		_avoidance.prewarm(int(profile["pass_mask"]), int(profile["terrain_mask"]))
 	unit.set_meta(&"navigation_agent_id", agent["id"])
 	if unit.has_method("set_navigation_managed"):
 		unit.call("set_navigation_managed", true)
@@ -127,7 +137,7 @@ func profile_for(unit: Node3D) -> Dictionary:
 		rotation_radius = maxf(
 			radius, float(unit.call("navigation_rotation_radius", rotation_radius))
 		)
-	var cell_size: Vector2 = _facade.runtime_map.grid.cell_size()
+	var cell_size: Vector2 = _runtime_map.grid.cell_size()
 	var body_clearance := maxi(
 		0,
 		int(ceil(radius / maxf(minf(cell_size.x, cell_size.y), 0.001))) - 1
@@ -136,7 +146,7 @@ func profile_for(unit: Node3D) -> Dictionary:
 		0,
 		int(ceil(rotation_radius / maxf(minf(cell_size.x, cell_size.y), 0.001))) - 1
 	)
-	var pass_mask := MapNavigationGrid.PASS_AIR if can_fly else (MapNavigationGrid.PASS_INFANTRY if infantry else MapNavigationGrid.PASS_VEHICLE)
+	var pass_mask := MapNavigationGridScript.PASS_AIR if can_fly else (MapNavigationGridScript.PASS_INFANTRY if infantry else MapNavigationGridScript.PASS_VEHICLE)
 	# A flying unit's authored Terrain list constrains only where it may land,
 	# never where it may fly — leave it unrestricted here so routing never
 	# detours around terrain types (e.g. InfantryRock) that only matter to
@@ -160,13 +170,13 @@ func terrain_mask(names: Array) -> int:
 	var result := 0
 	for value in names:
 		match String(value).to_lower():
-			"sand": result |= 1 << MapNavigationGrid.TERRAIN_SAND
-			"rock": result |= 1 << MapNavigationGrid.TERRAIN_ROCK
-			"cliff": result |= 1 << MapNavigationGrid.TERRAIN_CLIFF
-			"nbrock", "nonbuildrock": result |= 1 << MapNavigationGrid.TERRAIN_NONBUILDROCK
-			"infrock", "infantryrock": result |= 1 << MapNavigationGrid.TERRAIN_INFANTRYROCK
-			"dustbowl": result |= 1 << MapNavigationGrid.TERRAIN_DUSTBOWL
-			"ramp": result |= 1 << MapNavigationGrid.TERRAIN_RAMP
+			"sand": result |= 1 << MapNavigationGridScript.TERRAIN_SAND
+			"rock": result |= 1 << MapNavigationGridScript.TERRAIN_ROCK
+			"cliff": result |= 1 << MapNavigationGridScript.TERRAIN_CLIFF
+			"nbrock", "nonbuildrock": result |= 1 << MapNavigationGridScript.TERRAIN_NONBUILDROCK
+			"infrock", "infantryrock": result |= 1 << MapNavigationGridScript.TERRAIN_INFANTRYROCK
+			"dustbowl": result |= 1 << MapNavigationGridScript.TERRAIN_DUSTBOWL
+			"ramp": result |= 1 << MapNavigationGridScript.TERRAIN_RAMP
 	return result
 
 
@@ -193,7 +203,7 @@ func movement_probe_for(agents: Dictionary, unit: Node3D) -> Dictionary:
 func prune_agents(agents: Dictionary) -> void:
 	for key in agents.keys():
 		var unit = agents[key]["unit"]
-		if not is_instance_valid(unit) or unit.is_queued_for_deletion():
+		if not EntityQueryScript.is_live(unit):
 			agents.erase(key)
 
 
@@ -224,7 +234,7 @@ func set_agent_rotation_envelope(agent: Dictionary, active: bool) -> void:
 ## landing transitions only last ~1.5s, so this is cheap enough to just always
 ## reflect the unit's live flight phase instead of caching it across an order.
 func domain_for(agent: Dictionary) -> int:
-	if int(agent["pass_mask"]) != MapNavigationGrid.PASS_AIR:
+	if int(agent["pass_mask"]) != MapNavigationGridScript.PASS_AIR:
 		return Domain.GROUND
 	var unit: Node3D = agent.get("unit")
 	if unit != null and unit.has_method("flight_is_airborne_phase") \

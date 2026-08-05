@@ -1,6 +1,8 @@
 class_name BuildingOrder
 extends RefCounted
 
+const ProductionProgressScript := preload("res://scripts/buildings/production_progress.gd")
+
 var building_id: StringName
 var display_name := ""
 var cost := 0
@@ -13,10 +15,4 @@ var ready := false
 
 
 func progress_percent() -> float:
-	if ready:
-		return 100.0
-	if cost > 0:
-		return clampf(float(paid_cost) * 100.0 / float(cost), 0.0, 100.0)
-	if build_time_ticks > 0.0:
-		return clampf(elapsed_ticks * 100.0 / build_time_ticks, 0.0, 100.0)
-	return 100.0
+	return ProductionProgressScript.percent(ready, cost, paid_cost, build_time_ticks, elapsed_ticks)

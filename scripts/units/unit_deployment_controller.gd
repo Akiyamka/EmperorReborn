@@ -1,6 +1,10 @@
 class_name UnitDeploymentController
 extends Node
 
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
+
 ## Dispatches "deploy" to one of two strategies over the same {handled,
 ## started, message} façade. The MCV strategy (this file's original body,
 ## unchanged) owns both sides of the MCV/Construction Yard transformation.
@@ -17,6 +21,7 @@ signal construction_yard_deployed(building: Node3D)
 signal mcv_undeployed(unit: Node3D)
 
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
+const PlacementContextScript := preload("res://scripts/buildings/placement_context.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
@@ -36,8 +41,8 @@ var _navigation
 var _deployments: Dictionary = {}
 var _undeployments: Dictionary = {}
 var _building_scene_cache: Dictionary = {}
-var _unit_scene_catalog := UnitSceneCatalogScript.new()
-var _building_definition_catalog := BuildingDefinitionCatalogScript.new()
+static var _unit_scene_catalog := UnitSceneCatalogScript.shared()
+static var _building_definition_catalog := BuildingDefinitionCatalogScript.shared()
 var _combat_deploy_strategy := CombatDeployStrategyScript.new()
 
 
@@ -76,7 +81,7 @@ func try_deploy(unit: Node3D) -> Dictionary:
 		"hover_cell": hover_cell,
 		"building_id": building_id,
 		"building_scene": building_scene,
-		"owner_player_id": int(unit.get("owner_player_id")),
+		"owner_player_id": EntityQueryScript.owner_id_of(unit),
 	}
 	placement.building_placed.connect(_on_building_placed.bind(deployment_id))
 	unit.deployment_animation_finished.connect(
@@ -125,70 +130,43 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 	if not can_handle(unit):
 		return {"handled": false, "available": false, "message": ""}
 	if bool(unit.call("is_deploying")):
-		return {"handled": true, "available": false, "message": "MCV is already deploying"}
+		return _reject("MCV is already deploying")
 	if _navigation_grid == null or not _navigation_grid.is_loaded():
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: navigation grid is unavailable",
-		}
+		return _reject("MCV cannot deploy: navigation grid is unavailable")
 	if _buildings_root == null:
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: buildings root is unavailable",
-		}
+		return _reject("MCV cannot deploy: buildings root is unavailable")
 
 	var con_yard := _construction_yard_for(unit)
 	var building_id: StringName = con_yard.get("id", &"")
 	var config: Resource = con_yard.get("config")
 	if building_id == &"" or config == null:
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: its rules have no Construction Yard",
-		}
+		return _reject("MCV cannot deploy: its rules have no Construction Yard")
 
 	var building_scene := _cached_building_scene(building_id)
 	if building_scene == null:
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: %s scene is unavailable" % String(building_id),
-		}
+		return _reject("MCV cannot deploy: %s scene is unavailable" % String(building_id))
 
 	var placement: BuildingPlacement = BuildingPlacementScript.new()
 	add_child(placement)
-	placement.setup(
-		null,
-		_navigation_grid,
-		_buildings_root,
-		null,
-		null,
-		null,
-		null,
-		Callable(self, "_occupy_rows_for_existing_building")
+	var placement_context := PlacementContextScript.new()
+	placement_context.navigation_grid = _navigation_grid
+	placement_context.buildings_root = _buildings_root
+	placement_context.existing_building_occupy_rows = Callable(
+		self, "_occupy_rows_for_existing_building"
 	)
+	placement.setup(placement_context)
 	var occupy_rows: Array[String] = []
 	occupy_rows.assign(config.occupy_rows)
 	if not placement.begin(building_id, String(building_id), occupy_rows, false, true):
 		placement.free()
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy: %s has no valid footprint" % String(building_id),
-		}
+		return _reject("MCV cannot deploy: %s has no valid footprint" % String(building_id))
 
 	placement.set_rotation_quarter_turns(_deployment_quarter_turns(unit))
 	var hover_cell := _deployment_hover_cell(unit)
 	var evaluation: int = placement.evaluate_at_hover_cell(hover_cell)
 	if evaluation != BuildingPlacement.PlaceResult.AVAILABLE:
 		placement.free()
-		return {
-			"handled": true,
-			"available": false,
-			"message": "MCV cannot deploy at this location",
-		}
+		return _reject("MCV cannot deploy at this location")
 
 	return {
 		"handled": true,
@@ -199,6 +177,14 @@ func _deployment_candidate(unit: Node3D) -> Dictionary:
 		"building_id": building_id,
 		"building_scene": building_scene,
 	}
+
+
+## Every rejection past the can_handle() gate has the same shape and differs
+## only in its message. `handled` stays true there: the unit *is* an MCV, it
+## just cannot deploy right now, and the caller must not fall through to the
+## ordinary move order.
+static func _reject(message: String) -> Dictionary:
+	return {"handled": true, "available": false, "message": message}
 
 
 ## Whether a move order on this building should be routed to try_undeploy
@@ -219,8 +205,7 @@ func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dic
 		return {"handled": false, "started": false, "message": ""}
 	if _undeployments.has(building.get_instance_id()):
 		return _result(false, "Construction Yard is already packing")
-	if building.has_method("is_construction_complete") \
-	and not bool(building.call("is_construction_complete")):
+	if not EntityQueryScript.is_operational(building):
 		return _result(false, "Construction Yard cannot pack while under construction")
 
 	var mcv := _mcv_for(building, building_config)
@@ -244,7 +229,7 @@ func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dic
 		"unit_definition": mcv.get("config"),
 		"unit_scene": unit_scene,
 		"units_parent": units_parent,
-		"owner_player_id": int(building.get("owner_player_id")),
+		"owner_player_id": EntityQueryScript.owner_id_of(building),
 		"spawn_position": _building_spawn_position(building),
 		"exit_position": _building_exit_position(building),
 		"facing": _building_exit_direction(building),
@@ -255,19 +240,12 @@ func try_undeploy(building: Node3D, move_target: Vector3, move_mode := 0) -> Dic
 		_on_undeploying_building_exiting.bind(undeployment_id), CONNECT_ONE_SHOT
 	)
 
-	var player := building.get_node_or_null("StatePlayer") as AnimationPlayer
-	if player != null and player.has_animation(&"deconstruct"):
-		var animation := player.get_animation(&"deconstruct")
-		if animation != null:
-			animation.loop_mode = Animation.LOOP_NONE
-			if building.has_method("play_state"):
-				building.call("play_state", &"deconstruct")
-			else:
-				player.play(&"deconstruct")
-			player.animation_finished.connect(
-				_on_undeployment_animation_finished.bind(undeployment_id), CONNECT_ONE_SHOT
-			)
-			return _result(true, "%s packing into %s" % [String(building.get("config_id")), String(unit_id)])
+	if AuthoredModelScript.play_one_shot(
+		building,
+		&"deconstruct",
+		_on_undeployment_animation_finished.bind(undeployment_id)
+	):
+		return _result(true, "%s packing into %s" % [String(building.get("config_id")), String(unit_id)])
 
 	# Lightweight/test buildings without an authored deconstruct clip still obey
 	# the same transformation contract; their handoff is simply immediate.
@@ -366,9 +344,9 @@ func _on_building_placed(building: Node3D, deployment_id: int) -> void:
 func _on_construction_yard_completed(building: Node3D) -> void:
 	if building == null or not is_instance_valid(building):
 		return
-	var players := get_node_or_null("/root/Players")
+	var players := AutoloadLookupScript.roster(self)
 	if players != null:
-		players.set_main_base(int(building.get("owner_player_id")), building)
+		players.set_main_base(EntityQueryScript.owner_id_of(building), building)
 	construction_yard_deployed.emit(building)
 
 
@@ -499,15 +477,10 @@ func _building_config_for(building: Node3D) -> Resource:
 func _units_parent(building: Node3D) -> Node:
 	if _units_root != null and is_instance_valid(_units_root):
 		return _units_root
-	if is_inside_tree():
-		var existing_unit := get_tree().get_first_node_in_group("units")
-		if existing_unit != null and existing_unit.get_parent() != null:
-			return existing_unit.get_parent()
-		var scene_root := get_tree().current_scene
-		var units := scene_root.get_node_or_null("Units") if scene_root != null else null
-		if units != null:
-			return units
-	return building.get_parent() if building != null else null
+	return EntityQueryScript.units_parent(
+		get_tree() if is_inside_tree() else null,
+		building.get_parent() if building != null else null
+	)
 
 
 func _building_spawn_position(building: Node3D) -> Vector3:
@@ -528,9 +501,7 @@ func _building_exit_position(building: Node3D) -> Vector3:
 
 
 func _building_exit_direction(building: Node3D) -> Vector3:
-	if building.has_method("exit_direction"):
-		return building.call("exit_direction") as Vector3
-	return SpatialOrientationScript.world_horizontal_axis(building, Vector3.BACK)
+	return EntityQueryScript.exit_direction(building)
 
 
 func _occupy_rows_for_existing_building(building: Node3D) -> Array[String]:

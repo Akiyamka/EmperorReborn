@@ -1,7 +1,7 @@
 extends SceneTree
 
 const UnitScript := preload("res://scripts/units/unit.gd")
-const HarvesterScript := preload("res://scripts/units/harvester.gd")
+const HarvesterControllerScript := preload("res://scripts/units/harvester_controller.gd")
 const HarvesterScene := preload("res://scenes/units/harvester.tscn")
 const UnitRosterControllerScript := preload("res://scripts/units/unit_roster_controller.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
@@ -59,7 +59,7 @@ class FakeSpiceLayer extends RefCounted:
 		return best
 
 
-class TestHarvester extends HarvesterScript:
+class TestHarvester extends UnitScript:
 	var move_targets: Array[Vector3] = []
 	var animation_log: Array[StringName] = []
 	var stop_count := 0
@@ -80,13 +80,16 @@ class TestHarvester extends HarvesterScript:
 	func navigation_collision_radius(fallback: float) -> float:
 		return fallback
 
-	func _start_harvest_animation(animation_name: StringName) -> float:
+	# Stands in for the authored clips: records what was played and reports a
+	# duration per clip. The two hold clips differ on purpose -- the harvest
+	# hold has no authored length, so its interval must come from
+	# HARVEST_HOLD_SECONDS, while the unload hold is timed by the clip itself.
+	func play_action_animation(animation_name: StringName) -> float:
 		animation_log.append(animation_name)
-		return 0.1 if animation_name != HARVEST_HOLD_ANIMATION else 0.0
-
-	func _start_unload_animation(animation_name: StringName) -> float:
-		animation_log.append(animation_name)
-		return 0.5 if animation_name == UNLOAD_HOLD_ANIMATION else 0.1
+		if animation_name == HarvesterControllerScript.HARVEST_HOLD_ANIMATION:
+			return 0.0
+		return 0.5 \
+			if animation_name == HarvesterControllerScript.UNLOAD_HOLD_ANIMATION else 0.1
 
 
 class FakeNavigation extends RefCounted:
@@ -260,8 +263,11 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 	harvester.setup(&"Harvester")
 	_expect(is_equal_approx(harvester.max_spice, 700.0), "runtime Harvester capacity must match local Rules.txt")
 	var scene_harvester := HarvesterScene.instantiate()
-	_expect(scene_harvester is HarvesterScript and scene_harvester is UnitScript, "the dedicated Harvester scene must remain a Unit subtype")
 	root.add_child(scene_harvester)
+	_expect(
+		scene_harvester is UnitScript and scene_harvester.can_harvest_spice(),
+		"the dedicated Harvester scene must be an ordinary Unit that harvests"
+	)
 	var body_radius := float(scene_harvester.navigation_collision_radius(1.26))
 	var rotation_radius := float(scene_harvester.navigation_rotation_radius(body_radius))
 	_expect(rotation_radius > body_radius * 1.4,
@@ -270,9 +276,9 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 	var has_unload_clips := false
 	for node in scene_harvester.find_children("*", "AnimationPlayer", true, false):
 		var player := node as AnimationPlayer
-		if player.has_animation(HarvesterScript.UNLOAD_START_ANIMATION) \
-		and player.has_animation(HarvesterScript.UNLOAD_HOLD_ANIMATION) \
-		and player.has_animation(HarvesterScript.UNLOAD_END_ANIMATION):
+		if player.has_animation(HarvesterControllerScript.UNLOAD_START_ANIMATION) \
+		and player.has_animation(HarvesterControllerScript.UNLOAD_HOLD_ANIMATION) \
+		and player.has_animation(HarvesterControllerScript.UNLOAD_END_ANIMATION):
 			has_unload_clips = true
 			break
 	_expect(has_unload_clips, "the converted harvester model must retain all three unload clips")
@@ -280,7 +286,13 @@ func _test_rules_capacity_and_halo(token: int) -> int:
 	var roster := UnitRosterControllerScript.new()
 	var produced := roster._scene_for_unit(&"Harvester").instantiate()
 	var ordinary := roster._scene_for_unit(&"ATInfantry").instantiate()
-	_expect(produced is HarvesterScript and ordinary is UnitScript and not ordinary is HarvesterScript, "unit production must choose the specialized scene only for Harvester")
+	root.add_child(produced)
+	root.add_child(ordinary)
+	_expect(
+		produced is UnitScript and produced.can_harvest_spice()
+		and ordinary is UnitScript and not ordinary.can_harvest_spice(),
+		"unit production must choose the harvesting scene only for Harvester"
+	)
 	produced.free()
 	ordinary.free()
 	roster.free()
@@ -371,8 +383,8 @@ func _test_stop_clears_all_orders(token: int, player: PlayerData) -> int:
 	_expect(harvester.has_active_order(), "harvesting must count as an active order before Stop")
 	harvester.cancel_all_orders()
 	_expect(
-		not harvester.has_harvest_order()
-		and not harvester.has_unload_order()
+		not harvester._harvester.has_harvest_order()
+		and not harvester._harvester.has_unload_order()
 		and not harvester.has_active_order(),
 		"Stop must clear harvesting, unloading, movement, and the autonomous cycle"
 	)
@@ -386,12 +398,12 @@ func _test_stop_clears_all_orders(token: int, player: PlayerData) -> int:
 		"the Stop test must begin with an active unload order"
 	)
 	_expect(
-		harvester.has_unload_order() and harvester.assigned_refinery() == refinery,
+		harvester._harvester.has_unload_order() and harvester._harvester.assigned_refinery() == refinery,
 		"manual unloading must retain its refinery binding before Stop"
 	)
 	harvester.cancel_all_orders()
 	_expect(
-		not harvester.has_active_order() and harvester.assigned_refinery() == null,
+		not harvester.has_active_order() and harvester._harvester.assigned_refinery() == null,
 		"Stop must clear unloading and its persistent refinery binding"
 	)
 	_expect(refinery.reserved_by == null, "Stop must release an unloading dock reservation")
@@ -414,19 +426,19 @@ func _test_cycle_and_retarget(token: int) -> int:
 	harvester.global_position = grid.grid_to_world(first)
 
 	_expect(harvester.command_harvest(layer, grid, first), "a configured harvester must accept a harvesting order")
-	harvester.advance_harvest_order(0.0)
-	_expect(harvester.animation_log == [HarvesterScript.HARVEST_START_ANIMATION], "arrival must begin with Harv_Eat_Start")
-	harvester.advance_harvest_order(0.1)
-	_expect(harvester.animation_log.back() == HarvesterScript.HARVEST_HOLD_ANIMATION, "start completion must enter Harv_Eat_Hold")
-	harvester.advance_harvest_order(0.29)
+	harvester._harvester.advance_harvest_order(0.0)
+	_expect(harvester.animation_log == [HarvesterControllerScript.HARVEST_START_ANIMATION], "arrival must begin with Harv_Eat_Start")
+	harvester._harvester.advance_harvest_order(0.1)
+	_expect(harvester.animation_log.back() == HarvesterControllerScript.HARVEST_HOLD_ANIMATION, "start completion must enter Harv_Eat_Hold")
+	harvester._harvester.advance_harvest_order(0.29)
 	_expect(is_zero_approx(harvester.spice), "cargo must not change before the hold interval completes")
-	harvester.advance_harvest_order(0.02)
+	harvester._harvester.advance_harvest_order(0.02)
 	_expect(is_equal_approx(harvester.spice, 140.0) and layer.spice_at(first) == 0, "one cycle may collect exactly one fifth of the 700-unit bunker")
-	_expect(harvester.animation_log.back() == HarvesterScript.HARVEST_END_ANIMATION, "collection must be followed by Harv_Eat_End")
-	harvester.advance_harvest_order(0.1)
-	_expect(harvester.harvest_target_cell() == second, "an exhausted cell must switch to nearby spice")
+	_expect(harvester.animation_log.back() == HarvesterControllerScript.HARVEST_END_ANIMATION, "collection must be followed by Harv_Eat_End")
+	harvester._harvester.advance_harvest_order(0.1)
+	_expect(harvester._harvester.harvest_target_cell() == second, "an exhausted cell must switch to nearby spice")
 	_expect(harvester.move_targets.back() == grid.grid_to_world(second), "retargeting must issue movement to the next cell")
-	_expect(harvester.has_harvest_order(), "nearby spice must keep the autonomous order alive")
+	_expect(harvester._harvester.has_harvest_order(), "nearby spice must keep the autonomous order alive")
 	harvester.queue_free()
 	return token
 
@@ -442,20 +454,20 @@ func _test_empty_arrival(token: int) -> int:
 	root.add_child(harvester)
 	harvester.global_position = grid.grid_to_world(empty)
 	harvester.command_harvest(layer, grid, empty)
-	harvester.advance_harvest_order(0.0)
-	_expect(harvester.harvest_target_cell() == nearby and harvester.animation_log.is_empty(), "an empty arrival must retarget before starting the collection animation")
+	harvester._harvester.advance_harvest_order(0.0)
+	_expect(harvester._harvester.harvest_target_cell() == nearby and harvester.animation_log.is_empty(), "an empty arrival must retarget before starting the collection animation")
 
 	layer.values[nearby] = 0
 	var distant := Vector2i(36, 20)
 	layer.values[distant] = 100
 	harvester.global_position = grid.grid_to_world(nearby)
-	harvester.advance_harvest_order(0.0)
-	_expect(harvester.has_harvest_order() and harvester.harvest_target_cell() == distant, "an unfinished bunker must continue at the nearest non-empty field even beyond the old local radius")
+	harvester._harvester.advance_harvest_order(0.0)
+	_expect(harvester._harvester.has_harvest_order() and harvester._harvester.harvest_target_cell() == distant, "an unfinished bunker must continue at the nearest non-empty field even beyond the old local radius")
 	layer.values[distant] = 0
 	harvester.global_position = grid.grid_to_world(distant)
-	harvester.advance_harvest_order(0.0)
-	_expect(not harvester.has_harvest_order(), "the order must stop when the map has no remaining spice")
-	_expect(harvester.harvest_target_cell() == Vector2i(-1, -1), "a completed order must clear its target")
+	harvester._harvester.advance_harvest_order(0.0)
+	_expect(not harvester._harvester.has_harvest_order(), "the order must stop when the map has no remaining spice")
+	_expect(harvester._harvester.harvest_target_cell() == Vector2i(-1, -1), "a completed order must clear its target")
 	harvester.queue_free()
 	return token
 
@@ -488,7 +500,7 @@ func _test_two_harvesters_share_field(token: int) -> int:
 	for _tick in 1500:
 		navigation.call("_navigation_tick", 0.05)
 		for harvester in harvesters:
-			harvester.advance_harvest_order(0.05)
+			harvester._harvester.advance_harvest_order(0.05)
 		if harvesters.all(func(harvester: TestHarvester) -> bool: return harvester.spice > 0.0):
 			break
 	_expect(
@@ -497,7 +509,7 @@ func _test_two_harvesters_share_field(token: int) -> int:
 			func(harvester: TestHarvester) -> Dictionary: return {
 				"position": harvester.global_position,
 				"destination": harvester.target_position,
-				"field": harvester.harvest_target_cell(),
+				"field": harvester._harvester.harvest_target_cell(),
 				"spice": harvester.spice,
 			}
 		))
@@ -520,11 +532,11 @@ func _test_remaining_capacity(token: int) -> int:
 	root.add_child(harvester)
 	harvester.global_position = grid.grid_to_world(cell)
 	harvester.command_harvest(layer, grid, cell)
-	harvester.advance_harvest_order(0.41)
+	harvester._harvester.advance_harvest_order(0.41)
 	_expect(is_equal_approx(harvester.spice, 100.0), "a cycle must stop at the remaining bunker capacity")
 	_expect(layer.spice_at(cell) == 85, "only the cargo actually loaded may be removed from the map cell")
-	harvester.advance_harvest_order(0.1)
-	_expect(not harvester.has_harvest_order(), "a full bunker must complete the harvesting order")
+	harvester._harvester.advance_harvest_order(0.1)
+	_expect(not harvester._harvester.has_harvest_order(), "a full bunker must complete the harvesting order")
 	harvester.queue_free()
 	return token
 
@@ -561,21 +573,21 @@ func _test_full_harvester_auto_unload(token: int, player: PlayerData) -> int:
 	root.get_node("Players").set_main_base(player.player_id, main_base)
 
 	_expect(harvester.command_harvest(layer, grid, target_cell), "a full harvester must accept a harvest command as a request to continue its cycle")
-	_expect(not harvester.has_harvest_order() and harvester.has_unload_order(), "a full bunker must skip field travel and immediately start unloading")
-	_expect(harvester.assigned_refinery() == near_owned, "automatic unloading must bind the nearest owned refinery and ignore a closer enemy refinery")
+	_expect(not harvester._harvester.has_harvest_order() and harvester._harvester.has_unload_order(), "a full bunker must skip field travel and immediately start unloading")
+	_expect(harvester._harvester.assigned_refinery() == near_owned, "automatic unloading must bind the nearest owned refinery and ignore a closer enemy refinery")
 
 	near_owned.owner_player_id = player.player_id + 1
-	harvester.advance_unload_order(0.0)
-	harvester.advance_harvest_cycle()
-	_expect(harvester.assigned_refinery() == far_owned and harvester.has_unload_order(), "capture of the bound refinery must trigger a new nearest-owned search")
+	harvester._harvester.advance_unload_order(0.0)
+	harvester._harvester.advance_harvest_cycle()
+	_expect(harvester._harvester.assigned_refinery() == far_owned and harvester._harvester.has_unload_order(), "capture of the bound refinery must trigger a new nearest-owned search")
 
 	far_owned.owner_player_id = player.player_id + 1
-	harvester.advance_unload_order(0.0)
-	harvester.advance_harvest_cycle()
-	_expect(not harvester.has_unload_order() and harvester.target_position == main_base.global_position, "without an owned refinery a full harvester must return to the player's primary Construction Yard")
+	harvester._harvester.advance_unload_order(0.0)
+	harvester._harvester.advance_harvest_cycle()
+	_expect(not harvester._harvester.has_unload_order() and harvester.target_position == main_base.global_position, "without an owned refinery a full harvester must return to the player's primary Construction Yard")
 	near_owned.owner_player_id = player.player_id
-	harvester.advance_harvest_cycle(HarvesterScript.AUTO_SEARCH_RETRY_SECONDS)
-	_expect(not harvester.has_unload_order() and harvester.target_position == main_base.global_position, "a refinery built later must not redirect a harvester returning to its main base")
+	harvester._harvester.advance_harvest_cycle(HarvesterControllerScript.AUTO_SEARCH_RETRY_SECONDS)
+	_expect(not harvester._harvester.has_unload_order() and harvester.target_position == main_base.global_position, "a refinery built later must not redirect a harvester returning to its main base")
 
 	harvester.queue_free()
 	near_owned.queue_free()
@@ -609,21 +621,21 @@ func _test_cycle_binding_and_spice_filter(token: int, player: PlayerData) -> int
 	root.add_child(harvester)
 
 	_expect(harvester.command_unload(manual_refinery, grid, layer), "manual unloading with map context must enable the continuing cycle")
-	harvester.cancel_unload_order()
-	harvester.set_auto_spice_cell_filter(func(cell: Vector2i) -> bool: return cell != hidden_cell)
-	harvester.advance_harvest_cycle()
-	_expect(harvester.harvest_target_cell() == visible_cell, "automatic field selection must skip cells rejected by the future visibility predicate")
+	harvester._harvester.cancel_unload_order()
+	harvester._harvester.set_auto_spice_cell_filter(func(cell: Vector2i) -> bool: return cell != hidden_cell)
+	harvester._harvester.advance_harvest_cycle()
+	_expect(harvester._harvester.harvest_target_cell() == visible_cell, "automatic field selection must skip cells rejected by the future visibility predicate")
 
-	harvester.cancel_harvest_order()
+	harvester._harvester.cancel_harvest_order()
 	harvester.spice = harvester.max_spice
-	harvester.advance_harvest_cycle()
-	_expect(harvester.assigned_refinery() == manual_refinery, "the manually selected refinery must remain bound even when another owned refinery is closer")
+	harvester._harvester.advance_harvest_cycle()
+	_expect(harvester._harvester.assigned_refinery() == manual_refinery, "the manually selected refinery must remain bound even when another owned refinery is closer")
 	_expect(harvester.command_unload(near_refinery, grid, layer), "a later manual unload must be able to redirect the active trip")
-	_expect(harvester.assigned_refinery() == near_refinery, "manual redirection must replace the persistent refinery binding")
+	_expect(harvester._harvester.assigned_refinery() == near_refinery, "manual redirection must replace the persistent refinery binding")
 	var manual_move := Vector3(40.0, 0.0, 40.0)
 	harvester.move_to(manual_move)
-	harvester.advance_harvest_cycle()
-	_expect(not harvester.has_harvest_order() and not harvester.has_unload_order(), "an ordinary manual move must stop automatic cycling until a new harvest or unload command")
+	harvester._harvester.advance_harvest_cycle()
+	_expect(not harvester._harvester.has_harvest_order() and not harvester._harvester.has_unload_order(), "an ordinary manual move must stop automatic cycling until a new harvest or unload command")
 
 	harvester.queue_free()
 	near_refinery.queue_free()
@@ -640,23 +652,23 @@ func _test_full_unload(token: int, player: PlayerData) -> int:
 	harvester.owner_player_id = player.player_id
 	harvester.max_spice = 700.0
 	harvester.spice = 700.0
-	harvester.unload_rate_per_update = 2.0
+	harvester._harvester.unload_rate_per_update = 2.0
 	root.add_child(harvester)
 	_park_for_unload(harvester, refinery, grid)
-	_expect(harvester.animation_log.back() == HarvesterScript.UNLOAD_START_ANIMATION, "parking must start Harv_Unload_Start")
-	harvester.advance_unload_order(0.1)
-	_expect(harvester.animation_log.back() == HarvesterScript.UNLOAD_HOLD_ANIMATION, "UnloadStart must be followed by UnloadHold")
+	_expect(harvester.animation_log.back() == HarvesterControllerScript.UNLOAD_START_ANIMATION, "parking must start Harv_Unload_Start")
+	harvester._harvester.advance_unload_order(0.1)
+	_expect(harvester.animation_log.back() == HarvesterControllerScript.UNLOAD_HOLD_ANIMATION, "UnloadStart must be followed by UnloadHold")
 	for cycle in 35:
-		harvester.advance_unload_order(0.5)
+		harvester._harvester.advance_unload_order(0.5)
 	_expect(is_zero_approx(harvester.spice), "35 half-second hold cycles must empty the 700-credit bunker")
 	_expect(player.money == 700, "every removed cargo credit must be added to the owning player")
-	_expect(harvester.animation_log.back() == HarvesterScript.UNLOAD_END_ANIMATION, "an empty bunker must enter Harv_Unload_End")
-	harvester.advance_unload_order(0.1)
+	_expect(harvester.animation_log.back() == HarvesterControllerScript.UNLOAD_END_ANIMATION, "an empty bunker must enter Harv_Unload_End")
+	harvester._harvester.advance_unload_order(0.1)
 	_expect(refinery.release_delays == [3.0], "UnloadEnd completion must release the pad with a three-second delay")
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.RETURN_FRONT, "normal completion must return the harvester to the refinery front")
+	_expect(harvester._harvester.unload_phase() == HarvesterControllerScript.UnloadPhase.RETURN_FRONT, "normal completion must return the harvester to the refinery front")
 	harvester.global_position = refinery.front
-	harvester.advance_unload_order(0.0)
-	_expect(not harvester.has_unload_order(), "arrival at the front must complete the unloading order")
+	harvester._harvester.advance_unload_order(0.0)
+	_expect(not harvester._harvester.has_unload_order(), "arrival at the front must complete the unloading order")
 
 	harvester.queue_free()
 	refinery.queue_free()
@@ -678,16 +690,16 @@ func _test_unload_waits_for_dock(token: int, player: PlayerData) -> int:
 	harvester.global_position = refinery.front
 	_expect(harvester.command_unload(refinery, grid), "an owned refinery must accept an unloading order")
 	_expect(harvester.target_position == refinery.front, "with every dock occupied the waiting route must stay outside at the refinery front instead of targeting its centre")
-	harvester.advance_unload_order(0.0)
-	harvester.advance_unload_order(0.0)
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.WAIT_DOCK, "an occupied refinery must leave the harvester waiting near the building")
-	_expect(harvester.unload_dock() == -1 and refinery.reserved_by == null, "waiting must not claim an unavailable pad")
+	harvester._harvester.advance_unload_order(0.0)
+	harvester._harvester.advance_unload_order(0.0)
+	_expect(harvester._harvester.unload_phase() == HarvesterControllerScript.UnloadPhase.WAIT_DOCK, "an occupied refinery must leave the harvester waiting near the building")
+	_expect(harvester._harvester.unload_dock() == -1 and refinery.reserved_by == null, "waiting must not claim an unavailable pad")
 	refinery.available = true
-	harvester.advance_unload_order(0.0)
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK, "a newly free pad must be reserved on the next update")
-	_expect(harvester.unload_dock() == 0 and refinery.reserved_by == harvester, "the selected pad must be exclusively reserved")
+	harvester._harvester.advance_unload_order(0.0)
+	_expect(harvester._harvester.unload_phase() == HarvesterControllerScript.UnloadPhase.PARK, "a newly free pad must be reserved on the next update")
+	_expect(harvester._harvester.unload_dock() == 0 and refinery.reserved_by == harvester, "the selected pad must be exclusively reserved")
 
-	harvester.cancel_unload_order()
+	harvester._harvester.cancel_unload_order()
 	harvester.queue_free()
 	refinery.queue_free()
 	return token
@@ -711,11 +723,11 @@ func _test_side_dock_routes_directly(token: int, player: PlayerData) -> int:
 	harvester.set_navigation_controller(navigation)
 
 	_expect(harvester.command_unload(refinery, grid), "the second harvester must accept a multi-dock refinery order")
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK and harvester.unload_dock() == 1, "an occupied central dock must make the second harvester reserve the free side dock immediately")
+	_expect(harvester._harvester.unload_phase() == HarvesterControllerScript.UnloadPhase.PARK and harvester._harvester.unload_dock() == 1, "an occupied central dock must make the second harvester reserve the free side dock immediately")
 	_expect(navigation.dock_targets == [refinery.dock_positions[1]], "the first route must target the reserved side dock directly")
 	_expect(navigation.move_targets.is_empty(), "a free side dock must not insert a generic approach through the refinery center")
 
-	harvester.cancel_unload_order()
+	harvester._harvester.cancel_unload_order()
 	harvester.queue_free()
 	refinery.queue_free()
 	central_harvester.free()
@@ -742,21 +754,21 @@ func _test_unload_navigation_arrival(token: int, player: PlayerData) -> int:
 
 	_expect(harvester.command_unload(refinery, grid, layer), "the managed harvester must accept the unloading order")
 	_expect(
-		harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK \
+		harvester._harvester.unload_phase() == HarvesterControllerScript.UnloadPhase.PARK \
 		and harvester.target_position.is_equal_approx(refinery.dock),
 		"an available dock must be reserved and targeted before any generic refinery approach"
 	)
 	harvester.global_position = refinery.dock + Vector3(0.0, 0.0, 0.45)
 	harvester.face_direction(refinery.refinery_dock_facing_direction(0))
-	harvester.advance_unload_order(0.0)
-	_expect(harvester.unload_phase() == HarvesterScript.UnloadPhase.START, "parking must use the shared navigation arrival distance too")
+	harvester._harvester.advance_unload_order(0.0)
+	_expect(harvester._harvester.unload_phase() == HarvesterControllerScript.UnloadPhase.START, "parking must use the shared navigation arrival distance too")
 	_expect(navigation.is_held(harvester), "a harvester parked on a refinery pad must hold position throughout unloading")
 	harvester.spice = 0.0
-	harvester.advance_unload_order(0.1)
-	harvester.advance_unload_order(0.5)
-	harvester.advance_unload_order(0.1)
+	harvester._harvester.advance_unload_order(0.1)
+	harvester._harvester.advance_unload_order(0.5)
+	harvester._harvester.advance_unload_order(0.1)
 	_expect(not navigation.is_held(harvester), "UnloadEnd completion must release the navigation hold for the exit route")
-	_expect(not harvester.has_unload_order() and harvester.has_harvest_order(), "normal managed unloading must hand off directly to the next harvest order")
+	_expect(not harvester._harvester.has_unload_order() and harvester._harvester.has_harvest_order(), "normal managed unloading must hand off directly to the next harvest order")
 	_expect(navigation.departure_targets.back() == grid.grid_to_world(field), "the direct field route must retain temporary dock-cell access without becoming an exact dock order")
 
 	harvester.queue_free()
@@ -784,12 +796,12 @@ func _test_refinery_rally_selects_next_field(token: int, player: PlayerData) -> 
 
 	_park_for_unload(harvester, refinery, grid, layer)
 	harvester.spice = 0.0
-	harvester.advance_unload_order(0.1)
-	harvester.advance_unload_order(0.5)
-	harvester.advance_unload_order(0.1)
+	harvester._harvester.advance_unload_order(0.1)
+	harvester._harvester.advance_unload_order(0.5)
+	harvester._harvester.advance_unload_order(0.1)
 
 	_expect(
-		harvester.harvest_target_cell() == near_rally,
+		harvester._harvester.harvest_target_cell() == near_rally,
 		"after unloading, the refinery rally point must be the origin of the nearest-spice search"
 	)
 	_expect(
@@ -814,13 +826,13 @@ func _test_unload_parking_turn_rate(token: int, player: PlayerData) -> int:
 	root.add_child(harvester)
 	harvester.global_position = refinery.front
 	harvester.command_unload(refinery, grid)
-	harvester.advance_unload_order(0.0)
-	harvester.advance_unload_order(0.0)
+	harvester._harvester.advance_unload_order(0.0)
+	harvester._harvester.advance_unload_order(0.0)
 	harvester.global_position = refinery.dock
 
-	harvester.advance_unload_order(0.25)
+	harvester._harvester.advance_unload_order(0.25)
 	_expect(
-		harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK \
+		harvester._harvester.unload_phase() == HarvesterControllerScript.UnloadPhase.PARK \
 		and harvester.animation_log.is_empty(),
 		"parking must wait for the required dock heading before unloading"
 	)
@@ -828,15 +840,15 @@ func _test_unload_parking_turn_rate(token: int, player: PlayerData) -> int:
 		is_equal_approx(absf(harvester.global_rotation.y), 0.5),
 		"a 0.1-radian TurnRate must rotate by 0.5 radians over five movement updates"
 	)
-	harvester.advance_unload_order(1.0)
+	harvester._harvester.advance_unload_order(1.0)
 	_expect(
-		harvester.unload_phase() == HarvesterScript.UnloadPhase.PARK,
+		harvester._harvester.unload_phase() == HarvesterControllerScript.UnloadPhase.PARK,
 		"parking must keep turning while the dock heading has not been reached"
 	)
-	harvester.advance_unload_order(0.5)
+	harvester._harvester.advance_unload_order(0.5)
 	_expect(
-		harvester.unload_phase() != HarvesterScript.UnloadPhase.PARK \
-		and harvester.animation_log.has(HarvesterScript.UNLOAD_START_ANIMATION),
+		harvester._harvester.unload_phase() != HarvesterControllerScript.UnloadPhase.PARK \
+		and harvester.animation_log.has(HarvesterControllerScript.UNLOAD_START_ANIMATION),
 		"unloading may start after the turn-rate-limited rotation reaches the dock heading"
 	)
 
@@ -858,12 +870,12 @@ func _test_unload_interruption(token: int, player: PlayerData) -> int:
 	var start_move := Vector3(10.0, 0.0, 0.0)
 	start_harvester.move_to(start_move)
 	_expect(start_harvester.target_position != start_move, "a direct order during UnloadStart must wait")
-	start_harvester.advance_unload_order(0.1)
+	start_harvester._harvester.advance_unload_order(0.1)
 	_expect(start_harvester.animation_log == [
-		HarvesterScript.UNLOAD_START_ANIMATION,
-		HarvesterScript.UNLOAD_END_ANIMATION,
+		HarvesterControllerScript.UNLOAD_START_ANIMATION,
+		HarvesterControllerScript.UNLOAD_END_ANIMATION,
 	], "interrupting UnloadStart must skip UnloadHold and play UnloadEnd")
-	start_harvester.advance_unload_order(0.1)
+	start_harvester._harvester.advance_unload_order(0.1)
 	_expect(start_harvester.target_position == start_move, "the pending move may start only after UnloadEnd finishes")
 	_expect(is_equal_approx(start_harvester.spice, 100.0), "UnloadStart interruption must transfer no cargo")
 
@@ -874,18 +886,18 @@ func _test_unload_interruption(token: int, player: PlayerData) -> int:
 	hold_harvester.owner_player_id = player.player_id
 	hold_harvester.max_spice = 700.0
 	hold_harvester.spice = 100.0
-	hold_harvester.unload_rate_per_update = 2.0
+	hold_harvester._harvester.unload_rate_per_update = 2.0
 	root.add_child(hold_harvester)
 	_park_for_unload(hold_harvester, hold_refinery, grid)
-	hold_harvester.advance_unload_order(0.1)
-	hold_harvester.advance_unload_order(0.25)
+	hold_harvester._harvester.advance_unload_order(0.1)
+	hold_harvester._harvester.advance_unload_order(0.25)
 	_expect(player.money == 10 and is_equal_approx(hold_harvester.spice, 90.0), "UnloadHold must transfer at 40 credits per second")
 	var hold_move := Vector3(12.0, 0.0, 0.0)
 	_expect(not hold_harvester.prepare_navigation_order(hold_move), "the unit navigation API must defer a move during UnloadHold")
-	hold_harvester.advance_unload_order(0.25)
+	hold_harvester._harvester.advance_unload_order(0.25)
 	_expect(player.money == 10 and is_equal_approx(hold_harvester.spice, 90.0), "cargo transfer must stop immediately after an interrupt")
-	_expect(hold_harvester.animation_log.back() == HarvesterScript.UNLOAD_END_ANIMATION, "the interrupted hold cycle must finish before UnloadEnd")
-	hold_harvester.advance_unload_order(0.1)
+	_expect(hold_harvester.animation_log.back() == HarvesterControllerScript.UNLOAD_END_ANIMATION, "the interrupted hold cycle must finish before UnloadEnd")
+	hold_harvester._harvester.advance_unload_order(0.1)
 	_expect(hold_harvester.target_position == hold_move, "the hold interruption's pending move must start after UnloadEnd")
 
 	start_harvester.queue_free()
@@ -904,19 +916,19 @@ func _test_unload_refinery_capture(token: int, player: PlayerData) -> int:
 	harvester.owner_player_id = player.player_id
 	harvester.max_spice = 700.0
 	harvester.spice = 100.0
-	harvester.unload_rate_per_update = 2.0
+	harvester._harvester.unload_rate_per_update = 2.0
 	root.add_child(harvester)
 	_park_for_unload(harvester, refinery, grid)
-	harvester.advance_unload_order(0.1)
-	harvester.advance_unload_order(0.25)
+	harvester._harvester.advance_unload_order(0.1)
+	harvester._harvester.advance_unload_order(0.25)
 	_expect(player.money == 10, "UnloadHold must transfer cargo before the refinery is captured")
 
 	refinery.owner_player_id = player.player_id + 1
-	harvester.advance_unload_order(0.25)
+	harvester._harvester.advance_unload_order(0.25)
 	_expect(player.money == 10 and is_equal_approx(harvester.spice, 90.0), "capture must stop cargo transfer immediately")
-	_expect(harvester.animation_log.back() == HarvesterScript.UNLOAD_END_ANIMATION, "capture during UnloadHold must finish the current clip and play UnloadEnd")
-	harvester.advance_unload_order(0.1)
-	_expect(not harvester.has_unload_order(), "captured refinery must not receive a return-to-front movement")
+	_expect(harvester.animation_log.back() == HarvesterControllerScript.UNLOAD_END_ANIMATION, "capture during UnloadHold must finish the current clip and play UnloadEnd")
+	harvester._harvester.advance_unload_order(0.1)
+	_expect(not harvester._harvester.has_unload_order(), "captured refinery must not receive a return-to-front movement")
 	_expect(refinery.release_delays == [3.0], "capture must still release the occupied pad after UnloadEnd")
 
 	harvester.queue_free()
@@ -932,11 +944,11 @@ func _park_for_unload(
 	) -> void:
 	harvester.global_position = refinery.front
 	harvester.command_unload(refinery, grid, spice_layer)
-	harvester.advance_unload_order(0.0)
-	harvester.advance_unload_order(0.0)
+	harvester._harvester.advance_unload_order(0.0)
+	harvester._harvester.advance_unload_order(0.0)
 	harvester.global_position = refinery.dock
 	harvester.face_direction(refinery.refinery_dock_facing_direction(0))
-	harvester.advance_unload_order(0.0)
+	harvester._harvester.advance_unload_order(0.0)
 
 
 func _expect(condition: bool, message: String) -> void:

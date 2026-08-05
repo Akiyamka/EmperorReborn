@@ -8,6 +8,14 @@ const WallChainScript := preload("res://scripts/buildings/wall_chain.gd")
 const ATConYardScene := preload("res://assets/converted/buildings/ATConYard/ATConYard.scn")
 const PlacementBuildingScene := preload("res://assets/converted/placement/build_building.scn")
 const PlacementWallScene := preload("res://assets/converted/placement/build_wall.scn")
+const PlacementContextScript := preload("res://scripts/buildings/placement_context.gd")
+
+## Status line each mode emits on its way out, keyed the same as _enter_mode().
+const MODE_CANCEL_STATUS := {
+	&"sell": "Sell mode canceled",
+	&"repair": "Repair mode canceled",
+	&"wall_line": "Wall mode canceled",
+}
 
 var _assertions := 0
 var _failures := 0
@@ -20,9 +28,14 @@ var _completion_token := 3000
 ## tests/characterization/run.gd and tests/buildings/upgrade_run.gd, sized
 ## for BuildingController's own "buildings" group polling instead.
 class BuildingStub extends Node:
+	signal owner_changed(player_id: int)
+	signal construction_completed
+	signal upgrade_level_changed(level: int)
+
 	var owner_player_id: int
 	var config_id: StringName
 	var upgrade_level := 0
+	var construction_complete := true
 
 	func _init(new_config_id: StringName, new_owner_player_id: int) -> void:
 		config_id = new_config_id
@@ -31,6 +44,18 @@ class BuildingStub extends Node:
 
 	func set_upgrade_level(level: int) -> void:
 		upgrade_level = level
+		upgrade_level_changed.emit(level)
+
+	func set_owner_player_id(player_id: int) -> void:
+		owner_player_id = player_id
+		owner_changed.emit(player_id)
+
+	func finish_construction() -> void:
+		construction_complete = true
+		construction_completed.emit()
+
+	func is_construction_complete() -> bool:
+		return construction_complete
 
 
 class GestureController extends BuildingController:
@@ -100,6 +125,30 @@ func _initialize() -> void:
 		"completing a global upgrade unlocks an upgraded_primary_required entry without restarting the controller",
 		_test_availability_reacts_to_upgrade_purchase.bind(local_player)
 	)
+	_run_case(
+		"every ordered pair of sell/repair/wall-line modes deactivates the outgoing mode exactly once",
+		_test_mode_transitions_deactivate_exiting_mode_once
+	)
+	_run_case(
+		"leaving wall mode cancels its own placement preview",
+		_test_leaving_wall_mode_cancels_its_own_preview
+	)
+	_run_case(
+		"starting a wall chain stamps it with the roster's local player",
+		_test_wall_chain_owner_comes_from_roster.bind(local_player)
+	)
+	_run_case(
+		"unrelated nodes leaving the tree do not invalidate availability",
+		_test_unrelated_node_removal_keeps_availability_cache.bind(local_player)
+	)
+	_run_case(
+		"leaving and re-entering the tree does not double-connect availability signals",
+		_test_availability_resubscribe_after_tree_reentry.bind(local_player)
+	)
+	_run_case(
+		"a stale available cache does not survive leaving the tree",
+		_test_availability_forces_false_when_leaving_tree.bind(local_player)
+	)
 
 	players.reset_for_match()
 	if _failures > 0:
@@ -151,7 +200,7 @@ func _test_rotation_release_requires_confirmation(token: int) -> int:
 	controller._building_placement.begin(&"Gesture", "Gesture", ["X"])
 	controller._placement_pointer_down = true
 	controller._placement_press_position = Vector2(10.0, 10.0)
-	controller._placement_rotated_during_press = true
+	controller._pointer_gesture.set_rotated_during_press(true)
 	controller._finish_placement_pointer_action(Vector2(10.0, 10.0))
 	_expect(
 		controller._building_placement.is_active(),
@@ -217,7 +266,7 @@ func _test_completed_wall_refund(token: int, local_player: PlayerData) -> int:
 func _test_wall_line_preview_only_during_selection(token: int) -> int:
 	var controller := _new_controller()
 	_setup_without_assets(controller)
-	controller._building_placement.setup(
+	_setup_controller_placement(controller,
 		null,
 		FakeGrid.new(),
 		null,
@@ -258,7 +307,7 @@ func _test_wall_chain_skips_blocked_segment(token: int) -> int:
 	_setup_without_assets(controller)
 	var grid := MutableGrid.new()
 	grid.block_occupy_cell(Vector2i(2, 4))
-	controller._building_placement.setup(
+	_setup_controller_placement(controller,
 		null, grid, null, null, null, null, null, Callable()
 	)
 	controller._wall_chain = WallChainScript.new(
@@ -282,7 +331,7 @@ func _test_wall_chain_continues_after_late_block(token: int) -> int:
 	var controller := _new_controller()
 	_setup_without_assets(controller)
 	var grid := MutableGrid.new()
-	controller._building_placement.setup(
+	_setup_controller_placement(controller,
 		null, grid, null, null, null, null, null, Callable()
 	)
 	controller._wall_chain = WallChainScript.new(
@@ -307,7 +356,7 @@ func _test_wall_chain_continues_after_late_block(token: int) -> int:
 func _test_fixed_wall_line_ignores_world_right_click(token: int) -> int:
 	var controller := _new_controller()
 	_setup_without_assets(controller)
-	controller._building_placement.setup(
+	_setup_controller_placement(controller,
 		null, FakeGrid.new(), null, null, null, null, null, Callable()
 	)
 	var world_right_click := InputEventMouseButton.new()
@@ -355,16 +404,16 @@ func _test_fixed_wall_marker_lifecycle(token: int) -> int:
 	_setup_without_assets(controller)
 	var buildings_root := Node3D.new()
 	root.add_child(buildings_root)
-	controller._building_placement.setup(
+	_setup_controller_placement(controller,
 		null, FakeGrid.new(), buildings_root, null, null, null, null, Callable()
 	)
-	controller._wall_marker_scene = PlacementWallScene
+	controller._wall_session.set_marker_scene(PlacementWallScene)
 	controller._lock_wall_markers([Vector2i(2, 4), Vector2i(4, 4)])
 	_expect(
-		controller._wall_markers.size() == 2,
+		controller._wall_session.markers().size() == 2,
 		"fixing a wall line must retain one build_wall marker per green segment"
 	)
-	var marker := controller._wall_markers[Vector2i(2, 4)] as Node3D
+	var marker := controller._wall_session.markers()[Vector2i(2, 4)] as Node3D
 	var marker_meshes := marker.find_children("*", "MeshInstance3D", true, false)
 	var marker_uses_source_materials := not marker_meshes.is_empty()
 	for node in marker_meshes:
@@ -388,14 +437,14 @@ func _test_fixed_wall_marker_lifecycle(token: int) -> int:
 	controller._advance_wall_chain()
 	controller._building_queue.tick(1.0, 0)
 	_expect(
-		not controller._wall_markers.has(Vector2i(2, 4))
-		and controller._wall_markers.has(Vector2i(4, 4)),
+		not controller._wall_session.markers().has(Vector2i(2, 4))
+		and controller._wall_session.markers().has(Vector2i(4, 4)),
 		"a completed segment must remove only its own fixed marker"
 	)
 
 	controller._cancel_building_order()
 	_expect(
-		controller._wall_markers.is_empty(),
+		controller._wall_session.markers().is_empty(),
 		"canceling wall construction must remove all remaining fixed markers"
 	)
 	controller.free()
@@ -462,12 +511,337 @@ func _test_sale_construct_fallback(token: int, local_player: PlayerData) -> int:
 	return token
 
 
+## _sell_mode/_repair_mode/_wall_line_mode are property shims over a single
+## Mode enum. Activating one mode must deactivate whichever of the other two
+## was previously active -- emitting its own *_changed(false) exactly once,
+## same as when these were three independent bool fields (git show HEAD).
+## Covers every ordered pair among the three non-NONE modes (6 transitions);
+## entry from NONE is already exercised by the other mode tests above.
+func _test_mode_transitions_deactivate_exiting_mode_once(token: int) -> int:
+	var ordered_pairs := [
+		[&"sell", &"repair"],
+		[&"sell", &"wall_line"],
+		[&"repair", &"sell"],
+		[&"repair", &"wall_line"],
+		[&"wall_line", &"sell"],
+		[&"wall_line", &"repair"],
+	]
+	for pair in ordered_pairs:
+		var from_mode: StringName = pair[0]
+		var to_mode: StringName = pair[1]
+		var controller := _new_controller()
+		_setup_without_assets(controller)
+
+		var events: Dictionary = {&"sell": [], &"repair": [], &"wall_line": []}
+		controller.sell_mode_changed.connect(func(active: bool) -> void: events[&"sell"].append(active))
+		controller.repair_mode_changed.connect(func(active: bool) -> void: events[&"repair"].append(active))
+		controller.wall_mode_changed.connect(func(active: bool) -> void: events[&"wall_line"].append(active))
+		var statuses: Array[String] = []
+		controller.status_changed.connect(func(text: String) -> void: statuses.append(text))
+
+		_enter_mode(controller, from_mode)
+		for key in events.keys():
+			(events[key] as Array).clear()
+		statuses.clear()
+
+		_enter_mode(controller, to_mode)
+
+		var from_events: Array = events[from_mode]
+		_expect(
+			from_events == [false],
+			"%s -> %s must emit %s_mode_changed(false) exactly once for the outgoing mode (got %s)" % [
+				from_mode, to_mode, from_mode, from_events
+			]
+		)
+		# The signal is what listeners bind to, but the status line is what the
+		# player actually reads, and it is emitted from a different branch of the
+		# same deactivation body -- so a half-applied fix could restore one
+		# without the other.
+		var cancel_line: String = MODE_CANCEL_STATUS[from_mode]
+		_expect(
+			statuses.count(cancel_line) == 1,
+			"%s -> %s must report \"%s\" exactly once (got %s)" % [
+				from_mode, to_mode, cancel_line, statuses
+			]
+		)
+		controller.free()
+	return token
+
+
+## The third thing a deactivation does, after the signal and the status line:
+## wall mode owns a live BuildingPlacement preview, and _deactivate_wall_line_
+## mode() is what tears it down. Skipping that step is not visible as a
+## surviving preview -- the generic _cancel_building_placement() further down
+## the same setter catches it either way. What gives it away is that the
+## generic path announces "<id> placement canceled", a line the wall path never
+## produces, so that stray status is the assertion.
+func _test_leaving_wall_mode_cancels_its_own_preview(token: int) -> int:
+	for to_mode in [&"repair", &"sell"]:
+		var controller := _new_controller()
+		_setup_without_assets(controller)
+		_setup_controller_placement(controller,
+			null, FakeGrid.new(), null, null, PlacementBuildingScene, null, null, Callable()
+		)
+		_enter_mode(controller, &"wall_line")
+		_expect(
+			controller._building_placement.is_active(),
+			"wall mode must own a live placement preview before it is left"
+		)
+
+		var statuses: Array[String] = []
+		controller.status_changed.connect(func(text: String) -> void: statuses.append(text))
+		_enter_mode(controller, to_mode)
+
+		_expect(
+			not controller._building_placement.is_active(),
+			"leaving wall mode for %s must leave no live placement preview" % to_mode
+		)
+		var stray: Array = statuses.filter(func(text: String) -> bool:
+			return text.ends_with("placement canceled")
+		)
+		_expect(
+			stray.is_empty(),
+			"wall mode must cancel its own preview rather than leave it to the generic placement cancel (got %s)" % [stray]
+		)
+		controller.free()
+	return token
+
+
+## BuildingAvailabilityTracker connects owner_changed/construction_
+## completed/upgrade_level_changed/tree_exiting on every tracked building, but
+## _exit_tree() used to only forget them (clearing the tracked map)
+## without disconnecting -- so a controller that leaves the tree
+## (freed and replaced, or simply re-parented) and calls setup() again would
+## reconnect on top of connections that were never torn down, and Godot logs
+## "Signal is already connected" for every live building. Exercise exactly
+## that sequence and confirm each signal ends up connected exactly once.
+func _test_availability_resubscribe_after_tree_reentry(token: int, local_player: PlayerData) -> int:
+	var controller := _new_controller()
+	var building_ids: Array[StringName] = [&"ATBarracks"]
+	controller.setup(null, null, null, building_ids, null, null, null, null)
+
+	# ATBarracks needs both a primary ATConYard and a secondary Windtrap to
+	# read AVAILABLE (see _test_availability_reacts_to_prerequisite_loss), so
+	# the later ownership flip below actually changes its state instead of
+	# leaving it permanently DISABLED regardless of connection count.
+	var con_yard := BuildingStub.new(&"ATConYard", local_player.player_id)
+	var windtrap := BuildingStub.new(&"ATSmWindtrap", local_player.player_id)
+	root.add_child(con_yard)
+	root.add_child(windtrap)
+	controller.process(0.0)
+
+	root.remove_child(controller)
+	# Godot's Signal.connect() itself refuses to add a true duplicate
+	# connection (it just errors and leaves the original in place), so a
+	# post-resubscribe connection-count check alone cannot go red on the bug
+	# this guards against. Assert the actual root cause directly: leaving the
+	# tree must tear down every subscription it made, not just forget about
+	# it in the tracker's map.
+	_expect(
+		not con_yard.is_connected("owner_changed", Callable(controller._availability_tracker, "_on_owner_changed")),
+		"leaving the tree must disconnect owner_changed from a tracked building"
+	)
+	_expect(
+		not con_yard.is_connected("construction_completed", Callable(controller._availability_tracker, "mark_dirty")),
+		"leaving the tree must disconnect construction_completed from a tracked building"
+	)
+	_expect(
+		not con_yard.is_connected("upgrade_level_changed", Callable(controller._availability_tracker, "_on_upgrade_changed")),
+		"leaving the tree must disconnect upgrade_level_changed from a tracked building"
+	)
+	_expect(
+		not con_yard.is_connected("tree_exiting", Callable(controller._availability_tracker, "mark_dirty")),
+		"leaving the tree must disconnect tree_exiting from a tracked building"
+	)
+
+	root.add_child(controller)
+	controller.setup(null, null, null, building_ids, null, null, null, null)
+	controller.process(0.0)
+
+	_expect(
+		con_yard.get_signal_connection_list("owner_changed").size() == 1,
+		"re-entering the tree and calling setup() again must not double-connect owner_changed"
+	)
+	_expect(
+		con_yard.get_signal_connection_list("construction_completed").size() == 1,
+		"re-entering the tree and calling setup() again must not double-connect construction_completed"
+	)
+	_expect(
+		con_yard.get_signal_connection_list("upgrade_level_changed").size() == 1,
+		"re-entering the tree and calling setup() again must not double-connect upgrade_level_changed"
+	)
+	_expect(
+		con_yard.get_signal_connection_list("tree_exiting").size() == 1,
+		"re-entering the tree and calling setup() again must not double-connect tree_exiting"
+	)
+
+	# A duplicated connection cannot be detected by counting effects of firing
+	# the signal once -- mark_dirty() only sets a boolean flag,
+	# so N connections firing on one event still only mark it dirty once
+	# either way. The exactly-one-connection assertions above are the direct
+	# evidence; re-firing here just confirms the surviving connection still
+	# works end to end after the resubscribe.
+	# A single-element Array, not a plain int, because GDScript lambdas
+	# capture outer local scalars by value: an `int` incremented inside the
+	# closure would never be visible out here.
+	var refresh_count := [0]
+	controller.building_option_state_changed.connect(func(option_state: BuildingOptionState) -> void:
+		if option_state.building_id == &"ATBarracks":
+			refresh_count[0] += 1
+	)
+	con_yard.set_owner_player_id(2)
+	controller.process(0.0)
+	_expect(
+		refresh_count[0] >= 1,
+		"the surviving owner_changed connection must still refresh ATBarracks option state after resubscribing"
+	)
+
+	con_yard.free()
+	windtrap.free()
+	controller.free()
+	return token
+
+
+## HEAD's _is_building_available() began with `if not is_inside_tree(): return
+## false`; the stage-5 refactor moved availability into a plain-cache
+## _catalog_view whose is_available() has no notion of the scene tree, so a
+## controller that leaves the tree without one further dirtying event would
+## otherwise keep serving whatever it last computed while still inside it.
+func _test_availability_forces_false_when_leaving_tree(token: int, local_player: PlayerData) -> int:
+	var controller := _new_controller()
+	var building_ids: Array[StringName] = [&"ATBarracks"]
+	controller.setup(null, null, null, building_ids, null, null, null, null)
+
+	var con_yard := BuildingStub.new(&"ATConYard", local_player.player_id)
+	var windtrap := BuildingStub.new(&"ATSmWindtrap", local_player.player_id)
+	root.add_child(con_yard)
+	root.add_child(windtrap)
+	controller.process(0.0)
+	_expect(
+		controller._is_building_available(&"ATBarracks"),
+		"prerequisite present must read available before teardown"
+	)
+
+	root.remove_child(controller)
+	# _building_placement is this controller's own child, and children exit
+	# the tree before their parent's own _exit_tree() runs -- so its removal
+	# happens to reach the tracker's node_removed handler while the tree
+	# signal is still connected, marking availability dirty as an incidental
+	# side effect of this controller's own teardown cascade. Consume the flag
+	# to isolate the actual scenario this guards: nothing external marks
+	# availability dirty after leaving the tree, so a stale cached "true"
+	# must not survive on its own.
+	controller._availability_tracker.consume_dirty()
+	var latest_state: Dictionary = {}
+	controller.building_option_state_changed.connect(func(option_state: BuildingOptionState) -> void:
+		latest_state[option_state.building_id] = option_state.state
+	)
+	controller._refresh_building_option_states()
+	_expect(
+		latest_state.get(&"ATBarracks") == BuildingOptionStateScript.State.DISABLED,
+		"a controller outside the tree must report every entry unavailable, even from a stale cache"
+	)
+
+	con_yard.free()
+	windtrap.free()
+	controller.free()
+	return token
+
+
+func _enter_mode(controller: BuildingController, mode: StringName) -> void:
+	match mode:
+		&"sell":
+			controller._set_sell_mode(true)
+		&"repair":
+			controller._set_repair_mode(true)
+		&"wall_line":
+			controller._set_wall_line_mode(true, &"ATWall")
+
+
+## The wall tests above all install a WallChain directly, so nothing exercised
+## start_chain() itself -- where the chain is stamped with its owner. That owner
+## is the roster's local_player_id, not the local PlayerData's player_id, and
+## reading the wrong one crashed the moment a player finished a wall line.
+func _test_wall_chain_owner_comes_from_roster(token: int, local_player: PlayerData) -> int:
+	var controller := _new_controller()
+	_setup_without_assets(controller)
+	_setup_controller_placement(controller,
+		null, FakeGrid.new(), null, null, null, null, null, Callable()
+	)
+	var cells: Array[Vector2i] = [Vector2i(2, 4), Vector2i(4, 4)]
+	controller._start_wall_chain(Vector2i(2, 4), Vector2i(4, 4), &"ATWall", cells)
+	_expect(
+		controller._wall_chain != null,
+		"a wall line over buildable cells must produce a chain"
+	)
+	if controller._wall_chain != null:
+		_expect(
+			controller._wall_chain.owner_player_id == local_player.player_id,
+			"the chain must carry the roster's local player id, got %s" % [
+				controller._wall_chain.owner_player_id
+			]
+		)
+	controller._cancel_building_order()
+	controller.free()
+	return token
+
+
+## node_removed fires for every node in the game. BuildingPlacement releases its
+## preview cells through remove_child() on every cursor move, so treating any
+## removal as an availability change put the O(ids x buildings) recompute back
+## on every frame of a wall-line drag -- the exact cost the cache exists to
+## avoid.
+func _test_unrelated_node_removal_keeps_availability_cache(token: int, _local_player: PlayerData) -> int:
+	var controller := _new_controller()
+	var building_ids: Array[StringName] = [&"ATBarracks"]
+	controller.setup(null, null, null, building_ids, null, null, null, null)
+	controller.process(0.0)
+	_expect(
+		not controller._availability_tracker.is_dirty(),
+		"a completed refresh must leave the availability cache clean"
+	)
+
+	var scratch := Node3D.new()
+	root.add_child(scratch)
+	root.remove_child(scratch)
+	_expect(
+		not controller._availability_tracker.is_dirty(),
+		"a node that was never a tracked building must not invalidate availability"
+	)
+	scratch.free()
+	controller.free()
+	return token
+
+
 func _expect(condition: bool, message: String) -> void:
 	_assertions += 1
 	if condition:
 		return
 	_failures += 1
 	printerr("FAIL: %s: %s" % [_current_case, message])
+
+
+func _setup_controller_placement(
+		controller,
+		camera: Camera3D,
+		navigation_grid,
+		buildings_root: Node3D,
+		arrow_scene: PackedScene,
+		building_preview_scene: PackedScene,
+		cant_build_preview_scene: PackedScene,
+		skirt_preview_scene: PackedScene,
+		existing_rows: Callable
+) -> void:
+	var context := PlacementContextScript.new()
+	context.camera = camera
+	context.navigation_grid = navigation_grid
+	context.buildings_root = buildings_root
+	context.arrow_scene = arrow_scene
+	context.building_preview_scene = building_preview_scene
+	context.cant_build_preview_scene = cant_build_preview_scene
+	context.skirt_preview_scene = skirt_preview_scene
+	context.existing_building_occupy_rows = existing_rows
+	controller._building_placement.setup(context)
 
 
 ## docs/mechanics/production.md section 5: "loss of a prerequisite building
@@ -517,8 +891,38 @@ func _test_availability_reacts_to_prerequisite_loss(token: int, local_player: Pl
 		"restoring the prerequisite must re-enable the entry on the next poll"
 	)
 
-	restored_con_yard.free()
+	windtrap.set_owner_player_id(2)
+	controller.process(0.0)
+	_expect(
+		latest_states.get(&"ATBarracks") == BuildingOptionStateScript.State.DISABLED,
+		"capturing a prerequisite away from the player must invalidate availability"
+	)
+	windtrap.set_owner_player_id(local_player.player_id)
+	controller.process(0.0)
+	_expect(
+		latest_states.get(&"ATBarracks") == BuildingOptionStateScript.State.AVAILABLE,
+		"recapturing a prerequisite must restore availability"
+	)
+
+	root.remove_child(windtrap)
 	windtrap.free()
+	var unfinished_windtrap := BuildingStub.new(&"ATSmWindtrap", local_player.player_id)
+	unfinished_windtrap.construction_complete = false
+	root.add_child(unfinished_windtrap)
+	controller.process(0.0)
+	_expect(
+		latest_states.get(&"ATBarracks") == BuildingOptionStateScript.State.DISABLED,
+		"a newly added unfinished prerequisite must remain unavailable"
+	)
+	unfinished_windtrap.finish_construction()
+	controller.process(0.0)
+	_expect(
+		latest_states.get(&"ATBarracks") == BuildingOptionStateScript.State.AVAILABLE,
+		"construction completion must invalidate and restore availability"
+	)
+
+	restored_con_yard.free()
+	unfinished_windtrap.free()
 	controller.free()
 	return token
 

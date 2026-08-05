@@ -7,6 +7,7 @@ const BuildingDefinitionCatalogScript := preload(
 	"res://scripts/buildings/building_definition_catalog.gd"
 )
 const MatchFixtureScene := preload("res://tests/fixtures/match_fixture.tscn")
+const HarvesterControllerScript := preload("res://scripts/units/harvester_controller.gd")
 const HarvesterScene := preload("res://scenes/units/harvester.tscn")
 const ATRefineryScene := preload("res://assets/converted/buildings/ATRefinery/ATRefinery.scn")
 const ATMongooseModelScene := preload(
@@ -291,7 +292,7 @@ func _test_unit_movement_animations() -> void:
 			_expect(player.current_animation == &"Stationary", "%s idle sequence must start with Stationary" % unit_name)
 			if player.has_animation(&"Idle_0") and player.has_animation(&"Idle_1"):
 				_expect(
-					unit.call("_idle_animation_weight", &"Idle_0") > unit.call("_idle_animation_weight", &"Idle_1"),
+					unit._idle_animations.weight_of(&"Idle_0") > unit._idle_animations.weight_of(&"Idle_1"),
 					"%s higher-numbered Idle* clips must have lower selection weight" % unit_name
 				)
 			var stationary_plays := 0
@@ -337,8 +338,8 @@ func _test_mech_gait_speeds() -> void:
 		is_equal_approx(unit.mech_speed, configured_mech_speed),
 		"Mongoose must load its editable MechSpeed rule"
 	)
-	var authored_average := float(unit.get("_mech_authored_average_speed"))
-	var cadence := float(unit.call("_mech_gait_cadence"))
+	var authored_average := unit._locomotion.authored_average_speed()
+	var cadence := unit._locomotion.gait_cadence()
 	_expect(
 		is_equal_approx(authored_average, 2.66),
 		"Mongoose must average its authored 1.0/3.5/0.8 Move speed events"
@@ -348,17 +349,17 @@ func _test_mech_gait_speeds() -> void:
 		"MechSpeed must calibrate the authored profile's average through cadence"
 	)
 
-	unit.set("_mech_gait_elapsed", 0.0)
+	unit._locomotion.seek_gait_phase(0.0)
 	_expect(
 		is_equal_approx(unit.navigation_move_speed(), 1.0 * cadence),
 		"Mongoose Move must begin with its authored 1.0 speed"
 	)
-	unit.set("_mech_gait_elapsed", 0.20)
+	unit._locomotion.seek_gait_phase(0.20)
 	_expect(
 		is_equal_approx(unit.navigation_move_speed(), 3.5 * cadence),
 		"Mongoose must switch to its authored fast phase at frame 6"
 	)
-	unit.set("_mech_gait_elapsed", 0.60)
+	unit._locomotion.seek_gait_phase(0.60)
 	_expect(
 		is_equal_approx(unit.navigation_move_speed(), 0.8 * cadence),
 		"Mongoose must switch to its authored slow phase at frame 14"
@@ -370,7 +371,7 @@ func _test_mech_gait_speeds() -> void:
 
 	unit.velocity = Vector3.RIGHT * unit.navigation_move_speed()
 	_expect(
-		is_equal_approx(float(unit.call("_movement_animation_speed_scale")), cadence),
+		is_equal_approx(unit._locomotion.movement_animation_speed_scale(), cadence),
 		"the physical XBF speed and Move playback must share one cadence"
 	)
 
@@ -378,7 +379,7 @@ func _test_mech_gait_speeds() -> void:
 	unit.replace_visual_scene(HKDevastatorModelScene)
 	var forward := unit.facing_direction()
 	unit.set_navigation_destination(unit.global_position + forward * 10.0)
-	unit.set("_mech_gait_elapsed", 0.0)
+	unit._locomotion.seek_gait_phase(0.0)
 	_expect(
 		is_zero_approx(unit.navigation_move_speed()),
 		"Devastator must begin Move with its authored zero-speed phase"
@@ -388,14 +389,14 @@ func _test_mech_gait_speeds() -> void:
 	_expect(
 		devastator_player != null
 		and devastator_player.current_animation == &"Move_Start"
-		and is_zero_approx(float(unit.get("_mech_gait_elapsed"))),
+		and is_zero_approx(unit._locomotion.gait_phase()),
 		"Devastator must finish Move_Start before beginning its zero-speed Move phase"
 	)
 	if devastator_player != null:
 		devastator_player.animation_finished.emit(&"Move_Start")
 	unit.navigation_step(Vector3.ZERO, 0.1)
 	_expect(
-		float(unit.get("_mech_gait_elapsed")) > 0.0
+		unit._locomotion.gait_phase() > 0.0
 		and devastator_player != null
 		and devastator_player.current_animation == &"Move",
 		"an authored zero-speed Move phase must advance instead of resetting to idle"
@@ -413,7 +414,7 @@ func _test_mech_gait_speeds() -> void:
 	)
 	var parked_distance := lerpf(unit.arrival_radius, navigation_arrival, 0.5)
 	unit.set_navigation_destination(unit.global_position + unit.facing_direction() * parked_distance)
-	unit.set("_mech_gait_elapsed", 0.0)
+	unit._locomotion.seek_gait_phase(0.0)
 	unit.navigation_step(Vector3.ZERO, 0.1)
 	_expect(
 		devastator_player != null and devastator_player.current_animation == &"Move_Stop",
@@ -766,7 +767,7 @@ func _test_upgrade_availability_polls() -> void:
 	side_panel._set_active_tab(3) # Tab.UPGRADES
 	await process_frame
 
-	var slot_before = side_panel._upgrade_slot(&"ATBarracks")
+	var slot_before = side_panel._slot_for(SidePanel.OptionKind.UPGRADE, &"ATBarracks")
 	_expect(
 		slot_before != null and not slot_before.visible,
 		"ATBarracks upgrade must start hidden -- the fixture has no Barracks yet"
@@ -781,7 +782,7 @@ func _test_upgrade_availability_polls() -> void:
 	for i in 5:
 		await process_frame
 
-	var slot_after = side_panel._upgrade_slot(&"ATBarracks")
+	var slot_after = side_panel._slot_for(SidePanel.OptionKind.UPGRADE, &"ATBarracks")
 	_expect(
 		slot_after != null and slot_after.visible,
 		"ATBarracks upgrade must become visible once a Barracks is placed, without any manual refresh call"
@@ -797,7 +798,7 @@ func _test_upgrade_availability_polls() -> void:
 	for i in 5:
 		await process_frame
 
-	var slot_purchased = side_panel._upgrade_slot(&"ATBarracks")
+	var slot_purchased = side_panel._slot_for(SidePanel.OptionKind.UPGRADE, &"ATBarracks")
 	_expect(
 		slot_purchased != null and not slot_purchased.visible,
 		"a purchased upgrade's slot must be hidden, not left visible with an OWNED label"
@@ -831,8 +832,8 @@ func _test_unit_roster_availability() -> void:
 	)
 
 	# Tab.INFANTRY is the panel's boot default, so both slots are live.
-	var infantry_slot = side_panel._building_slot(&"ATInfantry")
-	var kindjal_slot = side_panel._building_slot(&"ATKindjal")
+	var infantry_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATInfantry")
+	var kindjal_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATKindjal")
 	_expect(
 		infantry_slot != null and infantry_slot.visible and infantry_slot.disabled,
 		"ATInfantry must retain its fixed empty slot before a Barracks exists"
@@ -852,8 +853,8 @@ func _test_unit_roster_availability() -> void:
 	for i in 5:
 		await process_frame
 
-	infantry_slot = side_panel._building_slot(&"ATInfantry")
-	kindjal_slot = side_panel._building_slot(&"ATKindjal")
+	infantry_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATInfantry")
+	kindjal_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATKindjal")
 	_expect(
 		infantry_slot != null and infantry_slot.visible and infantry_slot.disabled,
 		"ATInfantry must retain its slot while the owned Barracks is being built"
@@ -873,7 +874,7 @@ func _test_unit_roster_availability() -> void:
 	for i in 5:
 		await process_frame
 
-	infantry_slot = side_panel._building_slot(&"ATInfantry")
+	infantry_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATInfantry")
 	_expect(
 		infantry_slot != null and infantry_slot.visible,
 		"ATInfantry must become visible after the Barracks construction animation completes"
@@ -884,7 +885,7 @@ func _test_unit_roster_availability() -> void:
 	for i in 5:
 		await process_frame
 
-	kindjal_slot = side_panel._building_slot(&"ATKindjal")
+	kindjal_slot = side_panel._slot_for(SidePanel.OptionKind.BUILDING, &"ATKindjal")
 	_expect(
 		kindjal_slot != null and kindjal_slot.visible,
 		"ATKindjal must become visible once the Barracks is upgraded"
@@ -1107,7 +1108,7 @@ func _test_real_forced_friendly_attack() -> void:
 	attacker.weapon_fired.connect(func(projectiles: Array, fired_target: Variant, weapon_index: int) -> void:
 		if fired_target == target:
 			fired_projectiles.append_array(projectiles)
-			var fire_state: Dictionary = attacker._weapon_fire_sequences.get(
+			var fire_state: Dictionary = attacker.combat()._weapon_fire_sequences.get(
 				weapon_index, {}
 			)
 			var player := fire_state.get("player") as AnimationPlayer
@@ -1264,7 +1265,7 @@ func _test_real_harvester_unload_trip() -> void:
 	refinery.position = Vector3(24.0, 8.0, 12.0)
 	refinery.owner_player_id = 1
 	match_instance.get_node("Buildings").add_child(refinery)
-	var harvester := HarvesterScene.instantiate() as Harvester
+	var harvester := HarvesterScene.instantiate() as Unit
 	harvester.owner_player_id = 1
 	match_instance.get_node("Units").add_child(harvester)
 	get_root().add_child(match_instance)
@@ -1295,22 +1296,22 @@ func _test_real_harvester_unload_trip() -> void:
 
 	var visited_phases := {}
 	for _tick in 800:
-		visited_phases[harvester.unload_phase()] = true
+		visited_phases[harvester._harvester.unload_phase()] = true
 		navigation.call("_navigation_tick", 0.05)
-		harvester.advance_unload_order(0.05)
-		if not harvester.has_unload_order():
+		harvester._harvester.advance_unload_order(0.05)
+		if not harvester._harvester.has_unload_order():
 			break
 
 	for required_phase in [
-		Harvester.UnloadPhase.PARK,
-		Harvester.UnloadPhase.START,
-		Harvester.UnloadPhase.HOLD,
-		Harvester.UnloadPhase.END,
+		HarvesterControllerScript.UnloadPhase.PARK,
+		HarvesterControllerScript.UnloadPhase.START,
+		HarvesterControllerScript.UnloadPhase.HOLD,
+		HarvesterControllerScript.UnloadPhase.END,
 	]:
 		_expect(visited_phases.has(required_phase), "the real unload trip must visit phase %d" % required_phase)
-	_expect(not visited_phases.has(Harvester.UnloadPhase.RETURN_FRONT), "an automatic cycle must not insert a refinery-front waypoint before the field")
-	_expect(not harvester.has_unload_order() and harvester.has_harvest_order(), "the real unload trip must hand off directly to harvesting")
-	_expect(match_instance.terrain.spice_layer.spice_at(harvester.harvest_target_cell()) > 0, "the direct post-unload target must be a non-empty spice cell")
+	_expect(not visited_phases.has(HarvesterControllerScript.UnloadPhase.RETURN_FRONT), "an automatic cycle must not insert a refinery-front waypoint before the field")
+	_expect(not harvester._harvester.has_unload_order() and harvester._harvester.has_harvest_order(), "the real unload trip must hand off directly to harvesting")
+	_expect(match_instance.terrain.spice_layer.spice_at(harvester._harvester.harvest_target_cell()) > 0, "the direct post-unload target must be a non-empty spice cell")
 	_expect(is_zero_approx(harvester.spice), "the real unload trip must empty the harvester")
 	_expect(player.money == money_before + 100, "the real unload trip must credit all cargo to the player")
 

@@ -198,8 +198,8 @@ func _test_death_mid_fire_sequence() -> void:
 
 	var overlay := AnimationPlayer.new()
 	unit.add_child(overlay)
-	unit._weapon_fire_overlays[0] = overlay
-	unit._weapon_fire_sequences[0] = {
+	unit.combat()._fire_overlay.adopt_overlay(0, overlay)
+	unit.combat()._weapon_fire_sequences[0] = {
 		"turret": null,
 		"target": {},
 		"player": overlay,
@@ -217,7 +217,7 @@ func _test_death_mid_fire_sequence() -> void:
 	_expect(unit.is_queued_for_deletion(), "a unit killed mid-fire-sequence must still be freed")
 	_expect(not is_instance_valid(overlay), "the fire overlay handed to the corpse prep must have been freed")
 	_expect(
-		unit._weapon_fire_sequences.is_empty(),
+		unit.combat()._weapon_fire_sequences.is_empty(),
 		"the fire sequence referencing the freed overlay must be cleared, not left dangling"
 	)
 	# The actual free (and thus _exit_tree()'s _cancel_all_fire_sequences(false))
@@ -262,11 +262,9 @@ func _test_death_mid_own_fire_animation() -> void:
 	# of the unit's own (real, model-owned) AnimationPlayers.
 	var target := Node3D.new()
 	world.add_child(target)
-	unit._has_attack_order = true
-	unit._attack_is_ground = false
-	unit._attack_target_ref = weakref(target)
+	unit.combat()._attack_order.begin(target)
 	var fire_player := unit._animation_players[0]
-	unit._weapon_fire_sequences[0] = {
+	unit.combat()._weapon_fire_sequences[0] = {
 		"turret": null,
 		"target": {"is_ground": false, "ref": weakref(target)},
 		"player": fire_player,
@@ -344,15 +342,13 @@ func _test_dying_unit_leaves_no_reference_into_its_corpse() -> void:
 
 	var overlay := AnimationPlayer.new()
 	unit.add_child(overlay)
-	unit._weapon_fire_overlays[0] = overlay
+	unit.combat()._fire_overlay.adopt_overlay(0, overlay)
 
 	var target := Node3D.new()
 	world.add_child(target)
-	unit._has_attack_order = true
-	unit._attack_is_ground = false
-	unit._attack_target_ref = weakref(target)
+	unit.combat()._attack_order.begin(target)
 	var fire_player := unit._animation_players[0]
-	unit._weapon_fire_sequences[0] = {
+	unit.combat()._weapon_fire_sequences[0] = {
 		"turret": null,
 		"target": {"is_ground": false, "ref": weakref(target)},
 		"player": fire_player,
@@ -365,8 +361,15 @@ func _test_dying_unit_leaves_no_reference_into_its_corpse() -> void:
 		"blocking": true,
 	}
 	# Exercises the third site this audit found: nothing but the death
-	# handoff itself ever clears this field.
-	unit._deployment_animation_player = fire_player
+	# handoff itself ever clears the deploy machine's cached transition
+	# player. Planted through the production path that caches it, so the setup
+	# cannot drift away from what deploying actually does.
+	var planted_clip := StringName(fire_player.get_animation_list()[0])
+	unit._deploy.start_transition([planted_clip] as Array[StringName])
+	_expect(
+		unit._deploy.transition_player() == fire_player,
+		"the deploy transition must cache the model player this test plants"
+	)
 
 	unit.take_damage(unit.max_health + unit.max_shields + 10.0, &"Shot")
 

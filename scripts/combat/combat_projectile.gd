@@ -25,30 +25,23 @@ enum State {
 	EXPIRED,
 }
 
-const RULE_UPDATES_PER_SECOND := 20.0
-const SOURCE_MODEL_WORLD_SCALE := 0.0625
+const BallisticsScript := preload("res://scripts/combat/ballistics.gd")
+const RULE_UPDATES_PER_SECOND := BallisticsScript.RULE_UPDATES_PER_SECOND
+const SOURCE_MODEL_WORLD_SCALE := BallisticsScript.SOURCE_MODEL_WORLD_SCALE
 const MAX_SIMULATION_STEP := 1.0 / RULE_UPDATES_PER_SECOND
-const COMBAT_COLLISION_MASK := 3
-const DEFAULT_TARGET_HIT_RADIUS := 0.25
+const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const COMBAT_COLLISION_MASK := CombatRulesScript.COLLISION_MASK
 const MAX_PIERCING_COLLISIONS_PER_STEP := 64
 const DIRECT_PROJECTILE_SIZE := 0.12
 const HOMING_PROJECTILE_SIZE := 0.16
 const TRAJECTORY_PROJECTILE_SIZE := 0.18
-const MISSILE_TRAIL_SIDES := 6
-const MAX_MISSILE_TRAIL_POINTS := 128
-const MISSILE_TRAIL_RADIUS_SCALE := SOURCE_MODEL_WORLD_SCALE * 0.65
+const MissileTrailScript := preload("res://scripts/combat/fx/missile_trail.gd")
+const LaserBeamScript := preload("res://scripts/combat/fx/laser_beam.gd")
 const NO_PROPULSION_FLASH_BULLETS: Array[StringName] = [&"KobraHowitzer_B"]
-const LASER_VISUAL_DURATION := 0.16
-const LASER_CORE_RADIUS := 0.025
-const LASER_GLOW_RADIUS := 0.07
-const LASER_TANK_GLOW_RADIUS := 0.1
-const LASER_RADIAL_SEGMENTS := 8
-const LASER_TANK_COLOR := Color(0.2, 1.0, 0.08)
-const LASER_TANK_GLOW_COLOR := Color(0.08, 0.72, 1.0, 0.24)
-const LASER_TANK_GLOW_ENERGY := 3.0
-const INFANTRY_LASER_COLOR := Color(1.0, 0.55, 0.08)
 
 var bullet
+var _damage_scale := 1.0
 var state := State.READY
 var finish_reason: StringName = &""
 var velocity := Vector3.ZERO
@@ -70,15 +63,13 @@ var _gravity_world := 0.0
 var _trajectory_duration := 0.0
 var _trajectory_initial_velocity := Vector3.ZERO
 var _maximum_flight_distance := 0.0
-var _missile_trail_mesh: ImmediateMesh
-var _missile_trail_material: StandardMaterial3D
-var _missile_trail_points: Array[Dictionary] = []
-var _missile_trail_duration := 0.0
+var _missile_trail := MissileTrailScript.new()
 var _impact_resolver = CombatImpactResolverScript.new()
 
 
 func _init() -> void:
 	set_physics_process(false)
+	_missile_trail.configure(self)
 
 
 func launch(
@@ -102,7 +93,17 @@ func launch(
 	if not resolved_target["valid"]:
 		return false
 
-	bullet = bullet_payload
+	# A shot is aimed either at an entity that can move, die and be missed, or
+	# at a fixed coordinate. Resolved once here: five separate `is Object`
+	# tests below used to re-derive it, and every one of them had to agree.
+	#
+	# Spelled with `is`, not `target_or_position as Object`: the cast does not
+	# produce null for a Vector3, so an attack-ground shot would come out of it
+	# looking like a live target.
+	var target_entity: Object = target_or_position if target_or_position is Object else null
+	_damage_scale = float(bullet_payload.damage_scale) \
+		if "definition" in bullet_payload else 1.0
+	bullet = bullet_payload.definition if "definition" in bullet_payload else bullet_payload
 	name = "Bullet_%s" % String(bullet.id())
 	_create_visual()
 	if get_parent() is Node3D:
@@ -111,16 +112,16 @@ func launch(
 	_launch_position = global_position
 	_aim_position = Vector3(resolved_target["position"]) + aim_offset
 	_trajectory_impact_position = _aim_position
-	_targets_ground_position = target_or_position is Vector3
+	_targets_ground_position = target_entity == null
 	var gameplay_range_origin := range_origin \
 		if range_origin.is_finite() else _launch_position
-	if target_or_position is Object:
+	if target_entity != null:
 		var center_offset := _aim_position - gameplay_range_origin
 		var center_distance := Vector2(center_offset.x, center_offset.z).length()
 		var surface_distance: float = bullet.horizontal_target_distance(
 			gameplay_range_origin,
 			_aim_position,
-			target_or_position as Object
+			target_entity
 		)
 		_target_range_allowance = maxf(center_distance - surface_distance, 0.0)
 	# Flight budget, not firing range: a homing shot spends extra distance
@@ -128,20 +129,20 @@ func launch(
 	_maximum_flight_distance = bullet.flight_range_world() \
 		+ gameplay_range_origin.distance_to(_launch_position) \
 		+ _target_range_allowance
-	if target_or_position is Object:
-		_target_ref = weakref(target_or_position as Object)
+	if target_entity != null:
+		_target_ref = weakref(target_entity)
 		_tracks_live_target = true
-		if not bullet.can_hit(target_or_position as Object):
+		if not bullet.can_hit(target_entity):
 			return false
 		if not _target_is_alive():
 			return false
 	if source != null and is_instance_valid(source):
 		_source_ref = weakref(source)
-		_collect_collision_rids(source, _excluded_rids)
+		_excluded_rids.append_array(CombatTargetScript.collision_rids(source))
 
 	var authored_direction := Vector3(emission.get("direction", Vector3.ZERO))
 	var attack_ground_direction := _launch_position.direction_to(_aim_position) \
-		if target_or_position is Vector3 and not bullet.has_trajectory() \
+		if target_entity == null and not bullet.has_trajectory() \
 		else Vector3.ZERO
 	# A yaw-only launcher cannot encode the vertical component of an
 	# attack-ground shot in its muzzle marker. Direct coordinate shots must use
@@ -155,24 +156,19 @@ func launch(
 	if _direction.is_zero_approx():
 		_direction = Vector3.FORWARD
 	_aim_travel_distance = _launch_position.distance_to(_aim_position)
-	_gravity_world = trajectory_gravity_world(bullet_gravity)
+	_gravity_world = BallisticsScript.gravity_world(bullet_gravity)
 
 	state = State.FLYING
 	set_physics_process(true)
 	_face_direction(_direction)
-	_create_missile_trail()
+	_missile_trail.build(bullet, global_position, elapsed_seconds)
 
-	if (
-		target_or_position is Object
-		and not bullet.can_reach_target(
-			gameplay_range_origin,
-			_aim_position,
-			target_or_position as Object
-		)
-	) or (
-		not target_or_position is Object
-		and not bullet.can_reach(gameplay_range_origin, _aim_position)
-	):
+	var in_range: bool = (
+		bullet.can_reach_target(gameplay_range_origin, _aim_position, target_entity)
+		if target_entity != null
+		else bullet.can_reach(gameplay_range_origin, _aim_position)
+	)
+	if not in_range:
 		_expire(&"out_of_range")
 		return false
 	if bullet.is_hitscan():
@@ -243,140 +239,6 @@ func _hide_authored_propulsion_flash(node: Node) -> void:
 		_hide_authored_propulsion_flash(child)
 
 
-func _create_missile_trail() -> void:
-	if (
-		bullet == null
-		or bullet.is_hitscan()
-		or not bullet.has_missile_trail()
-		or bullet.missile_trail_size() <= 0.0
-		or bullet.missile_trail_length() <= 0
-	):
-		return
-
-	# Treat Length as the authored history count and Delta as its fractional
-	# rule-tick spacing. Keeping that history in seconds lets the wake follow the
-	# projectile's actual past positions along a ballistic arc.
-	_missile_trail_duration = maxf(
-		float(bullet.missile_trail_length())
-			* maxf(bullet.missile_trail_delta(), 0.05)
-			/ RULE_UPDATES_PER_SECOND,
-		1.0 / RULE_UPDATES_PER_SECOND
-	)
-	_missile_trail_mesh = ImmediateMesh.new()
-	_missile_trail_material = StandardMaterial3D.new()
-	_missile_trail_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_missile_trail_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_missile_trail_material.vertex_color_use_as_albedo = true
-	_missile_trail_material.albedo_color = Color.WHITE
-	_missile_trail_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-
-	var trail_visual := MeshInstance3D.new()
-	trail_visual.name = "MissileTrail"
-	trail_visual.mesh = _missile_trail_mesh
-	trail_visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(trail_visual)
-	_missile_trail_points.append({
-		"position": global_position,
-		"time": elapsed_seconds,
-	})
-
-
-func _sample_missile_trail() -> void:
-	if _missile_trail_mesh == null:
-		return
-	var point := {
-		"position": global_position,
-		"time": elapsed_seconds,
-	}
-	if _missile_trail_points.is_empty():
-		_missile_trail_points.append(point)
-	else:
-		var previous_position := Vector3(_missile_trail_points.back()["position"])
-		if previous_position.distance_squared_to(global_position) > 0.000001:
-			_missile_trail_points.append(point)
-
-	var oldest_time := elapsed_seconds - _missile_trail_duration
-	while (
-		_missile_trail_points.size() > 2
-		and float(_missile_trail_points[1]["time"]) < oldest_time
-	):
-		_missile_trail_points.pop_front()
-	while _missile_trail_points.size() > MAX_MISSILE_TRAIL_POINTS:
-		_missile_trail_points.pop_front()
-	_rebuild_missile_trail()
-
-
-func _rebuild_missile_trail() -> void:
-	_missile_trail_mesh.clear_surfaces()
-	if _missile_trail_points.size() < 2 or _missile_trail_duration <= 0.0:
-		return
-
-	var trail_color := _missile_trail_color(bullet.missile_trail_style())
-	var base_radius: float = bullet.missile_trail_size() * MISSILE_TRAIL_RADIUS_SCALE
-	_missile_trail_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, _missile_trail_material)
-	for point_index in _missile_trail_points.size() - 1:
-		var first_ring := _missile_trail_ring(point_index, base_radius, trail_color)
-		var second_ring := _missile_trail_ring(point_index + 1, base_radius, trail_color)
-		for side in MISSILE_TRAIL_SIDES:
-			var next_side := (side + 1) % MISSILE_TRAIL_SIDES
-			_add_missile_trail_vertex(first_ring[side])
-			_add_missile_trail_vertex(second_ring[side])
-			_add_missile_trail_vertex(second_ring[next_side])
-			_add_missile_trail_vertex(first_ring[side])
-			_add_missile_trail_vertex(second_ring[next_side])
-			_add_missile_trail_vertex(first_ring[next_side])
-	_missile_trail_mesh.surface_end()
-
-
-func _missile_trail_ring(
-		point_index: int,
-		base_radius: float,
-		trail_color: Color
-	) -> Array[Dictionary]:
-	var world_position := Vector3(_missile_trail_points[point_index]["position"])
-	var previous_position := Vector3(
-		_missile_trail_points[maxi(point_index - 1, 0)]["position"]
-	)
-	var next_position := Vector3(
-		_missile_trail_points[mini(point_index + 1, _missile_trail_points.size() - 1)]["position"]
-	)
-	var tangent := previous_position.direction_to(next_position)
-	if tangent.is_zero_approx():
-		tangent = _direction if not _direction.is_zero_approx() else Vector3.FORWARD
-	var reference := Vector3.RIGHT if absf(tangent.dot(Vector3.UP)) > 0.9 else Vector3.UP
-	var axis_a := tangent.cross(reference).normalized()
-	var axis_b := tangent.cross(axis_a).normalized()
-	var age := maxf(elapsed_seconds - float(_missile_trail_points[point_index]["time"]), 0.0)
-	var remaining := clampf(1.0 - age / _missile_trail_duration, 0.0, 1.0)
-	var radius := base_radius * lerpf(0.08, 1.0, remaining)
-	var color := trail_color
-	color.a *= remaining * remaining
-
-	var ring: Array[Dictionary] = []
-	for side in MISSILE_TRAIL_SIDES:
-		var angle := TAU * float(side) / float(MISSILE_TRAIL_SIDES)
-		var offset := (axis_a * cos(angle) + axis_b * sin(angle)) * radius
-		ring.append({
-			"position": to_local(world_position + offset),
-			"color": color,
-		})
-	return ring
-
-
-func _add_missile_trail_vertex(vertex: Dictionary) -> void:
-	_missile_trail_mesh.surface_set_color(Color(vertex["color"]))
-	_missile_trail_mesh.surface_add_vertex(Vector3(vertex["position"]))
-
-
-func _missile_trail_color(style: int) -> Color:
-	# Style 6 is KobraHowitzer_B's pale aerodynamic wake. The remaining styles
-	# retain a neutral smoke presentation until their original palettes are
-	# characterized independently.
-	if style == 6:
-		return Color(0.58, 0.65, 0.68, 0.48)
-	return Color(0.62, 0.62, 0.60, 0.56)
-
-
 func advance(delta: float) -> void:
 	if state != State.FLYING or delta <= 0.0:
 		return
@@ -392,7 +254,7 @@ func advance(delta: float) -> void:
 			_advance_trajectory(previous_elapsed, elapsed_seconds)
 		else:
 			_advance_direct(step, previous_elapsed)
-		_sample_missile_trail()
+		_missile_trail.sample(global_position, elapsed_seconds, _direction)
 		remaining -= step
 
 
@@ -437,18 +299,18 @@ func _configure_trajectory() -> void:
 	# barrels therefore fly in parallel instead of steering every shell toward
 	# one common point; elevation remains the ballistic solution for the target
 	# plane. This is the Minotaurus' original deterministic "spread".
-	_trajectory_impact_position = parallel_trajectory_impact_position(
+	_trajectory_impact_position = BallisticsScript.parallel_impact_position(
 		_launch_position, _aim_position, _direction
 	)
 	var offset := _trajectory_impact_position - _launch_position
 	var horizontal := Vector3(offset.x, 0.0, offset.z)
 	var horizontal_distance := horizontal.length()
-	var ballistic_velocities: Array[Vector3] = trajectory_launch_velocities(
+	var ballistic_velocities: Array[Vector3] = BallisticsScript.launch_velocities(
 		bullet, _launch_position, _trajectory_impact_position, _gravity_world,
 		bullet.maximum_range_world() + _target_range_allowance
 	)
 	if not ballistic_velocities.is_empty():
-		_trajectory_initial_velocity = _closest_velocity(
+		_trajectory_initial_velocity = BallisticsScript.closest_velocity(
 			ballistic_velocities, _direction
 		)
 		var horizontal_speed := Vector2(
@@ -479,105 +341,6 @@ func _configure_trajectory() -> void:
 	_face_direction(_direction)
 
 
-## Projects an artillery shell straight ahead from its muzzle until it reaches
-## the plane through the sampled target. Only the vertical launch angle is
-## solved ballistically; no horizontal correction converges parallel barrels.
-static func parallel_trajectory_impact_position(
-		launch_position: Vector3,
-		target_aim_position: Vector3,
-		forward_direction: Vector3
-	) -> Vector3:
-	var horizontal_forward := Vector3(
-		forward_direction.x, 0.0, forward_direction.z
-	)
-	var horizontal_offset := Vector3(
-		target_aim_position.x - launch_position.x,
-		0.0,
-		target_aim_position.z - launch_position.z
-	)
-	if horizontal_forward.is_zero_approx() or horizontal_offset.is_zero_approx():
-		return target_aim_position
-	horizontal_forward = horizontal_forward.normalized()
-	var forward_distance := horizontal_offset.dot(horizontal_forward)
-	if forward_distance <= 0.000001:
-		return target_aim_position
-	var result := launch_position + horizontal_forward * forward_distance
-	result.y = target_aim_position.y
-	return result
-
-
-## Returns the low and high ballistic solutions for a trajectory bullet whose
-## Rules.txt entry omits Speed. MaxRange defines the distance reached at 45
-## degrees under the global BulletGravity; nearer targets therefore get a
-## flatter low solution unless the weapon's elevation limits require the high
-## one. `_gravity_world` is already converted to Godot units per second².
-static func trajectory_launch_velocities(
-		bullet_payload,
-		launch_position: Vector3,
-		target_aim_position: Vector3,
-		gravity_world: float,
-		maximum_range_override := -1.0
-	) -> Array[Vector3]:
-	var result: Array[Vector3] = []
-	if (
-		bullet_payload == null
-		or not bullet_payload.has_trajectory()
-		or bullet_payload.speed() > 0.0
-		or gravity_world <= 0.0
-	):
-		return result
-	var offset := target_aim_position - launch_position
-	var horizontal := Vector3(offset.x, 0.0, offset.z)
-	var horizontal_distance := horizontal.length()
-	var maximum_range: float = maximum_range_override \
-		if maximum_range_override > 0.0 \
-		else float(bullet_payload.maximum_range_world())
-	if horizontal_distance <= 0.000001 or maximum_range <= 0.0:
-		return result
-
-	var speed_squared: float = gravity_world * maximum_range
-	var discriminant: float = speed_squared * speed_squared - gravity_world * (
-		gravity_world * horizontal_distance * horizontal_distance
-		+ 2.0 * offset.y * speed_squared
-	)
-	if discriminant < -0.000001:
-		return result
-	var root: float = sqrt(maxf(discriminant, 0.0))
-	var launch_speed: float = sqrt(speed_squared)
-	var horizontal_direction := horizontal / horizontal_distance
-	var numerators: Array[float] = [speed_squared - root, speed_squared + root]
-	for numerator in numerators:
-		var tangent := numerator / (gravity_world * horizontal_distance)
-		var cosine := 1.0 / sqrt(1.0 + tangent * tangent)
-		var sine := tangent * cosine
-		var candidate := (
-			horizontal_direction * (launch_speed * cosine)
-			+ Vector3.UP * (launch_speed * sine)
-		)
-		if result.is_empty() or result.front().angle_to(candidate) > 0.0001:
-			result.append(candidate)
-	return result
-
-
-static func trajectory_gravity_world(rule_gravity: float) -> float:
-	return maxf(rule_gravity, 0.0) \
-		* SOURCE_MODEL_WORLD_SCALE * RULE_UPDATES_PER_SECOND * RULE_UPDATES_PER_SECOND
-
-
-static func _closest_velocity(candidates: Array[Vector3], preferred_direction: Vector3) -> Vector3:
-	var result: Vector3 = candidates.front()
-	if preferred_direction.is_zero_approx():
-		return result
-	var normalized_direction := preferred_direction.normalized()
-	var best_dot: float = -INF
-	for candidate in candidates:
-		var score := normalized_direction.dot(candidate.normalized())
-		if score > best_dot:
-			best_dot = score
-			result = candidate
-	return result
-
-
 func _advance_trajectory(_previous_elapsed: float, current_elapsed: float) -> void:
 	var from := global_position
 	var time := current_elapsed
@@ -586,14 +349,10 @@ func _advance_trajectory(_previous_elapsed: float, current_elapsed: float) -> vo
 	var segment := to - from
 	traveled_distance += segment.length()
 	velocity = _trajectory_initial_velocity + Vector3.DOWN * (_gravity_world * time)
-	if _handle_collisions(_collisions_between(from, to)):
+	# An arcing shell's heading is the segment it just flew, not the one it was
+	# launched on; a step too short to have a direction keeps the previous one.
+	if _step_to(from, to, Vector3.ZERO if segment.is_zero_approx() else segment.normalized()):
 		return
-	if _fallback_target_collision(from, to):
-		return
-	global_position = to
-	if not segment.is_zero_approx():
-		_direction = segment.normalized()
-		_face_direction(_direction)
 	if (
 		_targets_ground_position
 		and current_elapsed + 0.000001 >= _trajectory_duration
@@ -621,18 +380,31 @@ func _advance_direct(delta: float, previous_elapsed: float) -> void:
 	var to := from + _direction * step_distance
 	velocity = _direction * bullet.speed()
 	traveled_distance += step_distance
-	if _handle_collisions(_collisions_between(from, to)):
+	if _step_to(from, to, _direction):
 		return
-	if _fallback_target_collision(from, to):
-		return
-	global_position = to
-	_face_direction(_direction)
 
 	if not tracks_live_homing_target \
 	and traveled_distance + 0.000001 >= _aim_travel_distance:
 		_resolve_arrival(global_position)
 	elif traveled_distance + 0.000001 >= _maximum_flight_distance:
 		_expire(&"range_exhausted")
+
+
+## Flies one segment, reporting whether that ended the shot. Both drivers move
+## the same way: anything the segment crosses is resolved first, then the
+## fallback for targets with no precise collision, and only a step that hit
+## nothing actually moves the node. A non-zero `facing` also becomes the new
+## heading.
+func _step_to(from: Vector3, to: Vector3, facing: Vector3) -> bool:
+	if _handle_collisions(_collisions_between(from, to)):
+		return true
+	if _fallback_target_collision(from, to):
+		return true
+	global_position = to
+	if not facing.is_zero_approx():
+		_direction = facing
+		_face_direction(_direction)
+	return false
 
 
 func _update_homing(delta: float) -> void:
@@ -672,7 +444,8 @@ func _fallback_target_collision(from: Vector3, to: Vector3) -> bool:
 	var target_position := _current_target_position()
 	if not target_position.is_finite():
 		return false
-	if _distance_to_segment(target_position, from, to) > _target_hit_radius(intended_target):
+	if BallisticsScript.distance_to_segment(target_position, from, to) \
+	> _target_hit_radius(intended_target):
 		return false
 	_impact_target(intended_target, target_position, _stops_at(intended_target))
 	return state != State.FLYING
@@ -681,7 +454,7 @@ func _fallback_target_collision(from: Vector3, to: Vector3) -> bool:
 func _handle_collisions(collisions: Array[Dictionary]) -> bool:
 	for collision in collisions:
 		var collider: Object = collision.get("collider") as Object
-		var entity := _combat_entity(collider)
+		var entity := CombatTargetScript.entity_of(collider)
 		if entity != null and entity == _source():
 			continue
 		if entity != null:
@@ -737,7 +510,7 @@ func _impact_ground(world_position: Vector3) -> void:
 
 func _resolve_impact(direct_target: Object, world_position: Vector3) -> void:
 	var results: Array[Dictionary] = _impact_resolver.resolve(
-		bullet, self, world_position, direct_target, _source()
+		bullet, self, world_position, direct_target, _source(), _damage_scale
 	)
 	for result in results:
 		var resolved_target: Object = result["target"] as Object
@@ -827,7 +600,7 @@ func _finish(reason: StringName, world_position: Vector3) -> void:
 		bullet != null
 		and bullet.is_laser()
 		and reason in [&"impact_target", &"impact_ground"]
-		and _create_laser_visual(_launch_position, world_position)
+		and LaserBeamScript.build(self, bullet.id(), _launch_position, world_position)
 	)
 	finished.emit(finish_reason, world_position)
 	if not is_inside_tree():
@@ -836,91 +609,12 @@ func _finish(reason: StringName, world_position: Vector3) -> void:
 		var cleanup := Timer.new()
 		cleanup.name = "LaserCleanup"
 		cleanup.one_shot = true
-		cleanup.wait_time = LASER_VISUAL_DURATION
+		cleanup.wait_time = LaserBeamScript.LIFETIME_SECONDS
 		add_child(cleanup)
 		cleanup.timeout.connect(_queue_free_finished)
 		cleanup.start()
 	else:
 		call_deferred("_queue_free_finished")
-
-
-func _create_laser_visual(start_position: Vector3, end_position: Vector3) -> bool:
-	if not is_inside_tree() or get_node_or_null("LaserBeam") != null:
-		return false
-	var segment := end_position - start_position
-	var length := segment.length()
-	if length <= 0.000001:
-		return false
-
-	var beam_direction := segment / length
-	var beam := Node3D.new()
-	beam.name = "LaserBeam"
-	beam.set_meta("start_position", start_position)
-	beam.set_meta("end_position", end_position)
-	add_child(beam)
-	# Impact resolution moves the projectile node to the hit position. Keeping
-	# the beam top-level prevents that parent move from dragging its midpoint
-	# away from the muzzle on the same frame.
-	beam.top_level = true
-	beam.global_transform = Transform3D(
-		Basis(Quaternion(Vector3.UP, beam_direction)),
-		start_position.lerp(end_position, 0.5)
-	)
-
-	var is_infantry_laser: bool = bullet.id() == &"InfLaser_B"
-	var color: Color = INFANTRY_LASER_COLOR if is_infantry_laser else LASER_TANK_COLOR
-	var glow_color: Color = Color(color.r, color.g, color.b, 0.24) \
-		if is_infantry_laser else LASER_TANK_GLOW_COLOR
-	var glow_energy: float = 2.5 if is_infantry_laser else LASER_TANK_GLOW_ENERGY
-	var glow_radius: float = LASER_GLOW_RADIUS \
-		if is_infantry_laser else LASER_TANK_GLOW_RADIUS
-	_add_laser_layer(
-		beam, "Glow", length, glow_radius,
-		glow_color, glow_energy
-	)
-	_add_laser_layer(
-		beam, "Core", length, LASER_CORE_RADIUS,
-		Color(
-			lerpf(color.r, 1.0, 0.72),
-			lerpf(color.g, 1.0, 0.72),
-			lerpf(color.b, 1.0, 0.72),
-			0.98
-		),
-		5.0
-	)
-	return true
-
-
-func _add_laser_layer(
-		parent: Node3D,
-		layer_name: String,
-		length: float,
-		radius: float,
-		color: Color,
-		emission_energy: float
-	) -> void:
-	var mesh := CylinderMesh.new()
-	mesh.height = length
-	mesh.top_radius = radius
-	mesh.bottom_radius = radius
-	mesh.radial_segments = LASER_RADIAL_SEGMENTS
-	mesh.rings = 1
-
-	var material := StandardMaterial3D.new()
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = color
-	material.emission_enabled = true
-	material.emission = Color(color.r, color.g, color.b)
-	material.emission_energy_multiplier = emission_energy
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mesh.material = material
-
-	var visual := MeshInstance3D.new()
-	visual.name = layer_name
-	visual.mesh = mesh
-	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	parent.add_child(visual)
 
 
 func _queue_free_finished() -> void:
@@ -953,23 +647,6 @@ func _collisions_between(from: Vector3, to: Vector3) -> Array[Dictionary]:
 	return result
 
 
-func _combat_entity(collider: Object) -> Object:
-	var current := collider as Node
-	while current != null:
-		if current.has_method("combat_armour_type"):
-			return current
-		current = current.get_parent()
-	return null
-
-
-func _collect_collision_rids(object: Object, result: Array[RID]) -> void:
-	if object is CollisionObject3D:
-		result.append((object as CollisionObject3D).get_rid())
-	if object is Node:
-		for child in (object as Node).get_children():
-			_collect_collision_rids(child, result)
-
-
 func _resolve_target_position(
 		target_or_position: Variant,
 		world_origin := Vector3.INF
@@ -983,19 +660,7 @@ func _resolve_target_position(
 
 
 func _object_position(object: Object, world_origin := Vector3.INF) -> Vector3:
-	if object == null or not is_instance_valid(object):
-		return Vector3.INF
-	if world_origin.is_finite() and object.has_method("combat_aim_position_from"):
-		var value: Variant = object.call("combat_aim_position_from", world_origin)
-		if value is Vector3:
-			return value
-	if object.has_method("combat_aim_position"):
-		var value: Variant = object.call("combat_aim_position")
-		if value is Vector3:
-			return value
-	if object is Node3D:
-		return (object as Node3D).global_position
-	return Vector3.INF
+	return CombatTargetScript.position_of(object, world_origin)
 
 
 func _current_target_position() -> Vector3:
@@ -1005,20 +670,13 @@ func _current_target_position() -> Vector3:
 
 
 func _target_is_alive() -> bool:
-	var intended_target := target()
-	if intended_target == null or not is_instance_valid(intended_target):
-		return false
-	if intended_target is Node and (intended_target as Node).is_queued_for_deletion():
-		return false
-	if intended_target.has_method("combat_is_alive"):
-		return bool(intended_target.call("combat_is_alive"))
-	return true
+	return CombatTargetScript.is_alive(target())
 
 
 func _target_hit_radius(intended_target: Object) -> float:
-	if intended_target != null and intended_target.has_method("combat_hit_radius"):
-		return maxf(float(intended_target.call("combat_hit_radius")), DEFAULT_TARGET_HIT_RADIUS)
-	return DEFAULT_TARGET_HIT_RADIUS
+	return CombatTargetScript.hit_radius(
+		intended_target, CombatRulesScript.DEFAULT_TARGET_HIT_RADIUS
+	)
 
 
 func _source() -> Object:
@@ -1034,12 +692,3 @@ func _face_direction(new_direction: Vector3) -> void:
 	# local -Z becomes local +Z in the baked scene. `use_model_front=true`
 	# aligns that converted +Z nose with flight instead of pointing it backward.
 	global_basis = Basis.looking_at(new_direction.normalized(), up, true)
-
-
-func _distance_to_segment(point: Vector3, from: Vector3, to: Vector3) -> float:
-	var segment := to - from
-	var length_squared := segment.length_squared()
-	if length_squared <= 0.000001:
-		return point.distance_to(from)
-	var amount := clampf((point - from).dot(segment) / length_squared, 0.0, 1.0)
-	return point.distance_to(from + segment * amount)

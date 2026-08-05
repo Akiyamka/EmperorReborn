@@ -258,37 +258,67 @@ func _setup_cursor_output() -> void:
 	_previous_mouse_mode = Input.mouse_mode
 
 
+## Two render passes over the same cursor models, differing only in what they
+## clear to and which layer they cull: the ordinary pass, and the pass that
+## collects !-marked additive surfaces for the screen-blend composite.
 func _setup_model_viewport() -> void:
-	_model_viewport = SubViewport.new()
-	_model_viewport.name = "CursorModelViewport"
-	_model_viewport.size = MODEL_VIEWPORT_SIZE
-	_model_viewport.transparent_bg = true
-	_model_viewport.own_world_3d = true
-	_model_viewport.msaa_3d = Viewport.MSAA_4X
-	_model_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	add_child(_model_viewport)
+	_model_viewport = _build_model_viewport(
+		"CursorModelViewport", Color(0.0, 0.0, 0.0, 0.0), CURSOR_NORMAL_RENDER_LAYER
+	)
+	_model_root = _model_viewport.get_node("Models") as Node3D
+	_model_sprite.texture = _model_viewport.get_texture()
 
-	_model_root = Node3D.new()
-	_model_root.name = "Models"
-	_model_viewport.add_child(_model_root)
+	# Additive !-marked surfaces must accumulate over defined black RGB.
+	# Transparent viewport RGB is undefined (and can be white), while black is
+	# exactly neutral when this pass is later composited with Screen.
+	_screen_model_viewport = _build_model_viewport(
+		"CursorScreenModelViewport", Color.BLACK, CURSOR_SCREEN_RENDER_LAYER
+	)
+	_screen_model_root = _screen_model_viewport.get_node("Models") as Node3D
+	_screen_model_sprite.texture = _screen_model_viewport.get_texture()
+
+
+## One offscreen cursor stack: a viewport with its own world, the model root,
+## flat ambient light plus a key light, and an orthographic camera. Node names
+## are part of the contract -- tests/ui/cursor_run.gd addresses this topology
+## by path.
+##
+## The clear colour decides the alpha mode: a translucent one means the pass is
+## composited normally and must not paint its own background, an opaque one
+## means the pass needs a defined RGB floor to accumulate over.
+func _build_model_viewport(
+	viewport_name: String, clear_color: Color, cull_mask: int
+) -> SubViewport:
+	var viewport := SubViewport.new()
+	viewport.name = viewport_name
+	viewport.size = MODEL_VIEWPORT_SIZE
+	viewport.transparent_bg = clear_color.a < 1.0
+	viewport.own_world_3d = true
+	viewport.msaa_3d = Viewport.MSAA_4X
+	viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(viewport)
+
+	var model_root := Node3D.new()
+	model_root.name = "Models"
+	viewport.add_child(model_root)
 
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color(0.0, 0.0, 0.0, 0.0)
+	environment.background_color = clear_color
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color.WHITE
 	environment.ambient_light_energy = 0.75
 	var world_environment := WorldEnvironment.new()
 	world_environment.name = "WorldEnvironment"
 	world_environment.environment = environment
-	_model_viewport.add_child(world_environment)
+	viewport.add_child(world_environment)
 
 	var light := DirectionalLight3D.new()
 	light.name = "KeyLight"
 	light.rotation_degrees = Vector3(-55.0, -35.0, 0.0)
 	light.light_energy = 0.8
 	light.shadow_enabled = false
-	_model_viewport.add_child(light)
+	viewport.add_child(light)
 
 	var camera := Camera3D.new()
 	camera.name = "Camera3D"
@@ -296,7 +326,7 @@ func _setup_model_viewport() -> void:
 	camera.size = MODEL_CAMERA_ORTHO_SIZE
 	camera.near = 0.05
 	camera.far = 30.0
-	camera.cull_mask = CURSOR_NORMAL_RENDER_LAYER
+	camera.cull_mask = cull_mask
 	var camera_tilt := deg_to_rad(MODEL_CAMERA_TILT_DEGREES)
 	var camera_distance := 12.0
 	# Cursor XBF direction names are authored for a camera on the negative-Z
@@ -307,55 +337,8 @@ func _setup_model_viewport() -> void:
 	)
 	camera.look_at_from_position(camera_position, Vector3.ZERO, Vector3.UP)
 	camera.current = true
-	_model_viewport.add_child(camera)
-
-	_model_sprite.texture = _model_viewport.get_texture()
-
-	_screen_model_viewport = SubViewport.new()
-	_screen_model_viewport.name = "CursorScreenModelViewport"
-	_screen_model_viewport.size = MODEL_VIEWPORT_SIZE
-	# Additive !-marked surfaces must accumulate over defined black RGB.
-	# Transparent viewport RGB is undefined (and can be white), while black is
-	# exactly neutral when this pass is later composited with Screen.
-	_screen_model_viewport.transparent_bg = false
-	_screen_model_viewport.own_world_3d = true
-	_screen_model_viewport.msaa_3d = Viewport.MSAA_4X
-	_screen_model_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	add_child(_screen_model_viewport)
-
-	_screen_model_root = Node3D.new()
-	_screen_model_root.name = "Models"
-	_screen_model_viewport.add_child(_screen_model_root)
-
-	var screen_environment := Environment.new()
-	screen_environment.background_mode = Environment.BG_COLOR
-	screen_environment.background_color = Color.BLACK
-	screen_environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	screen_environment.ambient_light_color = environment.ambient_light_color
-	screen_environment.ambient_light_energy = environment.ambient_light_energy
-	var screen_world_environment := WorldEnvironment.new()
-	screen_world_environment.name = "WorldEnvironment"
-	screen_world_environment.environment = screen_environment
-	_screen_model_viewport.add_child(screen_world_environment)
-
-	var screen_light := DirectionalLight3D.new()
-	screen_light.name = "KeyLight"
-	screen_light.rotation = light.rotation
-	screen_light.light_energy = light.light_energy
-	screen_light.shadow_enabled = false
-	_screen_model_viewport.add_child(screen_light)
-
-	var screen_camera := Camera3D.new()
-	screen_camera.name = "Camera3D"
-	screen_camera.projection = camera.projection
-	screen_camera.size = camera.size
-	screen_camera.near = camera.near
-	screen_camera.far = camera.far
-	screen_camera.cull_mask = CURSOR_SCREEN_RENDER_LAYER
-	screen_camera.transform = camera.transform
-	screen_camera.current = true
-	_screen_model_viewport.add_child(screen_camera)
-	_screen_model_sprite.texture = _screen_model_viewport.get_texture()
+	viewport.add_child(camera)
+	return viewport
 
 
 func _update_cursor_position() -> void:
@@ -404,35 +387,12 @@ func _activate_model_cursor(cursor: int) -> void:
 
 	var model_key := StringName(CURSOR_MODEL_KEYS.get(cursor, &""))
 	var scene_path := CursorModelCatalogScript.output_path(model_key) if model_key != &"" else ""
-	if scene_path.is_empty() or not ResourceLoader.exists(scene_path):
+	if not _ensure_model_pair(model_key, scene_path):
+		# Every way of failing to produce the pair ends the same way: say which
+		# cursor has no model, then fall back to the hardware pointer.
 		_warn_missing_model(cursor, scene_path)
 		_refresh_visual_mode()
 		return
-
-	if not _model_nodes.has(model_key):
-		var scene := load(scene_path) as PackedScene
-		if scene == null:
-			_warn_missing_model(cursor, scene_path)
-			_refresh_visual_mode()
-			return
-		var model := scene.instantiate() as Node3D
-		var screen_model := scene.instantiate() as Node3D
-		if model == null or screen_model == null:
-			if model != null:
-				model.free()
-			if screen_model != null:
-				screen_model.free()
-			_warn_missing_model(cursor, scene_path)
-			_refresh_visual_mode()
-			return
-		model.name = String(model_key)
-		model.visible = false
-		_model_root.add_child(model)
-		_model_nodes[model_key] = model
-		screen_model.name = String(model_key)
-		screen_model.visible = false
-		_screen_model_root.add_child(screen_model)
-		_screen_model_nodes[model_key] = screen_model
 
 	_active_model = _model_nodes[model_key] as Node3D
 	_active_screen_model = _screen_model_nodes[model_key] as Node3D
@@ -441,6 +401,36 @@ func _activate_model_cursor(cursor: int) -> void:
 	_set_model_animation_playing(_active_model, true)
 	_set_model_animation_playing(_active_screen_model, true)
 	_refresh_visual_mode()
+
+
+## Instantiates a cursor model once per key -- one copy per render pass, since
+## a node can only live in one viewport's world. Returns false when the pair
+## cannot be produced, having left nothing half-built behind.
+func _ensure_model_pair(model_key: StringName, scene_path: String) -> bool:
+	if scene_path.is_empty() or not ResourceLoader.exists(scene_path):
+		return false
+	if _model_nodes.has(model_key):
+		return true
+	var scene := load(scene_path) as PackedScene
+	if scene == null:
+		return false
+	var model := scene.instantiate() as Node3D
+	var screen_model := scene.instantiate() as Node3D
+	if model == null or screen_model == null:
+		if model != null:
+			model.free()
+		if screen_model != null:
+			screen_model.free()
+		return false
+	model.name = String(model_key)
+	model.visible = false
+	_model_root.add_child(model)
+	_model_nodes[model_key] = model
+	screen_model.name = String(model_key)
+	screen_model.visible = false
+	_screen_model_root.add_child(screen_model)
+	_screen_model_nodes[model_key] = screen_model
+	return true
 
 
 func _set_model_animation_playing(model: Node3D, playing: bool) -> void:

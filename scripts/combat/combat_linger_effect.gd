@@ -6,7 +6,9 @@ extends Node3D
 ## LingerDuration is measured in combat ticks and LingerDamage is delivered
 ## once per tick through the bullet's normal warhead/armour matrix.
 
-const RULE_COMBAT_TICKS_PER_SECOND := 25.0
+const CombatTargetScript := preload("res://scripts/combat/combat_target.gd")
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const RULE_COMBAT_TICKS_PER_SECOND := CombatRulesScript.TICKS_PER_SECOND
 const MINIMUM_TICK_SECONDS := 0.0001
 
 var bullet
@@ -89,13 +91,7 @@ func _target() -> Object:
 
 
 func _target_is_alive(target: Object) -> bool:
-	if target == null or not is_instance_valid(target):
-		return false
-	if target.has_method("combat_is_alive"):
-		return bool(target.call("combat_is_alive"))
-	if target is Node:
-		return not (target as Node).is_queued_for_deletion()
-	return true
+	return CombatTargetScript.is_alive(target)
 
 
 func _follow_target() -> void:

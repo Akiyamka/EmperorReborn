@@ -128,7 +128,7 @@ func begin_hangar_takeoff(rally_point: Vector3, exit_point: Vector3) -> void:
 	_post_takeoff_exit_point = exit_point
 	phase = Phase.HANGAR_EXIT
 	_phase_elapsed = 0.0
-	_unit._set_movement_animation(true)
+	_unit.flight_set_movement_animation(true)
 
 
 ## Called from Unit.move_to() when a landed flyer receives a new order.
@@ -201,7 +201,7 @@ func flight_complete_pickup_sequence() -> void:
 ## a flight controller exists.
 func advance(delta: float) -> void:
 	if phase == Phase.GROUNDED or phase == Phase.LANDED:
-		_unit._terrain_snap_body()
+		_unit.flight_snap_to_terrain()
 		return
 	if phase == Phase.HANGAR_EXIT:
 		_advance_hangar_exit(delta)
@@ -222,7 +222,7 @@ func advance(delta: float) -> void:
 		_advance_vertical_avoidance(delta)
 		_advance_cruise_altitude(delta)
 		_unit.global_position.y = cruise_altitude + _vertical_avoidance_offset
-		_unit._set_visual_slope_target(Vector3.UP)
+		_unit.flight_set_visual_slope_target(Vector3.UP)
 		return
 	# Pickup sub-phases: stub only, no automatic advancement this pass.
 
@@ -235,8 +235,8 @@ func _advance_hangar_exit(delta: float) -> void:
 	if distance > arrival and delta > 0.0:
 		var step: float = minf(float(_unit.navigation_move_speed()) * delta, distance)
 		_unit.global_position += exit_offset / distance * step
-		_unit._terrain_snap_body()
-		_unit._set_movement_animation(true)
+		_unit.flight_snap_to_terrain()
+		_unit.flight_set_movement_animation(true)
 		return
 	_start_takeoff(_post_takeoff_move_target, Vector3.INF)
 
@@ -253,7 +253,7 @@ func _advance_vertical_transition(
 	var duration: float = _unit.flight_clip_length(clip_name, default_seconds)
 	var t := clampf(_phase_elapsed / duration, 0.0, 1.0) if duration > 0.0 else 1.0
 	_unit.global_position.y = lerpf(from_altitude, to_altitude, t)
-	_unit._set_visual_slope_target(Vector3.UP)
+	_unit.flight_set_visual_slope_target(Vector3.UP)
 	if t < 1.0:
 		return
 	phase = next_phase
@@ -328,14 +328,14 @@ func notify_animation_finished(animation_name: StringName, player: AnimationPlay
 
 
 func _sample_ground_altitude(position: Vector3) -> float:
-	var hit: Dictionary = _unit._terrain_hit_at(position)
+	var hit: Dictionary = _unit.flight_terrain_hit_at(position)
 	if hit.is_empty():
 		return position.y
 	return (hit["position"] as Vector3).y
 
 
 func _sample_flight_altitude(position: Vector3) -> float:
-	var hit: Dictionary = _unit._terrain_hit_at(position)
+	var hit: Dictionary = _unit.flight_terrain_hit_at(position)
 	if hit.is_empty():
 		# Synthetic scenes and off-map flight may have no terrain collider.
 		# Preserve the current base altitude instead of adding the offset again

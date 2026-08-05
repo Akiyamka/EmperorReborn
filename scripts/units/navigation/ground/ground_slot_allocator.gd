@@ -3,17 +3,30 @@ extends RefCounted
 ## Parking-block selection: ring search for a free grid-aligned footprint
 ## block, formation/crowd aim-point spreading, route-lane assignment for
 ## groups sharing a corner, and slot-claim/uncross bookkeeping.
-##
-## Cross-cutting helpers (grid access, per-cell passability, routing) are not
-## yet owned by any single module at every stage of the mechanical split, so
-## this module calls back into the facade (`UnitNavigationSystem`) for them
-## the same way the facade itself used to call its own private methods.
+## Runtime-map and planner dependencies are injected explicitly; sibling
+## modules are held weakly where the routing relationship is bidirectional.
 
-var _facade: Node
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
+
+var _runtime_map
+var _planner
+var _path_follower_ref: WeakRef
+var _ground_navigation_ref: WeakRef
+var _navigation_tick_index: Callable
 
 
-func setup(facade: Node) -> void:
-	_facade = facade
+func setup(
+	runtime_map,
+	planner,
+	path_follower,
+	ground_navigation,
+	navigation_tick_index: Callable
+	) -> void:
+	_runtime_map = runtime_map
+	_planner = planner
+	_path_follower_ref = weakref(path_follower)
+	_ground_navigation_ref = weakref(ground_navigation)
+	_navigation_tick_index = navigation_tick_index
 
 
 ## Captures the group's initial lateral ordering once per player command. The
@@ -38,9 +51,9 @@ func assign_route_lanes(agents: Dictionary, units: Array[Node3D], world_target: 
 			agent["route_lane_max"] = 0.0
 		return
 	var lateral := travel.normalized().cross(Vector3.UP).normalized()
-	var cell: Vector2 = _facade.runtime_map.grid.cell_size()
+	var cell: Vector2 = _runtime_map.grid.cell_size()
 	var lane_limit := ceilf(sqrt(float(units.size()))) * 0.5 \
-		* float(largest_footprint(agents, units) + UnitNavigationSystem.PARKING_GAP_CELLS) * maxf(cell.x, cell.y)
+		* float(largest_footprint(agents, units) + NavConstantsScript.PARKING_GAP_CELLS) * maxf(cell.x, cell.y)
 	var entries: Array[Dictionary] = []
 	for unit in units:
 		var offset := unit.global_position - centroid
@@ -88,7 +101,7 @@ func assign_route_lanes(agents: Dictionary, units: Array[Node3D], world_target: 
 		var lane := raw_center
 		if previous_lane > -INF:
 			var comfort := minf(previous_radius, float(cluster["radius"])) \
-				* UnitNavigationSystem.ROUTE_LANE_COMFORT_RADIUS_FACTOR
+				* NavConstantsScript.ROUTE_LANE_COMFORT_RADIUS_FACTOR
 			lane = maxf(lane, previous_lane + previous_radius + float(cluster["radius"]) + comfort)
 		cluster["raw_center"] = raw_center
 		cluster["lane"] = lane
@@ -118,14 +131,14 @@ func assign_route_lanes(agents: Dictionary, units: Array[Node3D], world_target: 
 func assign_slots(agents: Dictionary, units: Array[Node3D], world_target: Vector3, mode: int) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var occupied: Array[Dictionary] = []
-	var spacing := largest_footprint(agents, units) + UnitNavigationSystem.PARKING_GAP_CELLS
-	var allow_no_stop: bool = _facade.runtime_map.is_no_stop(_facade.runtime_map.grid.world_to_grid(world_target))
+	var spacing := largest_footprint(agents, units) + NavConstantsScript.PARKING_GAP_CELLS
+	var allow_no_stop: bool = _runtime_map.is_no_stop(_runtime_map.grid.world_to_grid(world_target))
 	for index in units.size():
 		var unit := units[index]
 		var agent: Dictionary = agents[unit.get_instance_id()]
 		var span := int(agent["footprint"])
 		var preferred := parking_anchor(world_target, span)
-		if mode == UnitNavigationSystem.MoveMode.FORMATION:
+		if mode == NavConstantsScript.MoveMode.FORMATION:
 			preferred += formation_offset(index, units.size(), float(spacing))
 		else:
 			preferred += crowd_offset(index) * spacing
@@ -160,9 +173,9 @@ func shared_target_assignments(agents: Dictionary, units: Array[Node3D], world_t
 	for unit in units:
 		centroid += unit.global_position
 	centroid /= float(units.size())
-	var cell: Vector2 = _facade.runtime_map.grid.cell_size()
+	var cell: Vector2 = _runtime_map.grid.cell_size()
 	var pack_radius := ceilf(sqrt(float(units.size()))) * 0.5 \
-		* float(largest_footprint(agents, units) + UnitNavigationSystem.PARKING_GAP_CELLS) * maxf(cell.x, cell.y)
+		* float(largest_footprint(agents, units) + NavConstantsScript.PARKING_GAP_CELLS) * maxf(cell.x, cell.y)
 	var spread := 0.0
 	for unit in units:
 		spread = maxf(spread, Vector2(unit.global_position.x - centroid.x, unit.global_position.z - centroid.z).length())
@@ -170,7 +183,7 @@ func shared_target_assignments(agents: Dictionary, units: Array[Node3D], world_t
 	# point. A group scattered wider than its resting size is being GATHERED:
 	# claims run center-out from the target so the pack fills up tight.
 	var gather := spread > pack_radius * 1.5
-	var allow_no_stop: bool = _facade.runtime_map.is_no_stop(_facade.runtime_map.grid.world_to_grid(world_target))
+	var allow_no_stop: bool = _runtime_map.is_no_stop(_runtime_map.grid.world_to_grid(world_target))
 	for index in units.size():
 		var unit := units[index]
 		var agent: Dictionary = agents[unit.get_instance_id()]
@@ -226,7 +239,7 @@ func try_claim_slot(agents: Dictionary, agent: Dictionary) -> void:
 	var parked := block_center(anchor, span)
 	parked.y = destination.y
 	agent["destination"] = parked
-	_facade._route_agent(agent, unit.global_position, parked)
+	_ground_navigation_ref.get_ref().route_agent(agent, unit.global_position, parked)
 	if unit.has_method("set_navigation_destination"):
 		unit.call("set_navigation_destination", parked)
 
@@ -251,11 +264,11 @@ func uncross_assignments(ordered_agents: Array[Dictionary]) -> void:
 		offset.y = 0.0
 		if offset.length() > float(agent["claim_radius"]):
 			continue
-		if offset.length() <= maxf(_facade._arrival_radius(unit), float(agent["radius"]) * 0.35):
+		if offset.length() <= maxf(_arrival_radius(unit), float(agent["radius"]) * 0.35):
 			continue
 		# A cooldown after each trade stops marginal swaps from flip-flopping
 		# every tick while two units move in near-symmetry.
-		if _facade._navigation_tick_index - int(agent["swap_tick"]) < UnitNavigationSystem.SWAP_COOLDOWN_TICKS:
+		if int(_navigation_tick_index.call()) - int(agent["swap_tick"]) < NavConstantsScript.SWAP_COOLDOWN_TICKS:
 			continue
 		var key := "%d:%d" % [int(agent["command_id"]), int(agent["footprint"])]
 		if not groups.has(key):
@@ -278,10 +291,14 @@ func uncross_assignments(ordered_agents: Array[Dictionary]) -> void:
 				if swapped + 0.05 < current:
 					a["destination"] = b_destination
 					b["destination"] = a_destination
-					a["swap_tick"] = _facade._navigation_tick_index
-					b["swap_tick"] = _facade._navigation_tick_index
-					_facade._route_agent(a, a_unit.global_position, b_destination)
-					_facade._route_agent(b, b_unit.global_position, a_destination)
+					a["swap_tick"] = int(_navigation_tick_index.call())
+					b["swap_tick"] = int(_navigation_tick_index.call())
+					_ground_navigation_ref.get_ref().route_agent(
+						a, a_unit.global_position, b_destination
+					)
+					_ground_navigation_ref.get_ref().route_agent(
+						b, b_unit.global_position, a_destination
+					)
 					if a_unit.has_method("set_navigation_destination"):
 						a_unit.call("set_navigation_destination", b_destination)
 					if b_unit.has_method("set_navigation_destination"):
@@ -302,8 +319,8 @@ func reserved_blocks(agents: Dictionary, agent: Dictionary) -> Array[Dictionary]
 
 
 func claim_radius_for(agents: Dictionary, units: Array[Node3D]) -> float:
-	var cell: Vector2 = _facade.runtime_map.grid.cell_size()
-	var pitch := float(largest_footprint(agents, units) + UnitNavigationSystem.PARKING_GAP_CELLS)
+	var cell: Vector2 = _runtime_map.grid.cell_size()
+	var pitch := float(largest_footprint(agents, units) + NavConstantsScript.PARKING_GAP_CELLS)
 	var crowd := ceilf(sqrt(float(units.size()))) * 0.5 * pitch
 	return (crowd + 2.0) * maxf(cell.x, cell.y)
 
@@ -322,7 +339,7 @@ func approach_anchor(preferred: Vector2i, agent: Dictionary, from: Vector3) -> V
 	var delta := from_anchor - preferred
 	var length := maxi(absi(delta.x), absi(delta.y))
 	if length > 0:
-		var limit := mini(length, UnitNavigationSystem.SLOT_SEARCH_RADIUS)
+		var limit := mini(length, NavConstantsScript.SLOT_SEARCH_RADIUS)
 		for distance in range(0, limit + 1):
 			var weight := float(distance) / float(length)
 			var offset := Vector2i(
@@ -342,7 +359,7 @@ func approach_anchor(preferred: Vector2i, agent: Dictionary, from: Vector3) -> V
 ## a ring resolve toward `from`.
 func claim_anchor(preferred: Vector2i, agent: Dictionary, occupied: Array[Dictionary], from: Vector3) -> Vector2i:
 	var span := int(agent["footprint"])
-	for radius in range(0, UnitNavigationSystem.SLOT_SEARCH_RADIUS + 1):
+	for radius in range(0, NavConstantsScript.SLOT_SEARCH_RADIUS + 1):
 		var best := Vector2i(-1, -1)
 		var best_distance := INF
 		for offset in ring_offsets(radius):
@@ -376,7 +393,7 @@ func claim_passable_anchor(
 		from: Vector3
 	) -> Vector2i:
 	var span := int(agent["footprint"])
-	for radius in range(0, UnitNavigationSystem.SLOT_SEARCH_RADIUS + 1):
+	for radius in range(0, NavConstantsScript.SLOT_SEARCH_RADIUS + 1):
 		var best := Vector2i(-1, -1)
 		var best_distance := INF
 		for offset in ring_offsets(radius):
@@ -408,13 +425,23 @@ func claim_passable_anchor(
 func anchor_reachable(
 		anchor: Vector2i, agent: Dictionary, from: Vector3, allow_no_stop := false
 	) -> bool:
-	return _facade._ground_anchor_is_reachable(agent, anchor, from, allow_no_stop)
+	var span: int = int(agent["footprint"])
+	var target_center := block_center(anchor, span)
+	var target_cell: Vector2i = _runtime_map.grid.world_to_grid(target_center)
+	var stoppable_no_stop_cells := {target_cell: true} if allow_no_stop else {}
+	return _planner.is_reachable(
+		_runtime_map.grid.world_to_grid(from), target_cell,
+		int(agent["pass_mask"]), int(agent["clearance"]), int(agent["terrain_mask"]),
+		stoppable_no_stop_cells
+	)
 
 
 func block_passable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
 	for y in span:
 		for x in span:
-			if not _facade._agent_cell_passable(agent, anchor + Vector2i(x, y)):
+			if not _path_follower_ref.get_ref().agent_cell_passable(
+				agent, anchor + Vector2i(x, y)
+			):
 				return false
 	return true
 
@@ -422,7 +449,9 @@ func block_passable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
 func block_stoppable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
 	for y in span:
 		for x in span:
-			if not _facade._agent_cell_stoppable(agent, anchor + Vector2i(x, y)):
+			if not _path_follower_ref.get_ref().agent_cell_stoppable(
+				agent, anchor + Vector2i(x, y)
+			):
 				return false
 	return true
 
@@ -430,24 +459,29 @@ func block_stoppable(anchor: Vector2i, span: int, agent: Dictionary) -> bool:
 ## Two parking blocks conflict when fewer than PARKING_GAP_CELLS free cells
 ## separate them (in either axis), not only on actual overlap.
 func blocks_conflict(a: Vector2i, a_span: int, b: Vector2i, b_span: int) -> bool:
-	return a.x < b.x + b_span + UnitNavigationSystem.PARKING_GAP_CELLS and b.x < a.x + a_span + UnitNavigationSystem.PARKING_GAP_CELLS \
-		and a.y < b.y + b_span + UnitNavigationSystem.PARKING_GAP_CELLS and b.y < a.y + a_span + UnitNavigationSystem.PARKING_GAP_CELLS
+	return a.x < b.x + b_span + NavConstantsScript.PARKING_GAP_CELLS and b.x < a.x + a_span + NavConstantsScript.PARKING_GAP_CELLS \
+		and a.y < b.y + b_span + NavConstantsScript.PARKING_GAP_CELLS and b.y < a.y + a_span + NavConstantsScript.PARKING_GAP_CELLS
+
+
+static func _arrival_radius(unit: Node3D) -> float:
+	var value = unit.get("arrival_radius")
+	return float(value) if value != null else 0.2
 
 
 ## World center of a span x span cell block anchored at its lowest cell. For
 ## even spans the center sits on the shared cell corner.
 func block_center(anchor: Vector2i, span: int) -> Vector3:
-	var center: Vector3 = _facade.runtime_map.grid.grid_to_world(anchor)
-	var cell: Vector2 = _facade.runtime_map.grid.cell_size()
+	var center: Vector3 = _runtime_map.grid.grid_to_world(anchor)
+	var cell: Vector2 = _runtime_map.grid.cell_size()
 	var shift := float(span - 1) * 0.5
 	return center + Vector3(cell.x * shift, 0.0, cell.y * shift)
 
 
 ## Anchor cell of the block whose center lies nearest to `point`.
 func parking_anchor(point: Vector3, span: int) -> Vector2i:
-	var cell: Vector2 = _facade.runtime_map.grid.cell_size()
+	var cell: Vector2 = _runtime_map.grid.cell_size()
 	var shift := float(span - 1) * 0.5
-	return _facade.runtime_map.grid.world_to_grid(point - Vector3(cell.x * shift, 0.0, cell.y * shift))
+	return _runtime_map.grid.world_to_grid(point - Vector3(cell.x * shift, 0.0, cell.y * shift))
 
 
 ## Nearest reachable grid-aligned block center for the agent, avoiding every

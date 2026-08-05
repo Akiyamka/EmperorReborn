@@ -1,6 +1,7 @@
 extends SceneTree
 
 const BuildingPlacementScript := preload("res://scripts/buildings/building_placement.gd")
+const PlacementContextScript := preload("res://scripts/buildings/placement_context.gd")
 const BuildingBakeBuilderScript := preload("res://converters/building_bake_builder.gd")
 const ATBarracksScene := preload("res://assets/converted/buildings/ATBarracks/ATBarracks.scn")
 const PlacementArrowScene := preload("res://assets/converted/placement/build_arrow.scn")
@@ -99,8 +100,37 @@ func _new_placement(existing_building_occupy_rows: Callable = Callable()) -> Arr
 	get_root().add_child(buildings_root)
 	var placement = BuildingPlacementScript.new()
 	get_root().add_child(placement)
-	placement.setup(null, FakeGrid.new(), buildings_root, null, null, null, null, existing_building_occupy_rows)
+	_setup_placement(placement, null, FakeGrid.new(), buildings_root, null, null, null, null, existing_building_occupy_rows)
 	return [placement, buildings_root]
+
+
+func _setup_placement(
+		placement,
+		camera: Camera3D,
+		navigation_grid,
+		buildings_root: Node3D,
+		arrow_scene: PackedScene,
+		building_preview_scene: PackedScene,
+		cant_build_preview_scene: PackedScene,
+		skirt_preview_scene: PackedScene,
+		existing_rows: Callable,
+		existing_is_wall: Callable = Callable(),
+		build_radius: Callable = Callable(),
+		owner_id: Callable = Callable()
+) -> void:
+	var context := PlacementContextScript.new()
+	context.camera = camera
+	context.navigation_grid = navigation_grid
+	context.buildings_root = buildings_root
+	context.arrow_scene = arrow_scene
+	context.building_preview_scene = building_preview_scene
+	context.cant_build_preview_scene = cant_build_preview_scene
+	context.skirt_preview_scene = skirt_preview_scene
+	context.existing_building_occupy_rows = existing_rows
+	context.existing_building_is_wall = existing_is_wall
+	context.build_radius_provider = build_radius
+	context.owner_player_id_provider = owner_id
+	placement.setup(context)
 
 
 func _free_pair(pair: Array) -> void:
@@ -340,7 +370,7 @@ func _test_unmaterialed_preview_mesh_gets_fallback_material(token: int) -> int:
 
 	var placement = BuildingPlacementScript.new()
 	get_root().add_child(placement)
-	placement.setup(null, FakeGrid.new(), buildings_root, null, preview_scene, preview_scene, null, Callable())
+	_setup_placement(placement, null, FakeGrid.new(), buildings_root, null, preview_scene, preview_scene, null, Callable())
 	placement.begin(&"Preview", "Preview", _rows(["X"]))
 	placement.try_place_at_hover_cell(Vector2i.ZERO, null)
 	var preview_root := placement.get_child(0) as Node3D
@@ -396,7 +426,7 @@ func _test_wall_footprint_omits_arrow(token: int) -> int:
 	var placement = BuildingPlacementScript.new()
 	get_root().add_child(placement)
 
-	placement.setup(
+	_setup_placement(placement,
 		null,
 		FakeGrid.new(),
 		buildings_root,
@@ -448,7 +478,7 @@ func _test_wall_footprint_omits_arrow(token: int) -> int:
 		"extending a wall line must instantiate only its new segment preview"
 	)
 
-	placement.setup(
+	_setup_placement(placement,
 		null,
 		PartiallyBlockedGrid.new(),
 		buildings_root,
@@ -538,7 +568,7 @@ func _test_out_of_radius_preview_is_blocked(token: int) -> int:
 
 	var placement = BuildingPlacementScript.new()
 	get_root().add_child(placement)
-	placement.setup(
+	_setup_placement(placement,
 		null, FakeGrid.new(), buildings_root, null,
 		available_scene, blocked_scene, null,
 		Callable(), Callable(), Callable(self, "_always_out_of_radius")
@@ -575,7 +605,7 @@ func _test_enemy_building_does_not_extend_radius(token: int) -> int:
 	get_root().add_child(buildings_root)
 	var placement = BuildingPlacementScript.new()
 	get_root().add_child(placement)
-	placement.setup(
+	_setup_placement(placement,
 		null, FakeGrid.new(), buildings_root, null, null, null, null,
 		Callable(self, "_direct_config_rows"), Callable(), Callable(self, "_radius_two"),
 		Callable(self, "_owner_one")

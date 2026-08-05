@@ -1,18 +1,26 @@
 extends CharacterBody3D
 class_name Unit
 
+const AutoloadLookupScript := preload("res://scripts/players/autoload_lookup.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+const TeamColorScript := preload("res://scripts/world/team_color.gd")
+const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
+const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const DamagePolicyScript := preload("res://scripts/combat/damage_policy.gd")
+const SelectionHaloBindingScript := preload("res://scripts/ui/selection_halo_binding.gd")
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
-const CombatTurretScript := preload("res://scripts/combat/combat_turret.gd")
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const UnitFlightControllerScript := preload("res://scripts/units/navigation/unit_flight_controller.gd")
-const UnitNavigationSystemScript := preload("res://scripts/units/navigation/unit_navigation_system.gd")
-const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
-const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
-const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
-const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
-const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
-const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
-static var _definition_catalog := UnitSceneCatalogScript.new()
+const UnitTerrainAlignmentScript := preload("res://scripts/units/unit_terrain_alignment.gd")
+const NavConstantsScript := preload("res://scripts/units/navigation/shared/nav_constants.gd")
+const UnitDeathSequenceScript := preload("res://scripts/units/unit_death_sequence.gd")
+const UnitShaderFxScript := preload("res://scripts/units/unit_shader_fx.gd")
+const UnitIdleAnimationsScript := preload("res://scripts/units/unit_idle_animations.gd")
+const UnitLocomotionScript := preload("res://scripts/units/unit_locomotion.gd")
+const HarvesterControllerScript := preload("res://scripts/units/harvester_controller.gd")
+const UnitDeployStateScript := preload("res://scripts/units/unit_deploy_state.gd")
+const UnitCombatScript := preload("res://scripts/units/unit_combat.gd")
+static var _definition_catalog := UnitSceneCatalogScript.shared()
 
 signal owner_changed(player_id: int)
 signal navigation_enemy_encountered(enemies: Array[Node3D])
@@ -24,12 +32,6 @@ const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const SelectionHaloScript := preload("res://scripts/ui/selection_halo.gd")
 
 const COLLISION_OBJECT_NAME := "#~~0"
-const TERRAIN_COLLISION_MASK := 1
-const TERRAIN_RAY_HEIGHT := 200.0
-const MIN_SLOPE_SPEED_MULTIPLIER := 0.65
-const MAX_SLOPE_SPEED_MULTIPLIER := 1.50
-const SLOPE_PROBE_DISTANCE := 0.5
-const SLOPE_ALIGNMENT_RESPONSE := 10.0
 ## The incidental Tleilaxu walker predates the Mech rule used by the three
 ## playable House walkers, but its converted model has the same articulated
 ## leg hierarchy and must retain a level gameplay root as well.
@@ -37,76 +39,32 @@ const LEGACY_WALKER_UNIT_IDS: Array[StringName] = [&"INTLWalker"]
 ## Rules.txt stores TurnRate in radians per movement update. Navigation runs at
 ## 20 fixed updates per second, so use the same cadence for the unmanaged
 ## fallback to keep turning independent of the caller's frame rate.
-const RULE_MOVEMENT_UPDATES_PER_SECOND := 20.0
+##
+## Mirrors UnitCombat.RULE_MOVEMENT_UPDATES_PER_SECOND (used there for the
+## combat module's own hull-turn adjustment); kept here too because
+## tests/match/demo_boot_run.gd reads it as Unit.<const>.
+const RULE_MOVEMENT_UPDATES_PER_SECOND := UnitTerrainAlignmentScript.MOVEMENT_UPDATES_PER_SECOND
 ## Converted XBF tracks use a 20 Hz timeline, while the original firing
 ## cadence measured from ReloadCount and Fire clip frame counts is 25 Hz.
 ## Fire clips therefore traverse the baked timeline at 25/20 speed.
+##
+## Mirrors UnitCombat.BAKED_MODEL_FRAMES_PER_SECOND; kept here too because
+## tests/combat/run.gd reads it as UnitScript.<const>.
 const BAKED_MODEL_FRAMES_PER_SECOND := 20.0
-const RULE_COMBAT_TICKS_PER_SECOND := 25.0
-const FIRE_ANIMATION_SPEED_SCALE := (
-	RULE_COMBAT_TICKS_PER_SECOND / BAKED_MODEL_FRAMES_PER_SECOND
-)
-const FIRE_ANIMATION_PREFIX := "Fire_"
+## Drives the per-turret reload/cooldown ticks in _process() below, which stay
+## on the facade the same way Building._process() keeps its own copy next to
+## BuildingCombat (see scripts/buildings/building.gd). Also mirrored on
+## UnitCombat and read by tests/combat/run.gd as UnitScript.<const>.
+const RULE_COMBAT_TICKS_PER_SECOND := CombatRulesScript.TICKS_PER_SECOND
+## Used by _apply_animation_start_transforms() below (not combat) to treat a
+## track's very first key as the animation's starting pose. Also mirrored on
+## UnitCombat for the same purpose in the fire-sequence lifecycle.
 const FIRE_EVENT_EPSILON := 0.0001
-const MOVING_ANIMATION := &"Move"
-const MOVE_START_ANIMATION := &"Move_Start"
-const MOVE_STOP_ANIMATION := &"Move_Stop"
-const TURN_LEFT_ANIMATION := &"Turn_Left"
-const TURN_RIGHT_ANIMATION := &"Turn_Right"
-const IDLE_ANIMATION := &"Stationary"
-const IDLE_ANIMATION_PREFIX := "Idle"
-## The original MCV model has no clip literally named Deploy. Move_Stop is its
-## authored transition from driving to a braced stationary pose and is the
-## source-backed fallback for the first phase of deployment. Deploy_Gun is the
-## authored clip for the combat-deploy strategy (Kindjal/Mortar/Kobra); it is
-## first so those units resolve it before ever reaching the MCV fallback.
-const DEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
-	&"Deploy_Gun", &"Deploy", &"Deploying", &"Unpack", &"Move_Stop"
-]
-## Undeploy has no MCV-side authored clip at all (the Construction Yard's own
-## Deconstruct animation handles that transformation instead), so this list
-## only ever resolves for the combat-deploy strategy.
-const UNDEPLOYMENT_ANIMATION_CANDIDATES: Array[StringName] = [
-	&"Undeploy_Gun", &"Undeploy", &"Undeploying"
-]
-## Deployed-mode idle clips (Kindjal only) mirror the travel-mode Idle_*
-## naming so the same random-variant machinery in _idle_animations applies.
-const DEPLOYED_IDLE_ANIMATION_PREFIX := "Deployed_Idle"
-## The single canonical deployed-mode fire clip after the converter-stage
-## rename (see converters/model_bake_builder.gd CLIP_NAME_OVERRIDES).
-const DEPLOYED_FIRE_ANIMATION := &"Deployed_Fire"
-## Deploy_Gun_Hold is the authored held pose at the end of the deploy clip.
-## Mortar/Kobra have no Deployed_Idle_* clips, so this is played once and
-## held rather than falling back to Stationary/Idle_* (the travel-mode pose).
-const DEPLOYED_HOLD_ANIMATION := &"Deploy_Gun_Hold"
-const DEFAULT_MECH_MOVE_CYCLE_SECONDS := 1.0
-const ATTACK_REPATH_INTERVAL_SECONDS := 0.25
-const ATTACK_REPATH_DISTANCE := 0.5
-const AUTO_TARGET_REFRESH_SECONDS := 0.25
 
 enum SlopeAlignmentMode {
 	AUTO,
 	ENABLED,
 	DISABLED,
-}
-
-enum MechLocomotionState {
-	IDLE,
-	STARTING,
-	MOVING,
-	TURNING_LEFT,
-	TURNING_RIGHT,
-	STOPPING,
-}
-
-## MCV deploy (TRAVEL -> DEPLOYING -> [consumed: unit freed]) uses only the
-## first half of this machine. Combat deploy (Kindjal/Mortar/Kobra) uses all
-## four states, toggling DEPLOYED <-> TRAVEL through DEPLOYING/UNDEPLOYING.
-enum DeployState {
-	TRAVEL,
-	DEPLOYING,
-	DEPLOYED,
-	UNDEPLOYING,
 }
 
 @export var config_id: StringName
@@ -149,14 +107,30 @@ var shields := 0.0:
 		_refresh_shield_visibility()
 var passengers := 0.0
 var combat_turrets: Array = []
-var _shield_meshes: Array[MeshInstance3D] = []
-var _shield_time := 0.0
-var _scroll_fx_meshes: Array[MeshInstance3D] = []
-var _scroll_fx_time := 0.0
+var _shader_fx := UnitShaderFxScript.new()
 var _selection_halo
 var _animation_players: Array[AnimationPlayer] = []
-var _movement_animation_active := false
-var _stationary_repeats_remaining: Dictionary = {}
+var _idle_animations := UnitIdleAnimationsScript.new()
+## The harvesting loop, present only on a unit whose rules give it a spice
+## capacity. Null on everything else, which is what "is a harvester" means now.
+var _harvester = null
+## Cargo stays canonical on the facade like health and shields do: the match
+## snapshot reads it by name, and the selection halo draws its ring from it.
+##
+## A *spice* capacity is also what makes a unit a harvester: setting one
+## attaches the harvesting loop. Deliberately this field and no other -- a
+## carrier's passenger capacity and a launcher's ammunition are their own
+## fields (see selection_halo's max_passengers), and neither has anything to do
+## with driving to a field and eating it.
+@export var max_spice := 0.0:
+	set(value):
+		max_spice = maxf(value, 0.0)
+		_sync_harvester_controller()
+		# Re-clamps an existing load against the capacity just applied.
+		spice = spice
+var spice := 0.0:
+	set(value):
+		spice = clampf(value, 0.0, max_spice)
 var _navigation_managed := false
 var _navigation_system = null
 var _pending_navigation_order := Vector3.ZERO
@@ -164,20 +138,10 @@ var _pending_navigation_exit := Vector3.INF
 var _has_pending_navigation_order := false
 var _navigation_requested_velocity := Vector3.ZERO
 var _navigation_debug_visible := false
-var _visual_root_rest_basis := Basis.IDENTITY
-var _visual_slope_target_basis := Basis.IDENTITY
-var _last_terrain_normal := Vector3.UP
-var _uses_mech_gait := false
-var _mech_gait_elapsed := 0.0
-var _mech_motion_profile: Array[Dictionary] = []
-var _mech_authored_average_speed := 0.0
-var _mech_motion_cycle_seconds := DEFAULT_MECH_MOVE_CYCLE_SECONDS
-var _mech_locomotion_state := MechLocomotionState.IDLE
-var _mech_start_remaining := 0.0
+var _terrain_alignment := UnitTerrainAlignmentScript.new()
+var _locomotion := UnitLocomotionScript.new()
 var _flight_controller: UnitFlightController = null
-## Policy object picked once in _apply_unit_definition, alongside where it
-## already reads unit_definition.infantry today. See unit_death_strategy.gd.
-var _death_strategy: UnitDeathStrategy = null
+var _death_sequence := UnitDeathSequenceScript.new()
 ## Not `velocity`: navigation_step() zeroes its vertical component, and
 ## UnitFlightController writes global_position directly, bypassing velocity
 ## entirely during takeoff/landing. Updated at the top of every
@@ -185,46 +149,33 @@ var _death_strategy: UnitDeathStrategy = null
 ## unit's position at the start of the most recent physics step, regardless
 ## of which movement path is active.
 var _previous_global_position := Vector3.ZERO
-var _deploy_state := DeployState.TRAVEL
-var _deployment_aligning := false
-var _deployment_alignment_direction := Vector3.ZERO
-var _deployment_animation_player: AnimationPlayer
-var _deployment_animation_name: StringName = &""
-var _has_attack_order := false
-var _attack_ground_position := Vector3.INF
-var _attack_target_ref: WeakRef
-var _attack_is_ground := false
-var _attack_is_pursuing := false
-var _attack_repath_remaining := 0.0
-var _attack_last_path_position := Vector3.INF
-var _attack_pursuit_destination := Vector3.INF
-var _attack_pursuit_rejected := false
-var _issuing_attack_move := false
-var _fire_sequence_active := false
-var _fire_sequence_turret
-var _fire_sequence_player: AnimationPlayer
-var _fire_sequence_animation: StringName = &""
-var _fire_sequence_duration := 0.0
-var _fire_sequence_elapsed := 0.0
-var _fire_sequence_shot_times: Array[float] = []
-var _fire_sequence_next_shot := 0
-var _fire_sequence_shots_emitted := 0
-## Weapon-indexed state keeps multi-turret vehicles independent. The legacy
-## scalar fields above mirror whether any sequence exists for tests and older
-## callers; sequence timing and targets live here.
-var _weapon_fire_sequences: Dictionary = {}
-var _weapon_targets: Dictionary = {}
-var _weapon_auto_targets: Dictionary = {}
-var _weapon_auto_target_cooldowns: Dictionary = {}
-var _moving_fire_weapons: Dictionary = {}
-var _weapon_can_fire_while_moving: Dictionary = {}
-var _weapon_fire_overlays: Dictionary = {}
+var _deploy := UnitDeployStateScript.new()
+## Unit's combat engine (attack orders, turret engagement, fire sequences).
+## See scripts/units/unit_combat.gd; modeled on Building/BuildingCombat.
+var _combat := UnitCombatScript.new()
+## Test-only compatibility property: tests/combat/run.gd reads this by name.
+@warning_ignore("unused_private_class_variable")
+var _fire_sequence_active: bool:
+	get:
+		return _combat.has_fire_sequence_active()
+
+
+## Modules that hold no tree state are bound here rather than in _ready(), so
+## they also work on a unit whose _ready() is stubbed out (see the harvester
+## suite's TestHarvester) and before the node enters the tree.
+func _init() -> void:
+	_terrain_alignment.configure(self)
+	_death_sequence.configure(self)
+	_shader_fx.configure(self)
+	_idle_animations.configure(self)
+	_locomotion.configure(self)
+	_deploy.configure(self)
+	_combat.configure(self)
 
 
 func _ready() -> void:
-	if visual_root != null:
-		_visual_root_rest_basis = visual_root.transform.basis.orthonormalized()
-		_visual_slope_target_basis = _visual_root_rest_basis
+	# The authored rest pose only exists once visual_root has resolved.
+	_terrain_alignment.capture_rest_pose()
 	_apply_unit_definition()
 	target_position = global_position
 	_previous_global_position = global_position
@@ -234,11 +185,11 @@ func _ready() -> void:
 	# collision layer remains enabled, so mouse rays can still select this unit.
 	collision_mask = 0
 	_add_authored_collision()
-	_shield_meshes = _collect_shield_meshes()
-	_scroll_fx_meshes = _collect_scroll_fx_meshes()
+	_shader_fx.attach_model()
 	_animation_players = _collect_animation_players()
-	_refresh_weapon_runtime()
-	_refresh_mech_motion_profile()
+	_locomotion.attach_model(_animation_players)
+	_combat.refresh_weapon_runtime()
+	_locomotion.refresh_motion_profile()
 	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
@@ -249,46 +200,26 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
-	_cancel_all_fire_sequences(false)
+	# Unit never re-enters the tree after this (see UnitCombat.dispose()'s own
+	# doc comment), so this is the terminal call -- everything above the
+	# module has already run by the time it drops its back reference.
+	_combat.dispose()
 	for turret in combat_turrets:
 		turret.cancel_authored_fire_fx()
 
 
 func _process(delta: float) -> void:
-	_advance_auto_target_cooldowns(delta)
 	for turret in combat_turrets:
 		turret.advance_ticks(delta * RULE_COMBAT_TICKS_PER_SECOND)
-	# Authored locomotion/fire overlays run before Unit. Restore and advance the
+	# Authored locomotion/fire overlays run before Unit (see
+	# _prioritize_animations_before_unit_logic()). Restore and advance the
 	# combat-owned servo first, then sample the muzzle for this frame's shots;
 	# otherwise a moving turret launches along the clip's forward rest pose.
-	_advance_attack_order(delta)
-	_advance_fire_sequences(delta)
-	if (
-		not _has_attack_order
-		and _weapon_targets.is_empty()
-		and _moving_fire_weapons.is_empty()
-	):
-		# Movement/idle animations key some of the same model pivots as combat.
-		# Keep the combat angle authoritative after an order ends and return it
-		# to the authored forward pose through the normal turret servo. Without
-		# this, the animation snaps the visible pivot to rest while current_yaw
-		# stays cached, and the stale angle reappears on the next attack order.
-		# Only turrets live in the current deploy state: an inactive turret's
-		# pivot is owned by its own deploy/undeploy/idle animation, not combat.
-		for turret in _active_turrets():
-			turret.recenter(delta)
+	_combat.advance(delta)
 	_advance_visual_slope_alignment(delta)
-	# These shaders take their scroll/pulse phase from here: a continuous
-	# phase cannot come from animation tracks (it would snap on clip loops),
-	# and TIME in the shader would keep the editor viewport redrawing.
-	if shields > 0.0 and not _shield_meshes.is_empty():
-		_shield_time += delta
-		for mesh_instance in _shield_meshes:
-			mesh_instance.set_instance_shader_parameter("fx_time", _shield_time)
-	if not _scroll_fx_meshes.is_empty():
-		_scroll_fx_time += delta
-		for mesh_instance in _scroll_fx_meshes:
-			mesh_instance.set_instance_shader_parameter("fx_time", _scroll_fx_time)
+	_shader_fx.advance(delta, shields)
+	if _harvester != null:
+		_harvester.advance(delta)
 
 
 func _physics_process(delta: float) -> void:
@@ -303,18 +234,16 @@ func _physics_process(delta: float) -> void:
 		return
 	if is_deploying():
 		velocity = Vector3.ZERO
-		if _deployment_aligning:
-			if _turn_toward(_deployment_alignment_direction, delta):
-				_deployment_aligning = false
-				_set_visual_slope_target(_last_terrain_normal)
-				_start_deployment_animation()
+		if _deploy.advance_alignment(delta):
+			_terrain_alignment.refresh_slope_target()
+			_deploy.start_deploy_animation()
 		return
 	if is_deployed():
 		velocity = Vector3.ZERO
 		return
 	if _navigation_managed:
 		return
-	_advance_mech_start_transition(delta)
+	_locomotion.advance_start_transition(delta)
 	var offset := target_position - global_position
 	offset.y = 0.0
 	var requested_velocity := Vector3.ZERO
@@ -332,20 +261,20 @@ func _physics_process(delta: float) -> void:
 		else:
 			velocity = Vector3.ZERO
 		if not heading_reached:
-			turn_animation = _mech_turn_animation_for_direction(direction)
+			turn_animation = _locomotion.turn_animation_for(direction)
 
 	_set_navigation_debug_direction(requested_velocity)
-	var animation_speed_scale := _movement_animation_speed_scale()
+	var animation_speed_scale := _locomotion.movement_animation_speed_scale()
 	_set_movement_animation(
 		not velocity.is_zero_approx()
 			or not turn_animation.is_empty()
-			or _mech_transition_or_pause_has_move_order(),
+			or _locomotion.transition_or_pause_has_move_order(),
 		animation_speed_scale,
 		turn_animation
 	)
-	if _mech_locomotion_state == MechLocomotionState.STARTING:
+	if _locomotion.is_starting():
 		velocity = Vector3.ZERO
-	_advance_mech_gait(delta, animation_speed_scale)
+	_locomotion.advance_gait(delta, animation_speed_scale)
 	move_and_slide()
 	_snap_to_terrain(delta)
 
@@ -357,7 +286,7 @@ func move_to(world_position: Vector3, exit_point := Vector3.INF) -> void:
 		_flight_controller.begin_takeoff_toward(world_position, exit_point)
 		return
 	if _navigation_managed and _navigation_system != null:
-		_navigation_system.command_move([self], world_position, _navigation_system.MoveMode.FREE, exit_point)
+		_navigation_system.command_move([self], world_position, NavConstantsScript.MoveMode.FREE, exit_point)
 		return
 	if not prepare_navigation_order(world_position, exit_point, 0):
 		return
@@ -464,15 +393,38 @@ func flight_clip_length(clip_name: StringName, fallback: float) -> float:
 	return fallback
 
 
+## Narrow public surface used by UnitFlightController. Keeping these details
+## on Unit preserves its ownership of terrain and presentation state without
+## making the controller reach through to private implementation methods.
+func flight_set_movement_animation(is_moving: bool) -> void:
+	_set_movement_animation(is_moving)
+
+
+func flight_snap_to_terrain() -> void:
+	_terrain_snap_body()
+
+
+func flight_set_visual_slope_target(terrain_normal: Vector3) -> void:
+	_set_visual_slope_target(terrain_normal)
+
+
+func flight_terrain_hit_at(position: Vector3) -> Dictionary:
+	return _terrain_hit_at(position)
+
+
 ## Called by UnitNavigationSystem before it mutates an agent's route. Units may
 ## perform order-specific cleanup or return false to defer/reject the route.
 ## Unmanaged fallback movement uses the same API, keeping order preparation in
 ## the unit instead of teaching command controllers about unit state machines.
 func prepare_navigation_order(
-	_world_position: Vector3, _exit_point := Vector3.INF, _move_mode := 0
+	world_position: Vector3, exit_point := Vector3.INF, move_mode := 0
 	) -> bool:
-	if not _issuing_attack_move:
-		_replace_attack_with_move()
+	# A harvester mid-unload answers a move order by finishing its clip first,
+	# and takes the order back up when it does.
+	if _harvester != null \
+	and not _harvester.prepare_navigation_order(world_position, exit_point, move_mode):
+		return false
+	_combat.prepare_for_move_order()
 	return not (is_deploying() or is_deployed())
 
 
@@ -484,14 +436,17 @@ func set_navigation_managed(active: bool) -> void:
 
 
 func set_navigation_controller(controller) -> void:
+	if _harvester != null:
+		_harvester.begin_navigation_handoff()
 	_navigation_system = controller
-	if _navigation_system == null or not _has_pending_navigation_order:
-		return
-	var order := _pending_navigation_order
-	var exit_point := _pending_navigation_exit
-	_has_pending_navigation_order = false
-	_pending_navigation_exit = Vector3.INF
-	move_to(order, exit_point)
+	if _navigation_system != null and _has_pending_navigation_order:
+		var order := _pending_navigation_order
+		var exit_point := _pending_navigation_exit
+		_has_pending_navigation_order = false
+		_pending_navigation_exit = Vector3.INF
+		move_to(order, exit_point)
+	if _harvester != null:
+		_harvester.end_navigation_handoff()
 
 
 func set_navigation_destination(world_position: Vector3) -> void:
@@ -544,7 +499,7 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 		velocity = Vector3.ZERO
 		_set_navigation_debug_direction(Vector3.ZERO)
 		return
-	_advance_mech_start_transition(delta)
+	_locomotion.advance_start_transition(delta)
 	# Preserve the requested course before a tracked unit possibly converts its
 	# translational velocity to zero while turning in place. This is the value
 	# shown by the selected-unit navigation debug arrow.
@@ -553,12 +508,7 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 	var turn_animation := &""
 	var steering_direction := velocity.normalized() \
 		if velocity.length_squared() > 0.000001 else Vector3.ZERO
-	if (
-		steering_direction.is_zero_approx()
-		and _uses_mech_gait
-		and _mech_locomotion_state != MechLocomotionState.STARTING
-		and _mech_has_active_move_order()
-	):
+	if steering_direction.is_zero_approx() and _locomotion.wants_destination_heading():
 		var destination_offset := target_position - global_position
 		destination_offset.y = 0.0
 		steering_direction = destination_offset.normalized()
@@ -569,18 +519,18 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 		if not can_move_any_direction and not heading_reached:
 			velocity = Vector3.ZERO
 		if not heading_reached:
-			turn_animation = _mech_turn_animation_for_direction(steering_direction)
-	var animation_speed_scale := _movement_animation_speed_scale()
+			turn_animation = _locomotion.turn_animation_for(steering_direction)
+	var animation_speed_scale := _locomotion.movement_animation_speed_scale()
 	_set_movement_animation(
 		not velocity.is_zero_approx()
 			or not turn_animation.is_empty()
-			or _mech_transition_or_pause_has_move_order(),
+			or _locomotion.transition_or_pause_has_move_order(),
 		animation_speed_scale,
 		turn_animation
 	)
-	if _mech_locomotion_state == MechLocomotionState.STARTING:
+	if _locomotion.is_starting():
 		velocity = Vector3.ZERO
-	_advance_mech_gait(delta, animation_speed_scale)
+	_locomotion.advance_gait(delta, animation_speed_scale)
 	# Unit/unit collision has already been resolved centrally as swept discs.
 	# Applying the exact fixed navigation delta avoids depending on physics-frame
 	# frequency and keeps command replays stable.
@@ -592,83 +542,13 @@ func navigation_step(horizontal_velocity: Vector3, delta: float) -> void:
 ## applying it afterwards would let following units plan through a mech that is
 ## currently in its slower between-step phase.
 func navigation_move_speed() -> float:
-	if not _uses_mech_gait:
-		return move_speed
-	if _mech_motion_profile.is_empty():
-		return mech_speed
-	return _mech_authored_phase_speed() * _mech_gait_cadence()
+	return _locomotion.navigation_move_speed()
 
 
-func _advance_mech_gait(delta: float, animation_speed_scale: float) -> void:
-	if (
-		not _uses_mech_gait
-		or _mech_locomotion_state != MechLocomotionState.MOVING
-		or delta <= 0.0
-	):
-		return
-	var cycle_duration := _mech_move_cycle_duration()
-	_mech_gait_elapsed = fposmod(
-		_mech_gait_elapsed + delta * maxf(animation_speed_scale, 0.0),
-		cycle_duration
-	)
-
-
-func _advance_mech_start_transition(delta: float) -> void:
-	if _mech_locomotion_state != MechLocomotionState.STARTING or delta <= 0.0:
-		return
-	# Physics owns the transition deadline as well as AnimationPlayer. This
-	# keeps deterministic/manual simulations moving even when no render frame
-	# advances the player, while the normal animation_finished path can still
-	# switch to Move first during ordinary scene playback.
-	_mech_start_remaining = maxf(_mech_start_remaining - delta, 0.0)
-	if _mech_start_remaining <= 0.0:
-		_begin_mech_move(_mech_gait_cadence())
-
-
-func _mech_move_cycle_duration() -> float:
-	if not _mech_motion_profile.is_empty():
-		return _mech_motion_cycle_seconds
-	for player in _animation_players:
-		if not player.has_animation(MOVING_ANIMATION):
-			continue
-		var animation := player.get_animation(MOVING_ANIMATION)
-		if animation != null and animation.length > 0.0:
-			return animation.length
-	return DEFAULT_MECH_MOVE_CYCLE_SECONDS
-
-
-func _mech_authored_phase_speed() -> float:
-	if _mech_motion_profile.is_empty():
-		return mech_speed
-	var phase := fposmod(_mech_gait_elapsed, _mech_motion_cycle_seconds)
-	var result := float(_mech_motion_profile[0]["speed"])
-	for key in _mech_motion_profile:
-		if float(key["time"]) > phase + 0.000001:
-			break
-		result = float(key["speed"])
-	return maxf(result, 0.0)
-
-
-func _mech_gait_cadence() -> float:
-	if _mech_motion_profile.is_empty() or _mech_authored_average_speed <= 0.0:
-		return 1.0
-	return mech_speed / _mech_authored_average_speed
-
-
-func _mech_transition_or_pause_has_move_order() -> bool:
-	if not _uses_mech_gait or not _mech_has_active_move_order():
-		return false
-	if _mech_locomotion_state in [
-		MechLocomotionState.STARTING,
-		MechLocomotionState.TURNING_LEFT,
-		MechLocomotionState.TURNING_RIGHT,
-		MechLocomotionState.STOPPING,
-	]:
-		return true
-	return not _mech_motion_profile.is_empty() and _mech_authored_phase_speed() <= 0.0
-
-
-func _mech_has_active_move_order() -> bool:
+## Public because UnitLocomotion asks for it: the order itself belongs to the
+## facade (target_position plus the navigation system's arrival tolerance),
+## the gait only reacts to it.
+func has_active_move_order() -> bool:
 	var tolerance := arrival_radius
 	if (
 		_navigation_managed
@@ -682,94 +562,6 @@ func _mech_has_active_move_order() -> bool:
 	var offset := target_position - global_position
 	offset.y = 0.0
 	return offset.length() > tolerance
-
-
-func _mech_turn_animation_for_direction(direction: Vector3) -> StringName:
-	if not _uses_mech_gait or direction.length_squared() <= 0.000001:
-		return &""
-	var target_yaw := SpatialOrientationScript.yaw_facing(direction, global_rotation.y)
-	var signed_angle := angle_difference(global_rotation.y, target_yaw)
-	if is_zero_approx(signed_angle):
-		return &""
-	return TURN_LEFT_ANIMATION if signed_angle > 0.0 else TURN_RIGHT_ANIMATION
-
-
-func _refresh_mech_motion_profile() -> void:
-	_mech_motion_profile.clear()
-	_mech_authored_average_speed = 0.0
-	_mech_motion_cycle_seconds = DEFAULT_MECH_MOVE_CYCLE_SECONDS
-	if not _uses_mech_gait or visual_root == null:
-		return
-	var model_root := _find_xbf_motion_root(visual_root)
-	if model_root == null:
-		return
-	var move_entry := {}
-	for entry_value: Variant in model_root.get_meta("xbf_animation_entries", []):
-		var entry := entry_value as Dictionary
-		if String(entry.get("name", "")).strip_edges() == String(MOVING_ANIMATION):
-			move_entry = entry
-			break
-	if move_entry.is_empty():
-		return
-	var start_frame := int(move_entry.get("start_frame", -1))
-	var end_frame := int(move_entry.get("end_frame", -1))
-	if start_frame < 0 or end_frame < start_frame:
-		return
-	_mech_motion_cycle_seconds = (
-		float(end_frame - start_frame + 1) / BAKED_MODEL_FRAMES_PER_SECOND
-	)
-	for event_value: Variant in model_root.get_meta("xbf_fx_events", []):
-		var event := event_value as Dictionary
-		var frame := int(event.get("frame", -1))
-		if int(event.get("type", -1)) != 11 \
-		or frame < start_frame or frame > end_frame:
-			continue
-		var speed := _xbf_scalar_event_value(event)
-		if speed < 0.0:
-			continue
-		_mech_motion_profile.append({
-			"time": float(frame - start_frame) / BAKED_MODEL_FRAMES_PER_SECOND,
-			"speed": speed,
-		})
-	_mech_motion_profile.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return float(a["time"]) < float(b["time"])
-	)
-	if _mech_motion_profile.is_empty() \
-	or not is_zero_approx(float(_mech_motion_profile[0]["time"])):
-		_mech_motion_profile.clear()
-		return
-	var distance_per_cycle := 0.0
-	for index in _mech_motion_profile.size():
-		var segment_start := float(_mech_motion_profile[index]["time"])
-		var segment_end := _mech_motion_cycle_seconds
-		if index + 1 < _mech_motion_profile.size():
-			segment_end = float(_mech_motion_profile[index + 1]["time"])
-		distance_per_cycle += float(_mech_motion_profile[index]["speed"]) \
-			* maxf(segment_end - segment_start, 0.0)
-	_mech_authored_average_speed = distance_per_cycle / _mech_motion_cycle_seconds
-	if _mech_authored_average_speed <= 0.0:
-		_mech_motion_profile.clear()
-
-
-func _find_xbf_motion_root(node: Node) -> Node:
-	if node.has_meta("xbf_animation_entries") and node.has_meta("xbf_fx_events"):
-		return node
-	for child in node.get_children():
-		var found := _find_xbf_motion_root(child)
-		if found != null:
-			return found
-	return null
-
-
-static func _xbf_scalar_event_value(event: Dictionary) -> float:
-	if event.has("value"):
-		return float(event["value"])
-	var payload: Variant = event.get("raw_payload")
-	if not payload is PackedByteArray or (payload as PackedByteArray).size() != 8:
-		return -1.0
-	var buffer := StreamPeerBuffer.new()
-	buffer.data_array = payload as PackedByteArray
-	return buffer.get_double()
 
 
 func navigation_blocked_by_enemy(enemies: Array[Node3D]) -> void:
@@ -788,58 +580,19 @@ func _snap_to_terrain(delta: float = 0.0) -> void:
 	_terrain_snap_body()
 
 
-## Extracted so a landed/grounded flying unit (UnitFlightController.advance)
-## sits on real terrain/apron height exactly like a ground unit; airborne
-## flight phases bypass this entirely (fixed cruise altitude, no terrain-follow).
 func _terrain_snap_body() -> void:
-	# Units are moved horizontally, then projected back onto the terrain mesh.
-	# Keeping this independent of CharacterBody's floor state lets authored unit
-	# collision volumes remain usable for selection while the unit follows every
-	# height change in the map instead of retaining its spawn elevation.
-	var hit := _terrain_hit_at(global_position)
-	if hit.is_empty():
-		return
-
-	global_position.y = (hit["position"] as Vector3).y
-	_set_visual_slope_target(hit.get("normal", Vector3.UP) as Vector3)
+	_terrain_alignment.snap_body_to_terrain()
 
 
-## Keeps gameplay orientation, navigation collision and the selection halo
-## upright while tilting only the rendered model. A terrain normal uniquely
-## determines pitch and roll; projecting the unit's forward vector onto that
-## plane preserves its current yaw.
+## Test-only shim: tests/match/demo_boot_run.gd calls this by name. Not
+## architecture — the state lives in UnitTerrainAlignment.
 func _set_visual_slope_target(terrain_normal: Vector3) -> void:
-	_last_terrain_normal = terrain_normal.normalized() \
-		if terrain_normal.length_squared() > 0.000001 else Vector3.UP
-	if _last_terrain_normal.dot(Vector3.UP) < 0.0:
-		_last_terrain_normal = -_last_terrain_normal
-	if visual_root == null or not aligns_visual_to_terrain_slope():
-		_visual_slope_target_basis = _visual_root_rest_basis
-		return
-
-	var unit_basis := global_transform.basis.orthonormalized()
-	var slope_forward := (-unit_basis.z).slide(_last_terrain_normal)
-	if slope_forward.length_squared() <= 0.000001:
-		slope_forward = unit_basis.x.cross(_last_terrain_normal)
-	if slope_forward.length_squared() <= 0.000001:
-		_visual_slope_target_basis = _visual_root_rest_basis
-		return
-	slope_forward = slope_forward.normalized()
-	var slope_z := -slope_forward
-	var slope_x := _last_terrain_normal.cross(slope_z).normalized()
-	var slope_basis := Basis(slope_x, _last_terrain_normal, slope_z).orthonormalized()
-	_visual_slope_target_basis = (
-		unit_basis.inverse() * slope_basis * _visual_root_rest_basis
-	).orthonormalized()
+	_terrain_alignment.set_slope_target(terrain_normal)
 
 
+## Test-only shim: tests/match/demo_boot_run.gd calls this by name.
 func _advance_visual_slope_alignment(delta: float) -> void:
-	if visual_root == null or delta <= 0.0:
-		return
-	var blend := 1.0 - exp(-SLOPE_ALIGNMENT_RESPONSE * delta)
-	visual_root.transform.basis = visual_root.transform.basis.orthonormalized().slerp(
-		_visual_slope_target_basis, clampf(blend, 0.0, 1.0)
-	).orthonormalized()
+	_terrain_alignment.advance_slope_alignment(delta)
 
 
 func aligns_visual_to_terrain_slope() -> bool:
@@ -860,40 +613,18 @@ func aligns_visual_to_terrain_slope() -> bool:
 
 
 func _slope_speed_multiplier(direction: Vector3, delta: float) -> float:
-	if _flight_controller != null and _flight_controller.flight_is_airborne_phase():
-		return 1.0
-	var current_hit := _terrain_hit_at(global_position)
-	if current_hit.is_empty():
-		return 1.0
-
-	var probe_distance := maxf(move_speed * delta, SLOPE_PROBE_DISTANCE)
-	var ahead := global_position + direction * probe_distance
-	var ahead_hit := _terrain_hit_at(ahead)
-	if ahead_hit.is_empty():
-		return 1.0
-
-	var current_position: Vector3 = current_hit["position"]
-	var ahead_position: Vector3 = ahead_hit["position"]
-	var slope := (ahead_position.y - current_position.y) / probe_distance
-	if slope > 0.0:
-		return maxf(1.0 - slope * 0.65, MIN_SLOPE_SPEED_MULTIPLIER)
-	return minf(1.0 - slope * 0.75, MAX_SLOPE_SPEED_MULTIPLIER)
+	return _terrain_alignment.slope_speed_multiplier(direction, delta)
 
 
+## Rotates the hull toward `direction` by at most one tick's worth of yaw.
+func turn_toward(direction: Vector3, delta: float) -> bool:
+	return _terrain_alignment.turn_toward(direction, delta)
+
+
+## Test-only shim: tests/match/demo_boot_run.gd calls this by name, and
+## Harvester (harvester.gd) calls it as an inherited member.
 func _turn_toward(direction: Vector3, delta: float) -> bool:
-	var horizontal_direction := Vector3(direction.x, 0.0, direction.z)
-	if horizontal_direction.length_squared() <= 0.000001:
-		return true
-	horizontal_direction = horizontal_direction.normalized()
-	var current_yaw := global_rotation.y
-	var target_yaw := SpatialOrientationScript.yaw_facing(horizontal_direction, current_yaw)
-	if is_zero_approx(angle_difference(current_yaw, target_yaw)):
-		return true
-	if turn_rate <= 0.0 or delta <= 0.0:
-		return false
-	var maximum_step := turn_rate * RULE_MOVEMENT_UPDATES_PER_SECOND * delta
-	global_rotation.y = rotate_toward(current_yaw, target_yaw, maximum_step)
-	return is_zero_approx(angle_difference(global_rotation.y, target_yaw))
+	return turn_toward(direction, delta)
 
 
 func facing_direction() -> Vector3:
@@ -905,33 +636,29 @@ func face_direction(direction: Vector3) -> void:
 	var target_yaw := SpatialOrientationScript.yaw_facing(direction, current_yaw)
 	if is_inside_tree():
 		global_rotation.y = target_yaw
-		_set_visual_slope_target(_last_terrain_normal)
+		# Yaw moved, so the model's slope tilt is re-derived from the same
+		# terrain normal rather than waiting for the next terrain sample.
+		_terrain_alignment.refresh_slope_target()
 	else:
 		rotation.y = target_yaw
 
 
 func _terrain_hit_at(position: Vector3) -> Dictionary:
-	var query := PhysicsRayQueryParameters3D.create(
-		position + Vector3.UP * TERRAIN_RAY_HEIGHT,
-		position - Vector3.UP * TERRAIN_RAY_HEIGHT,
-		TERRAIN_COLLISION_MASK
-	)
-	query.exclude = [get_rid()]
-	return get_world_3d().direct_space_state.intersect_ray(query)
+	return _terrain_alignment.terrain_hit_at(position)
 
 
 func setup(unit_id: StringName) -> void:
-	_cancel_all_fire_sequences(false)
+	_combat.detach_model()
 	config_id = unit_id
 	if not is_inside_tree():
 		return
 
 	_apply_unit_definition()
-	_refresh_weapon_runtime()
-	_refresh_mech_motion_profile()
+	_combat.refresh_weapon_runtime()
+	_locomotion.refresh_motion_profile()
 	health = max_health
 	shields = max_shields
-	_set_visual_slope_target(_last_terrain_normal)
+	_terrain_alignment.refresh_slope_target()
 
 
 ## Used by runtime unit production and startup snapshots when a generic Unit
@@ -939,17 +666,17 @@ func setup(unit_id: StringName) -> void:
 func replace_visual_scene(model_scene: PackedScene) -> void:
 	if model_scene == null or visual_root == null:
 		return
-	_cancel_all_fire_sequences(false)
+	_combat.detach_model()
 	for child in visual_root.get_children():
 		visual_root.remove_child(child)
 		child.free()
 	visual_root.add_child(model_scene.instantiate())
-	_bind_combat_turrets()
-	_shield_meshes = _collect_shield_meshes()
-	_scroll_fx_meshes = _collect_scroll_fx_meshes()
+	_combat.bind_combat_turrets()
+	_shader_fx.attach_model()
 	_animation_players = _collect_animation_players()
-	_refresh_weapon_runtime()
-	_refresh_mech_motion_profile()
+	_locomotion.attach_model(_animation_players)
+	_combat.refresh_weapon_runtime()
+	_locomotion.refresh_motion_profile()
 	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
@@ -973,18 +700,15 @@ func grant_temporary_invulnerability(duration: float) -> void:
 
 
 func take_damage(amount: float, death_cause: StringName = &"") -> void:
-	if invulnerable or amount <= 0.0 or health <= 0.0:
+	# The arithmetic is shared with Building.take_damage(); applying it is not,
+	# because the health/shields setters here run unit-specific side effects.
+	var outcome := DamagePolicyScript.resolve(amount, health, shields, invulnerable)
+	if outcome.absorbed_by_shields > 0.0:
+		shields -= outcome.absorbed_by_shields
+	if outcome.health_delta == 0.0:
 		return
-
-	var remaining_damage := amount
-	if shields > 0.0:
-		var absorbed := minf(shields, remaining_damage)
-		shields -= absorbed
-		remaining_damage -= absorbed
-	if remaining_damage <= 0.0:
-		return
-	health -= remaining_damage
-	if health <= 0.0:
+	health += outcome.health_delta
+	if outcome.is_lethal:
 		_begin_death_sequence(death_cause)
 
 
@@ -996,141 +720,12 @@ func combat_is_airborne() -> bool:
 	return unit_definition != null and unit_definition.can_fly
 
 
-## Called on the killing blow instead of queue_free() directly. The unit is
-## still freed the instant health crosses zero, exactly as before this
-## feature — see the death-animation plan's "Core design decision" for why a
-## `_dying` guard living through the animation was rejected (it would need
-## mirroring across is_deploying()-style checks scattered through this file,
-## plus an explicit deselect UnitCommandController does not otherwise need).
-## A corpse node is spawned in the unit's place only when an authored clip
-## actually matches; otherwise this degrades byte-for-byte to today's
-## behaviour so units without a death clip never regress.
+## Entry point kept on the facade: take_damage() calls it, and the surrounding
+## docs (death_corpse.gd, unit_death_strategy.gd) name it. Everything it used
+## to do lives in UnitDeathSequence; _previous_global_position is the facade's
+## own bookkeeping and is handed over by value.
 func _begin_death_sequence(cause: StringName) -> void:
-	var candidates: Array[StringName] = (
-		_death_strategy.death_animation_candidates(cause, is_deployed())
-		if _death_strategy != null else []
-	)
-	var found := _find_animation_player(candidates)
-	var player := found.get("player") as AnimationPlayer
-	var clip := StringName(found.get("name", &""))
-	var parent := get_parent()
-	var model := (
-		visual_root.get_child(0) as Node3D
-		if visual_root != null and visual_root.get_child_count() > 0 else null
-	)
-	if player == null or model == null or parent == null:
-		# No corpse at all (no clip matched, or nothing to detach), but a
-		# vehicle with a rules-authored explosion must still visually explode
-		# — the death clip and the explosion FX are independent per the
-		# original data (ExplosionType/ExplosionEffects vs Explode animation),
-		# so losing one must not silently drop the other.
-		var start_paths: Array[String] = (
-			_death_strategy.death_start_sound_paths(_owner_faction_id(), config_id)
-			if _death_strategy != null else []
-		)
-		DeathSoundPlayerScript.play_pool(parent, global_position, start_paths)
-		_spawn_death_explosion_effects(parent, global_position)
-		queue_free()
-		return
-
-	var world_transform := visual_root.global_transform
-	_prepare_model_for_corpse(model)
-	visual_root.remove_child(model)
-
-	var launch_impulse: Vector3 = (
-		_death_strategy.death_launch_impulse(cause) if _death_strategy != null else Vector3.ZERO
-	)
-	# Inherited momentum is a property of the death cause, not of body type
-	# (death-animation plan, "Momentum policy"): Shot/Burn/Gassed clips are
-	# authored in place and must drop whatever velocity the unit had, while a
-	# flying unit's corpse must always fall regardless of what killed it.
-	var carries_momentum: bool = (
-		(unit_definition != null and unit_definition.can_fly)
-		or not launch_impulse.is_zero_approx()
-	)
-	var momentum := Vector3.ZERO
-	if carries_momentum:
-		var physics_delta := get_physics_process_delta_time()
-		var inherited_velocity := (
-			(global_position - _previous_global_position) / physics_delta
-			if physics_delta > 0.0 else Vector3.ZERO
-		)
-		momentum = inherited_velocity + launch_impulse
-
-	var owner_faction := _owner_faction_id()
-	var sound_layers: Array = (
-		_death_strategy.death_sound_event_layers(cause, owner_faction, config_id)
-		if _death_strategy != null else []
-	)
-	var sound_event_ids := _resolve_sound_event_ids(sound_layers)
-	var start_paths: Array[String] = (
-		_death_strategy.death_start_sound_paths(owner_faction, config_id)
-		if _death_strategy != null else []
-	)
-	DeathCorpseScript.spawn(
-		parent, model, world_transform, clip, sound_event_ids, momentum, owner_player_id,
-		start_paths,
-	)
-	_spawn_death_explosion_effects(parent, world_transform.origin)
-	queue_free()
-
-
-## Spawns this unit's rules-authored death explosion (UnitDefinition's
-## explosion_effect_ids, falling back to its single explosion_type_id —
-## mirrors CombatBullet.explosion_effect_ids()) as a sibling of the dying
-## unit, exactly like CombatProjectile._spawn_explosion_visuals(). Must never
-## parent to `self`: the unit is freed the instant this call returns, which
-## would take a child effect down with it. Infantry naturally get no effect
-## here since their UnitDefinition carries no explosion ids at all — nothing
-## unit-type-specific needed.
-##
-## Also plays the death strategy's VFX-timed sound layer
-## (death_vfx_sound_paths(), vehicles' size-tier boom) right here rather than
-## from DeathCorpse or attached to the CombatImpactEffect node itself: this
-## is the one call site that already fires at "the explosion SFX is shown"
-## for both branches of _begin_death_sequence (with a corpse and the early
-## no-corpse return alike), so tying the sound to it directly is explicit
-## rather than coincidental. It is deliberately NOT a child of the spawned
-## CombatImpactEffect — that node's own Cleanup timer frees it after its
-## (short, ~0.5s) visual lifetime, which would cut an explosion sample short;
-## playing it as a parent-level fire-and-forget layer (DeathSoundPlayer.
-## play_pool) instead lets it run to completion independent of the visual.
-func _spawn_death_explosion_effects(parent: Node, world_position: Vector3) -> void:
-	if unit_definition == null or parent == null or not parent.is_inside_tree():
-		return
-	var vfx_sound_paths: Array[String] = (
-		_death_strategy.death_vfx_sound_paths(config_id) if _death_strategy != null else []
-	)
-	DeathSoundPlayerScript.play_pool(parent, world_position, vfx_sound_paths)
-	for effect_id in _death_explosion_effect_ids():
-		var scene_path := String(unit_definition.explosion_scene_paths.get(effect_id, ""))
-		if scene_path.is_empty():
-			continue
-		var scene := load(scene_path) as PackedScene
-		if scene == null:
-			continue
-		var effect = CombatImpactEffectScript.new()
-		parent.add_child(effect)
-		if not effect.configure(effect_id, scene, world_position):
-			effect.free()
-
-
-## Mirrors CombatBullet.explosion_effect_ids(): an explicit effect list wins,
-## falling back to the single ExplosionType id only when no effect list was
-## authored, so a unit's death visual resolves its two Rules.txt fields the
-## same way its own bullets already do.
-func _death_explosion_effect_ids() -> Array[StringName]:
-	var result: Array[StringName] = []
-	if unit_definition == null:
-		return result
-	for value in unit_definition.explosion_effect_ids:
-		var effect_id := StringName(value)
-		if effect_id != &"" and effect_id not in result:
-			result.append(effect_id)
-	var primary_id: StringName = unit_definition.explosion_type_id
-	if result.is_empty() and primary_id != &"":
-		result.append(primary_id)
-	return result
+	_death_sequence.begin(cause, _previous_global_position)
 
 
 ## Scrubs the runtime state Unit bound onto the model subtree before handing
@@ -1150,24 +745,17 @@ func _death_explosion_effect_ids() -> Array[StringName]:
 ## which walks this instance's own script variables after a death and fails
 ## if anything still points at a node under the corpse — so forgetting an
 ## entry here fails loudly in that test rather than regressing silently.
-func _prepare_model_for_corpse(model: Node3D) -> void:
+func prepare_model_for_corpse(model: Node3D) -> void:
 	# Must run before any overlay player is freed below: a fire sequence's
 	# state dict can still hold that same player in state["player"], and
 	# freeing it out from under a live entry leaves a dangling reference that
-	# _exit_tree()'s teardown (_cancel_all_fire_sequences) would later cast.
-	# restore_idle=false because the unit is being discarded this frame, same
-	# as every other pre-teardown call site (setup(), replace_visual_scene()).
-	_cancel_all_fire_sequences(false)
+	# _exit_tree()'s teardown (_combat.dispose()) would later cast. Also drops
+	# the fire-while-moving overlay AnimationPlayers, same as every other
+	# pre-teardown call site (setup(), replace_visual_scene()) that calls this.
+	_combat.detach_model()
 	for turret in combat_turrets:
 		turret.unbind_model()
-	for mesh_instance in _shield_meshes:
-		mesh_instance.visible = false
-	for mesh_instance in _scroll_fx_meshes:
-		mesh_instance.visible = false
-	for overlay_value: Variant in _weapon_fire_overlays.values():
-		if is_instance_valid(overlay_value):
-			(overlay_value as Node).free()
-	_weapon_fire_overlays.clear()
+	_shader_fx.detach_model()
 	# Generic: disconnect every signal connection THIS unit made onto `model`
 	# or any of its descendants, regardless of which signal or when it was
 	# connected. This is what closes _prepare_idle_animations()'s
@@ -1183,23 +771,14 @@ func _prepare_model_for_corpse(model: Node3D) -> void:
 	# disconnect alone does not help a plain field that some other code path
 	# reads without going through a signal.
 	_animation_players.clear()
-	_shield_meshes.clear()
-	_scroll_fx_meshes.clear()
-	# _deployment_animation_player is populated straight from
-	# _animation_players (_start_deployment_animation(), line ~2408) but,
-	# unlike _animation_players itself, is a scalar field that keeps pointing
-	# at that same model AnimationPlayer until explicitly cleared — nothing
-	# else resets it on death, so a unit killed while deploying kept a live
-	# direct pointer into the corpse's subtree here. This is the newly-found
-	# third site in the same class as cdc79b6/2b745b2.
-	# (_fire_sequence_player/_fire_sequence_turret are the same shape of
-	# field, but _cancel_all_fire_sequences() above already zeroes them via
-	# _sync_legacy_fire_sequence(); cleared again here anyway so this
-	# function stays the single, self-sufficient place to look.)
-	_deployment_animation_player = null
-	_deployment_animation_name = &""
-	_fire_sequence_player = null
-	_fire_sequence_turret = null
+	_locomotion.detach_model()
+	# UnitDeployState caches the transition AnimationPlayer straight out of
+	# the model. Unlike _animation_players it is a scalar that keeps pointing
+	# at that player until explicitly cleared — nothing else resets it on
+	# death, so a unit killed while deploying kept a live direct pointer into
+	# the corpse's subtree. This is the newly-found third site in the same
+	# class as cdc79b6/2b745b2.
+	_deploy.detach_model()
 	# Reachable only via _on_animation_finished (now unreachable, see above),
 	# but nulled anyway so nothing can call back into it and so it no longer
 	# holds this Unit and one of the corpse's players alive together.
@@ -1237,38 +816,6 @@ func _sever_connections_into(subtree_root: Node) -> void:
 					node.disconnect(signal_name, callable)
 
 
-## Resolves every manifest-backed sound *layer* the strategy proposed,
-## collapsing each layer's candidate list to the single first id the SFX-hook
-## converter actually generated a resource for (per-house hook -> generic
-## hook -> nothing); a layer whose candidates all went ungenerated simply
-## drops out without taking the others with it. This is infantry-only now —
-## vehicle death explosions bypass GeneratedVoiceManifest entirely via
-## death_vfx_sound_paths()/death_start_sound_paths() (direct WAV pools, see
-## VehicleDeathStrategy/docs/quirks.md), so `layers` here is at most the one
-## per-cause layer InfantryDeathStrategy.death_sound_event_layers() returns.
-func _resolve_sound_event_ids(layers: Array) -> Array[StringName]:
-	var resolved: Array[StringName] = []
-	for layer: Array in layers:
-		for candidate: StringName in layer:
-			if not GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(_death_sound_key(candidate)):
-				continue
-			if not resolved.has(candidate):
-				resolved.append(candidate)
-			break
-	return resolved
-
-
-func _death_sound_key(sound_event_id: StringName) -> StringName:
-	return StringName(String(sound_event_id).to_lower())
-
-
-func _owner_faction_id() -> StringName:
-	var roster_player = owner_player()
-	if roster_player == null:
-		return &""
-	return roster_player.house_id
-
-
 func combat_aim_position() -> Vector3:
 	# The gameplay root sits on the terrain. A projectile aimed there forces
 	# horizontal-only weapons to compare their muzzle direction with a point
@@ -1291,34 +838,31 @@ func combat_owner_player_id() -> int:
 	return owner_player_id
 
 
+## Test-only accessor into the combat module: tests/combat/run.gd,
+## tests/units/death_animation_run.gd and tests/units/deployment_run.gd reach
+## fire-sequence/turret-engagement internals through this rather than Unit
+## re-exposing them itself. Not architecture.
+func combat():
+	return _combat
+
+
 ## Rotates every authored weapon joint toward a world-space point. The return
 ## value becomes true only when every configured weapon is inside its own
 ## acceptable-aim tolerance from Rules.txt.
 func aim_turrets_at(world_position: Vector3, delta: float) -> bool:
-	if combat_turrets.is_empty():
-		return false
-	var all_aimed := true
-	for turret in combat_turrets:
-		all_aimed = turret.aim_at(world_position, delta) and all_aimed
-	return all_aimed
+	return _combat.aim_turrets_at(world_position, delta)
 
 
 ## Returns world transforms/positions/directions for every authored muzzle of
 ## one weapon. Multi-barrel weapons expose all >> markers beneath their ::N
 ## pivot instead of confusing muzzle numbers with weapon numbers.
 func turret_emission_points(weapon_index: int = 0) -> Array[Dictionary]:
-	var turret = _combat_turret_for_weapon(weapon_index)
-	if turret == null:
-		return []
-	return turret.emission_points()
+	return _combat.turret_emission_points(weapon_index)
 
 
 ## Selects the next muzzle in authored marker order and advances the sequence.
 func next_turret_emission(weapon_index: int = 0) -> Dictionary:
-	var turret = _combat_turret_for_weapon(weapon_index)
-	if turret == null:
-		return {}
-	return turret.next_emission()
+	return _combat.next_turret_emission(weapon_index)
 
 
 ## Fires one rules-backed weapon from its next authored muzzle. A live target
@@ -1330,41 +874,11 @@ func fire_weapon_at(
 		projectile_parent: Node = null,
 		aim_offset := Vector3.ZERO
 	) -> Array:
-	var turret = _combat_turret_for_weapon(weapon_index)
-	if turret == null:
-		return []
-	return turret.try_fire_at(target_or_position, self, projectile_parent, aim_offset)
-
-
-func _combat_turret_for_weapon(weapon_index: int):
-	if weapon_index < 0:
-		return null
-	for turret in combat_turrets:
-		if turret.weapon_index() == weapon_index:
-			return turret
-	return null
-
-
-## Turrets whose TurretDefinition.disabled_when_deployed/disabled_when_undeployed
-## keep them live in the unit's current deploy state. Both transition states
-## (DEPLOYING/UNDEPLOYING) intentionally expose no active turret, preserving
-## "cannot attack while deploying" for every unit, deployable or not.
-func _active_turrets() -> Array:
-	if is_deploying():
-		return []
-	var deployed := is_deployed()
-	var active: Array = []
-	for turret in combat_turrets:
-		if turret.is_active_while_deployed(deployed):
-			active.append(turret)
-	return active
+	return _combat.fire_weapon_at(target_or_position, weapon_index, projectile_parent, aim_offset)
 
 
 func can_attack(target_or_position: Variant) -> bool:
-	for turret in _active_turrets():
-		if turret.can_target(target_or_position):
-			return true
-	return false
+	return _combat.can_attack(target_or_position)
 
 
 ## Installs an explicit player attack order. A Node target is tracked until it
@@ -1372,1066 +886,90 @@ func can_attack(target_or_position: Variant) -> bool:
 ## belong to UnitCommandController so Ctrl can deliberately force friendly or
 ## neutral fire through this same combat-facing API.
 func command_attack(target_or_position: Variant) -> bool:
-	if not can_attack(target_or_position):
-		return false
-	_cancel_all_fire_sequences()
-	stop_at_current_position()
-	_has_attack_order = true
-	_attack_is_ground = target_or_position is Vector3
-	_attack_ground_position = target_or_position if _attack_is_ground else Vector3.INF
-	_attack_target_ref = null if _attack_is_ground else weakref(target_or_position as Object)
-	_attack_is_pursuing = false
-	_attack_repath_remaining = 0.0
-	_attack_last_path_position = Vector3.INF
-	_attack_pursuit_destination = Vector3.INF
-	_attack_pursuit_rejected = false
-	_weapon_targets.clear()
-	_weapon_auto_targets.clear()
-	_weapon_auto_target_cooldowns.clear()
-	_moving_fire_weapons.clear()
-	for turret in _active_turrets():
-		if turret.can_target(target_or_position):
-			_set_weapon_target(turret.weapon_index(), target_or_position)
-	attack_order_changed.emit(true, target_or_position)
-	return true
+	return _combat.command_attack(target_or_position)
 
 
 func cancel_attack_order() -> void:
-	_cancel_all_fire_sequences()
-	_weapon_targets.clear()
-	_weapon_auto_targets.clear()
-	_weapon_auto_target_cooldowns.clear()
-	_moving_fire_weapons.clear()
-	if not _has_attack_order:
-		return
-	_has_attack_order = false
-	_attack_is_ground = false
-	_attack_ground_position = Vector3.INF
-	_attack_target_ref = null
-	_attack_is_pursuing = false
-	_attack_repath_remaining = 0.0
-	_attack_last_path_position = Vector3.INF
-	_attack_pursuit_destination = Vector3.INF
-	_attack_pursuit_rejected = false
-	attack_order_changed.emit(false, null)
-
-
-func _replace_attack_with_move() -> void:
-	var retained_targets: Dictionary = {}
-	_moving_fire_weapons.clear()
-	for turret in combat_turrets:
-		var weapon_index: int = turret.weapon_index()
-		if not weapon_can_fire_while_moving(weapon_index):
-			continue
-		_moving_fire_weapons[weapon_index] = true
-		if _weapon_targets.has(weapon_index):
-			retained_targets[weapon_index] = (
-				_weapon_targets[weapon_index] as Dictionary
-			).duplicate()
-	_cancel_blocking_fire_sequences()
-	var had_attack_order := _has_attack_order
-	_has_attack_order = false
-	_attack_is_ground = false
-	_attack_ground_position = Vector3.INF
-	_attack_target_ref = null
-	_attack_is_pursuing = false
-	_attack_repath_remaining = 0.0
-	_attack_last_path_position = Vector3.INF
-	_attack_pursuit_destination = Vector3.INF
-	_attack_pursuit_rejected = false
-	_weapon_targets = retained_targets
-	_weapon_auto_targets.clear()
-	_weapon_auto_target_cooldowns.clear()
-	if had_attack_order:
-		attack_order_changed.emit(false, null)
+	_combat.cancel_attack_order()
 
 
 func has_attack_order() -> bool:
-	return _has_attack_order
+	return _combat.has_attack_order()
 
 
 func has_active_order() -> bool:
-	return _has_attack_order or is_deploying() or _mech_has_active_move_order()
+	return has_attack_order() \
+		or is_deploying() \
+		or has_active_move_order() \
+		or (_harvester != null and _harvester.has_active_order())
 
 
 func attack_order_target() -> Variant:
-	if not _has_attack_order:
-		return null
-	if _attack_is_ground:
-		return _attack_ground_position
-	return _attack_target_ref.get_ref() if _attack_target_ref != null else null
+	return _combat.attack_order_target()
 
 
-func _advance_attack_order(delta: float) -> void:
-	if _active_turrets().is_empty():
-		return
-	if not _has_attack_order:
-		_advance_retained_weapon_targets(delta)
-		return
-	var attack_target: Variant = attack_order_target()
-	if not _attack_is_ground and not _combat_target_is_alive(attack_target):
-		cancel_attack_order()
-		stop_at_current_position()
-		return
-	var target_world_position := _combat_target_position(attack_target)
-	if not target_world_position.is_finite():
-		cancel_attack_order()
-		stop_at_current_position()
-		return
-	var primary_turret = _primary_attack_turret(attack_target)
-	if primary_turret == null:
-		cancel_attack_order()
-		stop_at_current_position()
-		return
-	var in_range_turrets: Array = []
-	var obstructed_turrets: Array = []
-	for turret in _active_turrets():
-		if turret.target_range(attack_target) != CombatTurretScript.TargetRange.IN_RANGE:
-			continue
-		if turret.has_line_of_fire(attack_target, self):
-			in_range_turrets.append(turret)
-		else:
-			obstructed_turrets.append(turret)
-	if in_range_turrets.is_empty():
-		_recenter_unengaged_turrets([], delta)
-		# A blocked line is solved the same way as a distant target: keep closing
-		# until the cliff shoulder or building no longer covers it. Firing from
-		# here would only damage the obstacle standing in front of the order.
-		if not obstructed_turrets.is_empty() \
-		or primary_turret.target_range(attack_target) == CombatTurretScript.TargetRange.TOO_FAR:
-			_advance_attack_pursuit(target_world_position, primary_turret, delta)
-			return
-		# A minimum-range violation is not solved by moving closer. Keep the
-		# explicit order active so a moving target can re-enter weapon range.
-		if _attack_is_pursuing:
-			stop_at_current_position()
-			_attack_is_pursuing = false
-		return
-	if _attack_is_pursuing:
-		stop_at_current_position()
-		_attack_is_pursuing = false
+## Callbacks _combat reaches through Node.call() (see building.gd:675 for the
+## pattern this mirrors) so the module can raise the facade's own signals
+## without a private reach into them.
+func _emit_attack_order_changed(active: bool, target: Variant) -> void:
+	attack_order_changed.emit(active, target)
 
-	var direct_turrets: Array = []
-	for turret in in_range_turrets:
-		if not turret.requires_hull_turn_for(target_world_position):
-			direct_turrets.append(turret)
 
-	# A limited side turret must not drag the hull away from a target already
-	# covered by another weapon. Only a real all-weapon blind zone requests a
-	# hull correction, and the smallest correction brings the nearest sector
-	# boundary onto the commanded target.
-	var hull_turret = null
-	var fixed_hull_aimed := false
-	if direct_turrets.is_empty():
-		var smallest_adjustment := INF
-		for turret in in_range_turrets:
-			var adjustment: float = turret.hull_yaw_adjustment_for(
-				target_world_position
-			)
-			if absf(adjustment) < smallest_adjustment:
-				smallest_adjustment = absf(adjustment)
-				hull_turret = turret
-		if hull_turret != null:
-			if hull_turret.requires_hull_turn():
-				fixed_hull_aimed = _turn_toward(
-					target_world_position - global_position, delta
-				)
-			else:
-				_turn_hull_by_adjustment(
-					hull_turret.hull_yaw_adjustment_for(target_world_position),
-					delta
-				)
+func _emit_weapon_fired(projectiles: Array, target: Variant, weapon_index: int) -> void:
+	weapon_fired.emit(projectiles, target, weapon_index)
 
-	var engaged_turrets: Array = []
-	for turret in in_range_turrets:
-		var turret_target: Variant = attack_target \
-			if turret in direct_turrets or turret == hull_turret \
-			else _automatic_target_for(turret)
-		if _advance_turret_engagement(
-			turret, turret_target, delta,
-			fixed_hull_aimed if turret == hull_turret \
-				and turret.requires_hull_turn() else null
-			):
-			engaged_turrets.append(turret)
-	_recenter_unengaged_turrets(engaged_turrets, delta)
 
+## Deployed state always resolves the single canonical Deployed_Fire clip;
+## the ordinary Fire_<index> chain is travel-mode only. See
+## unit_combat.gd:fire_animation_binding() for the full lookup this wraps.
+## Public because UnitFireOverlay calls it by name.
+func fire_animation_binding(weapon_index: int) -> Dictionary:
+	return _combat.fire_animation_binding(weapon_index)
 
-func _advance_retained_weapon_targets(delta: float) -> void:
-	if _weapon_targets.is_empty() and _moving_fire_weapons.is_empty():
-		return
-	for turret in _active_turrets():
-		var weapon_index: int = turret.weapon_index()
-		var autonomous := _moving_fire_weapons.has(weapon_index)
-		if not autonomous and not _weapon_targets.has(weapon_index):
-			continue
-		var retained_target: Variant = _weapon_target(weapon_index)
-		if retained_target != null and not _combat_target_is_alive(retained_target):
-			_weapon_targets.erase(weapon_index)
-			_weapon_auto_targets.erase(weapon_index)
-			_weapon_auto_target_cooldowns.erase(weapon_index)
-			retained_target = null
-		var turret_target: Variant = null
-		if retained_target != null:
-			var target_world_position := _combat_target_position(retained_target)
-			if (
-				turret.target_range(retained_target)
-					== CombatTurretScript.TargetRange.IN_RANGE
-				and not turret.requires_hull_turn_for(target_world_position)
-				and turret.has_line_of_fire(retained_target, self)
-			):
-				turret_target = retained_target
-		if turret_target == null and autonomous:
-			turret_target = _automatic_target_for(turret)
-		if not _advance_turret_engagement(turret, turret_target, delta):
-			_recenter_turret_if_idle(turret, delta)
 
-
-func _advance_turret_engagement(
-	turret, target: Variant, delta: float, aimed_override: Variant = null
-	) -> bool:
-	if turret == null or target == null:
-		return false
-	var target_world_position := _combat_target_position(target)
-	if not target_world_position.is_finite() \
-	or turret.target_range(target) != CombatTurretScript.TargetRange.IN_RANGE:
-		return false
-	var aimed := bool(aimed_override) if aimed_override is bool \
-		else bool(turret.aim_at(target_world_position, delta))
-	if not aimed or _weapon_fire_sequences.has(turret.weapon_index()):
-		return true
-	# A stream weapon's authored Fire clip is one short burst meant to replay
-	# back-to-back for the duration of a burst window (sized to ReloadCount,
-	# matching the original engine's roughly symmetric on/off cadence, e.g.
-	# the Flame Tank's ~2.4s burst followed by a ~2.4s reload) rather than
-	# waiting out the full ReloadCount between each short clip, which would
-	# otherwise turn a sustained flame into one brief puff per cooldown.
-	var is_continuous: bool = bool(turret.is_continuous_bullet())
-	var starting_new_burst := false
-	var ready_to_restart: bool
-	if is_continuous and bool(turret.continuous_burst_active()):
-		ready_to_restart = true
-	else:
-		ready_to_restart = bool(turret.is_ready())
-		starting_new_burst = is_continuous and ready_to_restart
-	if ready_to_restart and _start_authored_fire_sequence(turret, target):
-		if starting_new_burst:
-			turret.begin_continuous_burst()
-		return true
-	var projectiles: Array = turret.try_fire_at(target, self)
-	if not projectiles.is_empty():
-		weapon_fired.emit(projectiles, target, turret.weapon_index())
-	return true
-
-
-func _recenter_unengaged_turrets(engaged_turrets: Array, delta: float) -> void:
-	# Inactive turrets are excluded: their pivot belongs to the model's own
-	# deploy/undeploy/idle animation while disabled for the current deploy
-	# state, not to the combat servo.
-	for turret in _active_turrets():
-		if turret not in engaged_turrets:
-			_recenter_turret_if_idle(turret, delta)
-
-
-func _recenter_turret_if_idle(turret, delta: float) -> void:
-	if turret == null or _weapon_fire_sequences.has(turret.weapon_index()):
-		return
-	turret.recenter(delta)
-
-
-func _automatic_target_for(turret) -> Variant:
-	if turret == null:
-		return null
-	var weapon_index: int = turret.weapon_index()
-	var cached: Variant = _weak_target(_weapon_auto_targets.get(weapon_index, {}))
-	if _automatic_target_is_usable(turret, cached):
-		return cached
-	if float(_weapon_auto_target_cooldowns.get(weapon_index, 0.0)) > 0.0:
-		return null
-	_weapon_auto_target_cooldowns[weapon_index] = AUTO_TARGET_REFRESH_SECONDS
-	var best_target: Node3D = null
-	var best_distance := INF
-	var tree := get_tree()
-	if tree == null:
-		return null
-	var candidates: Array[Node] = []
-	candidates.append_array(tree.get_nodes_in_group(&"units"))
-	candidates.append_array(tree.get_nodes_in_group(&"buildings"))
-	for candidate_node in candidates:
-		if not candidate_node is Node3D or candidate_node == self:
-			continue
-		var candidate := candidate_node as Node3D
-		if not _automatic_target_is_usable(turret, candidate):
-			continue
-		var distance := global_position.distance_squared_to(candidate.global_position)
-		if distance < best_distance \
-		or (
-			is_equal_approx(distance, best_distance)
-			and best_target != null
-			and candidate.get_instance_id() < best_target.get_instance_id()
-		):
-			best_distance = distance
-			best_target = candidate
-	if best_target == null:
-		_weapon_auto_targets.erase(weapon_index)
-		return null
-	_weapon_auto_targets[weapon_index] = {"ref": weakref(best_target)}
-	return best_target
-
-
-func _advance_auto_target_cooldowns(delta: float) -> void:
-	for weapon_index: Variant in _weapon_auto_target_cooldowns.keys():
-		var remaining := maxf(
-			float(_weapon_auto_target_cooldowns[weapon_index]) - maxf(delta, 0.0),
-			0.0
-		)
-		if remaining <= 0.0:
-			_weapon_auto_target_cooldowns.erase(weapon_index)
-		else:
-			_weapon_auto_target_cooldowns[weapon_index] = remaining
-
-
-func _automatic_target_is_usable(turret, target: Variant) -> bool:
-	if not target is Node3D or not is_instance_valid(target):
-		return false
-	var candidate := target as Node3D
-	if not _combat_target_is_alive(candidate) \
-	or not candidate.has_method("is_enemy_of") \
-	or not bool(candidate.call("is_enemy_of", owner_player_id)):
-		return false
-	if turret.target_range(candidate) != CombatTurretScript.TargetRange.IN_RANGE:
-		return false
-	var target_world_position := _combat_target_position(candidate)
-	return target_world_position.is_finite() \
-		and not turret.requires_hull_turn_for(target_world_position) \
-		and turret.has_line_of_fire(candidate, self)
-
-
-func _turn_hull_by_adjustment(adjustment: float, delta: float) -> bool:
-	if absf(adjustment) <= 0.0001:
-		return true
-	if turn_rate <= 0.0 or delta <= 0.0:
-		return false
-	var current_yaw := global_rotation.y
-	var target_yaw := current_yaw + adjustment
-	var maximum_step := turn_rate * RULE_MOVEMENT_UPDATES_PER_SECOND * delta
-	global_rotation.y = rotate_toward(current_yaw, target_yaw, maximum_step)
-	return absf(angle_difference(global_rotation.y, target_yaw)) <= 0.0001
-
-
-func _set_weapon_target(weapon_index: int, target: Variant) -> void:
-	if target is Vector3:
-		_weapon_targets[weapon_index] = {
-			"ground": target,
-			"is_ground": true,
-		}
-	elif target is Object and is_instance_valid(target):
-		_weapon_targets[weapon_index] = {
-			"ref": weakref(target as Object),
-			"is_ground": false,
-		}
-
-
-func _weapon_target(weapon_index: int) -> Variant:
-	var state: Dictionary = _weapon_targets.get(weapon_index, {})
-	if state.is_empty():
-		return null
-	if bool(state.get("is_ground", false)):
-		return state.get("ground", Vector3.INF)
-	return _weak_target(state)
-
-
-func _weak_target(state: Variant) -> Variant:
-	if not state is Dictionary:
-		return null
-	var target_ref: WeakRef = (state as Dictionary).get("ref") as WeakRef
-	return target_ref.get_ref() if target_ref != null else null
-
-
-func _start_authored_fire_sequence(turret, attack_target: Variant = null) -> bool:
-	var weapon_index: int = turret.weapon_index()
-	if _weapon_fire_sequences.has(weapon_index):
-		return false
-	if attack_target == null:
-		attack_target = attack_order_target()
-	var binding := _fire_animation_binding(turret.weapon_index())
-	if binding.is_empty():
-		return false
-	var player := binding["player"] as AnimationPlayer
-	var animation_name := StringName(binding["name"])
-	var animation := player.get_animation(animation_name)
-	if animation == null or animation.length <= 0.0:
-		return false
-
-	var can_fire_moving := weapon_can_fire_while_moving(weapon_index)
-	var playback_player: AnimationPlayer = _weapon_fire_overlays.get(
-		weapon_index
-	) as AnimationPlayer if can_fire_moving else player
-	if not can_fire_moving:
-		for state_value: Variant in _weapon_fire_sequences.values():
-			if bool((state_value as Dictionary).get("blocking", false)):
-				return false
-		stop_at_current_position()
-	var target_state := _encoded_target(attack_target)
-	if target_state.is_empty():
-		return false
-	_weapon_fire_sequences[weapon_index] = {
-		"turret": turret,
-		"target": target_state,
-		"player": playback_player,
-		"animation": animation_name,
-		"duration": animation.length,
-		"elapsed": 0.0,
-		"shot_times": _authored_fire_shot_times(
-			player, animation, turret, animation_name
-		),
-		"next_shot": 0,
-		"shots_emitted": 0,
-		"blocking": not can_fire_moving,
-	}
-	# Vehicle turrets reload independently while their authored clip plays.
-	# Infantry Fire clips animate the whole actor through one locked action, so
-	# their post-action ReloadCount is started by _finish_fire_sequence instead.
-	# Committed shots bypass either timer so multi-muzzle salvos finish normally.
-	if not _reload_starts_after_fire_animation():
-		turret.begin_reload()
-	if playback_player != null and playback_player.has_animation(animation_name):
-		playback_player.speed_scale = FIRE_ANIMATION_SPEED_SCALE
-		_play_animation_from_start(playback_player, animation_name)
-	turret.start_authored_fire_fx(
-		animation_name, null, FIRE_ANIMATION_SPEED_SCALE
-	)
-	_sync_legacy_fire_sequence()
-	return true
-
-
-func _advance_fire_sequences(delta: float) -> void:
-	for weapon_index: Variant in _weapon_fire_sequences.keys():
-		if not _weapon_fire_sequences.has(weapon_index):
-			continue
-		var state: Dictionary = _weapon_fire_sequences[weapon_index]
-		var elapsed := minf(
-			float(state.get("elapsed", 0.0))
-				+ maxf(delta, 0.0) * FIRE_ANIMATION_SPEED_SCALE,
-			float(state.get("duration", 0.0))
-		)
-		state["elapsed"] = elapsed
-		var shot_times: Array = state.get("shot_times", [])
-		var next_shot := int(state.get("next_shot", 0))
-		var turret = state.get("turret")
-		var attack_target: Variant = _decoded_target(
-			state.get("target", {})
-		)
-		# A continuous stream's authored Damage is one clip's total payload,
-		# not each per-frame pulse's own full hit; split it evenly across
-		# every scheduled pulse so one full stream deals Damage once overall.
-		var damage_scale := 1.0
-		if bool(turret.is_continuous_bullet()) and shot_times.size() > 0:
-			damage_scale = 1.0 / shot_times.size()
-		while (
-			next_shot < shot_times.size()
-			and float(shot_times[next_shot]) <= elapsed + FIRE_EVENT_EPSILON
-		):
-			next_shot += 1
-			if attack_target == null:
-				continue
-			var projectiles: Array = turret.try_fire_at(
-				attack_target, self, null, Vector3.ZERO, false, false, true, damage_scale
-			)
-			if projectiles.is_empty():
-				continue
-			state["shots_emitted"] = int(state.get("shots_emitted", 0)) \
-				+ projectiles.size()
-			weapon_fired.emit(projectiles, attack_target, int(weapon_index))
-		state["next_shot"] = next_shot
-		_weapon_fire_sequences[weapon_index] = state
-		if elapsed + FIRE_EVENT_EPSILON >= float(state.get("duration", 0.0)):
-			_finish_fire_sequence_for(int(weapon_index))
-	_sync_legacy_fire_sequence()
-
-
-func _finish_fire_sequence() -> void:
-	if _weapon_fire_sequences.is_empty():
-		return
-	_finish_fire_sequence_for(int(_weapon_fire_sequences.keys().front()))
-
-
-func _cancel_fire_sequence(restore_idle := true) -> void:
-	_cancel_all_fire_sequences(restore_idle)
-
-
-func _reload_starts_after_fire_animation() -> bool:
-	return unit_definition != null and unit_definition.infantry
-
-
-func _clear_fire_sequence() -> void:
-	_cancel_all_fire_sequences(false)
-
-
-func _finish_fire_sequence_for(weapon_index: int) -> void:
-	if not _weapon_fire_sequences.has(weapon_index):
-		return
-	var state: Dictionary = _weapon_fire_sequences[weapon_index]
-	_weapon_fire_sequences.erase(weapon_index)
-	var player_value: Variant = state.get("player")
-	# is_instance_valid() must run before the `as` cast: casting an already
-	# freed object raises "Trying to cast a freed object" even though the
-	# guard right after would have caught it (see unit.gd's freed-overlay
-	# regression, tests/units/death_animation_run.gd).
-	if is_instance_valid(player_value) and player_value is AnimationPlayer:
-		# stop() without keep_state rewinds the just-finished Fire clip to its
-		# first frame immediately. Deployed Kindjal/Mortar clips begin with a
-		# large embedded bigflash, while Deploy_Gun_Hold is not evaluated until
-		# the next animation tick, producing a duplicate one-frame muzzle flash.
-		(player_value as AnimationPlayer).stop(true)
-	var turret = state.get("turret")
-	if turret != null:
-		turret.cancel_authored_fire_fx()
-	if _reload_starts_after_fire_animation() \
-	and int(state.get("shots_emitted", 0)) > 0 and turret != null:
-		turret.begin_reload()
-	var was_blocking := bool(state.get("blocking", false))
-	_sync_legacy_fire_sequence()
-	if was_blocking and not _movement_animation_active:
-		_set_movement_animation(false)
-
-
-func _cancel_all_fire_sequences(restore_idle := true) -> void:
-	var had_blocking := false
-	for weapon_index: Variant in _weapon_fire_sequences.keys():
-		var state: Dictionary = _weapon_fire_sequences[weapon_index]
-		had_blocking = had_blocking or bool(state.get("blocking", false))
-		var player_value: Variant = state.get("player")
-		# Validity must be checked before the cast (see _finish_fire_sequence_for).
-		if is_instance_valid(player_value) and player_value is AnimationPlayer:
-			(player_value as AnimationPlayer).stop(true)
-		var turret = state.get("turret")
-		if turret != null:
-			turret.cancel_authored_fire_fx()
-		if _reload_starts_after_fire_animation() \
-		and int(state.get("shots_emitted", 0)) > 0 and turret != null:
-			turret.begin_reload()
-	_weapon_fire_sequences.clear()
-	_sync_legacy_fire_sequence()
-	if restore_idle and had_blocking:
-		_set_movement_animation(false)
-
-
-func _has_blocking_fire_sequence() -> bool:
-	for state_value: Variant in _weapon_fire_sequences.values():
-		if bool((state_value as Dictionary).get("blocking", false)):
-			return true
-	return false
-
-
-func _cancel_blocking_fire_sequences() -> void:
-	for weapon_index: Variant in _weapon_fire_sequences.keys():
-		var state: Dictionary = _weapon_fire_sequences[weapon_index]
-		if not bool(state.get("blocking", false)):
-			continue
-		var player_value: Variant = state.get("player")
-		# Validity must be checked before the cast (see _finish_fire_sequence_for).
-		if is_instance_valid(player_value) and player_value is AnimationPlayer:
-			(player_value as AnimationPlayer).stop(true)
-		var turret = state.get("turret")
-		if turret != null:
-			turret.cancel_authored_fire_fx()
-		_weapon_fire_sequences.erase(weapon_index)
-	_sync_legacy_fire_sequence()
-
-
-func _sync_legacy_fire_sequence() -> void:
-	_fire_sequence_active = false
-	_fire_sequence_turret = null
-	_fire_sequence_player = null
-	_fire_sequence_animation = &""
-	_fire_sequence_duration = 0.0
-	_fire_sequence_elapsed = 0.0
-	_fire_sequence_shot_times.clear()
-	_fire_sequence_next_shot = 0
-	_fire_sequence_shots_emitted = 0
-	if _weapon_fire_sequences.is_empty():
-		return
-	var state: Dictionary = _weapon_fire_sequences.values().front()
-	_fire_sequence_active = true
-	_fire_sequence_turret = state.get("turret")
-	_fire_sequence_player = state.get("player") as AnimationPlayer
-	_fire_sequence_animation = StringName(state.get("animation", &""))
-	_fire_sequence_duration = float(state.get("duration", 0.0))
-	_fire_sequence_elapsed = float(state.get("elapsed", 0.0))
-	_fire_sequence_shot_times.assign(state.get("shot_times", []))
-	_fire_sequence_next_shot = int(state.get("next_shot", 0))
-	_fire_sequence_shots_emitted = int(state.get("shots_emitted", 0))
-
-
-func _encoded_target(target: Variant) -> Dictionary:
-	if target is Vector3:
-		return {"is_ground": true, "ground": target}
-	if target is Object and is_instance_valid(target):
-		return {"is_ground": false, "ref": weakref(target as Object)}
-	return {}
-
-
-func _decoded_target(state: Variant) -> Variant:
-	if not state is Dictionary or (state as Dictionary).is_empty():
-		return null
-	if bool((state as Dictionary).get("is_ground", false)):
-		return (state as Dictionary).get("ground", Vector3.INF)
-	return _weak_target(state)
-
-
-## Deployed state always resolves the single canonical Deployed_Fire clip
-## (see converters/model_bake_builder.gd CLIP_NAME_OVERRIDES); the ordinary
-## Fire_<index> chain below is travel-mode only and must never be reached
-## while deployed, since Fire_0 is the travel-mode animation.
-func _fire_animation_binding(weapon_index: int) -> Dictionary:
-	if is_deployed():
-		for player in _animation_players:
-			if player.has_animation(DEPLOYED_FIRE_ANIMATION):
-				return {"player": player, "name": DEPLOYED_FIRE_ANIMATION}
-		return {}
-	var variants := _travel_fire_variant_bindings(weapon_index)
-	if not variants.is_empty():
-		return variants[randi() % variants.size()]
-	var fallback_candidates: Array[StringName] = [&"Fire"]
-	if weapon_index != 0:
-		fallback_candidates.append(&"Fire_0")
-	for player in _animation_players:
-		for animation_name in fallback_candidates:
-			if player.has_animation(animation_name):
-				return {"player": player, "name": animation_name}
-	return {}
-
-
-## Every Fire_<N> clip belonging to this weapon: its own authored
-## Fire_<weapon_index>, plus — only on a combat-deployable unit (Kindjal,
-## Mortar, Kobra; see _is_combat_deployable) — any Fire_<N> whose index is not
-## claimed by any configured turret (an orphan travel-mode variant, e.g.
-## Kobra's Fire_2 once Fire_1 is renamed to Deployed_Fire). These orphan
-## clips are equivalent shot variants for the same weapon, not per-weapon-
-## index clips, and are chosen at random per shot, mirroring the idle-variant
-## selection in _idle_animations/_play_random_idle. An ordinary multi-turret
-## unit (e.g. ATMinotaurus, which authors an unrelated, unused Fire_1
-## alongside its single real turret's Fire_0) is never a combat-deployable
-## eligibility match, so it always resolves exactly one binding here — its
-## own Fire_<weapon_index> — matching the previous index-keyed lookup
-## byte-for-byte.
-func _travel_fire_variant_bindings(weapon_index: int) -> Array[Dictionary]:
-	var include_orphans := _is_combat_deployable()
-	var configured_indices := {}
-	if include_orphans:
-		for turret in combat_turrets:
-			configured_indices[turret.weapon_index()] = true
-	var seen := {}
-	var bindings: Array[Dictionary] = []
-	for player in _animation_players:
-		for animation_name in player.get_animation_list():
-			var name_text := String(animation_name)
-			if not name_text.begins_with(FIRE_ANIMATION_PREFIX):
-				continue
-			var suffix := name_text.trim_prefix(FIRE_ANIMATION_PREFIX)
-			if not suffix.is_valid_int():
-				continue
-			var suffix_index := int(suffix)
-			if suffix_index != weapon_index \
-			and (not include_orphans or configured_indices.has(suffix_index)):
-				continue
-			var key := "%d:%s" % [player.get_instance_id(), name_text]
-			if seen.has(key):
-				continue
-			seen[key] = true
-			bindings.append({"player": player, "name": animation_name})
-	return bindings
-
-
-## Data-driven combat-deploy eligibility (mirrors combat_deploy_strategy.gd):
-## at least one configured turret gated disabled_when_deployed and at least
-## one gated disabled_when_undeployed. Scoped to this unit's own turrets so it
-## needs no rules database access, unlike the strategy's version which must
-## work before any Unit instance exists.
-func _is_combat_deployable() -> bool:
-	var has_travel_gate := false
-	var has_deployed_gate := false
-	for turret in combat_turrets:
-		if turret.config == null:
-			continue
-		if bool(turret.config.disabled_when_deployed):
-			has_travel_gate = true
-		if bool(turret.config.disabled_when_undeployed):
-			has_deployed_gate = true
-	return has_travel_gate and has_deployed_gate
-
-
-func _authored_fire_shot_times(
-		player: AnimationPlayer,
-		animation: Animation,
-		turret,
-		animation_name: StringName = &""
-	) -> Array[float]:
-	if animation_name.is_empty():
-		for candidate_name: StringName in player.get_animation_list():
-			if player.get_animation(candidate_name) == animation:
-				animation_name = candidate_name
-				break
-	var xbf_events := _xbf_fire_shot_times(animation_name, animation, turret)
-	if not xbf_events.is_empty():
-		return xbf_events
-	var configured_burst := _configured_burst_shot_times(animation, turret)
-	if not configured_burst.is_empty():
-		return configured_burst
-	var fallback: Array[float] = [
-		minf(1.0 / BAKED_MODEL_FRAMES_PER_SECOND, animation.length)
-	]
-	if turret.muzzle_count() <= 1:
-		return fallback
-	var animation_root := player.get_node_or_null(player.root_node)
-	if animation_root == null:
-		return fallback
-
-	var events: Array[Dictionary] = []
-	var used_tracks: Dictionary = {}
-	for emission: Dictionary in turret.emission_points():
-		var muzzle := emission.get("node") as Node
-		if muzzle == null:
-			return fallback
-		var current := muzzle.get_parent()
-		var found := false
-		while current != null and (
-			current == animation_root or animation_root.is_ancestor_of(current)
-		):
-			var relative_path := animation_root.get_path_to(current)
-			var track_path := NodePath("%s:transform" % String(relative_path))
-			var track := animation.find_track(track_path, Animation.TYPE_VALUE)
-			if track >= 0:
-				var peak := _animation_transform_peak(animation, track)
-				if float(peak.get("score", 0.0)) > FIRE_EVENT_EPSILON:
-					var track_key := String(track_path)
-					if used_tracks.has(track_key):
-						return fallback
-					used_tracks[track_key] = true
-					events.append({
-						"muzzle": int(emission.get("index", events.size())),
-						"time": clampf(float(peak["time"]), 0.0, animation.length),
-					})
-					found = true
-					break
-			if current == animation_root:
-				break
-			current = current.get_parent()
-		if not found:
-			return fallback
-	if events.size() != turret.muzzle_count():
-		return fallback
-	events.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return float(a["time"]) < float(b["time"])
-	)
-	var result: Array[float] = []
-	for event in events:
-		result.append(float(event["time"]))
-	return result
-
-
-## XBF type-10 records are gameplay projectile events. Their integer payload
-## selects the source muzzle, while their absolute frame locates the shot in
-## the containing animation entry. Converted clips are sliced from those same
-## absolute ranges, so subtracting the clip start preserves the authored delay.
-func _xbf_fire_shot_times(
-		animation_name: StringName, animation: Animation, turret
-	) -> Array[float]:
-	if animation_name.is_empty() or visual_root == null:
-		return []
-	var model_root := _find_xbf_motion_root(visual_root)
-	if model_root == null \
-	or not bool(model_root.get_meta("xbf_fx_events_complete", false)):
-		return []
-	var source_entry := {}
-	for entry_value: Variant in model_root.get_meta("xbf_animation_entries", []):
-		var entry := entry_value as Dictionary
-		var converted_name := String(entry.get("name", "")).strip_edges().replace(" ", "_")
-		if converted_name == String(animation_name):
-			source_entry = entry
-			break
-	if source_entry.is_empty():
-		return []
-	var start_frame := int(source_entry.get("start_frame", -1))
-	var end_frame := int(source_entry.get("end_frame", -1))
-	if start_frame < 0 or end_frame < start_frame:
-		return []
-	var result: Array[float] = []
-	for event_value: Variant in model_root.get_meta("xbf_fx_events", []):
-		var event := event_value as Dictionary
-		var frame := int(event.get("frame", -1))
-		if int(event.get("type", -1)) == 10 \
-		and frame >= start_frame and frame <= end_frame:
-			result.append(clampf(
-				float(frame - start_frame) / BAKED_MODEL_FRAMES_PER_SECOND,
-				0.0,
-				animation.length
-			))
-	# Continuous bullets author one type-10 launch and keep their stream banks
-	# active for the remaining damage pulses. Expand that launch over the
-	# source-backed stream interval instead of treating it as one ordinary shot.
-	if (
-		result.size() == 1
-		and turret.bullet_config != null
-		and bool(turret.bullet_config.continuous)
-	):
-		var first_shot_frame := int(round(
-			result[0] * BAKED_MODEL_FRAMES_PER_SECOND
-		)) + start_frame
-		var continuous_result := _xbf_continuous_fire_shot_times(
-			model_root, start_frame, end_frame, animation.length, first_shot_frame
-		)
-		if continuous_result.size() > 1:
-			return continuous_result
-	# Generated launcher configuration remains a safe fallback for a partial or
-	# ambiguous source schedule; never silently drop part of a known salvo.
-	if turret.firing_config != null:
-		var configured_count := int(turret.firing_config.burst_shot_count)
-		if configured_count > 0 and result.size() != configured_count:
-			return []
-	return result
-
-
-func _xbf_continuous_fire_shot_times(
-		model_root: Node,
-		clip_start: int,
-		clip_end: int,
-		animation_length: float,
-		first_shot_frame: int
-	) -> Array[float]:
-	var stream_stop_frame := first_shot_frame + 1
-	var events := model_root.get_meta("xbf_fx_events", []) as Array
-	for start_value: Variant in events:
-		var start_event := start_value as Dictionary
-		if String(start_event.get("action", "")) != "start":
-			continue
-		var start_frame := int(start_event.get("frame", -1))
-		if start_frame < clip_start or start_frame > first_shot_frame:
-			continue
-		var attachment := String(start_event.get("attachment", "")).to_lower()
-		if not attachment.begins_with(">>") and not attachment.contains("gun"):
-			continue
-		var bank_id := String(start_event.get("bank_id", ""))
-		for stop_value: Variant in events:
-			var stop_event := stop_value as Dictionary
-			if (
-				String(stop_event.get("action", "")) != "stop"
-				or String(stop_event.get("bank_id", "")) != bank_id
-				or String(stop_event.get("attachment", "")).nocasecmp_to(
-					String(start_event.get("attachment", ""))
-				) != 0
-			):
-				continue
-			var stop_frame := int(stop_event.get("frame", -1))
-			if stop_frame > first_shot_frame and stop_frame <= clip_end:
-				stream_stop_frame = maxi(stream_stop_frame, stop_frame)
-				break
-	var result: Array[float] = []
-	for frame in range(first_shot_frame, stream_stop_frame):
-		result.append(clampf(
-			float(frame - clip_start) / BAKED_MODEL_FRAMES_PER_SECOND,
-			0.0,
-			animation_length
-		))
-	return result
-
-
-func _configured_burst_shot_times(animation: Animation, turret) -> Array[float]:
-	if turret.firing_config == null:
-		return []
-	var count := int(turret.firing_config.burst_shot_count)
-	if count <= 0:
-		return []
-	var first_shot_time := minf(1.0 / BAKED_MODEL_FRAMES_PER_SECOND, animation.length)
-	var interval_seconds := maxf(
-		float(turret.firing_config.burst_interval_ticks), 0.0
-	) / RULE_COMBAT_TICKS_PER_SECOND
-	var result: Array[float] = []
-	for index in count:
-		result.append(minf(
-			first_shot_time + float(index) * interval_seconds,
-			animation.length
-		))
-	return result
-
-
-func _animation_transform_peak(animation: Animation, track: int) -> Dictionary:
-	if animation.track_get_key_count(track) <= 1:
-		return {}
-	var rest: Variant = animation.track_get_key_value(track, 0)
-	if not rest is Transform3D:
-		return {}
-	var peak_score := 0.0
-	var peak_time := 0.0
-	for key_index in animation.track_get_key_count(track):
-		var value: Variant = animation.track_get_key_value(track, key_index)
-		if not value is Transform3D:
-			continue
-		var score := _transform_difference(rest as Transform3D, value as Transform3D)
-		if score > peak_score:
-			peak_score = score
-			peak_time = animation.track_get_key_time(track, key_index)
-	return {"score": peak_score, "time": peak_time}
-
-
-func _transform_difference(a: Transform3D, b: Transform3D) -> float:
-	var result := a.origin.distance_to(b.origin)
-	result += a.basis.get_scale().distance_to(b.basis.get_scale())
-	var relative_basis := a.basis.orthonormalized().inverse() * b.basis.orthonormalized()
-	result += absf(relative_basis.get_rotation_quaternion().get_angle())
-	return result
-
-
-func _primary_attack_turret(attack_target: Variant):
-	for turret in _active_turrets():
-		if turret.can_target(attack_target):
-			return turret
-	return null
-
-
-## Accepts only perches whose muzzle would see the ordered target. The probe
-## samples terrain height at the candidate because navigation cells carry the
-## map floor rather than the elevation the unit will actually stand at.
-func _line_of_fire_probe(primary_turret) -> Callable:
-	var target: Variant = attack_order_target()
-	if primary_turret == null or target == null:
-		return Callable()
-	var muzzle_origin: Vector3 = primary_turret.muzzle_origin()
-	var muzzle_height := maxf(muzzle_origin.y - global_position.y, 0.0) \
-		if muzzle_origin.is_finite() else 0.0
-	return func(candidate: Vector3) -> bool:
-		var hit := _terrain_hit_at(candidate)
-		var ground: Vector3 = hit["position"] if not hit.is_empty() else candidate
-		return primary_turret.has_line_of_fire_from(
-			ground + Vector3.UP * muzzle_height, target, self
-		)
-
-
-func _advance_attack_pursuit(
-	target_world_position: Vector3, primary_turret, delta: float
-	) -> void:
-	_attack_repath_remaining = maxf(_attack_repath_remaining - delta, 0.0)
-	var target_moved := not _attack_last_path_position.is_finite() \
-		or _attack_last_path_position.distance_to(target_world_position) >= ATTACK_REPATH_DISTANCE
-	var route_unreachable: bool = (
-		_navigation_managed
-		and _navigation_system != null
-		and _navigation_system.has_method("route_is_unreachable")
+## Narrow navigation surface for UnitAttackOrder: pursuit needs to know
+## whether the current route is hopeless, where it could stand to shoot from,
+## and how to ask for a move — but not which navigation system is in play, or
+## whether this unit is managed by one at all.
+func navigation_route_is_unreachable() -> bool:
+	return _navigation_managed \
+		and _navigation_system != null \
+		and _navigation_system.has_method("route_is_unreachable") \
 		and bool(_navigation_system.call("route_is_unreachable", self))
+
+
+func navigation_reachable_attack_position(
+	target_world_position: Vector3, maximum_range: float, probe := Callable()
+) -> Vector3:
+	if not _navigation_managed \
+	or _navigation_system == null \
+	or not _navigation_system.has_method("reachable_attack_position"):
+		return Vector3.INF
+	if probe.is_null():
+		return _navigation_system.call(
+			"reachable_attack_position", self, target_world_position, maximum_range
+		)
+	return _navigation_system.call(
+		"reachable_attack_position", self, target_world_position, maximum_range, probe
 	)
-	if target_moved:
-		_attack_pursuit_destination = Vector3.INF
-		_attack_pursuit_rejected = false
-		route_unreachable = false
-	if _attack_repath_remaining > 0.0 \
-	or (
-		_attack_is_pursuing
-		and not target_moved
-		and not route_unreachable
-		and _mech_has_active_move_order()
-	):
-		return
-	_attack_is_pursuing = true
-	_attack_last_path_position = target_world_position
-	_attack_repath_remaining = ATTACK_REPATH_INTERVAL_SECONDS
-	var pursuit_position := target_world_position
-	var horizontal_offset := target_world_position - global_position
-	horizontal_offset.y = 0.0
-	var preferred_range := float(primary_turret.maximum_range_world()) * 0.8 \
-		if primary_turret != null else 0.0
-	var reachable_position := Vector3.INF
-	if (
-		_navigation_managed
-		and _navigation_system != null
-		and primary_turret != null
-		and _navigation_system.has_method("reachable_attack_position")
-	):
-		var maximum_range := float(primary_turret.maximum_range_world())
-		reachable_position = _navigation_system.call(
-			"reachable_attack_position",
-			self,
-			target_world_position,
-			maximum_range,
-			_line_of_fire_probe(primary_turret)
-		)
-		if not reachable_position.is_finite():
-			var any_perch: Vector3 = _navigation_system.call(
-				"reachable_attack_position", self, target_world_position, maximum_range
-			)
-			if any_perch.is_finite():
-				# The search covered every reachable cell within weapon range and
-				# none of them can see the target: the obstacle shields it from
-				# this side entirely. Hold instead of grinding into it.
-				stop_at_current_position()
-				_attack_is_pursuing = false
-				_attack_pursuit_destination = Vector3.INF
-				return
-	if reachable_position.is_finite():
-		pursuit_position = reachable_position
-	elif preferred_range > 0.0:
-		# Navigate to a firing position rather than the target coordinate itself.
-		# An attack-ground point on top of a cliff may be unreachable to a ground
-		# unit even though a position in front of it is a valid artillery perch.
-		# If that first perch still cannot satisfy the elevation limits, halve
-		# the remaining distance on the next arrival and continue approaching.
-		var remaining_distance := minf(
-			preferred_range, horizontal_offset.length() * 0.5
-		)
-		pursuit_position = target_world_position \
-			- horizontal_offset.normalized() * remaining_distance
-	if (
-		not reachable_position.is_finite()
-		and (route_unreachable or _attack_pursuit_rejected)
-		and _attack_pursuit_destination.is_finite()
-	):
-		# The requested perch landed on disconnected terrain (commonly the red
-		# face or the separately connected top of a cliff). Back it toward the
-		# unit until the navigation grid accepts a firing position on this side.
-		pursuit_position = global_position.lerp(
-			_attack_pursuit_destination, 0.5
-		)
-	_attack_pursuit_destination = pursuit_position
-	_issuing_attack_move = true
+
+
+## Issues the pursuit move and returns whether navigation accepted it. The
+## note_issuing_attack_move() bracket tells _combat.prepare_for_move_order()
+## (reached through prepare_navigation_order()) that the move it is about to
+## see is this pursuit's own, not a player order.
+func issue_attack_move(pursuit_position: Vector3) -> bool:
+	_combat.note_issuing_attack_move(true)
 	var move_issued := true
 	if _navigation_managed and _navigation_system != null:
 		var assignments: Array = _navigation_system.command_move(
-			[self], pursuit_position, UnitNavigationSystemScript.MoveMode.FREE
+			[self], pursuit_position, NavConstantsScript.MoveMode.FREE
 		)
 		move_issued = not assignments.is_empty()
 	else:
 		move_to(pursuit_position)
-	_issuing_attack_move = false
-	_attack_pursuit_rejected = not move_issued
-	_attack_is_pursuing = move_issued
-
-
-func _combat_target_position(attack_target: Variant) -> Vector3:
-	if attack_target is Vector3:
-		return attack_target
-	if not attack_target is Object or not is_instance_valid(attack_target):
-		return Vector3.INF
-	var target_object := attack_target as Object
-	if target_object.has_method("combat_aim_position_from"):
-		var value: Variant = target_object.call(
-			"combat_aim_position_from", global_position
-		)
-		if value is Vector3:
-			return value
-	if target_object.has_method("combat_aim_position"):
-		var value: Variant = target_object.call("combat_aim_position")
-		if value is Vector3:
-			return value
-	return (target_object as Node3D).global_position if target_object is Node3D else Vector3.INF
-
-
-func _combat_target_is_alive(attack_target: Variant) -> bool:
-	if not attack_target is Object or not is_instance_valid(attack_target):
-		return false
-	var target_object := attack_target as Object
-	if target_object is Node and (target_object as Node).is_queued_for_deletion():
-		return false
-	return not target_object.has_method("combat_is_alive") \
-		or bool(target_object.call("combat_is_alive"))
+	_combat.note_issuing_attack_move(false)
+	return move_issued
 
 
 func stop_at_current_position() -> void:
@@ -2443,175 +981,72 @@ func stop_at_current_position() -> void:
 	_set_movement_animation(false)
 
 
-## Shared Stop-command contract. Subclasses with additional order state
-## override this, clear their own state, and then call super.
+## Shared Stop-command contract. Stopping also breaks a harvester's autonomous
+## economy loop, which would otherwise pick a new field on the next tick.
 func cancel_all_orders() -> bool:
 	var had_order := (
-		_has_attack_order
+		has_attack_order()
 		or _has_pending_navigation_order
-		or _mech_has_active_move_order()
+		or has_active_move_order()
 	)
-	if not had_order:
-		return false
-	cancel_attack_order()
-	_has_pending_navigation_order = false
-	_pending_navigation_order = Vector3.ZERO
-	_pending_navigation_exit = Vector3.INF
-	stop_at_current_position()
-	return had_order
+	if had_order:
+		cancel_attack_order()
+		_has_pending_navigation_order = false
+		_pending_navigation_order = Vector3.ZERO
+		_pending_navigation_exit = Vector3.INF
+		stop_at_current_position()
+	var had_harvester_order: bool = _harvester != null and _harvester.cancel_all_orders()
+	return had_order or had_harvester_order
 
 
 ## Shared unit deployment interface. Eligibility and the per-unit strategy
-## live in UnitDeploymentController; Unit owns the common locked alignment and
-## animation phases so future deployable units can reuse the same contract.
+## live in UnitDeploymentController; UnitDeployState owns the common locked
+## alignment and animation phases so future deployable units can reuse the
+## same contract.
 func deploy(desired_facing: Vector3 = Vector3.ZERO) -> bool:
-	if _deploy_state != DeployState.TRAVEL:
-		return false
-	_deploy_state = DeployState.DEPLOYING
-	_sync_active_turret_weapons()
-	stop_at_current_position()
-	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
-		_navigation_system.call("set_hold_position", self, true)
-
-	_deployment_alignment_direction = Vector3(
-		desired_facing.x, 0.0, desired_facing.z
-	)
-	_deployment_aligning = (
-		_deployment_alignment_direction.length_squared()
-			> SpatialOrientationScript.DIRECTION_EPSILON
-		and not _turn_toward(_deployment_alignment_direction, 0.0)
-	)
-	if _deployment_aligning and turn_rate > 0.0:
-		_deployment_alignment_direction = _deployment_alignment_direction.normalized()
-		return true
-	if _deployment_aligning:
-		# A deployable unit without an authored turn rate cannot complete a
-		# gradual alignment, so preserve the generic deployment contract.
-		face_direction(_deployment_alignment_direction)
-		_deployment_aligning = false
-
-	_start_deployment_animation()
-	return true
+	return _deploy.begin_deploy(desired_facing)
 
 
-## Combat-deploy strategy's toggle-back. The MCV/Construction Yard pair never
-## calls this: its "undeploy" is a different unit (the spawned MCV) built by
-## UnitDeploymentController's own Deconstruct handling, not a state on the
-## same Unit instance.
 func undeploy() -> bool:
-	if _deploy_state != DeployState.DEPLOYED:
-		return false
-	_deploy_state = DeployState.UNDEPLOYING
-	_sync_active_turret_weapons()
-	stop_at_current_position()
-	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
-		_navigation_system.call("set_hold_position", self, true)
-	_start_undeployment_animation()
-	return true
-
-
-func _start_deployment_animation() -> void:
-	_start_transition_animation(DEPLOYMENT_ANIMATION_CANDIDATES)
-
-
-func _start_undeployment_animation() -> void:
-	_start_transition_animation(UNDEPLOYMENT_ANIMATION_CANDIDATES)
-
-
-func _start_transition_animation(candidates: Array[StringName]) -> void:
-	var found := _find_animation_player(candidates)
-	_deployment_animation_player = found.get("player") as AnimationPlayer
-	_deployment_animation_name = StringName(found.get("name", &""))
-
-	if _deployment_animation_player == null:
-		call_deferred("_emit_deployment_animation_finished")
-		return
-
-	var animation := _deployment_animation_player.get_animation(_deployment_animation_name)
-	if animation != null:
-		animation.loop_mode = Animation.LOOP_NONE
-	_deployment_animation_player.stop()
-	_deployment_animation_player.play(_deployment_animation_name)
+	return _deploy.begin_undeploy()
 
 
 ## Shared "first player owning one of these candidate clips" scan, in
 ## candidate-preference order. Used by both deployment transitions and death
 ## animation selection (_begin_death_sequence) so the two don't drift apart.
-func _find_animation_player(candidates: Array[StringName]) -> Dictionary:
-	for candidate in candidates:
-		for player in _animation_players:
-			if player.has_animation(candidate):
-				return {"player": player, "name": candidate}
-	return {"player": null, "name": &""}
+func find_animation_clip(candidates: Array[StringName]) -> Dictionary:
+	return AuthoredModelScript.find_clip(_animation_players, candidates)
 
 
 ## Both transition directions count as "deploying" for every gameplay lock: a
 ## unit is equally immobile while folding out and while folding back in.
 func is_deploying() -> bool:
-	return _deploy_state == DeployState.DEPLOYING or _deploy_state == DeployState.UNDEPLOYING
+	return _deploy.is_transitioning()
 
 
-## Stationary combat mode (Kindjal/Mortar/Kobra). Never true for the MCV,
-## which has no DEPLOYED state of its own: a successful deploy consumes it
-## into a Construction Yard instead.
 func is_deployed() -> bool:
-	return _deploy_state == DeployState.DEPLOYED
+	return _deploy.is_deployed()
 
 
-func _emit_deployment_animation_finished() -> void:
+## Public because UnitDeployState defers to it when a model has no authored
+## transition clip: the signal belongs to the Unit its subscribers hold.
+func emit_deployment_animation_finished() -> void:
 	if is_deploying():
 		deployment_animation_finished.emit()
 
 
-## The deployment strategy calls this after the animation-to-world handoff.
-## `consumed` means the transition completed as intended: for the MCV this is
-## true only on a successful Construction Yard placement (the unit is freed
-## immediately after by the caller, so the resulting DeployState is moot); for
-## the combat strategy it is true whenever deploy()/undeploy() simply run to
-## completion, since nothing here is ever destroyed. `false` means the
-## transition was aborted (MCV placement failed after the animation already
-## played) and must fully unwind back to the state before it started.
 func finish_deployment(consumed: bool) -> void:
-	if not is_deploying():
+	if not _deploy.finish(consumed):
 		return
-	var was_deploying := _deploy_state == DeployState.DEPLOYING
-	_deployment_aligning = false
-	_deployment_alignment_direction = Vector3.ZERO
-	_deployment_animation_player = null
-	_deployment_animation_name = &""
-	if consumed:
-		_deploy_state = DeployState.DEPLOYED if was_deploying else DeployState.TRAVEL
-	else:
-		_deploy_state = DeployState.TRAVEL if was_deploying else DeployState.DEPLOYED
-	_sync_active_turret_weapons()
-	var still_locked := is_deployed()
-	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
-		_navigation_system.call("set_hold_position", self, still_locked)
 	_set_movement_animation(false)
 
 
 ## Cancels any in-flight fire sequence and clears retained targets for every
 ## weapon whose turret just became inactive under the current deploy state,
-## then zeroes its servo angle for next time it's reactivated. Turrets that
-## stay active are left untouched. This does not touch the pivot transform:
-## while inactive, the pivot belongs to the model's own deploy/undeploy/idle
-## animation, and stamping the combat-owned rest pose here would fight or
-## outlast that animation (e.g. snapping a just-folded-away deploy-only
-## turret back to its deployed pose).
-func _sync_active_turret_weapons() -> void:
-	var active_indices := {}
-	for turret in _active_turrets():
-		active_indices[turret.weapon_index()] = true
-	for turret in combat_turrets:
-		var weapon_index: int = turret.weapon_index()
-		if active_indices.has(weapon_index):
-			continue
-		_finish_fire_sequence_for(weapon_index)
-		_weapon_targets.erase(weapon_index)
-		_weapon_auto_targets.erase(weapon_index)
-		_weapon_auto_target_cooldowns.erase(weapon_index)
-		_moving_fire_weapons.erase(weapon_index)
-		turret.reset_aim()
+## then zeroes its servo angle for next time it's reactivated. Public because
+## UnitDeployState calls it by name on every deploy/undeploy transition.
+func sync_active_turret_weapons() -> void:
+	_combat.sync_active_turret_weapons()
 
 
 func set_selected(value: bool) -> void:
@@ -2623,8 +1058,57 @@ func set_selected(value: bool) -> void:
 		_selection_halo.set_selected(value)
 
 
-func navigation_requested_velocity() -> Vector3:
-	return _navigation_requested_velocity
+## Whether the navigation system owns this unit's movement. A unit outside it
+## (a test fixture, a unit not yet registered) moves by writing target_position
+## directly, and must not be given navigation-only orders.
+func is_navigation_managed() -> bool:
+	return _navigation_managed and _navigation_system != null
+
+
+## The three navigation orders that are not plain movement. Each reports
+## whether the navigation system took it, so a caller can fall back to ordinary
+## movement when it did not -- which is also what happens outside the system.
+##
+## `allowed_cells` is the per-agent exception that lets a harvester stand on a
+## refinery's dock cells, which are otherwise blocked.
+func navigation_command_dock(world_position: Vector3, allowed_cells: Dictionary) -> bool:
+	if not is_navigation_managed() or not _navigation_system.has_method("command_dock"):
+		return false
+	_navigation_system.call("command_dock", self, world_position, allowed_cells)
+	return true
+
+
+func navigation_command_depart(world_position: Vector3, allowed_cells: Dictionary) -> bool:
+	if not is_navigation_managed() or not _navigation_system.has_method("command_depart"):
+		return false
+	_navigation_system.call("command_depart", self, world_position, allowed_cells)
+	return true
+
+
+func navigation_command_move(
+	world_position: Vector3, move_mode: int, exit_point := Vector3.INF
+) -> bool:
+	if not is_navigation_managed():
+		return false
+	_navigation_system.call("command_move", [self], world_position, move_mode, exit_point)
+	return true
+
+
+## How close counts as arrived. The navigation system's own tolerance wins when
+## it is larger: it parks agents on non-overlapping footprint blocks, so a unit
+## can be finished moving while still further from the point than its arrival
+## radius.
+func navigation_arrival_tolerance(fallback: float) -> float:
+	if not is_navigation_managed() or not _navigation_system.has_method("arrival_tolerance"):
+		return fallback
+	return maxf(fallback, float(_navigation_system.call("arrival_tolerance", self)) + 0.01)
+
+
+## Public because UnitDeployState needs it: a deploying unit is pinned in
+## place, and the navigation system owns that lock.
+func set_navigation_hold(locked: bool) -> void:
+	if _navigation_system != null and _navigation_system.has_method("set_hold_position"):
+		_navigation_system.call("set_hold_position", self, locked)
 
 
 func _set_navigation_debug_direction(value: Vector3) -> void:
@@ -2652,10 +1136,7 @@ func set_owner_player_id(player_id: int) -> void:
 
 
 func owner_player():
-	var players = _players()
-	if players == null:
-		return null
-	return players.player(owner_player_id)
+	return EntityQueryScript.owner_player(self, _players())
 
 
 func is_neutral_owner() -> bool:
@@ -2663,22 +1144,19 @@ func is_neutral_owner() -> bool:
 
 
 func is_owned_by(player_id: int) -> bool:
-	return owner_player_id == player_id
+	return EntityQueryScript.is_owned_by(self, player_id)
 
 
 func is_allied_with(player_id: int) -> bool:
-	var players = _players()
-	return players != null and players.are_allied(owner_player_id, player_id)
+	return EntityQueryScript.is_allied_with(self, player_id, _players())
 
 
 func is_enemy_of(player_id: int) -> bool:
-	var players = _players()
-	return players != null and players.are_enemies(owner_player_id, player_id)
+	return EntityQueryScript.is_enemy_of(self, player_id, _players())
 
 
 func _refresh_shield_visibility() -> void:
-	for mesh_instance in _shield_meshes:
-		mesh_instance.visible = shields > 0.0
+	_shader_fx.refresh_shield_visibility(shields)
 
 
 func _apply_unit_definition() -> void:
@@ -2692,181 +1170,59 @@ func _apply_unit_definition() -> void:
 
 	move_speed = float(unit_definition.speed)
 	mech_speed = maxf(float(unit_definition.mech_speed), 0.0)
-	_uses_mech_gait = unit_definition.mech and mech_speed > 0.0
-	_mech_gait_elapsed = 0.0
-	_mech_locomotion_state = MechLocomotionState.IDLE
-	_mech_start_remaining = 0.0
+	_locomotion.adopt_definition(unit_definition)
 	turn_rate = maxf(float(unit_definition.turn_rate), 0.0)
 	can_move_any_direction = unit_definition.can_move_any_direction
 	max_health = float(unit_definition.health)
 	max_shields = float(unit_definition.shield_health)
 	armour_type = unit_definition.armour_type
-	_death_strategy = (
-		InfantryDeathStrategyScript.new() if unit_definition.infantry
-		else VehicleDeathStrategyScript.new()
-	)
-	_configure_combat_turrets()
+	_death_sequence.adopt_definition(unit_definition)
+	_combat.configure_combat_turrets()
 	if unit_definition.can_fly:
 		if _flight_controller == null:
 			_flight_controller = UnitFlightControllerScript.new()
 		_flight_controller.configure(self, unit_definition)
 	else:
 		_flight_controller = null
-
-
-func _configure_combat_turrets() -> void:
-	combat_turrets.clear()
-	var turret_values: Array = unit_definition.turret_ids
-	for weapon_index in turret_values.size():
-		var turret_value: Variant = turret_values[weapon_index]
-		var turret = CombatTurretScript.new()
-		if turret.configure(StringName(String(turret_value))):
-			turret.bind_model(visual_root, weapon_index)
-			combat_turrets.append(turret)
-
-
-func _bind_combat_turrets() -> void:
-	for turret in combat_turrets:
-		turret.bind_model(visual_root, turret.weapon_index())
-
-
-func _collect_shield_meshes() -> Array[MeshInstance3D]:
-	var result: Array[MeshInstance3D] = []
-	for mesh_instance in _mesh_instances():
-		if String(mesh_instance.get_parent().name).to_lower().contains("shield"):
-			result.append(mesh_instance)
-	return result
-
-
-func _collect_scroll_fx_meshes() -> Array[MeshInstance3D]:
-	var result: Array[MeshInstance3D] = []
-	for mesh_instance in _mesh_instances():
-		if mesh_instance.has_meta("scroll_fx"):
-			result.append(mesh_instance)
-	return result
+	# Attaches or drops the harvesting loop through the capacity setter.
+	max_spice = float(unit_definition.spice_capacity)
+	if _harvester != null:
+		_harvester.apply_definition(unit_definition)
 
 
 func _collect_animation_players() -> Array[AnimationPlayer]:
-	var result: Array[AnimationPlayer] = []
-	if visual_root == null:
-		return result
-	for node in visual_root.find_children("*", "AnimationPlayer", true, false):
-		result.append(node as AnimationPlayer)
-	return result
+	return AuthoredModelScript.animation_players(visual_root)
+
+
+## Public because UnitFireOverlay/fire_animation_binding() and
+## _travel_fire_variant_bindings() (both in unit_combat.gd) need every player,
+## not just the ones _locomotion attaches to.
+func animation_players() -> Array[AnimationPlayer]:
+	return _animation_players
+
+
+## The harvesting contract UnitCommandController probes for by name. Every
+## unit answers; only one with a harvesting module answers yes.
+func can_harvest_spice() -> bool:
+	return _harvester != null and _harvester.can_harvest_spice()
+
+
+func command_harvest(spice_layer, navigation_grid, cell: Vector2i) -> bool:
+	return _harvester != null \
+		and _harvester.command_harvest(spice_layer, navigation_grid, cell)
+
+
+func can_unload_at(refinery: Node) -> bool:
+	return _harvester != null and _harvester.can_unload_at(refinery)
+
+
+func command_unload(refinery: Node, navigation_grid, spice_layer = null) -> bool:
+	return _harvester != null \
+		and _harvester.command_unload(refinery, navigation_grid, spice_layer)
 
 
 func weapon_can_fire_while_moving(weapon_index: int) -> bool:
-	return bool(_weapon_can_fire_while_moving.get(weapon_index, false))
-
-
-func _refresh_weapon_runtime() -> void:
-	for overlay_value: Variant in _weapon_fire_overlays.values():
-		if is_instance_valid(overlay_value) and overlay_value is AnimationPlayer:
-			(overlay_value as AnimationPlayer).queue_free()
-	_weapon_fire_overlays.clear()
-	_weapon_can_fire_while_moving.clear()
-	_weapon_targets.clear()
-	_weapon_auto_targets.clear()
-	_weapon_auto_target_cooldowns.clear()
-	_moving_fire_weapons.clear()
-	# Only a turret active in the unit's spawn-time state (always TRAVEL) can
-	# ever fire while moving; a combat-deploy unit's deployed turret is
-	# inactive here and immobile whenever it later becomes active, so it never
-	# needs a fire-while-moving overlay bound to the wrong (travel-mode) clip.
-	for turret in _active_turrets():
-		var weapon_index: int = turret.weapon_index()
-		var binding := _fire_animation_binding(weapon_index)
-		var can_layer := false
-		if turret.has_independent_yaw() and not binding.is_empty():
-			can_layer = (
-				unit_definition != null and unit_definition.can_fly
-			) or _fire_animation_is_turret_local(binding, turret)
-		_weapon_can_fire_while_moving[weapon_index] = can_layer
-		if can_layer:
-			var overlay := _create_fire_overlay(binding, turret)
-			if overlay != null:
-				_weapon_fire_overlays[weapon_index] = overlay
-
-
-func _fire_animation_is_turret_local(binding: Dictionary, turret) -> bool:
-	var player := binding.get("player") as AnimationPlayer
-	var animation_name := StringName(binding.get("name", &""))
-	if player == null:
-		return false
-	var animation := player.get_animation(animation_name)
-	if animation == null:
-		return false
-	for track in animation.get_track_count():
-		if not _animation_track_changes(animation, track):
-			continue
-		var track_path := String(animation.track_get_path(track))
-		if not track_path.ends_with(":transform"):
-			continue
-		var target_node := _animation_track_node(player, track_path)
-		if target_node != null and not turret.owns_aim_branch(target_node):
-			return false
-	return true
-
-
-func _create_fire_overlay(binding: Dictionary, turret) -> AnimationPlayer:
-	var source_player := binding.get("player") as AnimationPlayer
-	var animation_name := StringName(binding.get("name", &""))
-	if source_player == null or source_player.get_parent() == null:
-		return null
-	var source_animation := source_player.get_animation(animation_name)
-	if source_animation == null:
-		return null
-	var animation := source_animation.duplicate(true) as Animation
-	for track in range(animation.get_track_count() - 1, -1, -1):
-		var track_path := String(animation.track_get_path(track))
-		var target_node := _animation_track_node(source_player, track_path)
-		var keep: bool = _animation_track_changes(animation, track) \
-			and (
-				(unit_definition != null and unit_definition.can_fly)
-				or target_node == null
-				or turret.owns_aim_branch(target_node)
-			)
-		if not keep:
-			animation.remove_track(track)
-	var overlay := AnimationPlayer.new()
-	overlay.name = "WeaponFireOverlay_%d" % turret.weapon_index()
-	overlay.root_node = source_player.root_node
-	overlay.process_priority = process_priority - 1
-	overlay.set_meta("combat_weapon_fire_overlay", true)
-	source_player.get_parent().add_child(overlay)
-	var library := AnimationLibrary.new()
-	library.add_animation(animation_name, animation)
-	overlay.add_animation_library(&"", library)
-	return overlay
-
-
-func _animation_track_node(player: AnimationPlayer, track_path: String) -> Node:
-	if player == null:
-		return null
-	var animation_root := player.get_node_or_null(player.root_node)
-	if animation_root == null:
-		return null
-	var separator := track_path.find(":")
-	var node_path := track_path.substr(0, separator) \
-		if separator >= 0 else track_path
-	return animation_root.get_node_or_null(NodePath(node_path))
-
-
-func _animation_track_changes(animation: Animation, track: int) -> bool:
-	if animation.track_get_key_count(track) < 2:
-		return false
-	var first: Variant = animation.track_get_key_value(track, 0)
-	for key in range(1, animation.track_get_key_count(track)):
-		var value: Variant = animation.track_get_key_value(track, key)
-		if first is Transform3D and value is Transform3D:
-			var a := first as Transform3D
-			var b := value as Transform3D
-			if not a.origin.is_equal_approx(b.origin) \
-			or not a.basis.is_equal_approx(b.basis):
-				return true
-		elif value != first:
-			return true
-	return false
+	return _combat.weapon_can_fire_while_moving(weapon_index)
 
 
 func _prioritize_animations_before_unit_logic() -> void:
@@ -2880,236 +1236,91 @@ func _prioritize_animations_before_unit_logic() -> void:
 		player.process_priority = mini(player.process_priority, process_priority - 1)
 
 
+## The animation_finished hookup stays here deliberately: _sever_connections_
+## into() only recognises connections whose callable belongs to this Unit, so a
+## module connecting on its own behalf would silently escape the death handoff.
 func _prepare_idle_animations() -> void:
-	_stationary_repeats_remaining.clear()
+	_idle_animations.reset()
 	for player in _animation_players:
-		var idle_animations := _idle_animations(player)
-		for animation_name in idle_animations:
-			var animation := player.get_animation(animation_name)
-			if animation != null:
-				animation.loop_mode = Animation.LOOP_NONE
-		if not idle_animations.is_empty() and player.has_animation(IDLE_ANIMATION):
-			var stationary := player.get_animation(IDLE_ANIMATION)
-			if stationary != null:
-				stationary.loop_mode = Animation.LOOP_NONE
+		_idle_animations.prepare(player)
 		if not player.animation_finished.is_connected(_on_animation_finished.bind(player)):
 			player.animation_finished.connect(_on_animation_finished.bind(player))
+
+
+## The harvesting module owns the model while an authored harvest or unload
+## clip plays; movement and idle animation must not touch it, and the clip's
+## own completion is not theirs to handle either.
+## The harvesting loop exists exactly while the unit has somewhere to put
+## spice. Attached from data rather than from a dedicated subclass, which is
+## why a test fixture that only sets a spice capacity gets one too.
+##
+## If a future unit needs a hold without harvesting -- or harvesting without a
+## hold -- this is the line to change, not the meaning of max_spice.
+func _sync_harvester_controller() -> void:
+	if max_spice > 0.0:
+		if _harvester == null:
+			_harvester = HarvesterControllerScript.new()
+			_harvester.configure(self)
+		return
+	if _harvester != null:
+		_harvester.dispose()
+		_harvester = null
+
+
+func _harvester_owns_animation() -> bool:
+	return _harvester != null and _harvester.owns_animation()
 
 
 func _set_movement_animation(
 		is_moving: bool, speed_scale := 1.0, turn_animation: StringName = &""
 	) -> void:
+	if _harvester_owns_animation():
+		return
 	if _flight_controller != null and _flight_controller.flight_is_airborne_phase():
 		_flight_controller.set_cruise_moving(is_moving, speed_scale)
 		return
-	if _has_blocking_fire_sequence():
+	if _combat.has_blocking_fire_sequence():
 		if not is_moving:
 			return
-		_cancel_blocking_fire_sequences()
-	if _uses_mech_gait:
-		_set_mech_locomotion_animation(is_moving, speed_scale, turn_animation)
-		_restore_combat_turret_poses()
-		return
-	if not is_moving:
-		_mech_gait_elapsed = 0.0
-		_mech_start_remaining = 0.0
-	_movement_animation_active = is_moving
-	for player in _animation_players:
-		if is_moving:
-			if player.has_animation(MOVING_ANIMATION):
-				if player.current_animation != MOVING_ANIMATION:
-					player.play(MOVING_ANIMATION)
-				player.speed_scale = speed_scale
-				continue
-		player.speed_scale = 1.0
-		_play_idle_sequence(player)
-	_restore_combat_turret_poses()
+		_combat.cancel_blocking_fire_sequences()
+	_locomotion.apply_movement_animation(
+		is_moving, speed_scale, turn_animation, _idle_animations.play_sequence
+	)
+	restore_combat_turret_poses()
 
 
-func _set_mech_locomotion_animation(
-		is_moving: bool, move_speed_scale: float, turn_animation: StringName
-	) -> void:
-	var was_moving := _movement_animation_active
-	_movement_animation_active = is_moving
-	if not is_moving:
-		_mech_gait_elapsed = 0.0
-		_mech_start_remaining = 0.0
-		if (
-			_mech_locomotion_state == MechLocomotionState.STOPPING
-			and _any_animation_playing(MOVE_STOP_ANIMATION)
-		):
-			return
-		if was_moving and _any_player_has_animation(MOVE_STOP_ANIMATION):
-			_mech_locomotion_state = MechLocomotionState.STOPPING
-			_play_mech_clip(MOVE_STOP_ANIMATION, _mech_gait_cadence())
-			return
-		_mech_locomotion_state = MechLocomotionState.IDLE
-		for player in _animation_players:
-			player.speed_scale = 1.0
-			_play_idle_sequence(player)
-		return
-
-	if turn_animation in [TURN_LEFT_ANIMATION, TURN_RIGHT_ANIMATION] \
-	and _any_player_has_animation(turn_animation):
-		_mech_start_remaining = 0.0
-		_mech_locomotion_state = MechLocomotionState.TURNING_LEFT \
-			if turn_animation == TURN_LEFT_ANIMATION \
-			else MechLocomotionState.TURNING_RIGHT
-		# TurnRate already controls the physical hull yaw. These authored clips
-		# describe the feet/body pose during that turn and retain their own time.
-		_play_mech_clip(turn_animation, 1.0)
-		return
-
-	if (
-		_mech_locomotion_state == MechLocomotionState.STARTING
-		and _any_animation_playing(MOVE_START_ANIMATION)
-	):
-		return
-	if _mech_locomotion_state == MechLocomotionState.MOVING:
-		_play_mech_clip(MOVING_ANIMATION, move_speed_scale)
-		return
-
-	if _any_player_has_animation(MOVE_START_ANIMATION):
-		_mech_locomotion_state = MechLocomotionState.STARTING
-		var start_speed_scale := _mech_gait_cadence()
-		_mech_start_remaining = _animation_playback_duration(
-			MOVE_START_ANIMATION, start_speed_scale
-		)
-		_play_mech_clip(MOVE_START_ANIMATION, start_speed_scale)
-		if _mech_start_remaining <= 0.0:
-			_begin_mech_move(move_speed_scale)
-		return
-	_begin_mech_move(move_speed_scale)
+## Returns the model to its ordinary movement/idle pose. Used by modules that
+## take the model over for an authored action clip and have just given it back.
+func restore_movement_animation() -> void:
+	_set_movement_animation(false)
 
 
-func _begin_mech_move(speed_scale: float) -> void:
-	_mech_locomotion_state = MechLocomotionState.MOVING
-	_mech_start_remaining = 0.0
-	_play_mech_clip(MOVING_ANIMATION, speed_scale)
+## Public because UnitCombat's fire-sequence restore-idle branches call it:
+## a fire sequence should not stomp a movement animation that started up
+## again while the sequence was still playing.
+func is_movement_animation_active() -> bool:
+	return _locomotion.is_movement_animation_active()
 
 
-func _play_mech_clip(animation_name: StringName, speed_scale: float) -> void:
-	for player in _animation_players:
-		var selected_animation := animation_name
-		if not player.has_animation(selected_animation):
-			if animation_name in [
-				MOVE_START_ANIMATION,
-				MOVE_STOP_ANIMATION,
-				TURN_LEFT_ANIMATION,
-				TURN_RIGHT_ANIMATION,
-			] and player.has_animation(MOVING_ANIMATION):
-				selected_animation = MOVING_ANIMATION
-			else:
-				continue
-		if (
-			player.current_animation != selected_animation
-			or not player.is_playing()
-		):
-			if player.current_animation == selected_animation:
-				player.stop()
-			player.play(selected_animation)
-		player.speed_scale = maxf(speed_scale, 0.0)
-
-
-func _any_player_has_animation(animation_name: StringName) -> bool:
-	for player in _animation_players:
-		if player.has_animation(animation_name):
-			return true
-	return false
-
-
-func _any_animation_playing(animation_name: StringName) -> bool:
-	for player in _animation_players:
-		if (
-			player.has_animation(animation_name)
-			and player.current_animation == animation_name
-			and player.is_playing()
-		):
-			return true
-	return false
-
-
-func _animation_playback_duration(animation_name: StringName, speed_scale: float) -> float:
+## Plays a one-shot action clip on every player that has it and returns its
+## duration, so a caller can time a state on the authored length. A clip no
+## model provides has zero duration, which keeps the state machine running at
+## full speed instead of stalling.
+func play_action_animation(animation_name: StringName) -> float:
 	var duration := 0.0
-	var safe_speed_scale := maxf(speed_scale, 0.000001)
 	for player in _animation_players:
 		if not player.has_animation(animation_name):
 			continue
 		var animation := player.get_animation(animation_name)
 		if animation != null:
-			duration = maxf(duration, animation.length / safe_speed_scale)
+			animation.loop_mode = Animation.LOOP_NONE
+			duration = maxf(duration, animation.length)
+		player.speed_scale = 1.0
+		play_animation_from_start(player, animation_name)
 	return duration
 
 
-func _play_idle_sequence(player: AnimationPlayer) -> void:
-	var idle_animations := _idle_animations(player)
-	if idle_animations.is_empty():
-		if is_deployed() and player.has_animation(DEPLOYED_HOLD_ANIMATION):
-			_hold_deployed_pose(player)
-			return
-		if player.has_animation(IDLE_ANIMATION) and player.current_animation != IDLE_ANIMATION:
-			player.play(IDLE_ANIMATION)
-		return
-
-	var player_id := player.get_instance_id()
-	var is_sequence_animation := player.current_animation == IDLE_ANIMATION \
-		or player.current_animation in idle_animations
-	if is_sequence_animation and player.is_playing() and _stationary_repeats_remaining.has(player_id):
-		return
-	_start_stationary_batch(player, idle_animations)
-
-
-## Kobra/Mortar have no authored Deployed_Idle_* clip: rather than falling
-## back to the travel-mode Stationary/Idle_* pose, hold the braced pose at the
-## end of Deploy_Gun (Deploy_Gun_Hold) for as long as the unit stays deployed.
-func _hold_deployed_pose(player: AnimationPlayer) -> void:
-	if player.current_animation == DEPLOYED_HOLD_ANIMATION and player.is_playing():
-		return
-	var animation := player.get_animation(DEPLOYED_HOLD_ANIMATION)
-	if animation != null:
-		animation.loop_mode = Animation.LOOP_LINEAR
-	# Preserve the hidden final bigflash pose until the hold clip receives its
-	# first animation tick. Rewinding the completed Deployed_Fire here exposes
-	# its large first-frame flash for one rendered frame.
-	player.stop(true)
-	player.play(DEPLOYED_HOLD_ANIMATION)
-	_restore_combat_turret_poses()
-
-
-func _start_stationary_batch(player: AnimationPlayer, idle_animations: Array[StringName]) -> void:
-	var player_id := player.get_instance_id()
-	# A deployed unit must only ever consider its Deployed_Idle_* clips here:
-	# a literal "Stationary" clip on the same model belongs to travel mode.
-	if not is_deployed() and player.has_animation(IDLE_ANIMATION):
-		_stationary_repeats_remaining[player_id] = randi_range(5, 15)
-		_play_animation_from_start(player, IDLE_ANIMATION)
-		return
-	_stationary_repeats_remaining[player_id] = 0
-	_play_random_idle(player, idle_animations)
-
-
-func _play_random_idle(player: AnimationPlayer, idle_animations: Array[StringName]) -> void:
-	var total_weight := 0.0
-	for animation_name in idle_animations:
-		total_weight += _idle_animation_weight(animation_name)
-
-	var roll := randf() * total_weight
-	for animation_name in idle_animations:
-		roll -= _idle_animation_weight(animation_name)
-		if roll <= 0.0:
-			_play_animation_from_start(player, animation_name)
-			return
-	_play_animation_from_start(player, idle_animations.back())
-
-
-func _idle_animation_weight(animation_name: StringName) -> float:
-	var suffix := String(animation_name).trim_prefix(IDLE_ANIMATION_PREFIX).trim_prefix("_")
-	if not suffix.is_valid_int():
-		return 1.0
-	return 1.0 / float(maxi(int(suffix), 0) + 1)
-
-
-func _play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
+func play_animation_from_start(player: AnimationPlayer, animation_name: StringName) -> void:
 	# Keep the outgoing pose while stopping so its first-frame effects are not
 	# exposed, then apply the incoming transform pose immediately. Waiting for
 	# the next AnimationPlayer tick leaves a one-frame hybrid of the outgoing
@@ -3118,7 +1329,7 @@ func _play_animation_from_start(player: AnimationPlayer, animation_name: StringN
 	player.stop(true)
 	player.play(animation_name)
 	_apply_animation_start_transforms(player, animation_name)
-	_restore_combat_turret_poses()
+	restore_combat_turret_poses()
 
 
 func _apply_animation_start_transforms(
@@ -3133,7 +1344,7 @@ func _apply_animation_start_transforms(
 		or animation.track_get_key_count(track) == 0 \
 		or animation.track_get_key_time(track, 0) > FIRE_EVENT_EPSILON:
 			continue
-		var target := _animation_track_node(
+		var target := AuthoredModelScript.track_node(
 			player, String(animation.track_get_path(track))
 		) as Node3D
 		var value: Variant = animation.track_get_key_value(track, 0)
@@ -3141,150 +1352,40 @@ func _apply_animation_start_transforms(
 			target.transform = value as Transform3D
 
 
-func _restore_combat_turret_poses() -> void:
-	# An inactive deploy-state turret shares authored pivots with the active
-	# model pose but must not write its own rest transform over that animation.
-	for turret in _active_turrets():
-		if turret != null:
-			turret.restore_aim_pose()
-
-
-func _idle_animations(player: AnimationPlayer) -> Array[StringName]:
-	var prefix := DEPLOYED_IDLE_ANIMATION_PREFIX if is_deployed() else IDLE_ANIMATION_PREFIX
-	var result: Array[StringName] = []
-	for animation_name in player.get_animation_list():
-		if String(animation_name).begins_with(prefix):
-			result.append(animation_name)
-	return result
+## Public: called both internally and by UnitIdleAnimations after playing a
+## random idle variant, so a just-restarted idle clip does not leave an
+## inactive-turret's pivot at whatever pose the clip's authoring left it in.
+func restore_combat_turret_poses() -> void:
+	_combat.restore_combat_turret_poses()
 
 
 func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:
+	if _harvester_owns_animation():
+		return
 	if _flight_controller != null and _flight_controller.notify_animation_finished(animation_name, player):
 		return
-	if (
-		_fire_sequence_active
-		and player == _fire_sequence_player
-		and animation_name == _fire_sequence_animation
-	):
-		# A long render frame may jump directly past the last authored shot.
-		# Move this sequence to its logical end; the shared advancement path
-		# emits every remaining committed projectile exactly once.
-		for weapon_index: Variant in _weapon_fire_sequences.keys():
-			var state: Dictionary = _weapon_fire_sequences[weapon_index]
-			if state.get("player") == player \
-			and StringName(state.get("animation", &"")) == animation_name:
-				state["elapsed"] = float(state.get("duration", 0.0))
-				_weapon_fire_sequences[weapon_index] = state
-				_advance_fire_sequences(0.0)
-				break
+	if _combat.on_animation_finished(animation_name, player):
 		return
-	if (
-		is_deploying()
-		and player == _deployment_animation_player
-		and animation_name == _deployment_animation_name
-	):
+	if _deploy.on_animation_finished(animation_name, player):
 		deployment_animation_finished.emit()
 		return
-	if _uses_mech_gait:
-		if (
-			_mech_locomotion_state == MechLocomotionState.STARTING
-			and animation_name == MOVE_START_ANIMATION
-		):
-			_begin_mech_move(_mech_gait_cadence())
-			return
-		if (
-			_mech_locomotion_state == MechLocomotionState.STOPPING
-			and animation_name == MOVE_STOP_ANIMATION
-		):
-			_mech_locomotion_state = MechLocomotionState.IDLE
-			_mech_start_remaining = 0.0
-			for animation_player in _animation_players:
-				animation_player.speed_scale = 1.0
-				_play_idle_sequence(animation_player)
-			return
-		var active_turn_animation := TURN_LEFT_ANIMATION \
-			if _mech_locomotion_state == MechLocomotionState.TURNING_LEFT \
-			else TURN_RIGHT_ANIMATION
-		if (
-			_mech_locomotion_state in [
-				MechLocomotionState.TURNING_LEFT,
-				MechLocomotionState.TURNING_RIGHT,
-			]
-			and animation_name == active_turn_animation
-			and _movement_animation_active
-		):
-			player.stop()
-			player.play(animation_name)
-			player.speed_scale = 1.0
-			return
-	if _movement_animation_active:
+	if _locomotion.on_animation_finished(
+		animation_name, player, _idle_animations.play_sequence
+	):
 		return
-	var idle_animations := _idle_animations(player)
-	if idle_animations.is_empty():
-		return
-	var player_id := player.get_instance_id()
-	if animation_name == IDLE_ANIMATION:
-		var repeats_left := int(_stationary_repeats_remaining.get(player_id, 1)) - 1
-		_stationary_repeats_remaining[player_id] = repeats_left
-		if repeats_left > 0:
-			_play_animation_from_start(player, IDLE_ANIMATION)
-		else:
-			_play_random_idle(player, idle_animations)
-	elif animation_name in idle_animations:
-		_start_stationary_batch(player, idle_animations)
-
-
-func _movement_animation_speed_scale() -> float:
-	var phase_speed := navigation_move_speed()
-	if _uses_mech_gait and not _mech_motion_profile.is_empty():
-		var cadence := _mech_gait_cadence()
-		if _mech_authored_phase_speed() <= 0.0:
-			return cadence
-		return cadence * velocity.length() / maxf(phase_speed, 0.000001)
-	if phase_speed <= 0.0:
-		return 1.0
-	return velocity.length() / phase_speed
+	_idle_animations.on_animation_finished(animation_name, player)
 
 
 func _refresh_owner_visuals() -> void:
-	var color := _owner_team_color()
-	for mesh_instance in _mesh_instances():
-		if _mesh_declares_team_color(mesh_instance):
-			mesh_instance.set_instance_shader_parameter("team_color", color)
-
-
-func _mesh_declares_team_color(mesh_instance: MeshInstance3D) -> bool:
-	var materials: Array[Material] = []
-	if mesh_instance.material_override != null:
-		materials.append(mesh_instance.material_override)
-	if mesh_instance.material_overlay != null:
-		materials.append(mesh_instance.material_overlay)
-	if mesh_instance.mesh != null:
-		for surface_index in mesh_instance.mesh.get_surface_count():
-			var material := mesh_instance.get_surface_override_material(surface_index)
-			if material == null:
-				material = mesh_instance.mesh.surface_get_material(surface_index)
-			if material != null:
-				materials.append(material)
-	for material in materials:
-		if material is ShaderMaterial:
-			var shader := (material as ShaderMaterial).shader
-			if shader != null and "instance uniform vec4 team_color" in shader.code:
-				return true
-	return false
+	TeamColorScript.apply(visual_root, _owner_team_color())
 
 
 func _owner_team_color() -> Color:
-	var roster_player = owner_player()
-	if roster_player == null or roster_player.is_neutral:
-		return Color(0.2, 0.85, 1.0)
-	return roster_player.team_color
+	return TeamColorScript.color_for(owner_player(), Color(0.2, 0.85, 1.0))
 
 
 func _players():
-	if not is_inside_tree():
-		return null
-	return get_node_or_null("/root/Players")
+	return AutoloadLookupScript.roster(self)
 
 
 func _clear_invulnerability() -> void:
@@ -3308,27 +1409,10 @@ func _add_authored_collision() -> void:
 
 
 func _collision_sources() -> Array[Node3D]:
-	var result: Array[Node3D] = []
-	_collect_collision_sources(visual_root, COLLISION_OBJECT_NAME, result)
-	if result.is_empty():
-		_collect_collision_sources(visual_root, "slct", result, true)
-	return result
-
-
-func _collect_collision_sources(node: Node, original_name: String, result: Array[Node3D], prefix_match := false) -> void:
-	if node is Node3D and _is_collision_source(node, original_name, prefix_match):
-		_hide_collision_meshes(node)
-		result.append(node)
-		return
-	for child in node.get_children():
-		_collect_collision_sources(child, original_name, result, prefix_match)
-
-
-func _is_collision_source(node: Node3D, original_name: String, prefix_match: bool) -> bool:
-	var source_name := String(node.get_meta("original_name", ""))
-	var matches := source_name.to_lower().begins_with(original_name) if prefix_match else source_name == original_name
-	var points: PackedVector3Array = node.get_meta("collision_points", PackedVector3Array())
-	return matches and points.size() >= 4
+	return AuthoredModelScript.collision_sources(visual_root, [
+		{"name": COLLISION_OBJECT_NAME, "prefix": false},
+		{"name": "slct", "prefix": true},
+	])
 
 
 func _collision_shape(source: Node3D) -> Shape3D:
@@ -3343,17 +1427,11 @@ func _collision_shape(source: Node3D) -> Shape3D:
 	return null
 
 
-func _hide_collision_meshes(node: Node) -> void:
-	for child in node.get_children():
-		if child is MeshInstance3D and child.has_meta("collision_mesh"):
-			child.visible = false
-
-
 func _add_selection_halo() -> void:
 	_selection_halo = SelectionHaloScript.new()
 	_selection_halo.name = "SelectionHalo"
 	add_child(_selection_halo)
-	var anchor := _halo_anchor_node(visual_root)
+	var anchor := SelectionHaloBindingScript.anchor(visual_root)
 	_selection_halo.configure(
 		self, _selection_radius(), _selection_position(), anchor
 	)
@@ -3372,112 +1450,12 @@ func _rebuild_selection_halo() -> void:
 
 
 func _selection_radius() -> float:
-	var anchor_bounds := _halo_anchor_bounds()
-	if anchor_bounds.size.x > 0.0 or anchor_bounds.size.z > 0.0:
-		return maxf(anchor_bounds.size.x, anchor_bounds.size.z) * 0.5
-
-	var bounds := _selection_bounds()
-	# A halo is circular: its diameter follows the authored selection volume's
-	# narrow horizontal axis, not its length.  This keeps long vehicles and
-	# buildings from receiving an oversized circle.
-	return minf(bounds.size.x, bounds.size.z) * 0.5
+	return SelectionHaloBindingScript.radius(visual_root, self)
 
 
 func _selection_position() -> Vector3:
-	var anchor: Node3D = _halo_anchor_node(visual_root)
-	if anchor != null:
-		return to_local(anchor.to_global(Vector3.ZERO))
-
-	return Vector3(0.0, _selection_bounds().end.y + 0.05, 0.0)
-
-
-func _halo_anchor_bounds() -> AABB:
-	var anchor: Node3D = _halo_anchor_node(visual_root)
-	if anchor == null or not anchor.has_meta("halo_anchor_bounds"):
-		return AABB()
-	var source_bounds: AABB = anchor.get_meta("halo_anchor_bounds")
-	var source_to_global := anchor.global_transform
-	var reference_basis: Variant = (
-		anchor.get_meta("halo_anchor_reference_basis")
-		if anchor.has_meta("halo_anchor_reference_basis")
-		else null
-	)
-	var anchor_parent := anchor.get_parent() as Node3D
-	if reference_basis is Basis and anchor_parent != null:
-		source_to_global.basis = (
-			anchor_parent.global_transform.basis * (reference_basis as Basis)
-		)
-	var bounds := AABB()
-	var has_bounds := false
-	for corner in _aabb_corners(source_bounds):
-		var point := to_local(source_to_global * corner)
-		if has_bounds:
-			bounds = bounds.expand(point)
-		else:
-			bounds = AABB(point, Vector3.ZERO)
-			has_bounds = true
-	return bounds
+	return SelectionHaloBindingScript.position(visual_root, self)
 
 
 func _selection_bounds() -> AABB:
-	var bounds := AABB()
-	var has_bounds := false
-	for marker in _selection_marker_nodes(visual_root):
-		var marker_bounds: AABB = marker.get_meta("selection_bounds")
-		for corner in _aabb_corners(marker_bounds):
-			var point := to_local(marker.to_global(corner))
-			if has_bounds:
-				bounds = bounds.expand(point)
-			else:
-				bounds = AABB(point, Vector3.ZERO)
-				has_bounds = true
-	if has_bounds:
-		return bounds
-	return AABB(Vector3.ZERO, Vector3(1.0, 1.0, 1.0))
-
-
-func _selection_marker_nodes(node: Node) -> Array[Node3D]:
-	var result: Array[Node3D] = []
-	_collect_selection_marker_nodes(node, result)
-	return result
-
-
-func _collect_selection_marker_nodes(node: Node, result: Array[Node3D]) -> void:
-	if node is Node3D and node.has_meta("selection_bounds"):
-		result.append(node)
-	for child in node.get_children():
-		_collect_selection_marker_nodes(child, result)
-
-
-func _halo_anchor_node(node: Node) -> Node3D:
-	if node is Node3D and node.has_meta("halo_anchor"):
-		return node
-	for child in node.get_children():
-		var anchor: Node3D = _halo_anchor_node(child)
-		if anchor != null:
-			return anchor
-	return null
-
-
-func _aabb_corners(bounds: AABB) -> Array[Vector3]:
-	var corners: Array[Vector3] = []
-	for x in [bounds.position.x, bounds.end.x]:
-		for y in [bounds.position.y, bounds.end.y]:
-			for z in [bounds.position.z, bounds.end.z]:
-				corners.append(Vector3(x, y, z))
-	return corners
-
-
-func _mesh_instances() -> Array[MeshInstance3D]:
-	var result: Array[MeshInstance3D] = []
-	if visual_root == null:
-		return result
-	_collect_mesh_instances(visual_root, result)
-	return result
-
-
-func _collect_mesh_instances(node: Node, result: Array[MeshInstance3D]) -> void:
-	if node is MeshInstance3D:
-		result.append(node)
-	for child in node.get_children():
-		_collect_mesh_instances(child, result)
+	return AuthoredModelScript.selection_bounds(visual_root, self)

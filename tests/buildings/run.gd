@@ -170,13 +170,23 @@ func _test_cancel_refund(token: int) -> int:
 func _test_ready_and_consume(token: int) -> int:
 	var queue = BuildingQueueScript.new()
 	var ready_events := [0]
-	queue.order_ready.connect(func(_order) -> void: ready_events[0] += 1)
+	var emitted_orders: Array[BuildingOrder] = []
+	queue.order_ready.connect(func(order: BuildingOrder) -> void:
+		ready_events[0] += 1
+		emitted_orders.append(order)
+	)
 	queue.start(&"Ready", "Ready", 0, 60.0)
+	var adopted_order := queue.current_order()
 	queue.tick(1.0, 0)
 	queue.tick(1.0, 0)
 	_expect(ready_events[0] == 1, "ready must emit exactly once")
+	_expect(
+		emitted_orders.size() == 1 and emitted_orders[0] == adopted_order,
+		"ready must emit the exact typed order adopted by the shared queue"
+	)
 	var ready_order = queue.take_ready()
 	_expect(ready_order != null and ready_order.building_id == &"Ready", "take_ready must hand off the ready order")
+	_expect(ready_order == adopted_order, "take_ready must return the exact adopted order instance")
 	_expect(not queue.has_order(), "take_ready must consume the queue order")
 	_expect(queue.take_ready() == null, "a ready order must be consumed only once")
 	return token

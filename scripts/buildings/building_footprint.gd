@@ -2,6 +2,8 @@ class_name BuildingFootprint
 extends RefCounted
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+const OccupyGridScript := preload("res://scripts/buildings/occupy_grid.gd")
 const AXIS_ALIGNMENT_DOT := 0.9999
 const EDGE_EPSILON := 0.00001
 
@@ -97,9 +99,7 @@ static func _fill_axis_aligned(
 
 
 static func _building_exit_direction(building: Node3D) -> Vector3:
-	if building.has_method("exit_direction"):
-		return building.call("exit_direction") as Vector3
-	return SpatialOrientationScript.world_horizontal_axis(building, Vector3.BACK)
+	return EntityQueryScript.exit_direction(building)
 
 
 static func _uses_grid_axes(right: Vector3, exit_direction: Vector3) -> bool:
@@ -107,10 +107,7 @@ static func _uses_grid_axes(right: Vector3, exit_direction: Vector3) -> bool:
 
 
 static func _row_width(occupy_rows: Array) -> int:
-	var width := 0
-	for row in occupy_rows:
-		width = maxi(width, String(row).length())
-	return width
+	return OccupyGridScript.width(occupy_rows)
 
 
 static func _marker_at(occupy_rows: Array, column: int, row_index: int) -> String:
@@ -121,4 +118,4 @@ static func _marker_at(occupy_rows: Array, column: int, row_index: int) -> Strin
 
 
 static func _is_empty_marker(marker: String) -> bool:
-	return marker.is_empty() or marker == " " or marker == "." or marker == "_" or marker.to_lower() == "n"
+	return OccupyGridScript.is_empty_marker(marker)

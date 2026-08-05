@@ -1,6 +1,8 @@
 class_name UpgradeEffects
 extends RefCounted
 
+const EntityQueryScript := preload("res://scripts/world/entity_query.gd")
+
 ## docs/mechanics/production.md section 4/5: a global per-type upgrade
 ## purchase is player state, not building state ("upgrades are irreversible
 ## ... the purchased state belongs to the player, not the building"). Every
@@ -17,7 +19,7 @@ static func apply_to_existing_buildings(buildings: Array, player_id: int, buildi
 	for building in buildings:
 		if not is_instance_valid(building):
 			continue
-		if int(building.get("owner_player_id")) != player_id:
+		if not EntityQueryScript.is_owned_by(building, player_id):
 			continue
 		if StringName(String(building.get("config_id"))) != building_id:
 			continue
