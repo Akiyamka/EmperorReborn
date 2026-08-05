@@ -322,8 +322,8 @@ func flight_is_airborne_phase() -> bool:
 
 
 ## True while grounded/landed (including a flying unit that has not yet taken
-## off). This is the seam a later combat pass wires into combat_is_airborne()
-## so a landed plane counts as a ground unit for targeting — not done here.
+## off). Also feeds combat_is_airborne() so a landed plane counts as a ground
+## unit for targeting.
 func flight_is_landed() -> bool:
 	return _flight_controller == null or _flight_controller.flight_is_landed()
 
@@ -717,7 +717,7 @@ func combat_armour_type() -> StringName:
 
 
 func combat_is_airborne() -> bool:
-	return unit_definition != null and unit_definition.can_fly
+	return unit_definition != null and unit_definition.can_fly and not flight_is_landed()
 
 
 ## Entry point kept on the facade: take_damage() calls it, and the surrounding
