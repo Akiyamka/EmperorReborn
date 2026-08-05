@@ -7,6 +7,7 @@ const BuildingDefinitionCatalogScript := preload(
 	"res://scripts/buildings/building_definition_catalog.gd"
 )
 const MatchFixtureScene := preload("res://tests/fixtures/match_fixture.tscn")
+const HarvesterControllerScript := preload("res://scripts/units/harvester_controller.gd")
 const HarvesterScene := preload("res://scenes/units/harvester.tscn")
 const ATRefineryScene := preload("res://assets/converted/buildings/ATRefinery/ATRefinery.scn")
 const ATMongooseModelScene := preload(
@@ -1264,7 +1265,7 @@ func _test_real_harvester_unload_trip() -> void:
 	refinery.position = Vector3(24.0, 8.0, 12.0)
 	refinery.owner_player_id = 1
 	match_instance.get_node("Buildings").add_child(refinery)
-	var harvester := HarvesterScene.instantiate() as Harvester
+	var harvester := HarvesterScene.instantiate() as Unit
 	harvester.owner_player_id = 1
 	match_instance.get_node("Units").add_child(harvester)
 	get_root().add_child(match_instance)
@@ -1295,22 +1296,22 @@ func _test_real_harvester_unload_trip() -> void:
 
 	var visited_phases := {}
 	for _tick in 800:
-		visited_phases[harvester.unload_phase()] = true
+		visited_phases[harvester._harvester.unload_phase()] = true
 		navigation.call("_navigation_tick", 0.05)
-		harvester.advance_unload_order(0.05)
-		if not harvester.has_unload_order():
+		harvester._harvester.advance_unload_order(0.05)
+		if not harvester._harvester.has_unload_order():
 			break
 
 	for required_phase in [
-		Harvester.UnloadPhase.PARK,
-		Harvester.UnloadPhase.START,
-		Harvester.UnloadPhase.HOLD,
-		Harvester.UnloadPhase.END,
+		HarvesterControllerScript.UnloadPhase.PARK,
+		HarvesterControllerScript.UnloadPhase.START,
+		HarvesterControllerScript.UnloadPhase.HOLD,
+		HarvesterControllerScript.UnloadPhase.END,
 	]:
 		_expect(visited_phases.has(required_phase), "the real unload trip must visit phase %d" % required_phase)
-	_expect(not visited_phases.has(Harvester.UnloadPhase.RETURN_FRONT), "an automatic cycle must not insert a refinery-front waypoint before the field")
-	_expect(not harvester.has_unload_order() and harvester.has_harvest_order(), "the real unload trip must hand off directly to harvesting")
-	_expect(match_instance.terrain.spice_layer.spice_at(harvester.harvest_target_cell()) > 0, "the direct post-unload target must be a non-empty spice cell")
+	_expect(not visited_phases.has(HarvesterControllerScript.UnloadPhase.RETURN_FRONT), "an automatic cycle must not insert a refinery-front waypoint before the field")
+	_expect(not harvester._harvester.has_unload_order() and harvester._harvester.has_harvest_order(), "the real unload trip must hand off directly to harvesting")
+	_expect(match_instance.terrain.spice_layer.spice_at(harvester._harvester.harvest_target_cell()) > 0, "the direct post-unload target must be a non-empty spice cell")
 	_expect(is_zero_approx(harvester.spice), "the real unload trip must empty the harvester")
 	_expect(player.money == money_before + 100, "the real unload trip must credit all cargo to the player")
 

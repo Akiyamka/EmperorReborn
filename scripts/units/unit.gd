@@ -23,6 +23,7 @@ const UnitDeathSequenceScript := preload("res://scripts/units/unit_death_sequenc
 const UnitShaderFxScript := preload("res://scripts/units/unit_shader_fx.gd")
 const UnitIdleAnimationsScript := preload("res://scripts/units/unit_idle_animations.gd")
 const UnitLocomotionScript := preload("res://scripts/units/unit_locomotion.gd")
+const HarvesterControllerScript := preload("res://scripts/units/harvester_controller.gd")
 const UnitDeployStateScript := preload("res://scripts/units/unit_deploy_state.gd")
 const UnitAttackOrderScript := preload("res://scripts/units/unit_attack_order.gd")
 const UnitFireOverlayScript := preload("res://scripts/units/unit_fire_overlay.gd")
@@ -125,6 +126,23 @@ var _shader_fx := UnitShaderFxScript.new()
 var _selection_halo
 var _animation_players: Array[AnimationPlayer] = []
 var _idle_animations := UnitIdleAnimationsScript.new()
+## The harvesting loop, present only on a unit whose rules give it a spice
+## capacity. Null on everything else, which is what "is a harvester" means now.
+var _harvester = null
+## Cargo stays canonical on the facade like health and shields do: the match
+## snapshot reads it by name, and the selection halo draws its ring from it.
+##
+## A capacity is also what makes a unit a harvester: setting one attaches the
+## harvesting loop, and that is the whole of "is a harvester" now.
+@export var max_spice := 0.0:
+	set(value):
+		max_spice = maxf(value, 0.0)
+		_sync_harvester_controller()
+		# Re-clamps an existing load against the capacity just applied.
+		spice = spice
+var spice := 0.0:
+	set(value):
+		spice = clampf(value, 0.0, max_spice)
 var _navigation_managed := false
 var _navigation_system = null
 var _pending_navigation_order := Vector3.ZERO
@@ -237,6 +255,8 @@ func _process(delta: float) -> void:
 			turret.recenter(delta)
 	_advance_visual_slope_alignment(delta)
 	_shader_fx.advance(delta, shields)
+	if _harvester != null:
+		_harvester.advance(delta)
 
 
 func _physics_process(delta: float) -> void:
@@ -434,8 +454,13 @@ func flight_terrain_hit_at(position: Vector3) -> Dictionary:
 ## Unmanaged fallback movement uses the same API, keeping order preparation in
 ## the unit instead of teaching command controllers about unit state machines.
 func prepare_navigation_order(
-	_world_position: Vector3, _exit_point := Vector3.INF, _move_mode := 0
+	world_position: Vector3, exit_point := Vector3.INF, move_mode := 0
 	) -> bool:
+	# A harvester mid-unload answers a move order by finishing its clip first,
+	# and takes the order back up when it does.
+	if _harvester != null \
+	and not _harvester.prepare_navigation_order(world_position, exit_point, move_mode):
+		return false
 	if not _issuing_attack_move:
 		_replace_attack_with_move()
 	return not (is_deploying() or is_deployed())
@@ -449,14 +474,17 @@ func set_navigation_managed(active: bool) -> void:
 
 
 func set_navigation_controller(controller) -> void:
+	if _harvester != null:
+		_harvester.begin_navigation_handoff()
 	_navigation_system = controller
-	if _navigation_system == null or not _has_pending_navigation_order:
-		return
-	var order := _pending_navigation_order
-	var exit_point := _pending_navigation_exit
-	_has_pending_navigation_order = false
-	_pending_navigation_exit = Vector3.INF
-	move_to(order, exit_point)
+	if _navigation_system != null and _has_pending_navigation_order:
+		var order := _pending_navigation_order
+		var exit_point := _pending_navigation_exit
+		_has_pending_navigation_order = false
+		_pending_navigation_exit = Vector3.INF
+		move_to(order, exit_point)
+	if _harvester != null:
+		_harvester.end_navigation_handoff()
 
 
 func set_navigation_destination(world_position: Vector3) -> void:
@@ -981,7 +1009,10 @@ func has_attack_order() -> bool:
 
 
 func has_active_order() -> bool:
-	return _attack_order.is_active() or is_deploying() or has_active_move_order()
+	return _attack_order.is_active() \
+		or is_deploying() \
+		or has_active_move_order() \
+		or (_harvester != null and _harvester.has_active_order())
 
 
 func attack_order_target() -> Variant:
@@ -1458,22 +1489,22 @@ func stop_at_current_position() -> void:
 	_set_movement_animation(false)
 
 
-## Shared Stop-command contract. Subclasses with additional order state
-## override this, clear their own state, and then call super.
+## Shared Stop-command contract. Stopping also breaks a harvester's autonomous
+## economy loop, which would otherwise pick a new field on the next tick.
 func cancel_all_orders() -> bool:
 	var had_order := (
 		_attack_order.is_active()
 		or _has_pending_navigation_order
 		or has_active_move_order()
 	)
-	if not had_order:
-		return false
-	cancel_attack_order()
-	_has_pending_navigation_order = false
-	_pending_navigation_order = Vector3.ZERO
-	_pending_navigation_exit = Vector3.INF
-	stop_at_current_position()
-	return had_order
+	if had_order:
+		cancel_attack_order()
+		_has_pending_navigation_order = false
+		_pending_navigation_order = Vector3.ZERO
+		_pending_navigation_exit = Vector3.INF
+		stop_at_current_position()
+	var had_harvester_order: bool = _harvester != null and _harvester.cancel_all_orders()
+	return had_order or had_harvester_order
 
 
 ## Shared unit deployment interface. Eligibility and the per-unit strategy
@@ -1680,6 +1711,10 @@ func _apply_unit_definition() -> void:
 		_flight_controller.configure(self, unit_definition)
 	else:
 		_flight_controller = null
+	# Attaches or drops the harvesting loop through the capacity setter.
+	max_spice = float(unit_definition.spice_capacity)
+	if _harvester != null:
+		_harvester.apply_definition(unit_definition)
 
 
 func _configure_combat_turrets() -> void:
@@ -1700,6 +1735,26 @@ func _bind_combat_turrets() -> void:
 
 func _collect_animation_players() -> Array[AnimationPlayer]:
 	return AuthoredModelScript.animation_players(visual_root)
+
+
+## The harvesting contract UnitCommandController probes for by name. Every
+## unit answers; only one with a harvesting module answers yes.
+func can_harvest_spice() -> bool:
+	return _harvester != null and _harvester.can_harvest_spice()
+
+
+func command_harvest(spice_layer, navigation_grid, cell: Vector2i) -> bool:
+	return _harvester != null \
+		and _harvester.command_harvest(spice_layer, navigation_grid, cell)
+
+
+func can_unload_at(refinery: Node) -> bool:
+	return _harvester != null and _harvester.can_unload_at(refinery)
+
+
+func command_unload(refinery: Node, navigation_grid, spice_layer = null) -> bool:
+	return _harvester != null \
+		and _harvester.command_unload(refinery, navigation_grid, spice_layer)
 
 
 func weapon_can_fire_while_moving(weapon_index: int) -> bool:
@@ -1735,9 +1790,32 @@ func _prepare_idle_animations() -> void:
 			player.animation_finished.connect(_on_animation_finished.bind(player))
 
 
+## The harvesting module owns the model while an authored harvest or unload
+## clip plays; movement and idle animation must not touch it, and the clip's
+## own completion is not theirs to handle either.
+## The harvesting loop exists exactly while the unit has somewhere to put
+## spice. Attached from data rather than from a dedicated subclass, which is
+## why a test fixture that only sets a capacity gets one too.
+func _sync_harvester_controller() -> void:
+	if max_spice > 0.0:
+		if _harvester == null:
+			_harvester = HarvesterControllerScript.new()
+			_harvester.configure(self)
+		return
+	if _harvester != null:
+		_harvester.dispose()
+		_harvester = null
+
+
+func _harvester_owns_animation() -> bool:
+	return _harvester != null and _harvester.owns_animation()
+
+
 func _set_movement_animation(
 		is_moving: bool, speed_scale := 1.0, turn_animation: StringName = &""
 	) -> void:
+	if _harvester_owns_animation():
+		return
 	if _flight_controller != null and _flight_controller.flight_is_airborne_phase():
 		_flight_controller.set_cruise_moving(is_moving, speed_scale)
 		return
@@ -1749,6 +1827,12 @@ func _set_movement_animation(
 		is_moving, speed_scale, turn_animation, _idle_animations.play_sequence
 	)
 	restore_combat_turret_poses()
+
+
+## Returns the model to its ordinary movement/idle pose. Used by modules that
+## take the model over for an authored action clip and have just given it back.
+func restore_movement_animation() -> void:
+	_set_movement_animation(false)
 
 
 ## Plays a one-shot action clip on every player that has it and returns its
@@ -1810,6 +1894,8 @@ func restore_combat_turret_poses() -> void:
 
 
 func _on_animation_finished(animation_name: StringName, player: AnimationPlayer) -> void:
+	if _harvester_owns_animation():
+		return
 	if _flight_controller != null and _flight_controller.notify_animation_finished(animation_name, player):
 		return
 	var fire_finish_result: int = _authored_fire_controller.finish_animation(

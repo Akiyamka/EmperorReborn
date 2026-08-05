@@ -3,7 +3,6 @@ extends SceneTree
 const UnitSceneCatalogScript := preload("res://scripts/units/unit_scene_catalog.gd")
 const UnitDefinitionScript := preload("res://scripts/units/unit_definition.gd")
 const UnitScript := preload("res://scripts/units/unit.gd")
-const HarvesterScript := preload("res://scripts/units/harvester.gd")
 const UnitScene := preload("res://scenes/units/unit.tscn")
 
 var _assertions := 0
@@ -31,7 +30,11 @@ func _initialize() -> void:
 		scout.free()
 
 	var harvester := catalog.instantiate(&"Harvester", UnitScene)
-	_expect(harvester is HarvesterScript, "Harvester must keep its specialized lifecycle scene")
+	_expect(
+		harvester != null
+		and harvester.get_node_or_null("VisualRoot/G_harvester_h0") != null,
+		"Harvester must keep its own prepared scene rather than the generic fallback"
+	)
 	if harvester != null:
 		harvester.free()
 
