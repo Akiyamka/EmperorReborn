@@ -117,10 +117,20 @@ TURRET_FIRE_SOUND_NON_EXCLUSIVE: set[str] = {
 # siblings do not exist and all three MCVs would fall silent -- their engine
 # sound is `[mcvmovefxstart]` (`mcv_a_motor_1`), one section for all of them,
 # exactly as the source has it.
+#
+# The plain Carryall is the mirror-image case: one house-shared unit here, three
+# sections in the source. They carry no audible difference to choose between --
+# [ATCarryallMoveFxStart], [hkcarryallmovefxstart] and [orcarryallmovefxstart]
+# all name the same `adv_carryall_takeoff_1` at Volume=70, Limit=1 (as do the
+# three ADVCarryall sections), so the house is picked arbitrarily rather than
+# carried around in a by-house dictionary that would resolve to one sample
+# anyway. Only Atreides's copy adds `Control = loop decay`; the Ordos one is
+# taken because it is the plain variant.
 UNIT_MOVE_START_RULES_SECTIONS: dict[str, str] = {
     "ATMCV": "MCV",
     "HKMCV": "MCV",
     "ORMCV": "MCV",
+    "Carryall": "ORCarryall",
 }
 # Fire sounds that no SFX section can express, because the sample is a
 # hand-authored asset under assets/reworked/ rather than a converted original.

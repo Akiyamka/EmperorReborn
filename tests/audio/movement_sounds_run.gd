@@ -92,8 +92,9 @@ func _test_move_start_ids() -> void:
 		var definition = load("%s/%s" % [DEFINITION_DIR, file_name])
 		if definition != null and not String(definition.move_start_sound_id).is_empty():
 			with_sound += 1
-	# 19 by their own name plus the three per-house MCVs.
-	_expect(with_sound == 22, "exactly 22 units resolve a MoveFxStart section, got %d" % with_sound)
+	# 19 by their own name, plus the three per-house MCVs and the house-shared
+	# Carryall, all four of which name a section their config_id cannot spell.
+	_expect(with_sound == 23, "exactly 23 units resolve a MoveFxStart section, got %d" % with_sound)
 
 
 func _test_step_schedule() -> void:
