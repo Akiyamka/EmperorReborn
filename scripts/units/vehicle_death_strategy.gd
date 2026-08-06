@@ -42,15 +42,6 @@ func death_animation_candidates(_cause: StringName, _deployed: bool) -> Array[St
 	return CANDIDATES.duplicate()
 
 
-## Vehicle death explosions carry no manifest-backed sound layer at all
-## today (see UnitDeathStrategy.death_sound_event_layers docstring) — the
-## size-tier and faction layers below replace it entirely.
-func death_sound_event_layers(
-		_cause: StringName, _faction: StringName, _config_id: StringName
-	) -> Array:
-	return []
-
-
 ## The size-tier boom, timed by the caller to `_spawn_death_explosion_effects`
 ## firing rather than corpse/clip start.
 func death_vfx_sound_paths(config_id: StringName) -> Array[String]:

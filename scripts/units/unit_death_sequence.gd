@@ -15,7 +15,7 @@ const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_s
 const DeathCorpseScript := preload("res://scripts/effects/death_corpse.gd")
 const CombatImpactEffectScript := preload("res://scripts/combat/combat_impact_effect.gd")
 const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
-const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
+const AuthoredDeathVoiceScript := preload("res://scripts/units/authored_death_voice.gd")
 
 var _unit: CharacterBody3D
 ## Infantry and vehicles die differently enough (clip set, momentum, sound
@@ -87,6 +87,12 @@ func begin(cause: StringName, previous_global_position: Vector3) -> void:
 		_unit.queue_free()
 		return
 
+	# Resolved before the model is detached only for clarity of ordering — the
+	# meta this reads travels with the subtree either way. See
+	# AuthoredDeathVoice: the sounds belong to the clip that actually matched,
+	# so this must follow find_animation_clip() rather than the death cause.
+	var voice_schedule := AuthoredDeathVoiceScript.schedule(model, clip)
+
 	var world_transform := visual_root.global_transform
 	_unit.prepare_model_for_corpse(model)
 	visual_root.remove_child(model)
@@ -112,17 +118,12 @@ func begin(cause: StringName, previous_global_position: Vector3) -> void:
 		momentum = inherited_velocity + launch_impulse
 
 	var owner_faction := _owner_faction_id()
-	var sound_layers: Array = (
-		_strategy.death_sound_event_layers(cause, owner_faction, _unit.config_id)
-		if _strategy != null else []
-	)
-	var sound_event_ids := _resolve_sound_event_ids(sound_layers)
 	var start_paths: Array[String] = (
 		_strategy.death_start_sound_paths(owner_faction, _unit.config_id)
 		if _strategy != null else []
 	)
 	DeathCorpseScript.spawn(
-		parent, model, world_transform, clip, sound_event_ids, momentum,
+		parent, model, world_transform, clip, voice_schedule, momentum,
 		_unit.owner_player_id, start_paths,
 	)
 	spawn_explosion_effects(parent, world_transform.origin)
@@ -187,31 +188,6 @@ func explosion_effect_ids() -> Array[StringName]:
 	if result.is_empty() and primary_id != &"":
 		result.append(primary_id)
 	return result
-
-
-## Resolves every manifest-backed sound *layer* the strategy proposed,
-## collapsing each layer's candidate list to the single first id the SFX-hook
-## converter actually generated a resource for (per-house hook -> generic
-## hook -> nothing); a layer whose candidates all went ungenerated simply
-## drops out without taking the others with it. This is infantry-only now —
-## vehicle death explosions bypass GeneratedVoiceManifest entirely via
-## death_vfx_sound_paths()/death_start_sound_paths() (direct WAV pools, see
-## VehicleDeathStrategy/docs/quirks.md), so `layers` here is at most the one
-## per-cause layer InfantryDeathStrategy.death_sound_event_layers() returns.
-func _resolve_sound_event_ids(layers: Array) -> Array[StringName]:
-	var resolved: Array[StringName] = []
-	for layer: Array in layers:
-		for candidate: StringName in layer:
-			if not GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(_sound_key(candidate)):
-				continue
-			if not resolved.has(candidate):
-				resolved.append(candidate)
-			break
-	return resolved
-
-
-static func _sound_key(sound_event_id: StringName) -> StringName:
-	return StringName(String(sound_event_id).to_lower())
 
 
 func _owner_faction_id() -> StringName:

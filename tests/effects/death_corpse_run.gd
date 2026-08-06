@@ -24,6 +24,7 @@ func _initialize() -> void:
 	await _run_case("two sound layers both play, and both hold the corpse open", _test_two_sound_layers_both_played)
 	await _run_case("a single sound layer behaves as before", _test_single_sound_layer)
 	await _run_case("an unresolvable sound layer never blocks cleanup", _test_unresolvable_sound_layer_frees_promptly)
+	await _run_case("a delayed layer starts at its authored offset and holds the corpse open until then", _test_delayed_sound_layer)
 	await _run_case("death sound is tuned to be audible at this game's real camera distances, not Godot's point-blank defaults", _test_death_sound_attenuation_tuned)
 	await _run_case("a superseded one-shot fades out and frees instead of being cut with a click", _test_fade_out_and_free)
 	if _failures > 0:
@@ -67,10 +68,22 @@ func _make_model(clip: StringName, mesh_size := Vector3.ZERO) -> Dictionary:
 
 
 ## Typed empty list for the "no sound at all" cases: DeathCorpse.spawn() takes
-## a typed Array[StringName], which an inline `[]` literal cannot satisfy.
-func _no_sounds() -> Array[StringName]:
-	var ids: Array[StringName] = []
-	return ids
+## a typed Array[Dictionary], which an inline `[]` literal cannot satisfy.
+func _no_sounds() -> Array[Dictionary]:
+	var schedule: Array[Dictionary] = []
+	return schedule
+
+
+## The voice schedule AuthoredDeathVoice hands over: one entry per resolved
+## layer, `delay` being seconds into the death clip the model authored it at.
+func _voice(entries: Array) -> Array[Dictionary]:
+	var schedule: Array[Dictionary] = []
+	for entry in entries:
+		schedule.append({
+			"event_id": StringName(entry[0]),
+			"delay": float(entry[1]),
+		})
+	return schedule
 
 
 func _sound_players(corpse: Node) -> Array[Node]:
@@ -308,17 +321,18 @@ func _test_fade_out_and_free() -> void:
 	await process_frame
 
 
-## A vehicle with a personal death hook carries two concurrent sound layers
-## (see UnitDeathStrategy.death_sound_event_layers), so the corpse must spawn
-## one player per layer and outlive *all* of them — a second boom must not be
-## cut off just because the first one, or the death clip, ended early.
+## A death clip can author more than one voice layer (TL_Contaminator's Burnt_1
+## screams `burn_dying_*` and its own `contaminator_die_*`, see
+## AuthoredDeathVoice), so the corpse must spawn one player per layer and
+## outlive *all* of them — a second sound must not be cut off just because the
+## first one, or the death clip, ended early.
 func _test_two_sound_layers_both_played() -> void:
 	var world := Node3D.new()
 	root.add_child(world)
 	var fixture := _make_model(&"Explode")
-	var ids: Array[StringName] = [&"hkmedium1", &"medium"]
 	var corpse := DeathCorpseScript.spawn(
-		world, fixture["model"], Transform3D.IDENTITY, &"Explode", ids, Vector3.ZERO, 1
+		world, fixture["model"], Transform3D.IDENTITY, &"Explode",
+		_voice([[&"hkmedium1", 0.0], [&"medium", 0.0]]), Vector3.ZERO, 1
 	)
 	var players := _sound_players(corpse)
 	_expect(players.size() == 2, "two resolved sound ids must spawn two players, got %d" % players.size())
@@ -340,9 +354,9 @@ func _test_single_sound_layer() -> void:
 	var world := Node3D.new()
 	root.add_child(world)
 	var fixture := _make_model(&"Explode")
-	var ids: Array[StringName] = [&"medium"]
 	var corpse := DeathCorpseScript.spawn(
-		world, fixture["model"], Transform3D.IDENTITY, &"Explode", ids, Vector3.ZERO, 1
+		world, fixture["model"], Transform3D.IDENTITY, &"Explode",
+		_voice([[&"medium", 0.0]]), Vector3.ZERO, 1
 	)
 	var players := _sound_players(corpse)
 	_expect(players.size() == 1, "one resolved sound id must spawn exactly one player, got %d" % players.size())
@@ -362,9 +376,9 @@ func _test_unresolvable_sound_layer_frees_promptly() -> void:
 	var world := Node3D.new()
 	root.add_child(world)
 	var fixture := _make_model(&"Explode")
-	var ids: Array[StringName] = [&"no_such_death_event", &"medium"]
 	var corpse := DeathCorpseScript.spawn(
-		world, fixture["model"], Transform3D.IDENTITY, &"Explode", ids, Vector3.ZERO, 1
+		world, fixture["model"], Transform3D.IDENTITY, &"Explode",
+		_voice([[&"no_such_death_event", 0.0], [&"medium", 0.0]]), Vector3.ZERO, 1
 	)
 	var players := _sound_players(corpse)
 	_expect(
@@ -378,6 +392,44 @@ func _test_unresolvable_sound_layer_frees_promptly() -> void:
 		corpse.is_queued_for_deletion(),
 		"a bad layer must never block the corpse from freeing once the real one finished"
 	)
+	world.queue_free()
+	await process_frame
+
+
+## Models author the scream partway into the clip (TL_Contaminator's Burnt_1
+## puts `contaminator_die_*` 31 frames in), so a layer with a delay must not
+## play at t=0 — and must still hold the corpse open across the wait, or a
+## short clip would free the corpse before its own scream ever started.
+func _test_delayed_sound_layer() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var fixture := _make_model(&"Burnt_1")
+	var corpse := DeathCorpseScript.spawn(
+		world, fixture["model"], Transform3D.IDENTITY, &"Burnt_1",
+		_voice([[&"burningsmall", 0.0], [&"contaminatordying", 0.15]]), Vector3.ZERO, 1
+	)
+	_expect(
+		_sound_players(corpse).size() == 1,
+		"only the undelayed layer may have started, got %d players" % _sound_players(corpse).size()
+	)
+	(fixture["player"] as AnimationPlayer).animation_finished.emit(&"Burnt_1")
+	_sound_players(corpse)[0].sound_finished.emit()
+	_expect(
+		not corpse.is_queued_for_deletion(),
+		"the corpse must outlive both its clip and its first layer while a delayed layer is still pending"
+	)
+	await create_timer(0.3).timeout
+	var players := _sound_players(corpse)
+	_expect(
+		players.size() == 2,
+		"the delayed layer must have started once its offset elapsed, got %d players" % players.size()
+	)
+	if players.size() == 2:
+		players[1].sound_finished.emit()
+		_expect(
+			corpse.is_queued_for_deletion(),
+			"the corpse must free once the delayed layer finishes too"
+		)
 	world.queue_free()
 	await process_frame
 
