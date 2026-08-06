@@ -110,6 +110,18 @@ TURRET_FIRE_SOUND_NON_EXCLUSIVE: set[str] = {
     "ORAPCBase",
     "HKMissileTankBarrage",
 }
+# Units whose `config_id` is not the Rules section name the original engine
+# synthesised `<RulesSectionName>MoveFxStart` from, because this project split
+# one source unit into several. Rules.txt has a single `[MCV]`; the convert
+# stage splits it per house (see docs/quirks.md), so `ATMCVMoveFxStart` and its
+# siblings do not exist and all three MCVs would fall silent -- their engine
+# sound is `[mcvmovefxstart]` (`mcv_a_motor_1`), one section for all of them,
+# exactly as the source has it.
+UNIT_MOVE_START_RULES_SECTIONS: dict[str, str] = {
+    "ATMCV": "MCV",
+    "HKMCV": "MCV",
+    "ORMCV": "MCV",
+}
 # Fire sounds that no SFX section can express, because the sample is a
 # hand-authored asset under assets/reworked/ rather than a converted original.
 # Kept here for the same reason as every other table in this file: the .tres is
@@ -464,7 +476,8 @@ def move_start_sound_id_for(
     "" when no such section exists or all of its samples are localized stubs
     that never made it into the WAV archive.
     """
-    section_name = f"{config_id}MoveFxStart"
+    source_name = UNIT_MOVE_START_RULES_SECTIONS.get(config_id, config_id)
+    section_name = f"{source_name}MoveFxStart"
     samples, _volume = sfx_sections.get(section_name.casefold(), ([], 100))
     return section_name.casefold() if resolve_sfx_paths(samples, wavs) else ""
 

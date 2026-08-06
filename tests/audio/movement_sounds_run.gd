@@ -69,6 +69,16 @@ func _test_move_start_ids() -> void:
 		apc.move_start_sound_id == &"orapcmovefxstart",
 		"ORAPC must carry its synthesised MoveFxStart section",
 	)
+	# Rules.txt has one [MCV]; the convert stage splits it per house, so the
+	# section name cannot be synthesised from the config_id and all three would
+	# fall silent without UNIT_MOVE_START_RULES_SECTIONS.
+	for mcv_id in ["ATMCV", "HKMCV", "ORMCV"]:
+		var mcv = load("%s/%s.tres" % [DEFINITION_DIR, mcv_id])
+		_expect(
+			mcv.move_start_sound_id == &"mcvmovefxstart",
+			"%s must resolve the shared MCV engine section" % mcv_id,
+		)
+
 	var infantry = load("%s/ATInfantry.tres" % DEFINITION_DIR)
 	_expect(
 		String(infantry.move_start_sound_id).is_empty(),
@@ -82,7 +92,8 @@ func _test_move_start_ids() -> void:
 		var definition = load("%s/%s" % [DEFINITION_DIR, file_name])
 		if definition != null and not String(definition.move_start_sound_id).is_empty():
 			with_sound += 1
-	_expect(with_sound == 19, "exactly 19 units resolve a MoveFxStart section, got %d" % with_sound)
+	# 19 by their own name plus the three per-house MCVs.
+	_expect(with_sound == 22, "exactly 22 units resolve a MoveFxStart section, got %d" % with_sound)
 
 
 func _test_step_schedule() -> void:

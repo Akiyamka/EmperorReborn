@@ -660,10 +660,24 @@ share, and plays for both.
 
 *Engine starts are synthesised.* The original engine built the section name as
 `<RulesSectionName>MoveFxStart` — `[ORAPC]` → `[orapcmovefxstart]`
-(`apcmovestarta/b/c`, `Control = random`, `Limit = 1`). 19 of 102 units
+(`apcmovestarta/b/c`, `Control = random`, `Limit = 1`). 22 of 102 units
 resolve one; `tools/generate_unit_definitions.py`'s `move_start_sound_id_for()`
 bakes it into `UnitDefinition.move_start_sound_id`, so that count is a checked
-artifact. Unit-level `*MoveFx` *loop* sections do not exist — only buildings
+artifact.
+
+That name is the *Rules* section name, which is not always the `config_id`:
+Rules.txt carries a single `[MCV]`, split per house at convert time, so
+`ATMCVMoveFxStart` does not exist and all three MCVs came out silent until
+`UNIT_MOVE_START_RULES_SECTIONS` mapped them back onto the one
+`[mcvmovefxstart]` (`mcv_a_motor_1`) the source gives them. The mirror-image
+case is still open: the plain `Carryall` is one house-shared unit here, while
+the source has three sections (`atcarryallmovefxstart`,
+`hkcarryallmovefxstart`, `orcarryallmovefxstart`), which a single
+`move_start_sound_id` cannot express — it needs a by-house dictionary plus the
+owner's house at runtime (`Unit.owner_player().house_id`, the way
+`UnitVoiceCatalog.profile_for_unit()` already resolves house-shared voices).
+`StormUnitMoveFx` is a loop section, in the same unimplemented family as the
+buildings' `*MoveFx` loops. Unit-level `*MoveFx` *loop* sections do not exist — only buildings
 with moving parts (`ATRocketTurretBaseMoveFx`, `ORPopUpGunMoveFx`, …) and
 `StormUnitMoveFx` have them, and those are not wired up yet.
 
