@@ -38,10 +38,28 @@ signal sound_finished
 const UNIT_SIZE := 80.0
 const MAX_DISTANCE := 400.0
 
+## Length of the ramp `fade_out_and_free()` applies before freeing a player
+## that is still mid-sample. Cutting a running stream with a hard `stop()`
+## leaves a step discontinuity in the mixed signal — an audible click — so the
+## gain is ramped down first. Short enough (30ms) that the retired sample reads
+## as "replaced by the next shot" rather than as its own fading tail, long
+## enough to stay below the click threshold.
+const FADE_OUT_SECONDS := 0.03
+## Gain the fade ramps down to before freeing. -60dB is inaudible under any
+## other combat sound; ramping to actual silence is not possible in dB space.
+const FADE_OUT_DB := -60.0
+
+var _fading := false
+
 
 func _init() -> void:
 	unit_size = UNIT_SIZE
 	max_distance = MAX_DISTANCE
+	# Godot's default attenuation low-pass (cutoff 5000Hz/-24dB) simulates air
+	# absorption for a close first-person listener; at RTS camera distances
+	# it made every positional sound sound muffled even at default zoom.
+	# 20500Hz+ disables the filter outright (per AudioStreamPlayer3D docs).
+	attenuation_filter_cutoff_hz = 20500.0
 	attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
 
 
@@ -90,6 +108,30 @@ func play_stream(stream: AudioStream) -> void:
 	play()
 
 
+## Retires a still-playing one-shot early, for a caller that has decided this
+## sound has been superseded — the fire-sound "one voice per weapon" rule in
+## CombatTurret, where the next shot of a burst replaces the previous one
+## instead of layering on top of it.
+##
+## Ramps the gain down over `duration` and then frees the node, rather than
+## calling `stop()`: stopping mid-sample truncates the waveform at whatever
+## non-zero amplitude it happened to be at, and that step discontinuity is an
+## audible click. Idempotent — a second call while the ramp is running is
+## ignored, so a player already on its way out is never re-tweened.
+func fade_out_and_free(duration: float = FADE_OUT_SECONDS) -> void:
+	if _fading:
+		return
+	_fading = true
+	# Nothing to ramp: either not yet in the tree (create_tween() would fail) or
+	# the sample already finished on its own.
+	if not is_inside_tree() or not playing:
+		queue_free()
+		return
+	var tween := create_tween()
+	tween.tween_property(self, "volume_db", FADE_OUT_DB, maxf(duration, 0.0))
+	tween.tween_callback(queue_free)
+
+
 ## Fire-and-forget playback of one random sample from `paths`, parented
 ## directly under `parent` at `world_position` and freeing itself once done.
 ## For layers that have no owner tracking their completion (the VFX-timed
@@ -104,15 +146,20 @@ func play_stream(stream: AudioStream) -> void:
 ## ones authored hot and quiet (e.g. TurretDefinition.fire_sound_volume).
 ## Defaults to 100 (unscaled) for callers (explosion/death pools) that have
 ## no per-sample volume of their own.
+##
+## Returns the started player so a caller that owns a single "voice" (see
+## `fade_out_and_free()`) can retire it when the next sound replaces it, or
+## null when nothing was played. Callers with no such tracking ignore the
+## return value — the player still frees itself when the sample ends.
 static func play_pool(
 	parent: Node, world_position: Vector3, paths: Array, volume: float = 100.0
-) -> void:
+) -> DeathSoundPlayer:
 	if paths.is_empty() or parent == null or not parent.is_inside_tree():
-		return
+		return null
 	var path: String = paths[randi() % paths.size()]
 	var stream := load(path) as AudioStream
 	if stream == null:
-		return
+		return null
 	var player := DeathSoundPlayer.new()
 	parent.add_child(player)
 	player.global_position = world_position
@@ -120,3 +167,4 @@ static func play_pool(
 	player.stream = stream
 	player.volume_db = linear_to_db(clampf(volume / 100.0, 0.0001, 1.0))
 	player.play()
+	return player
