@@ -5,8 +5,8 @@ extends RefCounted
 ## `Unit._begin_death_sequence()` before the unit is freed. Mirrors
 ## `CombatDeployStrategy`: a plain `RefCounted` that only maps data to data and
 ## never touches nodes, so it can be unit-tested with no scene setup at all.
-## Subclasses are duck-typed against these three methods, not against this
-## base class's (deliberately empty) defaults — a config with no clips at all
+## Subclasses are duck-typed against these methods, not against this base
+## class's (deliberately empty) defaults — a config with no clips at all
 ## degrades to "no candidates, no sound, no impulse" rather than an error.
 
 ## Candidate clip names for the given death cause, most-preferred first. The
@@ -17,25 +17,14 @@ func death_animation_candidates(_cause: StringName, _deployed: bool) -> Array[St
 	return []
 
 
-## Candidate sound layers for this death, as a list of *layers*, each layer
-## itself an ordered candidate list, most-preferred first. Within one layer
-## the candidates are a *fallback* chain, not extra sounds: the caller (Unit)
-## resolves each layer against the generated
-## `GeneratedVoiceManifest.DEATH_EVENT_PATHS` and keeps only the first id
-## actually present, since e.g. Burn's per-house `atburningmandying` and its
-## generic `BurningSmall` are two spellings of one sound, not two.
-##
-## This is the *manifest-backed* hook system (real, grep/listening-confirmed
-## per-house dying/burning/choking hooks) and is now infantry-only. Vehicle
-## death explosions no longer go through this at all — see
+## Note that there is no hook here for the dying scream itself: it is not a
+## policy decision at all. The manifest-backed voice comes from the FX event
+## table baked into the unit's own model, keyed by the death clip that actually
+## matched, and `UnitDeathSequence` reads it directly via
+## `scripts/units/authored_death_voice.gd`. Vehicle death explosions bypass
+## `GeneratedVoiceManifest` in the other direction — see
 ## `death_vfx_sound_paths()`/`death_start_sound_paths()` below and
-## docs/quirks.md for why: the vehicle "personal death hook" this method used
-## to also carry for `VehicleDeathStrategy` turned out not to correspond to
-## anything real once tested against the reference build.
-func death_sound_event_layers(
-		_cause: StringName, _faction: StringName, _config_id: StringName
-	) -> Array:
-	return []
+## docs/quirks.md.
 
 
 ## Direct WAV paths (bypassing SoundEvent/GeneratedVoiceManifest entirely —

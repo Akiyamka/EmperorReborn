@@ -371,6 +371,67 @@ samples, so there was nothing to change, and applying the same drop rule to
 voice events would need `tests/audio/voice_feedback_run.gd`'s expectations
 revisited first.
 
+**Superseded for the six per-house infantry hooks.** Once the death voice
+became data-driven (see "Infantry death voices are authored in the model, not
+derived from the death cause" below), falling through to the generic hook
+stopped being good enough: the model names `ATNormalManDying` specifically, and
+that section carries an `FShift` the generic `[NormalManDying]` does not. All
+six — plus `[atcrush]`/`[hkcrush]`, shadowed the same way — are now listed in
+`SHADOW_PROOF_EVENT_IDS`, so the real Atreides/Harkonnen definitions win over
+the localization stub and reach `DEATH_EVENT_PATHS` with their real samples.
+The drop-empty-events rule above still stands for everything else, `[YAKDYING]`
+and the eight never-defined-in-English ids included.
+
+### Infantry death voices are authored in the model, not derived from the death cause
+
+**Observed data:** every infantry `.XBF` under
+`assets/raw_original_content/3DDATA/Units/` carries FX **event type 9**
+records: one SFX section name pinned to one frame, and that frame falls inside
+the frame range of exactly the death clip it belongs to (both halves are baked
+onto the model root as `xbf_fx_events` / `xbf_animation_entries`). The scream
+is therefore a per-model, per-clip authoring decision, not a function of the
+death cause plus the owning house. `TL_Contaminator_H0.XBF`:
+
+```
+Shot 1     [424..453] -> GunHit1, ContaminatorDying
+Burnt 1    [454..507] -> BurningSmall, HKburningManDying, ContaminatorDying
+Gassed 1   [508..566] -> ContamChoking
+Blow Up 1  [567..594] -> RocketDetonation2, ContaminatorDying
+Run Over 1 [611..625] -> HKCrush, ContaminatorDying
+```
+
+Three authoring habits in that table are worth knowing before touching
+`scripts/units/authored_death_voice.gd`, since each one needs a rule:
+
+1. **Clip frame ranges overlap.** `HK_Flamer_H0`'s `Run Over 1` [328..338]
+   sits wholly inside its `Shot 1` [332..356], so plain containment hands one
+   clip's sounds to its neighbour. The tightest range around a frame owns it.
+2. **The same sample pool is named twice in one clip.** TL_Contaminator's
+   `Burnt 1` lists both `BurningSmall` and `HKburningManDying`, which are the
+   identical eight `burn_dying_*` samples — playing both doubles the scream.
+   One voice per sample family per clip, earliest frame wins.
+3. **A sound is occasionally authored just outside its own clip.**
+   `GU_Man_H0` puts `ATCrush` on frame 281, one frame before its own
+   `Run Over 1` [282..292] begins, stranding it in `Shot 1` [270..307] where
+   no range rule can dislodge it. Crush is pinned to `Run_Over_1` explicitly.
+
+**OpenEBfD compatibility decision:** read the events rather than restate them.
+The alternative — the per-cause, per-house table this replaced — could not
+express `[ContaminatorDying]`, `[FemaleCivDying]`, `[SardaukarDying]` or
+`[FremenDying]` without a per-unit branch, and it asserted outright that
+`Blow_Up` carries no voice, which every infantry model contradicts.
+`AuthoredDeathVoice` keeps only the 21 sections drawn from the six
+dying-infantry sample pools (`normal_dying_*`, `burn_dying_*`,
+`choke_dying_*`, `contaminator_die_*`, `female_death_*`, `crush_guy_*`) — the
+weapon and explosion sounds sharing those clips (`RocketDetonation*`,
+`GunHit*`, `Small`/`Medium`, ...) belong to systems that fire them from their
+own call sites, and replaying them here would double them up.
+
+**Dormant by construction:** the crush family resolves and is covered by
+tests, but nothing produces a `&"Crush"` death cause yet — crushing is
+declared in the rules (`UnitDefinition.crushable`/`crushes`) and not
+implemented.
+
 ### Vehicle death explosions: the "personal hook" theory was falsified; size tiers are hand-picked instead
 
 **Observed data (the now-abandoned theory):** `HarkonnenSFX.txt` contains four

@@ -31,6 +31,42 @@ and can produce invalid project-path or incomplete class-loading errors that
 look like test failures.
 
 
+### Running Godot from a git worktree
+
+`.gitignore` excludes `assets/*` and `.godot`, so a fresh worktree has neither
+the converted/original assets nor Godot's import cache. Both matter more than
+they look like they do: without `.godot/global_script_class_cache.cfg`, every
+`class_name` fails to resolve, and the resulting `Could not find type "X" in
+the current scope` parse errors read like a broken change rather than a
+missing cache.
+
+Symlinking them in is not enough on its own. `tools/godot-container` mounts
+only the project directory, so an absolute symlink pointing outside it dangles
+inside the container — and the mount uses SELinux `:Z`, so simply adding the
+target as a second volume yields `Permission denied` rather than a clear
+error. Two things are needed together:
+
+1. In the worktree, symlink `.godot` and each untracked `assets/` subtree
+   (`raw_original_content`, `reworked`, and each `converted/*` directory other
+   than the tracked `rules.db`/`schema.sql`) to the main checkout.
+2. Run Godot with the main checkout mounted at its own host path, and SELinux
+   labelling off so the symlinks resolve:
+
+```bash
+podman run --rm --userns=keep-id --security-opt label=disable \
+  --volume "$PWD:/workspace" \
+  --volume /path/to/main/checkout:/path/to/main/checkout \
+  --workdir /workspace openebfd-godot:4.7 godot --headless --path /workspace "$@"
+```
+
+`tools/run_godot_tests.sh` takes that wrapper via `GODOT_CONTAINER` (it must
+tolerate a leading `godot` argument, which the script passes). Sharing one
+`.godot` between checkouts is fine — the cache is keyed by `res://` paths —
+but it is another reason to keep container runs sequential.
+
+Note that a headless run never creates `.godot` itself, so "run it once and
+let it build the cache" does not work; it has to come from the main checkout.
+
 ### A headless run that "hangs" is usually a compile error, not slow work
 
 A `godot --headless --script res://....gd` invocation for a one-shot

@@ -45,19 +45,36 @@ DEATH_EVENT_IDS = {
     "small", "medium", "large",
     "burningsmall", "burninglarge",
     "choking", "contamchoking", "atchoking", "hkchoking", "orchoking",
+    # The crush family: infantry models fire these off their "Run Over 1" clip
+    # (XBF FX event type 9, see scripts/units/authored_death_voice.gd). All four
+    # sections play the same crush_guy_1..4 pool and none of them ends in
+    # "Dying", so DEATH_SUFFIXES never picked them up.
+    "crush", "atcrush", "hkcrush", "orcrush",
 }
 # ImportedSfx.txt redefines a number of already-defined sections with a single
 # localized ($-prefixed) sample name that was never converted, and the merge
 # below is last-file-wins, so such a redefinition normally wipes out the real
 # English definition (docs/quirks.md). For most ids that is harmless — the
 # event drops out of DEATH_EVENT_PATHS and the runtime falls through to a
-# generic hook. These three have no fallback to fall through to: they are
-# per-vehicle personal death hooks (HarkAssaultTankDie / HarkInkvineDie /
-# HarkBuzzsawDie), so losing them means losing the sound outright. For them
-# only, the earlier real definition wins over the localization stub. Scoped
-# deliberately: widening this to every shadowed id would also resurrect the
-# per-house infantry dying hooks and change sounds this plan never touched.
-SHADOW_PROOF_EVENT_IDS = {"hkmedium1", "hkmedium2", "hksmall1"}
+# generic hook. The ids below have no fallback worth taking:
+#
+# - hkmedium1/hkmedium2/hksmall1 are per-vehicle personal death hooks
+#   (HarkAssaultTankDie / HarkInkvineDie / HarkBuzzsawDie), so losing them means
+#   losing the sound outright.
+# - The Atreides/Harkonnen infantry hooks are named directly by the FX event
+#   tables baked into every AT/HK infantry model, which is now what picks the
+#   death voice (scripts/units/authored_death_voice.gd). They carry an
+#   `FShift` the generic sections do not, and keeping them means the resolver
+#   plays the section the artists actually named instead of falling back. Their
+#   Ordos counterparts need no entry here: ORDOSSFX.TXT sorts after
+#   ImportedSfx.txt, so last-file-wins already keeps the real definition.
+SHADOW_PROOF_EVENT_IDS = {
+    "hkmedium1", "hkmedium2", "hksmall1",
+    "atnormalmandying", "hknormalmandying",
+    "atburningmandying", "hkburningmandying",
+    "atchoking", "hkchoking",
+    "atcrush", "hkcrush",
+}
 SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:;.*)?$")
 PROPERTY_RE = re.compile(r"^\s*([^=;]+?)\s*=\s*(.*?)\s*$")
 UNIT_ID_RE = re.compile(r'^config_id = &"([^"]+)"$', re.MULTILINE)

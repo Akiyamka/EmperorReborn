@@ -3,7 +3,6 @@ extends SceneTree
 const InfantryDeathStrategyScript := preload("res://scripts/units/infantry_death_strategy.gd")
 const VehicleDeathStrategyScript := preload("res://scripts/units/vehicle_death_strategy.gd")
 const ExplosionTierPools := preload("res://scripts/audio/explosion_tier_pools.gd")
-const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
 
 var _assertions := 0
 var _failures := 0
@@ -15,17 +14,7 @@ func _initialize() -> void:
 	_run_case("infantry candidates prepend deployed variants", _test_infantry_candidates_deployed)
 	_run_case("infantry candidates for an unmapped cause", _test_infantry_candidates_unknown_cause)
 	_run_case("vehicle candidates are always Explode", _test_vehicle_candidates)
-	_run_case("infantry sound id: Blow_Up has no per-house candidate", _test_infantry_sound_blow_up)
-	_run_case("infantry sound id: Burn per-house stem differs from generic", _test_infantry_sound_burn)
-	_run_case("infantry sound id: Gassed maps to the choking family", _test_infantry_sound_gassed)
-	_run_case("infantry sound id: Shot generic fallback", _test_infantry_sound_generic_fallback)
-	_run_case("infantry sound id: mapped houses use their two-letter dying hook", _test_infantry_sound_mapped_houses)
-	_run_case("infantry sound id: mapped houses prepend their burn hook before the generic fallback", _test_infantry_sound_burn_candidates)
-	_run_case("infantry sound id: mapped houses prepend their choking hook before the generic fallback", _test_infantry_sound_gassed_candidates)
-	_run_case("infantry sound id: unmapped house falls back to the generic hook", _test_infantry_sound_unmapped_house)
-	_run_case("infantry sound id: empty house_id falls back to the generic hook", _test_infantry_sound_empty_house)
-	_run_case("infantry sound resolution: Atreides/Harkonnen fall through their shadowed per-house hook to a real generic sample", _test_infantry_sound_resolves_to_real_samples)
-	_run_case("infantry sound id: HKFlamer's own boom moved to death_start_sound_paths", _test_infantry_sound_flamer_extra_layer)
+	_run_case("infantry Crush proposes the authored Run_Over_1 clip", _test_infantry_candidates_crush)
 	_run_case("infantry death_start_sound_paths: only HKFlamer gets the small pool", _test_infantry_start_sound_paths)
 	_run_case("vehicle death_vfx_sound_paths: named units resolve their tier pool", _test_vehicle_vfx_sound_paths_named)
 	_run_case("vehicle death_vfx_sound_paths: unnamed unit defaults to medium", _test_vehicle_vfx_sound_paths_default)
@@ -33,7 +22,6 @@ func _initialize() -> void:
 	_run_case("vehicle death_start_sound_paths: Harkonnen gets the vehicle_* layer", _test_vehicle_start_sound_paths_harkonnen)
 	_run_case("vehicle death_start_sound_paths: Ordos gets the ordos* layer", _test_vehicle_start_sound_paths_ordos)
 	_run_case("vehicle death_start_sound_paths: Atreides/other factions get no extra layer", _test_vehicle_start_sound_paths_none)
-	_run_case("vehicle death_sound_event_layers is always empty (manifest bypassed)", _test_vehicle_sound_event_layers_empty)
 	_run_case("infantry launch impulse: Blow_Up only", _test_infantry_launch_impulse)
 	_run_case("vehicle launch impulse is always zero", _test_vehicle_launch_impulse)
 	if _failures > 0:
@@ -117,156 +105,17 @@ func _test_vehicle_candidates() -> void:
 			)
 
 
-## An ordinary infantry unit's Blow_Up carries no corpse sound at all: the boom
-## belongs to the weapon that detonated (a separate, not-yet-wired system), and
-## the `explode` family it used to borrow is HarkDevastatorDie, one vehicle's
-## personal hook, never a generic explosion.
-func _test_infantry_sound_blow_up() -> void:
+## Crush is dormant — nothing produces the cause yet — but the clip mapping
+## must stay wired so landing the gameplay needs no change here. `Run_Over_1`
+## is the clip every crushable infantry model authors its `crush_guy_*` scream
+## on (see tests/units/authored_death_voice_run.gd).
+func _test_infantry_candidates_crush() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
-	for house_id: StringName in [&"", &"Atreides", &"Harkonnen", &"Ordos"]:
-		_expect(
-			strategy.death_sound_event_layers(&"Blow_Up", house_id, &"ATInfantry").is_empty(),
-			"Blow_Up must contribute no corpse sound layer at all (house %s)" % house_id
-		)
-
-
-func _test_infantry_sound_burn() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
+	var candidates := strategy.death_animation_candidates(&"Crush", false)
 	_expect(
-		_cause_layer(strategy, &"Burn", &"") == [&"burningsmall"],
-		"Burn with no faction must resolve to only the generic burning sound group"
+		candidates == [&"Run_Over_1"],
+		"Crush must propose exactly [Run_Over_1], got %s" % [candidates]
 	)
-
-
-## Gassed must map to the choking family (Choking/atchoking/hkchoking/
-## orchoking), not to normalmandying: GeneralSFX.txt states these fire
-## whenever infantry are hit with poisonous gas.
-func _test_infantry_sound_gassed() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
-	_expect(
-		_cause_layer(strategy, &"Gassed", &"") == [&"choking"],
-		"Gassed with no faction must resolve to only the generic choking sound group"
-	)
-
-
-func _test_infantry_sound_generic_fallback() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
-	for cause in [&"Shot", &""]:
-		_expect(
-			_cause_layer(strategy, cause, &"") == [&"normalmandying"],
-			"%s with no faction must fall back to only the generic dying hook" % cause
-		)
-
-
-## Burn's per-house stem ("burningmandying") differs from its generic
-## fallback ("burningsmall") — a single composed id could not express this,
-## which is exactly why a layer is a candidate list, not one composed id.
-func _test_infantry_sound_burn_candidates() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
-	var cases := {
-		&"Atreides": &"atburningmandying",
-		&"Harkonnen": &"hkburningmandying",
-		&"Ordos": &"orburningmandying",
-	}
-	for house_id: StringName in cases:
-		_expect(
-			_cause_layer(strategy, &"Burn", house_id) == [cases[house_id], &"burningsmall"],
-			"%s Burn must propose [%s, burningsmall], got %s" % [
-				house_id, cases[house_id], _cause_layer(strategy, &"Burn", house_id)
-			]
-		)
-
-
-## Gassed's per-house stem happens to equal its generic id ("choking" either
-## way), but the per-house hook must still be preferred (listed first).
-func _test_infantry_sound_gassed_candidates() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
-	var cases := {
-		&"Atreides": &"atchoking",
-		&"Harkonnen": &"hkchoking",
-		&"Ordos": &"orchoking",
-	}
-	for house_id: StringName in cases:
-		_expect(
-			_cause_layer(strategy, &"Gassed", house_id) == [cases[house_id], &"choking"],
-			"%s Gassed must propose [%s, choking], got %s" % [
-				house_id, cases[house_id], _cause_layer(strategy, &"Gassed", house_id)
-			]
-		)
-
-
-## The SFX source files only ever define at/hk/or two-letter prefixed dying
-## hooks (grep-confirmed across every assets/raw_original_content/SFX/*.txt
-## file: atnormalmandying, hknormalmandying, ORNORMALMANDYING and their
-## burning/diced siblings) — house_id's full names ("Atreides") can never be
-## used directly.
-func _test_infantry_sound_mapped_houses() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
-	var cases := {
-		&"Atreides": &"atnormalmandying",
-		&"Harkonnen": &"hknormalmandying",
-		&"Ordos": &"ornormalmandying",
-	}
-	for house_id: StringName in cases:
-		_expect(
-			_cause_layer(strategy, &"Shot", house_id) == [cases[house_id], &"normalmandying"],
-			"%s must propose [%s, normalmandying], got %s" % [
-				house_id, cases[house_id], _cause_layer(strategy, &"Shot", house_id)
-			]
-		)
-
-
-## Fremen/Guild/Imperial/Ix/Tleilaxu/Incidental have no per-house dying hook
-## in the source data at all, so an unmapped house must fall back to only the
-## generic hook rather than composing a prefix nothing defines.
-func _test_infantry_sound_unmapped_house() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
-	_expect(
-		_cause_layer(strategy, &"Gassed", &"Fremen") == [&"choking"],
-		"an unmapped house must fall back to only the generic choking hook"
-	)
-
-
-func _test_infantry_sound_empty_house() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
-	_expect(
-		_cause_layer(strategy, &"Shot", &"") == [&"normalmandying"],
-		"an empty house_id must fall back to only the generic dying hook"
-	)
-
-
-## The cause layer is the first one the infantry strategy proposes; HKFlamer's
-## own fuel-tank boom (if any) comes after it, and is asserted separately.
-func _cause_layer(strategy, cause: StringName, faction: StringName) -> Array:
-	var layers: Array = strategy.death_sound_event_layers(cause, faction, &"ATInfantry")
-	return layers[0] if not layers.is_empty() else []
-
-
-## HKFlamer's cause layer is unaffected: death_sound_event_layers() proposes
-## only the ordinary cause layer now (its extra boom moved to
-## death_start_sound_paths, see the next test) — including Blow_Up, which
-## still contributes nothing.
-func _test_infantry_sound_flamer_extra_layer() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
-	var expected_cause_layers := {
-		&"Shot": [&"hknormalmandying", &"normalmandying"],
-		&"Burn": [&"hkburningmandying", &"burningsmall"],
-		&"Gassed": [&"hkchoking", &"choking"],
-		&"Blow_Up": [],
-	}
-	for cause: StringName in expected_cause_layers:
-		var layers: Array = strategy.death_sound_event_layers(cause, &"Harkonnen", &"HKFlamer")
-		var expected_cause: Array = expected_cause_layers[cause]
-		var expected_size := (0 if expected_cause.is_empty() else 1)
-		_expect(
-			layers.size() == expected_size,
-			"HKFlamer %s must propose %d layer(s), got %s" % [cause, expected_size, layers]
-		)
-		if not expected_cause.is_empty() and layers.size() == expected_size:
-			_expect(
-				layers[0] == expected_cause,
-				"HKFlamer %s must keep its ordinary cause layer %s, got %s" % [cause, expected_cause, layers[0]]
-			)
 
 
 ## HKFlamer always gets a `small`-tier direct-WAV pool from
@@ -365,77 +214,15 @@ func _test_vehicle_start_sound_paths_none() -> void:
 		)
 
 
-## Vehicle death explosions no longer go through GeneratedVoiceManifest at
-## all — this is the regression that would catch a stray manifest lookup
-## creeping back in.
-func _test_vehicle_sound_event_layers_empty() -> void:
-	var strategy := VehicleDeathStrategyScript.new()
-	for config_id in [&"HKDevastator", &"ATTrike", &"ORAPC"]:
-		_expect(
-			strategy.death_sound_event_layers(&"Explode", &"Harkonnen", config_id).is_empty(),
-			"%s death_sound_event_layers must be empty" % config_id
-		)
-
-
 func _test_infantry_launch_impulse() -> void:
 	var strategy := InfantryDeathStrategyScript.new()
 	var blow_up_impulse := strategy.death_launch_impulse(&"Blow_Up")
 	_expect(blow_up_impulse.y > 0.0, "Blow_Up must add a positive-Y launch impulse")
-	for cause in [&"Shot", &"Burn", &"Gassed", &""]:
+	for cause in [&"Shot", &"Burn", &"Gassed", &"Crush", &""]:
 		_expect(
 			strategy.death_launch_impulse(cause).is_zero_approx(),
 			"%s must add no launch impulse; the clip is authored in place" % cause
 		)
-
-
-## This is the regression that would have caught the ImportedSfx.txt
-## shadowing bug (docs/quirks.md): AtreidesSFX.txt/HarkonnenSFX.txt's real
-## atnormalmandying/atburningmandying/atchoking/hknormalmandying/
-## hkburningmandying/hkchoking hooks are redefined by ImportedSfx.txt with
-## localized sample names that were never converted. If the generator still
-## emitted those ids, they would be "present" in DEATH_EVENT_PATHS with zero
-## samples, so Unit._resolve_sound_event_id()'s first-present-wins scan would
-## pick them and Atreides/Harkonnen infantry would die in silence. The
-## generator (tools/generate_voice_feedback.py's death_events() handling in
-## main()) must drop any death event whose samples are all unresolved
-## entirely out of DEATH_EVENT_PATHS, so this resolution — mirroring
-## Unit._resolve_sound_event_id()/_death_sound_key() exactly — falls through
-## to a generic hook that actually has samples.
-func _test_infantry_sound_resolves_to_real_samples() -> void:
-	var strategy := InfantryDeathStrategyScript.new()
-	for house_id: StringName in [&"Atreides", &"Harkonnen", &"Ordos"]:
-		# Blow_Up excluded deliberately: it proposes no layer at all now, since
-		# the boom belongs to the weapon, not to the corpse.
-		for cause in [&"Shot", &"Burn", &"Gassed"]:
-			var candidates: Array = _cause_layer(strategy, cause, house_id)
-			var resolved_id := _resolve_against_manifest(candidates)
-			_expect(
-				resolved_id != &"",
-				"%s/%s must resolve to some generated death event, candidates were %s" % [house_id, cause, candidates]
-			)
-			if resolved_id == &"":
-				continue
-			var path := String(GeneratedVoiceManifest.DEATH_EVENT_PATHS[_manifest_key(resolved_id)])
-			var event := load(path) as SoundEvent
-			_expect(
-				event != null and not event.sample_paths.is_empty(),
-				"%s/%s resolved to %s (%s), which must carry at least one real sample, got %s" % [
-					house_id, cause, resolved_id, path, (event.sample_paths if event != null else "<failed to load>")
-				]
-			)
-
-
-## Mirrors Unit._resolve_sound_event_id(): picks the first candidate id that
-## is actually a key in the generated DEATH_EVENT_PATHS manifest.
-func _resolve_against_manifest(candidates: Array) -> StringName:
-	for candidate in candidates:
-		if GeneratedVoiceManifest.DEATH_EVENT_PATHS.has(_manifest_key(candidate)):
-			return candidate
-	return &""
-
-
-func _manifest_key(sound_event_id: StringName) -> StringName:
-	return StringName(String(sound_event_id).to_lower())
 
 
 func _test_vehicle_launch_impulse() -> void:

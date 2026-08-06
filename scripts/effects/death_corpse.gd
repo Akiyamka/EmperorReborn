@@ -18,6 +18,7 @@ const AuthoredModelScript := preload("res://scripts/world/authored_model.gd")
 const PlayerDataScript := preload("res://scripts/players/player_data.gd")
 const DeathCorpseScene := preload("res://scenes/effects/death_corpse.tscn")
 const DeathSoundPlayerScript := preload("res://scripts/audio/death_sound_player.gd")
+const SoundEventScript := preload("res://scripts/audio/sound_event.gd")
 const GeneratedVoiceManifest := preload("res://resources/audio/generated_voice_manifest.gd")
 
 ## The corpse's own free layer/mask (docs/... see death-animation plan §5):
@@ -47,13 +48,13 @@ var _fitted_local_aabb := AABB()
 var _death_animation_player: AnimationPlayer
 var _death_clip: StringName = &""
 var _animation_done := false
-## How many DeathSoundPlayer children are still playing. A corpse can carry
-## more than one concurrent sound layer (see
-## UnitDeathStrategy.death_sound_event_layers), so this is a count, not a
-## flag: _maybe_free() waits for every layer before freeing the corpse — an
-## explosion sample must not be cut off by a short death clip finishing first.
-## Layers with no resolvable sample are never counted at all, so one bad layer
-## can neither block the others nor keep the corpse alive forever.
+## How many sound layers are still outstanding — playing, or waiting on their
+## authored start delay. A corpse can carry more than one layer (see
+## AuthoredDeathVoice), so this is a count, not a flag: _maybe_free() waits for
+## every layer before freeing the corpse — an explosion sample must not be cut
+## off by a short death clip finishing first. Layers with no resolvable sample
+## are never counted at all, so one bad layer can neither block the others nor
+## keep the corpse alive forever.
 var _pending_sounds := 0
 
 
@@ -68,7 +69,7 @@ static func spawn(
 		model: Node3D,
 		world_transform: Transform3D,
 		clip: StringName,
-		sound_event_ids: Array[StringName],
+		voice_schedule: Array[Dictionary],
 		momentum: Vector3,
 		corpse_owner_player_id: int,
 		start_sound_paths: Array[String] = [],
@@ -83,7 +84,7 @@ static func spawn(
 	corpse._adopt_model(model)
 	corpse._play_death_clip(clip)
 	corpse._configure_physics(momentum)
-	corpse._configure_sounds(sound_event_ids)
+	corpse._configure_sounds(voice_schedule)
 	corpse._configure_start_sound(start_sound_paths)
 	corpse._maybe_free()
 	return corpse
@@ -229,12 +230,12 @@ func _on_settle_timeout() -> void:
 	freeze = true
 
 
-## Looks up `sound_event_id` (already one of the ids `Unit` resolved from its
-## death strategy's sound layers) in the generated
-## `DEATH_EVENT_PATHS` manifest. Keyed case-insensitively: the manifest keys
-## by the id casefolded (tools/generate_voice_feedback.py), since the
-## surviving section's own casing depends on which source SFX file last
-## defined it under parse_sources()'s casefold-keyed, last-file-wins merge.
+## Looks up `sound_event_id` (already one of the ids AuthoredDeathVoice resolved
+## off the model's FX events) in the generated `DEATH_EVENT_PATHS` manifest.
+## Keyed case-insensitively: the manifest keys by the id casefolded
+## (tools/generate_voice_feedback.py), since the surviving section's own casing
+## depends on which source SFX file last defined it under parse_sources()'s
+## casefold-keyed, last-file-wins merge.
 func _resolve_sound_path(sound_event_id: StringName) -> String:
 	if sound_event_id == &"":
 		return ""
@@ -242,10 +243,19 @@ func _resolve_sound_path(sound_event_id: StringName) -> String:
 	return String(GeneratedVoiceManifest.DEATH_EVENT_PATHS.get(key, ""))
 
 
-## One throwaway DeathSoundPlayer per resolved layer, all started together.
-func _configure_sounds(sound_event_ids: Array[StringName]) -> void:
-	for sound_event_id in sound_event_ids:
-		var sample_path := _resolve_sound_path(sound_event_id)
+## One throwaway DeathSoundPlayer per resolved layer, each started at the frame
+## its model authored it on (`delay` seconds into the clip, see
+## AuthoredDeathVoice) rather than all at once on the killing blow — a burning
+## man must not scream before he is alight.
+##
+## Every layer is counted up front, delayed ones included: _maybe_free() runs
+## the moment spawn() returns, so a layer that has not started playing yet would
+## otherwise let the corpse free itself out from under its own scream.
+func _configure_sounds(voice_schedule: Array[Dictionary]) -> void:
+	for entry in voice_schedule:
+		var sample_path := _resolve_sound_path(
+			StringName(entry.get("event_id", &""))
+		)
 		if sample_path.is_empty():
 			continue
 		var event := load(sample_path) as SoundEvent
@@ -254,10 +264,24 @@ func _configure_sounds(sound_event_ids: Array[StringName]) -> void:
 			# archive) must degrade to silence, not to a corpse that never frees.
 			continue
 		_pending_sounds += 1
-		var player := DeathSoundPlayerScript.new()
-		add_child(player)
-		player.sound_finished.connect(_on_sound_finished)
-		player.play_event(event)
+		var delay := float(entry.get("delay", 0.0))
+		if delay <= 0.0 or not is_inside_tree():
+			_start_sound_event(event)
+			continue
+		get_tree().create_timer(delay).timeout.connect(
+			_start_sound_event.bind(event)
+		)
+
+
+func _start_sound_event(event: SoundEventScript) -> void:
+	# The timer outlives a corpse freed for any other reason (the match ending,
+	# the scene changing); its callback must not resurrect one.
+	if not is_instance_valid(self) or is_queued_for_deletion():
+		return
+	var player := DeathSoundPlayerScript.new()
+	add_child(player)
+	player.sound_finished.connect(_on_sound_finished)
+	player.play_event(event)
 
 
 ## The faction/self-destruct "start of animation" extra layer (see
