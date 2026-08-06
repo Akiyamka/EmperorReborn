@@ -63,6 +63,10 @@ func _initialize() -> void:
 	)
 	_run_case("Muzzle flash clip visibility", _test_muzzle_flash_clip_visibility)
 	_run_case(
+		"muzzle flash cutouts bake static while beam textures keep scrolling",
+		_test_muzzle_flash_textures_do_not_scroll
+	)
+	_run_case(
 		"combat-deploy clip rename normalizes Fire_1 to Deployed_Fire",
 		_test_combat_deploy_clip_rename
 	)
@@ -1675,6 +1679,84 @@ func _test_muzzle_flash_clip_visibility() -> bool:
 			_expect(fire_values.count(true) == int(model_case[2]), "%s Fire_0 must show only its active muzzle flash geometry" % String(model_case[0]).get_file())
 		root.free()
 	return true
+
+
+## Regression test for a reported bug: the "%" marker means "animated frame
+## sequence" in the source data, but it is also carried by lone muzzle-flash
+## cutouts ("!%flash01.tga", "!%FireFlash0.tga"). Those fell through
+## _is_scrolling_texture() and got the panning shader, so the flash texture
+## visibly crawled across the geometry while the gun fired -- worst on
+## HKGunTurret, whose Fire clip scales the flash up ~60x. The unmarked flash
+## cutouts in the same role ("!5flash03.tga") already bake as plain additive
+## materials, which is what these must match. Beams and coils that legitimately
+## pan ("!%lascoil.tga", "!%LTRing.tga") must keep scrolling.
+func _test_muzzle_flash_textures_do_not_scroll() -> bool:
+	var static_cases := [
+		"res://assets/raw_original_content/3DDATA/Buildings/HK_GunTurret_H0.XBF",
+		"res://assets/raw_original_content/3DDATA/Units/AT_Kindjal_H0.xbf",
+		"res://assets/raw_original_content/3DDATA/Units/OR_Mortar_H0.xbf",
+	]
+	for source_path: String in static_cases:
+		var builder = ModelBakeBuilderScript.new()
+		var scene: PackedScene = builder.build(source_path)
+		_expect(scene != null, "%s must build" % source_path.get_file())
+		if scene == null:
+			continue
+		var root: Node = scene.instantiate()
+		var flash_surfaces := 0
+		for scrolling in _scrolling_surface_textures(root):
+			if String(scrolling).to_lower().contains("flash"):
+				flash_surfaces += 1
+		_expect(
+			_surface_textures_containing(root, "flash") > 0,
+			"%s must carry muzzle flash surfaces at all" % source_path.get_file()
+		)
+		_expect(
+			flash_surfaces == 0,
+			"%s must bake its muzzle flash cutouts as static, not scrolling"
+				% source_path.get_file()
+		)
+		root.free()
+
+	var beam_builder = ModelBakeBuilderScript.new()
+	var beam_scene: PackedScene = beam_builder.build(
+		"res://assets/raw_original_content/3DDATA/Explosion/LTMuzzle.xbf"
+	)
+	_expect(beam_scene != null, "LTMuzzle.xbf must build")
+	if beam_scene != null:
+		var beam_root: Node = beam_scene.instantiate()
+		_expect(
+			not _scrolling_surface_textures(beam_root).is_empty(),
+			"LTMuzzle's laser coil and rings must keep their panning shader"
+		)
+		beam_root.free()
+	return true
+
+
+func _scrolling_surface_textures(root: Node) -> Array[String]:
+	var result: Array[String] = []
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance := node as MeshInstance3D
+		if not mesh_instance.has_meta("scroll_fx"):
+			continue
+		var mesh := mesh_instance.mesh as ArrayMesh
+		if mesh == null:
+			continue
+		for surface in mesh.get_surface_count():
+			result.append(mesh.surface_get_name(surface))
+	return result
+
+
+func _surface_textures_containing(root: Node, needle: String) -> int:
+	var count := 0
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := (node as MeshInstance3D).mesh as ArrayMesh
+		if mesh == null:
+			continue
+		for surface in mesh.get_surface_count():
+			if mesh.surface_get_name(surface).to_lower().contains(needle):
+				count += 1
+	return count
 
 
 ## Guards converters/model_bake_builder.gd's CLIP_NAME_OVERRIDES against a

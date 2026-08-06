@@ -1182,6 +1182,19 @@ func _is_scrolling_texture(texture_name: String) -> bool:
 	# so this one is excluded rather than assumed to scroll.
 	if file_name.contains("spotlight"):
 		return false
+	# Same reuse of the "%" marker on muzzle-flash cutouts ("!%flash01.tga" and
+	# "!%flash02.tga" on HKGunTurret/AT_Kindjal/AT_Sniper/HK_Engineer/
+	# HK_airgun/OR_Mortar, "!%FireFlash0.tga", "!%@Flash2.tga"). A flash is a
+	# still cutout the model reveals for a few frames -- the unmarked flash
+	# cutouts in the same role ("!5flash03.tga", "!FFlash2.tga") bake as plain
+	# additive materials and are what these must match. Panning them makes the
+	# texture visibly crawl across the flash while the gun fires, most obvious
+	# on HKGunTurret, whose Fire clip scales the flash up ~60x. Beams and
+	# coils ("!%lascoil.tga", "!%LTRing.tga", "!%SonicMuzzle.tga",
+	# "!%Bluelightning_128.tga") are deliberately not matched here: those are
+	# panning effects.
+	if file_name.contains("flash"):
+		return false
 	return true
 
 
