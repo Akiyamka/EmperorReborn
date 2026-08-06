@@ -93,7 +93,31 @@ TURRET_DEPLOY_GATE_OVERRIDES = {
 # source-file comment or an unambiguous bullet/sample-name correspondence
 # checked by hand; turrets with no such evidence are left with no fire sound
 # rather than guessed. See docs/quirks.md.
+# Turrets that opt out of TurretDefinition.fire_sound_exclusive — the default
+# "one fire-sound voice per weapon, next shot retires the previous one" rule.
+# Only for a weapon whose sample is genuinely meant to layer over itself; a
+# weapon that simply fires slower than its sample is long needs no entry, since
+# there is never a previous sound left to retire. Kept here rather than
+# hand-edited into the .tres, which this generator rewrites wholesale.
+TURRET_FIRE_SOUND_NON_EXCLUSIVE: set[str] = {
+    # Salvo launchers. Their shots are separate rockets/shells leaving separate
+    # muzzles, spaced by the authored fire animation or by BURST_CONFIGS rather
+    # than by the reload, so the overlap is the intended sound of a salvo, not
+    # a burst of one gun. Retiring the previous shot here would clip each rocket
+    # to the gap before the next one.
+    "ATRocketTurretGun",
+    "ATMinotaurusGun",
+    "ORAPCBase",
+    "HKMissileTankBarrage",
+}
 TURRET_FIRE_SOUND_SECTION_OVERRIDES: dict[str, str] = {
+    # AtreidesSFX.txt: ";dko added 4/24/01 used for both the ATPillbox and AT
+    # Trike" over [ATMedMG-Shortburst], and the comment above the neighbouring
+    # [MedMG-Shortburst] repeats it ("These samples are also being called by the
+    # Atreides Pillbox"). Both sections carry the same `Sounds =
+    # sand_trike_gun_1` at Volume=70 as [ATTrikeGun] itself, so the pillbox and
+    # the trike share one gun sound. ATPillboxGun has no section of its own.
+    "ATPillboxGun": "ATMedMG-Shortburst",
     # ORDOSSFX.TXT: "[KobraAttack] ;dko kobra fires big weapon <good>". Both
     # the deployed (howitzer) and undeployed Kobra joints fire this weapon.
     "ORKobraDeployedGun": "KobraAttack",
@@ -385,6 +409,10 @@ def fire_sound_paths_for(
     return resolve_sfx_paths(samples, wavs), volume
 
 
+def fire_sound_exclusive_for(config_id: str) -> bool:
+    return config_id not in TURRET_FIRE_SOUND_NON_EXCLUSIVE
+
+
 def hit_sound_paths_for(
     config_id: str, effects: list[str], is_laser: bool, continuous: bool,
     sfx_sections: dict[str, tuple[list[str], int]], wavs: dict[str, Path]
@@ -602,6 +630,12 @@ def turret_text(
         *(
             [f"fire_sound_volume = {float(fire_sound_volume):.6g}"]
             if fire_sound_paths and fire_sound_volume != 100 else []
+        ),
+        # Omitted when true: that is TurretDefinition's own default.
+        *(
+            []
+            if fire_sound_exclusive_for(str(row["name"]))
+            else ["fire_sound_exclusive = false"]
         ),
         f"yaw_speed = {float(row['turret_y_rotation_angle'] or 0.0):.6g}",
         f"pitch_speed = {float(row['turret_x_rotation_angle'] or 0.0):.6g}",

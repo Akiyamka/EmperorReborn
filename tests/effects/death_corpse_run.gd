@@ -25,6 +25,7 @@ func _initialize() -> void:
 	await _run_case("a single sound layer behaves as before", _test_single_sound_layer)
 	await _run_case("an unresolvable sound layer never blocks cleanup", _test_unresolvable_sound_layer_frees_promptly)
 	await _run_case("death sound is tuned to be audible at this game's real camera distances, not Godot's point-blank defaults", _test_death_sound_attenuation_tuned)
+	await _run_case("a superseded one-shot fades out and frees instead of being cut with a click", _test_fade_out_and_free)
 	if _failures > 0:
 		printerr("DeathCorpse tests: %d failures after %d assertions" % [_failures, _assertions])
 		quit(1)
@@ -244,6 +245,64 @@ func _test_death_sound_attenuation_tuned() -> void:
 	_expect(
 		player.unit_size > 10.0 and player.max_distance > 300.0,
 		"play_event() must not disturb the attenuation tuning set at construction"
+	)
+	world.queue_free()
+	await process_frame
+
+
+## The "one fire-sound voice per weapon" rule (CombatTurret.fire_sound_exclusive)
+## rests on two things this class must provide: play_pool() handing back the
+## player it started, so the caller can retire it later, and fade_out_and_free()
+## ramping that player down instead of stopping it dead. A burst weapon calls
+## the second one on every shot but the last, so it also has to be safe to call
+## twice and safe to call on a player whose sample already ended.
+func _test_fade_out_and_free() -> void:
+	var world := Node3D.new()
+	root.add_child(world)
+	var paths := ["res://assets/converted/audio/sfx/explosion_vehicle_2.wav"]
+	var player: DeathSoundPlayer = DeathSoundPlayerScript.play_pool(
+		world, Vector3.ZERO, paths, 80.0
+	)
+	_expect(
+		player != null and player.playing,
+		"play_pool() must return the started player so a single-voice caller can retire it"
+	)
+	var loud_db := player.volume_db
+	player.fade_out_and_free()
+	# Idempotent: a second retire must not restart the ramp from the original
+	# gain, which would make the sample briefly loud again.
+	player.fade_out_and_free()
+	await process_frame
+	await process_frame
+	_expect(
+		not is_instance_valid(player) or player.volume_db < loud_db,
+		"a retired one-shot must ramp its gain down rather than jump-cut, got %s from %s" % [
+			player.volume_db if is_instance_valid(player) else "freed", loud_db
+		]
+	)
+	# The ramp is short (DeathSoundPlayer.FADE_OUT_SECONDS); give it real time
+	# to run out and confirm the node then frees itself rather than lingering.
+	await create_timer(DeathSoundPlayerScript.FADE_OUT_SECONDS + 0.2).timeout
+	_expect(
+		not is_instance_valid(player),
+		"a retired one-shot must free itself once its fade finishes"
+	)
+
+	# The common case for a slow weapon: nothing is left playing by the time the
+	# next shot retires it. That must free cleanly, not error on a tween.
+	var idle := DeathSoundPlayerScript.new()
+	world.add_child(idle)
+	await process_frame
+	idle.fade_out_and_free()
+	await process_frame
+	_expect(
+		not is_instance_valid(idle),
+		"retiring a player that never started must free it outright"
+	)
+
+	_expect(
+		DeathSoundPlayerScript.play_pool(world, Vector3.ZERO, [], 100.0) == null,
+		"play_pool() must return null when it had nothing to play"
 	)
 	world.queue_free()
 	await process_frame

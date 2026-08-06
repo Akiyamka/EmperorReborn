@@ -20,6 +20,20 @@ extends Resource
 ## (e.g. ornithopter_rocket_2.wav peaks at ~99% of full scale but is authored
 ## at Volume=60). Defaults to 100 (unscaled) when the source omitted it.
 @export var fire_sound_volume: float = 100.0
+## Whether this weapon owns a single fire-sound "voice": each shot retires the
+## previous shot's still-playing sample (a short fade, see
+## DeathSoundPlayer.fade_out_and_free) instead of layering on top of it, so only
+## the last shot of a burst is heard in full.
+##
+## Weapons fire faster than their own sample is long — a 2s sample on a barrel
+## that fires every 0.4s stacks five copies of the same mono file, which not
+## only muddies the burst but sums almost coherently into clipping. Defaulted on
+## because it is a no-op for anything slower than its sample: the previous
+## player has already finished and freed itself, so there is nothing to retire.
+## Opt out per turret (via TURRET_FIRE_SOUND_NON_EXCLUSIVE in
+## tools/generate_unit_definitions.py, so a regeneration keeps it) for a weapon
+## whose sample is deliberately meant to pile up.
+@export var fire_sound_exclusive: bool = true
 @export var yaw_speed: float
 @export var minimum_yaw: float = NAN
 @export var maximum_yaw: float = NAN

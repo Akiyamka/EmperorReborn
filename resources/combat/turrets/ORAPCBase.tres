@@ -12,6 +12,7 @@ muzzle_flash_id = &"Muzzle3"
 muzzle_flash_scene_path = "res://assets/converted/muzzle_flashes/muzzle3/muzzle3.scn"
 fire_sound_paths = ["res://assets/converted/audio/sfx/APCAttack.wav"]
 fire_sound_volume = 70
+fire_sound_exclusive = false
 yaw_speed = 2
 pitch_speed = 0
 acceptable_yaw = 1

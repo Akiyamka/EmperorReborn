@@ -64,6 +64,7 @@ const TURRET_PATHS: Dictionary = {
 	&"ORMortarInfBigGun": "res://resources/combat/turrets/ORMortarInfBigGun.tres",
 	&"ORMortarInfGun": "res://resources/combat/turrets/ORMortarInfGun.tres",
 	&"ORPopUpGun": "res://resources/combat/turrets/ORPopUpGun.tres",
+	&"SMQuadGun": "res://resources/combat/turrets/SMQuadGun.tres",
 	&"SpotlightBase": "res://resources/combat/turrets/SpotlightBase.tres",
 	&"SpotlightGun": "res://resources/combat/turrets/SpotlightGun.tres",
 	&"SurfaceWormGun": "res://resources/combat/turrets/SurfaceWormGun.tres",

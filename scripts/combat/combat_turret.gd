@@ -56,6 +56,16 @@ var muzzle_flash_id: StringName = &""
 var muzzle_flash_scene: PackedScene
 var fire_sound_paths: Array = []
 var fire_sound_volume := 100.0
+## See TurretDefinition.fire_sound_exclusive. While true this turret keeps at
+## most one volley's worth of fire sound alive at a time, in
+## `_fire_sound_players`: the next shot fades those out instead of playing over
+## them, so a burst is heard as a sequence of shots rather than as N stacked
+## copies of the same sample. A volley is one `try_fire_at` call, which may
+## launch several payloads (a multi-muzzle mount fires them together), so this
+## holds an array rather than a single player — those siblings are meant to
+## sound at once; only the *next* volley retires them.
+var fire_sound_exclusive := true
+var _fire_sound_players: Array[DeathSoundPlayer] = []
 var joint_configs: Array[Resource] = []
 var reload_ticks_remaining := 0.0
 var continuous_burst_ticks_remaining := 0.0
@@ -116,6 +126,8 @@ func configure(turret_id: StringName) -> bool:
 	muzzle_flash_scene = null
 	fire_sound_paths = []
 	fire_sound_volume = 100.0
+	fire_sound_exclusive = true
+	_fire_sound_players.clear()
 	_continuous_fire_sound_pending = true
 	reload_ticks_remaining = 0.0
 	bullet_gravity = 1.0
@@ -143,6 +155,7 @@ func configure(turret_id: StringName) -> bool:
 		muzzle_flash_scene = _definition_catalog.scene(firing_config.muzzle_flash_scene_path)
 	fire_sound_paths = firing_config.fire_sound_paths
 	fire_sound_volume = firing_config.fire_sound_volume
+	fire_sound_exclusive = firing_config.fire_sound_exclusive
 
 	var warhead_id: StringName = bullet_config.warhead_id
 	if warhead_id != &"":
@@ -712,6 +725,18 @@ func begin_continuous_burst(sustain_window: bool = true) -> void:
 	_continuous_fire_sound_pending = true
 
 
+## Fades out whatever this turret's previous volley is still playing and drops
+## the references. Entries are validity-checked rather than assumed live: a
+## player frees itself the moment its sample ends, which for anything firing
+## slower than its own sample is the normal case, and the array then holds only
+## freed instance IDs.
+func _retire_fire_sounds() -> void:
+	for player in _fire_sound_players:
+		if is_instance_valid(player):
+			player.fade_out_and_free()
+	_fire_sound_players.clear()
+
+
 func advance_ticks(ticks: float) -> void:
 	if ticks <= 0.0:
 		return
@@ -900,6 +925,10 @@ func try_fire_at(request: FireRequest) -> Array:
 		request.begin_reload_after_shot, request.committed_sequence, request.damage_scale,
 		request.muzzle_index
 	)
+	# One volley retires the previous volley's sounds exactly once, on its first
+	# audible shot — not per payload, or a multi-muzzle mount would cut its own
+	# simultaneous siblings short.
+	var retired_previous_fire_sound := false
 	for index in payloads.size():
 		var projectile = CombatProjectileScript.new()
 		parent.add_child(projectile)
@@ -943,10 +972,15 @@ func try_fire_at(request: FireRequest) -> Array:
 			should_play_fire_sound = _continuous_fire_sound_pending
 			_continuous_fire_sound_pending = false
 		if should_play_fire_sound:
-			DeathSoundPlayerScript.play_pool(
+			if fire_sound_exclusive and not retired_previous_fire_sound:
+				retired_previous_fire_sound = true
+				_retire_fire_sounds()
+			var fire_sound_player: DeathSoundPlayer = DeathSoundPlayerScript.play_pool(
 				parent, Vector3(effect_emission["position"]), fire_sound_paths,
 				fire_sound_volume
 			)
+			if fire_sound_exclusive and fire_sound_player != null:
+				_fire_sound_players.append(fire_sound_player)
 		result.append(projectile)
 	return result
 

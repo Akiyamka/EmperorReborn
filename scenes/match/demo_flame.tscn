@@ -8,6 +8,7 @@
 [ext_resource type="PackedScene" path="res://scenes/units/atadv_carryall.tscn" id="6_mgqkj"]
 [ext_resource type="PackedScene" path="res://scenes/units/atapc.tscn" id="7_6pt2m"]
 [ext_resource type="Script" uid="uid://c3sursjoim88" path="res://scripts/ui/selection_rectangle.gd" id="8_4rnnr"]
+[ext_resource type="PackedScene" path="res://scenes/buildings/at_pillbox.tscn" id="8_h47e7"]
 [ext_resource type="PackedScene" path="res://scenes/units/atmcv.tscn" id="8_nrmfh"]
 [ext_resource type="PackedScene" path="res://scenes/units/at_engineer.tscn" id="9_5l5ba"]
 [ext_resource type="PackedScene" path="res://scenes/ui/side_panel.tscn" id="9_nabld"]
@@ -64,6 +65,11 @@
 [ext_resource type="PackedScene" uid="uid://bklm37mbnlo4i" path="res://scenes/units/unit.tscn" id="60_3q3pw"]
 [ext_resource type="PackedScene" path="res://scenes/units/sm_quad.tscn" id="61_cfq2o"]
 [ext_resource type="PackedScene" path="res://scenes/units/tl_contaminator.tscn" id="61_dpn50"]
+[ext_resource type="PackedScene" path="res://scenes/buildings/hk_gun_turret.tscn" id="66_j6xc8"]
+[ext_resource type="PackedScene" path="res://scenes/buildings/hk_flame_turret.tscn" id="67_tiqsg"]
+[ext_resource type="PackedScene" path="res://scenes/buildings/at_rocket_turret.tscn" id="68_8pc7f"]
+[ext_resource type="PackedScene" path="res://scenes/buildings/or_pop_up_turret.tscn" id="69_742kh"]
+[ext_resource type="PackedScene" path="res://scenes/buildings/or_gas_turret.tscn" id="70_wu4w8"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -99,6 +105,30 @@ far = 500.0
 metadata/_edit_lock_ = true
 
 [node name="Buildings" type="Node3D" parent="." unique_id=251147608]
+
+[node name="ATPillbox" parent="Buildings" unique_id=1590851602 instance=ExtResource("8_h47e7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 241.37056, 7.7609186, 210.77034)
+owner_player_id = 1
+
+[node name="HKGunTurret" parent="Buildings" unique_id=2137966869 instance=ExtResource("66_j6xc8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 258.19992, 8.324982, 205.49347)
+owner_player_id = 1
+
+[node name="HKFlameTurret" parent="Buildings" unique_id=528824432 instance=ExtResource("67_tiqsg")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 270.5813, 8.006868, 205.49347)
+owner_player_id = 1
+
+[node name="ATRocketTurret" parent="Buildings" unique_id=767571500 instance=ExtResource("68_8pc7f")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 242.00243, 7.832102, 228.58418)
+owner_player_id = 1
+
+[node name="ORPopUpTurret" parent="Buildings" unique_id=1167498670 instance=ExtResource("69_742kh")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 257.4297, 7.886343, 231.39423)
+owner_player_id = 1
+
+[node name="ORGasTurret" parent="Buildings" unique_id=461014997 instance=ExtResource("70_wu4w8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 272.74103, 7.828188, 227.28984)
+owner_player_id = 1
 
 [node name="Units" type="Node3D" parent="." unique_id=21881757]
 
