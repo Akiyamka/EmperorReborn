@@ -110,6 +110,43 @@ TURRET_FIRE_SOUND_NON_EXCLUSIVE: set[str] = {
     "ORAPCBase",
     "HKMissileTankBarrage",
 }
+# Fire sounds that no SFX section can express, because the sample is a
+# hand-authored asset under assets/reworked/ rather than a converted original.
+# Kept here for the same reason as every other table in this file: the .tres is
+# rewritten wholesale on every run, so a hand edit to it does not survive.
+TURRET_FIRE_SOUND_PATH_OVERRIDES: dict[str, list[str]] = {
+    # The original [HKGunTurretGun] samples are a single tank-cannon shot, but
+    # the turret fires a burst; hk_assault_tank_1a repeated at burst rate reads
+    # as one stuttering shot instead of a burst, so a burst was authored from
+    # the same source material. The section's authored Volume still applies.
+    "HKGunTurretGun": ["res://assets/reworked/HKGunTurretBurst.wav"],
+}
+# Turrets that do not exist in the original data: a unit the source points at
+# some other unit's shared turret, and which this project has since given its
+# own weapon voice. The derived turret copies every field of its `source`
+# turret except the fire sound (and the exclusivity rule, which usually differs
+# because the source is a salvo launcher and the derived one is not).
+# UNIT_TURRET_OVERRIDES then repoints the owning unit onto it.
+DERIVED_TURRETS: dict[str, dict] = {
+    # The Smuggler Quad shared ORAPCBase, whose APCAttack rocket sound has
+    # nothing to do with the Quad's gun. GeneralSFX.txt's
+    # [atsmallcannonsingleshot] (KindjalGun1..3, ";dko this looks like the gun
+    # attack sound for the IX Projector") is the small-cannon family this
+    # weapon belongs to. Unlike ORAPCBase's salvo it is one gun, so it takes
+    # the ordinary one-voice rule back.
+    "SMQuadGun": {
+        "source": "ORAPCBase",
+        "fire_sound_section": "atsmallcannonsingleshot",
+        "fire_sound_exclusive": True,
+        # The section itself authors Volume = 80; 70 is the level the turret
+        # was tuned to by ear when it was first hand-written (the same level
+        # ORAPCBase plays at). Kept explicit so it is a choice, not a drift.
+        "fire_sound_volume": 70,
+    },
+}
+UNIT_TURRET_OVERRIDES: dict[str, list[str]] = {
+    "SMQuad": ["SMQuadGun"],
+}
 TURRET_FIRE_SOUND_SECTION_OVERRIDES: dict[str, str] = {
     # AtreidesSFX.txt: ";dko added 4/24/01 used for both the ATPillbox and AT
     # Trike" over [ATMedMG-Shortburst], and the comment above the neighbouring
@@ -402,11 +439,34 @@ def resolve_sfx_paths(samples: list[str], wavs: dict[str, Path]) -> list[str]:
 
 
 def fire_sound_paths_for(
-    config_id: str, sfx_sections: dict[str, tuple[list[str], int]], wavs: dict[str, Path]
+    config_id: str, sfx_sections: dict[str, tuple[list[str], int]], wavs: dict[str, Path],
+    section_override: str = "",
 ) -> tuple[list[str], int]:
-    section_name = TURRET_FIRE_SOUND_SECTION_OVERRIDES.get(config_id, config_id)
+    section_name = section_override or TURRET_FIRE_SOUND_SECTION_OVERRIDES.get(
+        config_id, config_id
+    )
     samples, volume = sfx_sections.get(section_name.casefold(), ([], 100))
-    return resolve_sfx_paths(samples, wavs), volume
+    paths = TURRET_FIRE_SOUND_PATH_OVERRIDES.get(config_id)
+    if paths is None:
+        paths = resolve_sfx_paths(samples, wavs)
+    return paths, volume
+
+
+def move_start_sound_id_for(
+    config_id: str, sfx_sections: dict[str, tuple[list[str], int]], wavs: dict[str, Path]
+) -> str:
+    """The section the original engine synthesised from the unit's own Rules
+    section name plus "MoveFxStart" -- there is no MoveSound/EngineSound key in
+    Rules.txt to read, the name is the mapping. Resolved here, at convert time,
+    so "which units have one" is a checked artifact: 19 of 102 units do.
+
+    Returns the casefolded section name (the key SfxSectionCatalog looks up), or
+    "" when no such section exists or all of its samples are localized stubs
+    that never made it into the WAV archive.
+    """
+    section_name = f"{config_id}MoveFxStart"
+    samples, _volume = sfx_sections.get(section_name.casefold(), ([], 100))
+    return section_name.casefold() if resolve_sfx_paths(samples, wavs) else ""
 
 
 def fire_sound_exclusive_for(config_id: str) -> bool:
@@ -489,7 +549,9 @@ def linked_names(connection: sqlite3.Connection, table: str, unit_id: int) -> li
     ]
 
 
-def turret_names(connection: sqlite3.Connection, unit_id: int) -> list[str]:
+def turret_names(connection: sqlite3.Connection, unit_id: int, config_id: str = "") -> list[str]:
+    if config_id in UNIT_TURRET_OVERRIDES:
+        return list(UNIT_TURRET_OVERRIDES[config_id])
     return [
         row[0]
         for row in connection.execute(
@@ -513,6 +575,7 @@ def visual_path(xaf: str | None, output_root: str) -> str:
 
 def definition_text(row: sqlite3.Row, scene_path: str, model_path: str,
                     direct_voice_profile_path: str, house_voice_profile_paths: dict[str, str],
+                    move_start_sound_id: str,
                     primary: list[str], secondary: list[str], turrets: list[str],
                     terrain: list[str], resources: list[str], effects: list[str],
                     veterancy_paths: list[str], explosion_paths: dict[str, str]) -> str:
@@ -528,6 +591,7 @@ def definition_text(row: sqlite3.Row, scene_path: str, model_path: str,
         f"sidebar_type = {string_name(row['sidebar_type'])}",
         f"voice_profile_path = {godot_string(direct_voice_profile_path)}",
         f"voice_profile_paths_by_house = {string_dictionary_text(house_voice_profile_paths)}",
+        f"move_start_sound_id = {string_name(move_start_sound_id)}",
         f"cost = {int(row['cost'] or 0)}",
         f"build_time_ticks = {int(row['build_time'] or 0)}",
         f"tech_level = {int(row['tech_level'] or 0)}",
@@ -616,11 +680,18 @@ def art_xaf(connection: sqlite3.Connection, art_name: str | None) -> str:
     return str(row[0] or "") if row else ""
 
 
+## `config_id` differs from `row["name"]` only for a DERIVED_TURRETS entry: the
+## resource takes the derived name, while every table keyed by turret name
+## (burst, deploy gates, exclusivity) still answers for the source turret the
+## row came from, which is what the derived one is a copy of.
 def turret_text(
-    row: sqlite3.Row, muzzle_scene_path: str, fire_sound_paths: list[str], fire_sound_volume: int
+    row: sqlite3.Row, muzzle_scene_path: str, fire_sound_paths: list[str], fire_sound_volume: int,
+    config_id: str = "", fire_sound_exclusive: bool | None = None
 ) -> str:
+    if fire_sound_exclusive is None:
+        fire_sound_exclusive = fire_sound_exclusive_for(str(row["name"]))
     properties = [
-        f"config_id = {string_name(row['name'])}",
+        f"config_id = {string_name(config_id or str(row['name']))}",
         f"bullet_id = {string_name(row['bullet_name'])}",
         f"next_joint_id = {string_name(row['next_joint_name'])}",
         f"reload_count = {float(row['reload_count'] or 0.0):.6g}",
@@ -632,11 +703,7 @@ def turret_text(
             if fire_sound_paths and fire_sound_volume != 100 else []
         ),
         # Omitted when true: that is TurretDefinition's own default.
-        *(
-            []
-            if fire_sound_exclusive_for(str(row["name"]))
-            else ["fire_sound_exclusive = false"]
-        ),
+        *([] if fire_sound_exclusive else ["fire_sound_exclusive = false"]),
         f"yaw_speed = {float(row['turret_y_rotation_angle'] or 0.0):.6g}",
         f"pitch_speed = {float(row['turret_x_rotation_angle'] or 0.0):.6g}",
         f"acceptable_yaw = {float(row['turret_y_acceptable_aim'] or 1.0):.6g}",
@@ -914,9 +981,10 @@ def main() -> int:
                 model_path,
                 voice_profile_path(config_id),
                 voice_house_paths(config_id),
+                move_start_sound_id_for(config_id, sfx_sections, sfx_wavs),
                 linked_names(connection, "unit_primary_buildings", int(row["id"])),
                 linked_names(connection, "unit_secondary_buildings", int(row["id"])),
-                turret_names(connection, int(row["id"])),
+                turret_names(connection, int(row["id"]), config_id),
                 unit_list(connection, "SELECT t.name FROM unit_terrain link JOIN terrain_types t ON t.id=link.terrain_type_id WHERE link.unit_id=? ORDER BY t.sort_order", int(row["id"])),
                 unit_list(connection, "SELECT target_name FROM entity_resource_links WHERE entity_type='unit' AND entity_id=? ORDER BY seq", int(row["id"])),
                 explosion_effects,
@@ -926,17 +994,45 @@ def main() -> int:
             ok = write_or_check(output, content, args.check) and ok
 
         turret_paths: dict[str, str] = {}
+        turret_rows: dict[str, sqlite3.Row] = {}
         for row in connection.execute("""
             SELECT t.*, b.name AS bullet_name, next.name AS next_joint_name
               FROM turrets t LEFT JOIN bullets b ON b.id=t.bullet_id
               LEFT JOIN turrets next ON next.id=t.turret_next_joint_id ORDER BY t.id
         """):
+            turret_rows[str(row["name"])] = row
             output = TURRET_DIR / f"{row['name']}.tres"
             turret_paths[str(row["name"])] = "res://" + output.relative_to(ROOT).as_posix()
             muzzle = visual_path(art_xaf(connection, row["turret_muzzle_flash"]), "assets/converted/muzzle_flashes")
             fire_sounds, fire_volume = fire_sound_paths_for(str(row["name"]), sfx_sections, sfx_wavs)
             ok = write_or_check(
                 output, turret_text(row, muzzle, fire_sounds, fire_volume), args.check
+            ) and ok
+
+        for derived_id, derived in sorted(DERIVED_TURRETS.items()):
+            source_row = turret_rows.get(str(derived["source"]))
+            if source_row is None:
+                print(f"error: derived turret {derived_id} has no source turret")
+                ok = False
+                continue
+            output = TURRET_DIR / f"{derived_id}.tres"
+            turret_paths[derived_id] = "res://" + output.relative_to(ROOT).as_posix()
+            muzzle = visual_path(
+                art_xaf(connection, source_row["turret_muzzle_flash"]),
+                "assets/converted/muzzle_flashes",
+            )
+            fire_sounds, fire_volume = fire_sound_paths_for(
+                derived_id, sfx_sections, sfx_wavs, str(derived.get("fire_sound_section", ""))
+            )
+            fire_volume = int(derived.get("fire_sound_volume", fire_volume))
+            ok = write_or_check(
+                output,
+                turret_text(
+                    source_row, muzzle, fire_sounds, fire_volume,
+                    config_id=derived_id,
+                    fire_sound_exclusive=bool(derived.get("fire_sound_exclusive", True)),
+                ),
+                args.check,
             ) and ok
 
         bullet_paths: dict[str, str] = {}

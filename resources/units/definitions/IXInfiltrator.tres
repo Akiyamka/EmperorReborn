@@ -15,6 +15,7 @@ icon_grey_path = "icons\\\\grey_IX_Infiltrator.tga"
 sidebar_type = &"Units"
 voice_profile_path = "res://resources/audio/voices/IXInfiltrator.tres"
 voice_profile_paths_by_house = {}
+move_start_sound_id = &"ixinfiltratormovefxstart"
 cost = 500
 build_time_ticks = 432
 tech_level = 4

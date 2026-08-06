@@ -15,6 +15,7 @@ icon_grey_path = "icons\\\\grey_HK_Airgun.tga"
 sidebar_type = &"Units"
 voice_profile_path = "res://resources/audio/voices/HKADP.tres"
 voice_profile_paths_by_house = {}
+move_start_sound_id = &""
 cost = 1500
 build_time_ticks = 750
 tech_level = 6

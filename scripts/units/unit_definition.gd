@@ -20,6 +20,12 @@ extends Resource
 @export var sidebar_type: StringName
 @export_file("*.tres") var voice_profile_path: String
 @export var voice_profile_paths_by_house: Dictionary = {}
+## Section of the original SFX data the engine synthesised as
+## `<RulesSectionName>MoveFxStart` -- the engine/undercarriage sound a vehicle
+## makes when it starts moving. Empty for the units whose section does not
+## exist or resolves to no converted sample; only 19 of them carry one. Looked
+## up through SfxSectionCatalog, which owns the authored Volume/Limit/Control.
+@export var move_start_sound_id: StringName
 
 @export_group("Production")
 @export var cost: int

@@ -15,6 +15,7 @@ icon_grey_path = "icons\\\\grey_HK_Flamer.tga"
 sidebar_type = &"Infantry"
 voice_profile_path = "res://resources/audio/voices/HKFlamer.tres"
 voice_profile_paths_by_house = {}
+move_start_sound_id = &""
 cost = 150
 build_time_ticks = 144
 tech_level = 4
