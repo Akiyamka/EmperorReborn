@@ -63,6 +63,14 @@ func _initialize() -> void:
 	)
 	_run_case("Muzzle flash clip visibility", _test_muzzle_flash_clip_visibility)
 	_run_case(
+		"muzzle flash cutouts bake static while beam textures keep scrolling",
+		_test_muzzle_flash_textures_do_not_scroll
+	)
+	_run_case(
+		"unmarked additive blast sheets bake as event-driven flipbooks",
+		_test_event_driven_texture_flipbooks
+	)
+	_run_case(
 		"combat-deploy clip rename normalizes Fire_1 to Deployed_Fire",
 		_test_combat_deploy_clip_rename
 	)
@@ -1675,6 +1683,163 @@ func _test_muzzle_flash_clip_visibility() -> bool:
 			_expect(fire_values.count(true) == int(model_case[2]), "%s Fire_0 must show only its active muzzle flash geometry" % String(model_case[0]).get_file())
 		root.free()
 	return true
+
+
+## Regression test for a reported bug: the "%" marker means "animated frame
+## sequence" in the source data, but it is also carried by lone muzzle-flash
+## cutouts ("!%flash01.tga", "!%FireFlash0.tga"). Those fell through
+## _is_scrolling_texture() and got the panning shader, so the flash texture
+## visibly crawled across the geometry while the gun fired -- worst on
+## HKGunTurret, whose Fire clip scales the flash up ~60x. The unmarked flash
+## cutouts in the same role ("!5flash03.tga") already bake as plain additive
+## materials, which is what these must match. Beams and coils that legitimately
+## pan ("!%lascoil.tga", "!%LTRing.tga") must keep scrolling.
+func _test_muzzle_flash_textures_do_not_scroll() -> bool:
+	var static_cases := [
+		"res://assets/raw_original_content/3DDATA/Buildings/HK_GunTurret_H0.XBF",
+		"res://assets/raw_original_content/3DDATA/Units/AT_Kindjal_H0.xbf",
+		"res://assets/raw_original_content/3DDATA/Units/OR_Mortar_H0.xbf",
+	]
+	for source_path: String in static_cases:
+		var builder = ModelBakeBuilderScript.new()
+		var scene: PackedScene = builder.build(source_path)
+		_expect(scene != null, "%s must build" % source_path.get_file())
+		if scene == null:
+			continue
+		var root: Node = scene.instantiate()
+		var flash_surfaces := 0
+		for scrolling in _scrolling_surface_textures(root):
+			if String(scrolling).to_lower().contains("flash"):
+				flash_surfaces += 1
+		_expect(
+			_surface_textures_containing(root, "flash") > 0,
+			"%s must carry muzzle flash surfaces at all" % source_path.get_file()
+		)
+		_expect(
+			flash_surfaces == 0,
+			"%s must bake its muzzle flash cutouts as static, not scrolling"
+				% source_path.get_file()
+		)
+		root.free()
+
+	var beam_builder = ModelBakeBuilderScript.new()
+	var beam_scene: PackedScene = beam_builder.build(
+		"res://assets/raw_original_content/3DDATA/Explosion/LTMuzzle.xbf"
+	)
+	_expect(beam_scene != null, "LTMuzzle.xbf must build")
+	if beam_scene != null:
+		var beam_root: Node = beam_scene.instantiate()
+		_expect(
+			not _scrolling_surface_textures(beam_root).is_empty(),
+			"LTMuzzle's laser coil and rings must keep their panning shader"
+		)
+		beam_root.free()
+	return true
+
+
+## Regression test for a reported bug: the ORPopUpTurret's muzzle flash read as
+## a solid blob rather than a flash. Its gplasglow model references a bare
+## "!Gbang1.tga" -- no "%" sequence marker -- while its own type-6 events step
+## that object through "!Gbang0..9", one per source frame. Only the marker was
+## ever consulted, so the ten-frame blast baked as a single frozen mid-blast
+## still. The marker-free sequence must be picked up from those events instead.
+## The unmarked leech-infestation overlay is the deliberate counter-case: it is
+## a lit hull surface, not an additive blast sheet, and must stay as it was.
+func _test_event_driven_texture_flipbooks() -> bool:
+	var flipbook_cases := [
+		["res://assets/raw_original_content/3DDATA/Explosion/gplasglow.XBF", 10],
+		["res://assets/raw_original_content/3DDATA/Explosion/devmuzzle.XBF", 10],
+		["res://assets/raw_original_content/3DDATA/bullets/shellhit.xbf", 10],
+	]
+	for model_case: Array in flipbook_cases:
+		var source_path := String(model_case[0])
+		var builder = ModelBakeBuilderScript.new()
+		var scene: PackedScene = builder.build(source_path)
+		_expect(scene != null, "%s must build" % source_path.get_file())
+		if scene == null:
+			continue
+		var root: Node = scene.instantiate()
+		_expect(
+			_atlas_frame_counts(root) == [int(model_case[1])],
+			"%s must bake one %d-frame texture atlas, got %s"
+				% [source_path.get_file(), int(model_case[1]), _atlas_frame_counts(root)]
+		)
+		var player := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+		var stepped: Array = []
+		if player != null and player.has_animation(&"Stationary"):
+			stepped = _frame_track_values(player.get_animation(&"Stationary"))
+		_expect(
+			stepped == range(int(model_case[1])),
+			"%s Stationary must step every atlas frame in order, got %s"
+				% [source_path.get_file(), stepped]
+		)
+		root.free()
+
+	var leech_builder = ModelBakeBuilderScript.new()
+	var leech_scene: PackedScene = leech_builder.build(
+		"res://assets/raw_original_content/3DDATA/Units/AT_Trike_H0.xbf"
+	)
+	_expect(leech_scene != null, "AT_Trike_H0.xbf must build")
+	if leech_scene != null:
+		var leech_root: Node = leech_scene.instantiate()
+		_expect(
+			_atlas_frame_counts(leech_root).is_empty(),
+			"the unmarked leech overlay must stay off the frame atlas shader"
+		)
+		leech_root.free()
+	return true
+
+
+func _atlas_frame_counts(root: Node) -> Array:
+	var result: Array = []
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := (node as MeshInstance3D).mesh as ArrayMesh
+		if mesh == null:
+			continue
+		for surface in mesh.get_surface_count():
+			var material := mesh.surface_get_material(surface) as ShaderMaterial
+			if material == null:
+				continue
+			var frame_count: Variant = material.get_shader_parameter("frame_count")
+			if frame_count != null:
+				result.append(int(frame_count))
+	return result
+
+
+func _frame_track_values(animation: Animation) -> Array:
+	var result: Array = []
+	for track in animation.get_track_count():
+		if not String(animation.track_get_path(track)).ends_with("fx_frame"):
+			continue
+		for key in animation.track_get_key_count(track):
+			result.append(int(animation.track_get_key_value(track, key)))
+	return result
+
+
+func _scrolling_surface_textures(root: Node) -> Array[String]:
+	var result: Array[String] = []
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance := node as MeshInstance3D
+		if not mesh_instance.has_meta("scroll_fx"):
+			continue
+		var mesh := mesh_instance.mesh as ArrayMesh
+		if mesh == null:
+			continue
+		for surface in mesh.get_surface_count():
+			result.append(mesh.surface_get_name(surface))
+	return result
+
+
+func _surface_textures_containing(root: Node, needle: String) -> int:
+	var count := 0
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := (node as MeshInstance3D).mesh as ArrayMesh
+		if mesh == null:
+			continue
+		for surface in mesh.get_surface_count():
+			if mesh.surface_get_name(surface).to_lower().contains(needle):
+				count += 1
+	return count
 
 
 ## Guards converters/model_bake_builder.gd's CLIP_NAME_OVERRIDES against a

@@ -381,6 +381,11 @@ func _initialize() -> void:
 			+ "actually opens, not a plain round-robin",
 		_test_atrocket_turret_muzzle_matches_authored_animation
 	)
+	_run_case(
+		"stopping a defensive turret's burst returns its authored muzzle "
+			+ "flash to rest",
+		_test_defensive_turret_stop_clears_muzzle_flash
+	)
 	await _run_async_case(
 		"Ordos popup turrets visibly deploy, hold, and undeploy",
 		_test_ordos_popup_turret_animations
@@ -4224,6 +4229,112 @@ func _test_atrocket_turret_muzzle_matches_authored_animation() -> void:
 			projectile.free()
 	target.free()
 	building.free()
+
+
+## Regression test for a reported bug: a Stop order during an ATPillbox or
+## HKGunTurret burst left the authored muzzle flash frozen at whatever size the
+## cancelled Fire clip had reached (both models scale their `_bigflash*` nodes
+## by more than an order of magnitude mid-clip). Nothing rewrites those nodes
+## afterwards -- a stationary defensive building runs no idle clip on its model
+## player -- so the flash stayed on the barrels and swung around with the
+## turret. Cancelling must leave the same pose a completed burst leaves.
+func _test_defensive_turret_stop_clears_muzzle_flash() -> void:
+	for building_id in [&"ATPillbox", &"HKGunTurret"]:
+		var scene_path := (
+			"res://assets/converted/buildings/%s/%s.scn"
+			% [String(building_id), String(building_id)]
+		)
+		var scene := load(scene_path) as PackedScene
+		var building := scene.instantiate() as Building
+		building.owner_player_id = 1
+		root.add_child(building)
+		var flashes := _authored_flash_nodes(building)
+		_expect(
+			not flashes.is_empty(),
+			"%s must expose authored bigflash nodes" % String(building_id)
+		)
+		if flashes.is_empty():
+			building.free()
+			continue
+		var rest_scales: Array[Vector3] = []
+		for flash in flashes:
+			rest_scales.append(flash.scale)
+
+		var turret = building.combat_turrets[0]
+		var emission: Dictionary = turret.peek_emission()
+		var direction: Vector3 = emission.get("direction", Vector3.BACK)
+		var target := PhysicsCombatTarget.new(
+			Vector3(emission["position"]) + direction.normalized() * 5.0
+		)
+		target.owner_player_id = 2
+		target.add_to_group(&"units")
+		root.add_child(target)
+		var fired: Array = []
+		building.weapon_fired.connect(
+			func(projectiles: Array, _target: Variant, _weapon_index: int) -> void:
+				fired.append_array(projectiles)
+		)
+		_expect(
+			building.command_attack(target),
+			"%s must accept an explicit attack order" % String(building_id)
+		)
+
+		# The AnimationPlayer is driven explicitly so the burst is caught at a
+		# reproducible point: awaiting real frames would leave where the flash
+		# happens to be at cancellation up to the headless frame rate.
+		var controller = building._authored_fire_controller
+		var flash_grew := false
+		for frame in 900:
+			building._process(1.0 / 60.0)
+			if not controller.is_active():
+				continue
+			for weapon_index: Variant in controller._sequences:
+				var state: Dictionary = controller._sequences[weapon_index]
+				var player := state["player"] as AnimationPlayer
+				player.advance(1.0 / 60.0)
+			flash_grew = _flash_departed_from_rest(flashes, rest_scales)
+			if flash_grew:
+				break
+		_expect(
+			flash_grew,
+			"%s must visibly scale an authored muzzle flash mid-burst"
+				% String(building_id)
+		)
+
+		building.cancel_all_orders()
+		_expect(
+			not _flash_departed_from_rest(flashes, rest_scales),
+			(
+				"%s must return its authored muzzle flash to rest when a burst "
+				+ "is stopped, not freeze it mid-flash"
+			) % String(building_id)
+		)
+
+		for projectile in fired:
+			if is_instance_valid(projectile) \
+			and not projectile.is_queued_for_deletion():
+				projectile.free()
+		target.free()
+		building.free()
+
+
+func _authored_flash_nodes(building) -> Array[Node3D]:
+	var result: Array[Node3D] = []
+	var state_root: Node3D = building.state_root(building.current_state)
+	if state_root == null:
+		return result
+	for node in state_root.find_children("*bigflash*", "Node3D", true, false):
+		result.append(node as Node3D)
+	return result
+
+
+func _flash_departed_from_rest(
+	flashes: Array[Node3D], rest_scales: Array[Vector3]
+	) -> bool:
+	for index in flashes.size():
+		if not flashes[index].scale.is_equal_approx(rest_scales[index]):
+			return true
+	return false
 
 
 func _test_ordos_popup_turret_animations() -> void:

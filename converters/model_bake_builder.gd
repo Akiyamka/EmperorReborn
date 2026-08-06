@@ -705,8 +705,8 @@ func _model_material(texture_name: String) -> Material:
 
 	var texture_path := _ensure_model_texture(texture_name)
 	var texture: Texture2D = null
-	var animated_frames := _animated_texture_frames(texture_name)
 	var additive := _is_additive_texture(texture_name)
+	var animated_frames := _animated_texture_frames(texture_name, additive)
 	var team_colored := _uses_team_color(texture_name)
 	if not animated_frames.is_empty():
 		var animated_texture := _load_animated_texture_atlas(animated_frames)
@@ -846,10 +846,53 @@ func _fx_texture_name_exists(texture_name: String, fx_strings: Array[Dictionary]
 	return false
 
 
-func _animated_texture_frames(texture_name: String) -> PackedStringArray:
-	if not _is_animated_texture(texture_name):
+## The "%" marker is the usual declaration that a texture is one frame of a
+## sequence, but the standalone muzzle flashes do not carry it: gplasglow's
+## mesh references a bare "!Gbang1.tga" and devmuzzle's a bare "!bang0.tga",
+## while each model's own type-6 events step that object through the full
+## "!Gbang0..9"/"!bang0..9" run, one frame per source frame. Without a second
+## way in, those bake as a single frozen frame of a ten-frame blast -- a dense
+## mid-explosion still that reads as a solid blob rather than a flash. So an
+## unmarked texture is also accepted when this model's own texture events
+## actually walk its sequence, which is the same ground truth
+## _authored_frame_keys() already resolves the resulting track against.
+##
+## `event_driven` keeps that second way in to additive ("!") textures, which is
+## where the frozen-frame flipbooks live: blast and flash sheets whose meshes
+## exist only to show the sequence. Ordinary model surfaces stay on the marker
+## alone. The unmarked leech-infestation overlay ("@Leeched_128.tga" plus
+## "@Leeched1/2_128.tga", stepped by four events on every leechable unit) is
+## the case this deliberately excludes -- it is a lit surface on the hull, and
+## the atlas shader would turn it unshaded and depth-write-free.
+func _animated_texture_frames(
+	texture_name: String, event_driven := false
+	) -> PackedStringArray:
+	var frames: PackedStringArray = _animated_texture_sequences.get(
+		_texture_sequence_key(texture_name.get_file()), PackedStringArray()
+	)
+	if frames.is_empty() or _is_animated_texture(texture_name):
+		return frames
+	if not event_driven or not _texture_events_step_sequence(frames):
 		return PackedStringArray()
-	return _animated_texture_sequences.get(_texture_sequence_key(texture_name.get_file()), PackedStringArray())
+	return frames
+
+
+## True when some object's authored texture events name more than one frame of
+## `frames`. A single event is a one-off texture assignment, not a flipbook,
+## and must not turn a static texture into an animated atlas.
+func _texture_events_step_sequence(frames: PackedStringArray) -> bool:
+	var frame_keys := {}
+	for frame_name in frames:
+		frame_keys[_texture_sequence_key(frame_name.get_file())] = true
+	for events_value: Variant in _texture_events_by_object.values():
+		var stepped := {}
+		for event: Dictionary in events_value as Array:
+			var key := _texture_sequence_key(String(event["texture"]).get_file())
+			if frame_keys.has(key):
+				stepped[key] = true
+		if stepped.size() > 1:
+			return true
+	return false
 
 
 func _load_animated_texture_atlas(frame_names: PackedStringArray) -> Texture2D:
@@ -1181,6 +1224,19 @@ func _is_scrolling_texture(texture_name: String) -> bool:
 	# is evidently reused for more than one purpose in the source data,
 	# so this one is excluded rather than assumed to scroll.
 	if file_name.contains("spotlight"):
+		return false
+	# Same reuse of the "%" marker on muzzle-flash cutouts ("!%flash01.tga" and
+	# "!%flash02.tga" on HKGunTurret/AT_Kindjal/AT_Sniper/HK_Engineer/
+	# HK_airgun/OR_Mortar, "!%FireFlash0.tga", "!%@Flash2.tga"). A flash is a
+	# still cutout the model reveals for a few frames -- the unmarked flash
+	# cutouts in the same role ("!5flash03.tga", "!FFlash2.tga") bake as plain
+	# additive materials and are what these must match. Panning them makes the
+	# texture visibly crawl across the flash while the gun fires, most obvious
+	# on HKGunTurret, whose Fire clip scales the flash up ~60x. Beams and
+	# coils ("!%lascoil.tga", "!%LTRing.tga", "!%SonicMuzzle.tga",
+	# "!%Bluelightning_128.tga") are deliberately not matched here: those are
+	# panning effects.
+	if file_name.contains("flash"):
 		return false
 	return true
 

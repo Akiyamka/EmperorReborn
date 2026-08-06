@@ -174,8 +174,11 @@ func cancel_sequences(
 		if blocking_only and not bool(state.get("blocking", false)):
 			continue
 		restore_idle = bool(state.get("blocking", false)) or restore_idle
-		_stop_sequence(state, reload_after_animation and commit_reload)
+		# Erase before stopping, matching finish_sequence(): _stop_sequence()
+		# settles the authored clip on its final frame, and an AnimationPlayer
+		# signal raised from that must not find this sequence still registered.
 		sequences.erase(weapon_index)
+		_stop_sequence(state, reload_after_animation and commit_reload)
 	return restore_idle
 
 
@@ -207,13 +210,34 @@ func finish_animation(
 	return 0
 
 
+## `stop(true)` deliberately keeps the pose the clip last wrote (see
+## Unit.play_animation_from_start), which is correct for a burst that ran to
+## the end -- an authored Fire clip returns every node it keys to its rest pose
+## on its final frame. A burst cut short (Stop during the burst, a target
+## dying, a move order) freezes that same pose wherever it happened to be, and
+## on a gun turret that is mid-muzzle-flash: ATPillbox scales `_bigflash1` by
+## ~40x over its rest transform and HKGunTurret scales each `_bigflashNN` by
+## ~60x, with the barrels' AttachmentFX particles still emitting. Nothing
+## writes those nodes again -- a stationary defensive building runs no idle
+## clip on its model player -- so the flash stays stuck on the barrels and
+## swings around with the turret as it recenters. Settling the clip on its
+## final frame first leaves exactly the pose a completed burst leaves.
 func _stop_sequence(state: Dictionary, reload_after_animation: bool) -> void:
 	var player_value: Variant = state.get("player")
 	if is_instance_valid(player_value) and player_value is AnimationPlayer:
-		(player_value as AnimationPlayer).stop(true)
+		var player := player_value as AnimationPlayer
+		var animation_name := StringName(state.get("animation", &""))
+		if not animation_name.is_empty() \
+		and player.current_animation == animation_name:
+			player.seek(float(state.get("duration", 0.0)), true)
+		player.stop(true)
 	var turret = state.get("turret")
 	if turret != null:
 		turret.cancel_authored_fire_fx()
+		# The clip's final frame keys the aim pivots back to their authored
+		# straight-ahead pose, so the combat-owned angles have to be reapplied
+		# before the frame renders.
+		turret.restore_aim_pose()
 	if reload_after_animation \
 	and int(state.get("shots_emitted", 0)) > 0 and turret != null:
 		turret.begin_reload()
