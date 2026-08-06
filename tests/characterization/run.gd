@@ -67,6 +67,10 @@ func _initialize() -> void:
 		_test_muzzle_flash_textures_do_not_scroll
 	)
 	_run_case(
+		"unmarked additive blast sheets bake as event-driven flipbooks",
+		_test_event_driven_texture_flipbooks
+	)
+	_run_case(
 		"combat-deploy clip rename normalizes Fire_1 to Deployed_Fire",
 		_test_combat_deploy_clip_rename
 	)
@@ -1731,6 +1735,85 @@ func _test_muzzle_flash_textures_do_not_scroll() -> bool:
 		)
 		beam_root.free()
 	return true
+
+
+## Regression test for a reported bug: the ORPopUpTurret's muzzle flash read as
+## a solid blob rather than a flash. Its gplasglow model references a bare
+## "!Gbang1.tga" -- no "%" sequence marker -- while its own type-6 events step
+## that object through "!Gbang0..9", one per source frame. Only the marker was
+## ever consulted, so the ten-frame blast baked as a single frozen mid-blast
+## still. The marker-free sequence must be picked up from those events instead.
+## The unmarked leech-infestation overlay is the deliberate counter-case: it is
+## a lit hull surface, not an additive blast sheet, and must stay as it was.
+func _test_event_driven_texture_flipbooks() -> bool:
+	var flipbook_cases := [
+		["res://assets/raw_original_content/3DDATA/Explosion/gplasglow.XBF", 10],
+		["res://assets/raw_original_content/3DDATA/Explosion/devmuzzle.XBF", 10],
+		["res://assets/raw_original_content/3DDATA/bullets/shellhit.xbf", 10],
+	]
+	for model_case: Array in flipbook_cases:
+		var source_path := String(model_case[0])
+		var builder = ModelBakeBuilderScript.new()
+		var scene: PackedScene = builder.build(source_path)
+		_expect(scene != null, "%s must build" % source_path.get_file())
+		if scene == null:
+			continue
+		var root: Node = scene.instantiate()
+		_expect(
+			_atlas_frame_counts(root) == [int(model_case[1])],
+			"%s must bake one %d-frame texture atlas, got %s"
+				% [source_path.get_file(), int(model_case[1]), _atlas_frame_counts(root)]
+		)
+		var player := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+		var stepped: Array = []
+		if player != null and player.has_animation(&"Stationary"):
+			stepped = _frame_track_values(player.get_animation(&"Stationary"))
+		_expect(
+			stepped == range(int(model_case[1])),
+			"%s Stationary must step every atlas frame in order, got %s"
+				% [source_path.get_file(), stepped]
+		)
+		root.free()
+
+	var leech_builder = ModelBakeBuilderScript.new()
+	var leech_scene: PackedScene = leech_builder.build(
+		"res://assets/raw_original_content/3DDATA/Units/AT_Trike_H0.xbf"
+	)
+	_expect(leech_scene != null, "AT_Trike_H0.xbf must build")
+	if leech_scene != null:
+		var leech_root: Node = leech_scene.instantiate()
+		_expect(
+			_atlas_frame_counts(leech_root).is_empty(),
+			"the unmarked leech overlay must stay off the frame atlas shader"
+		)
+		leech_root.free()
+	return true
+
+
+func _atlas_frame_counts(root: Node) -> Array:
+	var result: Array = []
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := (node as MeshInstance3D).mesh as ArrayMesh
+		if mesh == null:
+			continue
+		for surface in mesh.get_surface_count():
+			var material := mesh.surface_get_material(surface) as ShaderMaterial
+			if material == null:
+				continue
+			var frame_count: Variant = material.get_shader_parameter("frame_count")
+			if frame_count != null:
+				result.append(int(frame_count))
+	return result
+
+
+func _frame_track_values(animation: Animation) -> Array:
+	var result: Array = []
+	for track in animation.get_track_count():
+		if not String(animation.track_get_path(track)).ends_with("fx_frame"):
+			continue
+		for key in animation.track_get_key_count(track):
+			result.append(int(animation.track_get_key_value(track, key)))
+	return result
 
 
 func _scrolling_surface_textures(root: Node) -> Array[String]:
