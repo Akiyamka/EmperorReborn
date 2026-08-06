@@ -61,4 +61,4 @@ damage_effect_id = &"MediumDamageFX"
 explosion_type_id = &"Explosion"
 explosion_scene_paths = {&"Explosion": "res://assets/converted/impact_effects/explosion/explosion.scn"}
 veterancy_level_paths = ["res://resources/units/veterancy/SMQuad_1.tres", "res://resources/units/veterancy/SMQuad_2.tres", "res://resources/units/veterancy/SMQuad_3.tres"]
-turret_ids = [&"ORAPCBase"]
+turret_ids = [&"SMQuadGun"]
