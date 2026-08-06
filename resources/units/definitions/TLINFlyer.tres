@@ -15,6 +15,7 @@ icon_grey_path = ""
 sidebar_type = &""
 voice_profile_path = ""
 voice_profile_paths_by_house = {}
+move_start_sound_id = &""
 cost = 1200
 build_time_ticks = 648
 tech_level = 6

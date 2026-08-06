@@ -17,6 +17,7 @@ const UnitDeathSequenceScript := preload("res://scripts/units/unit_death_sequenc
 const UnitShaderFxScript := preload("res://scripts/units/unit_shader_fx.gd")
 const UnitIdleAnimationsScript := preload("res://scripts/units/unit_idle_animations.gd")
 const UnitLocomotionScript := preload("res://scripts/units/unit_locomotion.gd")
+const UnitMovementSoundsScript := preload("res://scripts/units/unit_movement_sounds.gd")
 const HarvesterControllerScript := preload("res://scripts/units/harvester_controller.gd")
 const UnitDeployStateScript := preload("res://scripts/units/unit_deploy_state.gd")
 const UnitCombatScript := preload("res://scripts/units/unit_combat.gd")
@@ -140,6 +141,7 @@ var _navigation_requested_velocity := Vector3.ZERO
 var _navigation_debug_visible := false
 var _terrain_alignment := UnitTerrainAlignmentScript.new()
 var _locomotion := UnitLocomotionScript.new()
+var _movement_sounds := UnitMovementSoundsScript.new()
 var _flight_controller: UnitFlightController = null
 var _death_sequence := UnitDeathSequenceScript.new()
 ## Not `velocity`: navigation_step() zeroes its vertical component, and
@@ -169,6 +171,7 @@ func _init() -> void:
 	_shader_fx.configure(self)
 	_idle_animations.configure(self)
 	_locomotion.configure(self)
+	_movement_sounds.configure(self)
 	_deploy.configure(self)
 	_combat.configure(self)
 
@@ -188,8 +191,10 @@ func _ready() -> void:
 	_shader_fx.attach_model()
 	_animation_players = _collect_animation_players()
 	_locomotion.attach_model(_animation_players)
+	_movement_sounds.attach_model(_animation_players)
 	_combat.refresh_weapon_runtime()
 	_locomotion.refresh_motion_profile()
+	_movement_sounds.refresh_step_schedule()
 	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
@@ -224,6 +229,10 @@ func _process(delta: float) -> void:
 	if _deploy.advance_undeploy_alignment(delta):
 		_deploy.start_undeploy_animation()
 	_advance_visual_slope_alignment(delta)
+	# Same _process (not _physics_process) requirement as the two calls above:
+	# the movement clip's playback position is only this frame's value after
+	# the AnimationPlayers have run.
+	_movement_sounds.advance(delta)
 	_shader_fx.advance(delta, shields)
 	if _harvester != null:
 		_harvester.advance(delta)
@@ -663,6 +672,7 @@ func setup(unit_id: StringName) -> void:
 	_apply_unit_definition()
 	_combat.refresh_weapon_runtime()
 	_locomotion.refresh_motion_profile()
+	_movement_sounds.refresh_step_schedule()
 	health = max_health
 	shields = max_shields
 	_terrain_alignment.refresh_slope_target()
@@ -682,8 +692,10 @@ func replace_visual_scene(model_scene: PackedScene) -> void:
 	_shader_fx.attach_model()
 	_animation_players = _collect_animation_players()
 	_locomotion.attach_model(_animation_players)
+	_movement_sounds.attach_model(_animation_players)
 	_combat.refresh_weapon_runtime()
 	_locomotion.refresh_motion_profile()
+	_movement_sounds.refresh_step_schedule()
 	_prioritize_animations_before_unit_logic()
 	_prepare_idle_animations()
 	_set_movement_animation(false)
@@ -779,6 +791,7 @@ func prepare_model_for_corpse(model: Node3D) -> void:
 	# reads without going through a signal.
 	_animation_players.clear()
 	_locomotion.detach_model()
+	_movement_sounds.detach_model()
 	# UnitDeployState caches the transition AnimationPlayer straight out of
 	# the model. Unlike _animation_players it is a scalar that keeps pointing
 	# at that player until explicitly cleared — nothing else resets it on
@@ -1184,6 +1197,7 @@ func _apply_unit_definition() -> void:
 	move_speed = float(unit_definition.speed)
 	mech_speed = maxf(float(unit_definition.mech_speed), 0.0)
 	_locomotion.adopt_definition(unit_definition)
+	_movement_sounds.adopt_definition(unit_definition)
 	turn_rate = maxf(float(unit_definition.turn_rate), 0.0)
 	can_move_any_direction = unit_definition.can_move_any_direction
 	max_health = float(unit_definition.health)
@@ -1299,6 +1313,7 @@ func _set_movement_animation(
 	_locomotion.apply_movement_animation(
 		is_moving, speed_scale, turn_animation, _idle_animations.play_sequence
 	)
+	_movement_sounds.notify_movement_state(is_moving)
 	restore_combat_turret_poses()
 
 

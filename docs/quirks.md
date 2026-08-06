@@ -607,6 +607,122 @@ turned out to carry a real `ShellHit` explosion effect despite reading as
 previous hand-picked list had excluded them on a guess that the effect data
 contradicts.
 
+### Sound fixes belong in the generator's tables, never in the generated `.tres`
+
+**Observed data:** `make unit-definitions` rewrites every
+`resources/combat/turrets/*.tres`, `resources/units/definitions/*.tres` and
+`resources/combat/generated_combat_manifest.gd` wholesale. Commit `028dc99`
+tuned two weapons by editing the outputs directly — `HKGunTurretGun` pointed at
+the hand-authored `assets/reworked/HKGunTurretBurst.wav`, and a new
+`SMQuadGun.tres` was written by hand with `SMQuad.turret_ids` repointed onto it
+— so the next regeneration silently reverted all three, and
+`unit-definitions --check` reported them as "out of date" on plain `main`.
+
+**OpenEBfD compatibility decision:** both fixes now live in
+`tools/generate_unit_definitions.py`, alongside the section-override tables
+that were already there for the same reason:
+
+- `TURRET_FIRE_SOUND_PATH_OVERRIDES` — a fire sound whose sample is a
+  hand-authored `assets/reworked/` asset that no SFX section can name. The
+  section's authored `Volume` still applies.
+- `DERIVED_TURRETS` + `UNIT_TURRET_OVERRIDES` — a turret the original data does
+  not have, because a unit shared someone else's turret and has since been
+  given its own weapon voice. The derived turret copies every field of its
+  source turret except the fire sound, its exclusivity rule, and (explicitly,
+  so it reads as a choice rather than drift) its volume. `SMQuadGun` is the
+  only one: the Smuggler Quad shared `ORAPCBase`'s APC rocket sound, and now
+  fires `[atsmallcannonsingleshot]` as a single non-salvo gun at the level it
+  was tuned to by ear (70, where the section itself authors 80).
+
+The rule for anything similar: if a sound needs changing, change the table and
+regenerate. A `.tres` edit is not a fix, it is a pending revert.
+
+### Movement sounds live in two places: the model's FX table and a synthesised section name
+
+**Observed data:** There is no `MoveSound`/`EngineSound` key anywhere in
+`MODEL/Rules.txt` or `MODEL/ArtIni.txt` — the `[ORAPC]` block only carries
+commented-out `//SoundSelected`/`//SoundOrdered` lines. The connection is made
+two different ways instead.
+
+*Footsteps are in the model.* `3DDATA/Units/*.xbf` FX event **type 9**
+(`probability` u32, `payload_type` 4, one C-string) is the "play this sound
+event" record, and the string is an SFX section name: `AT_mongoose_H0.xbf`
+authors `ATThumpStep` on the `Ltoe1`/`Rtoe1` bones, `AT_minotaurus_H0.xbf`
+`ATHollowstep`, `Or_DustScout` `DustScoutMove`, `TL_Leech` `LeechFootsteps`.
+`probability` is 100 in every unit model, so the roll never fails in shipped
+data; it is still rolled. Type 9 also carries the fire and death sounds
+(`ATCannonSingleLoudShot`, `ATMedBang1`), but those land in the `Fire 0` and
+`Explode` frame ranges, so scoping the search to the movement clips (`Move`,
+`Move_Start`, `Move_Stop`, `Turn_Left`, `Turn_Right`) separates them by data
+rather than by a name blacklist. One event can belong to two clips at once:
+the Mongoose's third step sits in the range `Turn Left` and `Turn Right`
+share, and plays for both.
+
+*Engine starts are synthesised.* The original engine built the section name as
+`<RulesSectionName>MoveFxStart` — `[ORAPC]` → `[orapcmovefxstart]`
+(`apcmovestarta/b/c`, `Control = random`, `Limit = 1`). 22 of 102 units
+resolve one; `tools/generate_unit_definitions.py`'s `move_start_sound_id_for()`
+bakes it into `UnitDefinition.move_start_sound_id`, so that count is a checked
+artifact.
+
+That name is the *Rules* section name, which is not always the `config_id`, so
+`UNIT_MOVE_START_RULES_SECTIONS` maps the exceptions back. Rules.txt carries a
+single `[MCV]`, split per house at convert time, so `ATMCVMoveFxStart` does not
+exist and all three MCVs came out silent until they were mapped onto the one
+`[mcvmovefxstart]` (`mcv_a_motor_1`) the source gives them. The plain
+`Carryall` is the mirror image — one house-shared unit here against three
+source sections — but that needs no by-house machinery either:
+`[ATCarryallMoveFxStart]`, `[hkcarryallmovefxstart]` and
+`[orcarryallmovefxstart]` all name the same `adv_carryall_takeoff_1` at
+`Volume = 70`, `Limit = 1`, as do the three ADVCarryall sections, so the house
+is simply picked. `StormUnitMoveFx` is a loop section, in the same
+unimplemented family as the buildings' `*MoveFx` loops.
+
+Note that carryalls barely exercise this in practice: `_set_movement_animation()`
+hands airborne phases to `UnitFlightController` before the movement-sound module
+sees them, so a carryall only sounds its start on ground locomotion. Hooking
+takeoff is the open work here, not per-house resolution. Unit-level `*MoveFx` *loop* sections do not exist — only buildings
+with moving parts (`ATRocketTurretBaseMoveFx`, `ORPopUpGunMoveFx`, …) and
+`StormUnitMoveFx` have them, and those are not wired up yet.
+
+**OpenEBfD compatibility decisions:** `resources/audio/generated_sfx_manifest.gd`
+(from `tools/generate_voice_feedback.py`) carries every section that resolves
+to at least one converted WAV — 510 of them — because a model's section names
+are only known at runtime, unlike the voice/death hooks which resolve into
+per-unit resources at convert time. `SfxSectionCatalog` looks them up and owns
+the `Limit` accounting, which Sfx.txt defines as a *global* simultaneous-
+instance cap, so `ATThumpStep`'s `Limit = 3` throttles a whole platoon of
+Mongooses with no extra runtime throttle. `[GlobalDefaults]`
+(`Control = random`, `Volume = 80`, `Limit = 5`) is applied in this manifest
+only; the already-generated voice/death resources keep the values they were
+generated with.
+
+Deliberate silences and one deliberate deviation:
+
+- Every infantry `*Footsteps` name (`ATengineerFootsteps`, `HKscoutFootsteps`,
+  …), plus `TrackStartMove`/`TrackStopMove`, `EngineStart`, `Leech` and
+  friends, has no SFX section at all. They stay silent — that is what the data
+  says, and nothing is invented for them.
+- `HKDevastatorFootsteps` is the same case, but the Devastator *does* have
+  `[hkdevastatormovefxstart]` (`hk_devastator_walk_1`). A mech whose step
+  events resolve to nothing therefore falls back to its own move-start section
+  for its steps, and does not additionally play it on departure — a mech's
+  movement sound is its gait. This is a gameplay decision, not something the
+  source data states; it affects HKDevastator alone (the only one of the three
+  `mech = true` units without resolvable step events).
+- `ATadpMove` is the one movement-clip section partitioned into
+  `attack`/`decay` samples: it is the ADP's spoken radio acknowledgement
+  (already played as a voice bark), not a mechanical sound, so sections
+  carrying those controls are skipped. Filtered on what the section data says,
+  not on the name.
+- `DeathHandLaunch` (in `HK_Deathhand`'s `Move`) and `HKSmall1` (in
+  `HK_buzzsaw`'s `Move_Stop`) are genuinely authored inside movement clips and
+  do play. That is correct; do not "fix" it.
+- The four carryalls among the 19 only sound their engine start on ground
+  locomotion: `Unit._set_movement_animation()` hands airborne phases to
+  `UnitFlightController` before the movement-sound module sees them. Hooking
+  takeoff is open work, not a regression.
+
 ## Building models
 
 ### Atreides Refinery H0 contains two broken geometry components

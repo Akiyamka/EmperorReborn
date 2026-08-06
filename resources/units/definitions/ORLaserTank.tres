@@ -15,6 +15,7 @@ icon_grey_path = "icons\\\\grey_OR_LaserTank.tga"
 sidebar_type = &"Units"
 voice_profile_path = "res://resources/audio/voices/ORLaserTank.tres"
 voice_profile_paths_by_house = {}
+move_start_sound_id = &"orlasertankmovefxstart"
 cost = 700
 build_time_ticks = 432
 tech_level = 3

@@ -15,6 +15,7 @@ icon_grey_path = "icons\\\\grey_IM_ADVSardaukar.tga"
 sidebar_type = &"Infantry"
 voice_profile_path = "res://resources/audio/voices/IMADVSardaukar.tres"
 voice_profile_paths_by_house = {}
+move_start_sound_id = &""
 cost = 350
 build_time_ticks = 689
 tech_level = 5

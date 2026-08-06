@@ -15,6 +15,7 @@ icon_grey_path = "icons\\\\grey_AT_Trike.tga"
 sidebar_type = &"Units"
 voice_profile_path = "res://resources/audio/voices/ATTrike.tres"
 voice_profile_paths_by_house = {}
+move_start_sound_id = &"attrikemovefxstart"
 cost = 300
 build_time_ticks = 150
 tech_level = 2

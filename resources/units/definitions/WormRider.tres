@@ -15,6 +15,7 @@ icon_grey_path = "icons\\\\Grey_worm.tga"
 sidebar_type = &"Infantry"
 voice_profile_path = ""
 voice_profile_paths_by_house = {}
+move_start_sound_id = &""
 cost = 150
 build_time_ticks = 0
 tech_level = 0
