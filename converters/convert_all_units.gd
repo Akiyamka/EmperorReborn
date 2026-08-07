@@ -45,6 +45,7 @@ func _init() -> void:
 			continue
 		var builder = ModelBakeBuilderScript.new()
 		builder.source_texture_dir = TEXTURE_DIR
+		builder.bake_attachment_bank_effects = true
 		var scene: PackedScene = builder.build(source)
 		if scene == null:
 			failures.append(model_name)

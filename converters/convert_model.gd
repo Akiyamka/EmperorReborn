@@ -17,6 +17,7 @@ func _init() -> void:
 		output = "res://assets/converted/models".path_join(source.get_file().get_basename()).path_join("%s.scn" % source.get_file().get_basename())
 
 	var builder = ModelBakeBuilderScript.new()
+	builder.bake_attachment_bank_effects = true
 	builder.source_texture_dir = String(args.get("textures", "res://assets/raw_original_content/3DDATA/Textures"))
 	builder.texture_output_dir = String(args.get("texture-output", ""))
 	if args.has("world-scale"):
