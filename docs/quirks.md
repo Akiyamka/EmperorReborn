@@ -382,6 +382,23 @@ the localization stub and reach `DEATH_EVENT_PATHS` with their real samples.
 The drop-empty-events rule above still stands for everything else, `[YAKDYING]`
 and the eight never-defined-in-English ids included.
 
+**The same shadowing hits two reload hooks.** `AtreidesSFX.txt` defines real
+`[atsniperreload]` and `[frwarriorreload]` sections (both
+`Sounds = kindjal_infantry_reload_1`, `Volume = 40`) and `ImportedSfx.txt`
+redefines both as `[ATSNIPERRELOAD]`/`[FRWARRIORRELOAD]` pointing at
+`$Atsniperreload`/`$FRwarriorreload`. Those two names are what
+`AT_Sniper_H0`, `AT_Kindjal_H0` and the AT Pillbox author in their own fire
+clips (see "Weapon reload sounds are authored in the fire clip" below), and
+unlike the death hooks there is no generic spelling to fall through to — the
+model names one section and nothing else claims it — so losing them loses the
+sound outright. Both are in `SHADOW_PROOF_EVENT_IDS`.
+
+`[HKINKVINERELOAD]` and `[HKMISSILETANKRELOAD]` look like the same case and
+are not: `ImportedSfx.txt` is their *only* definition anywhere, so they belong
+with the eight never-defined-in-English death ids. `HK_Inkvine_H0` authors
+`HKinkvinereload` in its `Fire 0` and it is genuinely silent. Do not
+"shadow-proof" them — there is nothing behind the stub to recover.
+
 ### Infantry death voices are authored in the model, not derived from the death cause
 
 **Observed data:** every infantry `.XBF` under
@@ -783,6 +800,74 @@ Deliberate silences and one deliberate deviation:
   locomotion: `Unit._set_movement_animation()` hands airborne phases to
   `UnitFlightController` before the movement-sound module sees them. Hooking
   takeoff is open work, not a regression.
+
+### Weapon reload sounds are authored in the fire clip, not in the rules
+
+**Observed data:** no rules key describes a reload sound. Eight authored
+FX **type 9** events across the whole converted model set are one, each pinned
+to a frame inside the clip it belongs to (frame numbers are the bake's, at the
+fixed 20 fps XBF rate):
+
+| model | clip | range | frame | section |
+| --- | --- | --- | --- | --- |
+| `AT_Sniper_H0` | `Fire 0` | 213..289 | 258 | `Atsniperreload` |
+| `AT_Sniper_H0` | `Lay Down Fire` | 290..331 | 309 | `Atsniperreload` |
+| `HK_Trooper_H0` | `Fire 0` | 195..248 | 237 | `HKreload` |
+| `OR_AATrooper_H0` | `Fire 0` | 286..353 | 338 | `ORkobrareload` |
+| `HK_Inkvine_H0` | `Fire 0` | 32..58 | 50 | `HKinkvinereload` |
+| `AT_Kindjal_H0` | `Deployed Fire` | 386..436 | 429 | `FRwarriorreload` |
+| `AT_Kindjal_H0` | `Deploy Gun` | 322..384 | 374 | `Atsniperreload` |
+| `OR_Mortar_H0` | `Deploy Gun` | 362..420 | 416 | `ORkobrareload` |
+| `ATPillbox` (`AT_MGT_H0`) | `Fire 0` | 193..275 | 257 | `Atsniperreload` |
+
+Behind them are exactly two samples: `hk_rocket_trooper_reload_1` for the
+Harkonnen bazooka and `kindjal_infantry_reload_1` for everything else.
+
+**Why this needs an allowlist and not a name filter:** a fire clip's *other*
+type-9 events are the weapon's own shot sound, and `CombatTurret` already
+plays that from the turret definition's baked `fire_sound_paths` (resolved by
+`config_id` name match, see "Turret fire sounds and bullet hit sounds" above).
+On nine units the authored section resolves to the very WAV the turret already
+fires — `AT_SonicTank`'s `SonicWail` and `HK_assault`'s `CannonSingleLoudShot`
+are both exact duplicates — so playing every event in the clip would double the
+gunfire. `AuthoredReloadSound.RELOAD_SECTIONS` is therefore derived from the
+SFX data rather than from the model survey: it is every section in
+`assets/raw_original_content/SFX/*.txt` whose `Sounds=` is one of the two
+reload samples, plus the two ImportedSfx-only stubs, and nothing else.
+
+**OpenEBfD compatibility decisions:**
+
+- Fire clips are scheduled through `AuthoredFireController`'s own sequence
+  clock (`sound_times`/`next_sound` beside `shot_times`), which is what both
+  units and buildings already advance, so the AT Pillbox needed no separate
+  wiring. Reload entries stay *out* of `shot_times` on purpose: three separate
+  behaviours count that array (burst validation, the continuous-bullet damage
+  split, and `_fire_sequence_has_multiple_shots`).
+- A burst cut short stays silent. Cancellation goes through
+  `cancel_sequences()` → `_stop_sequence()`, which never reaches the sound
+  loop; a clip that genuinely ended does sound, including via
+  `finish_animation()`'s jump to `duration` — which matters, because every
+  authored reload sits near the end of its clip.
+- `Deploy Gun` is driven by `UnitDeployState`, not by the fire controller, so
+  the Kindjal's and the Mortar's deploy-time reloads are scheduled there on
+  timers. A transition clip runs to completion by construction
+  (`is_transitioning()` locks out every order that could interrupt it), so
+  there is no cancellation to unwind. The delay is divided by the player's
+  speed scale because nothing resets it between clips: a unit that fired
+  before deploying leaves the player at `FIRE_ANIMATION_SPEED_SCALE`.
+- `Lay_Down_Fire` and `CrouchFire` are authored on most infantry but bound by
+  nothing in `scripts/`, so the sniper's prone reload is resolved and tested
+  yet never plays today. That is missing prone/crouch stances, not a missing
+  sound.
+- `HK_Inkvine_H0`'s reload is silent (see the ImportedSfx shadowing entry
+  above). The section stays on the allowlist so the silence reads as a data
+  fact rather than an oversight.
+- The AT Pillbox reload depends on the `Idle 0` range repair below: the source
+  file nests `Idle 0` [200..240] inside `Fire 0` [193..275], and a nested range
+  wins the tightest-range rule that decides which clip owns a frame. The bake
+  rewrites `Idle_0` to the `Stationary` range and keeps the original only as
+  `source_*_frame`, so the reload stays in `Fire_0`. A resolver that ever
+  preferred `source_*_frame` would silently move it.
 
 ## Building models
 

@@ -27,6 +27,9 @@ const CombatTargetAcquisitionScript := preload(
 const AuthoredFireControllerScript := preload(
 	"res://scripts/combat/authored_fire_controller.gd"
 )
+const AuthoredReloadSoundScript := preload(
+	"res://scripts/combat/authored_reload_sound.gd"
+)
 const UnitAttackOrderScript := preload("res://scripts/units/unit_attack_order.gd")
 const UnitFireOverlayScript := preload("res://scripts/units/unit_fire_overlay.gd")
 const UnitTerrainAlignmentScript := preload(
@@ -501,7 +504,12 @@ func _start_authored_fire_sequence(turret, attack_target: Variant = null) -> boo
 		_authored_fire_shot_times(player, animation, turret, animation_name),
 		not can_fire_moving,
 		_reload_starts_after_fire_animation(),
-		restore_combat_turret_poses
+		restore_combat_turret_poses,
+		# Resolved from the model rather than the playback player: a weapon that
+		# fires while moving performs the clip on a synthesized overlay player
+		# (UnitFireOverlay), but the authored FX events live on the model root
+		# either way, and the sounds are driven by the sequence's own clock.
+		AuthoredReloadSoundScript.schedule(_owner.visual_root, animation_name)
 	)
 
 

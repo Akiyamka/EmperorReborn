@@ -15,6 +15,10 @@ extends RefCounted
 ## mid-deploy runs the corpse handoff and then _exit_tree() as well.
 
 const SpatialOrientationScript := preload("res://scripts/world/spatial_orientation.gd")
+const AuthoredReloadSoundScript := preload(
+	"res://scripts/combat/authored_reload_sound.gd"
+)
+const SfxSectionCatalogScript := preload("res://scripts/audio/sfx_section_catalog.gd")
 
 ## The original MCV model has no clip literally named Deploy. Move_Stop is its
 ## authored transition from driving to a braced stationary pose and is the
@@ -208,6 +212,54 @@ func start_transition(candidates: Array[StringName]) -> void:
 		animation.loop_mode = Animation.LOOP_NONE
 	_transition_player.stop()
 	_transition_player.play(_transition_animation)
+	_schedule_authored_sounds()
+
+
+## The Kindjal and the Mortar author a reload inside `Deploy Gun` itself -- the
+## gun being loaded as it folds out (AT_Kindjal_H0 frame 374 `Atsniperreload`,
+## OR_Mortar_H0 frame 54 `ORkobrareload`), on top of the `KindjalDeploy` /
+## `MortarDeploy` servo sound at the head of the same clip. Nothing else drives
+## this clip's FX events, so they are scheduled here.
+##
+## Timers rather than a per-frame position watcher: a transition clip runs to
+## completion by construction (`is_transitioning()` locks out every order that
+## could interrupt it), so there is no cancellation to unwind. The delay is
+## divided by the player's speed scale because nothing resets it between clips
+## -- a Kindjal that fired before deploying leaves the player at
+## AuthoredFireController.FIRE_ANIMATION_SPEED_SCALE, and the clip then runs
+## 25% fast.
+func _schedule_authored_sounds() -> void:
+	if _unit == null or not _unit.is_inside_tree():
+		return
+	var schedule := AuthoredReloadSoundScript.schedule(
+		_unit.visual_root, _transition_animation
+	)
+	if schedule.is_empty():
+		return
+	var speed_scale := maxf(absf(_transition_player.speed_scale), 0.01)
+	for entry in schedule:
+		var section := StringName(entry.get("section", &""))
+		var delay := float(entry.get("time", 0.0)) / speed_scale
+		if delay <= 0.0:
+			_play_authored_sound(section)
+			continue
+		_unit.get_tree().create_timer(delay).timeout.connect(
+			_play_authored_sound.bind(section)
+		)
+
+
+## Guarded against everything the timer can outlive: the unit dying mid-deploy,
+## the transition finishing early, the match ending. Parented to the unit's
+## parent so a sound already started survives the unit itself, like
+## UnitMovementSounds._play().
+func _play_authored_sound(section: StringName) -> void:
+	if section.is_empty() or not is_transitioning():
+		return
+	if _unit == null or not is_instance_valid(_unit) or not _unit.is_inside_tree():
+		return
+	SfxSectionCatalogScript.play_at(
+		_unit.get_parent(), _unit.global_position, section
+	)
 
 
 ## True when the finished clip is the transition this machine is waiting for;

@@ -3,6 +3,10 @@ extends RefCounted
 
 const FireRequestScript := preload("res://scripts/combat/fire_request.gd")
 const CombatRulesScript := preload("res://scripts/combat/combat_rules.gd")
+const AuthoredReloadSoundScript := preload(
+	"res://scripts/combat/authored_reload_sound.gd"
+)
+const SfxSectionCatalogScript := preload("res://scripts/audio/sfx_section_catalog.gd")
 
 signal weapon_fired(projectiles: Array, target: Variant, weapon_index: int)
 
@@ -62,7 +66,8 @@ func start_sequence(
 	shot_times: Array[Dictionary],
 	blocking: bool,
 	reload_after_animation: bool,
-	restore_aim_poses: Callable = Callable()
+	restore_aim_poses: Callable = Callable(),
+	sound_times: Array[Dictionary] = []
 	) -> bool:
 	var weapon_index: int = turret.weapon_index()
 	if sequences.has(weapon_index) or animation == null or animation.length <= 0.0:
@@ -81,6 +86,13 @@ func start_sequence(
 		"next_shot": 0,
 		"shots_emitted": 0,
 		"blocking": blocking,
+		# Kept apart from `shot_times` on purpose: a reload is not a shot, and
+		# folding the two together would corrupt everything that counts shot
+		# events -- `_fire_sequence_has_multiple_shots`, the continuous-bullet
+		# `damage_scale` split below, and the `burst_shot_count` validation in
+		# `_xbf_fire_shot_times`.
+		"sound_times": sound_times,
+		"next_sound": 0,
 	}
 	if not reload_after_animation:
 		turret.begin_reload()
@@ -143,12 +155,55 @@ func advance_sequences(
 				+ projectiles.size()
 			weapon_fired.emit(projectiles, target, int(weapon_index))
 		state["next_shot"] = next_shot
+		state["next_sound"] = _play_crossed_sounds(state, elapsed, source)
 		sequences[weapon_index] = state
 		if elapsed + FIRE_EVENT_EPSILON >= float(state.get("duration", 0.0)):
 			restore_idle = finish_sequence(
 				sequences, int(weapon_index), reload_after_animation
 			) or restore_idle
 	return restore_idle
+
+
+## Plays every authored sound the clip crossed since the previous tick and
+## returns the new `next_sound` cursor. Independent of the shot loop above,
+## including its `target == null` skip: a man whose target died mid-clip still
+## racks the bolt.
+##
+## Two paths reach here with a clip that genuinely ended, and both should sound:
+## the integrator landing on `duration`, and `finish_animation()` jumping
+## `elapsed` to `duration` because the AnimationPlayer reported the clip
+## finished. That matters -- every authored reload sits 42-52 frames into its
+## clip, near the end. A burst cut short is the opposite case and stays silent:
+## cancellation goes through `cancel_sequences()` -> `_stop_sequence()`, which
+## never comes past here.
+func _play_crossed_sounds(
+	state: Dictionary, elapsed: float, source: Object
+	) -> int:
+	var sound_times: Array = state.get("sound_times", [])
+	var next_sound := int(state.get("next_sound", 0))
+	while (
+		next_sound < sound_times.size()
+		and float((sound_times[next_sound] as Dictionary)["time"])
+			<= elapsed + FIRE_EVENT_EPSILON
+	):
+		var entry: Dictionary = sound_times[next_sound]
+		next_sound += 1
+		_play_authored_sound(source, StringName(entry.get("section", &"")))
+	return next_sound
+
+
+## Parented to the source's parent rather than the source: a reload that starts
+## on the frame the unit dies should finish playing rather than be freed with
+## it, exactly like UnitMovementSounds._play() and the corpse's death sounds.
+func _play_authored_sound(source: Object, section: StringName) -> void:
+	if section.is_empty() or not is_instance_valid(source):
+		return
+	var node := source as Node3D
+	if node == null or not node.is_inside_tree():
+		return
+	SfxSectionCatalogScript.play_at(
+		node.get_parent(), node.global_position, section
+	)
 
 
 func finish_sequence(
@@ -293,7 +348,9 @@ func try_start(target: Variant) -> bool:
 		animation,
 		shot_times,
 		false,
-		false
+		false,
+		Callable(),
+		AuthoredReloadSoundScript.schedule(_model_root, animation_name)
 	)
 	if not started:
 		return false

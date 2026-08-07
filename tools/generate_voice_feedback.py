@@ -68,12 +68,19 @@ DEATH_EVENT_IDS = {
 #   plays the section the artists actually named instead of falling back. Their
 #   Ordos counterparts need no entry here: ORDOSSFX.TXT sorts after
 #   ImportedSfx.txt, so last-file-wins already keeps the real definition.
+# - The two reload hooks are named by the fire clips of AT_Sniper_H0,
+#   AT_Kindjal_H0 and the AT Pillbox (scripts/combat/authored_reload_sound.gd).
+#   Unlike the death hooks they have no generic spelling to fall through to, so
+#   losing them loses the sound outright. `HKinkvinereload` and
+#   `HKmissiletankreload` deliberately get no entry: ImportedSfx.txt is their
+#   only definition anywhere, so they are genuinely silent rather than shadowed.
 SHADOW_PROOF_EVENT_IDS = {
     "hkmedium1", "hkmedium2", "hksmall1",
     "atnormalmandying", "hknormalmandying",
     "atburningmandying", "hkburningmandying",
     "atchoking", "hkchoking",
     "atcrush", "hkcrush",
+    "atsniperreload", "frwarriorreload",
 }
 SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:;.*)?$")
 PROPERTY_RE = re.compile(r"^\s*([^=;]+?)\s*=\s*(.*?)\s*$")
